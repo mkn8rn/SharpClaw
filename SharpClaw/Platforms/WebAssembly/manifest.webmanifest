@@ -1,0 +1,10 @@
+{
+  "background_color": "#ffffff",
+  "description": "SharpClaw",
+  "display": "standalone",
+  "name": "SharpClaw",
+  "short_name": "SharpClaw",
+  "start_url": "/index.html",
+  "theme_color": "#ffffff",
+  "scope": "/"
+}

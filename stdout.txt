@@ -1,0 +1,14 @@
+[11:01:01 WRN] No instantiatable types implementing `IEntityTypeConfiguration` were found while scanning assembly 'SharpClaw.Application.Infrastructure, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'.
+[11:01:02 INF] Saved 37 entities to in-memory store.
+[11:01:02 INF] SharpClaw API listening on http://127.0.0.1:48923
+[11:01:02 INF] API key written to: C:\Users\marko\AppData\Local\SharpClaw\.api-key
+[11:01:02 INF] ScheduledTaskService started.
+[11:01:02 INF] Now listening on: http://127.0.0.1:48923
+[11:01:02 INF] Application started. Press Ctrl+C to shut down.
+[11:01:02 INF] Hosting environment: Production
+[11:01:02 INF] Content root path: E:\source\SharpClaw
+
+Type 'help' for available commands, 'exit' to quit.
+Log in with: login <username> <password>
+
+sharpclaw> 

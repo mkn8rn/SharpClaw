@@ -1,0 +1,36 @@
+<Solution>
+  <Folder Name="/Application/">
+    <Project Path="SharpClaw.Application.API/SharpClaw.Application.API.csproj" />
+    <Project Path="SharpClaw.Application.Core/SharpClaw.Application.Core.csproj" />
+    <Project Path="SharpClaw.Application.Infrastructure/SharpClaw.Application.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/NativeClient/">
+    <Project Path="SharpClaw/SharpClaw.csproj">
+      <Deploy />
+    </Project>
+  </Folder>
+  <Folder Name="/PublicAPI/">
+    <Project Path="SharpClaw.PublicAPI/SharpClaw.PublicAPI.csproj" />
+  </Folder>
+  <Folder Name="/Shared/">
+    <Project Path="SharpClaw.Contracts/SharpClaw.Contracts.csproj" />
+    <Project Path="SharpClaw.Utils/SharpClaw.Utils.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="SharpClaw.Tests/SharpClaw.Tests.csproj">
+      <Deploy />
+    </Project>
+    <Project Path="SharpClaw.UITests/SharpClaw.UITests.csproj">
+      <Deploy />
+    </Project>
+  </Folder>
+</Solution>
