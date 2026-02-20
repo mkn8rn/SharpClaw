@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
+using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;

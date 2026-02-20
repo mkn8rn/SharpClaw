@@ -1,9 +1,9 @@
 using SharpClaw.Application.Infrastructure.Models.Clearance;
-using SharpClaw.Application.Infrastructure.Models.Context;
+using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Infrastructure.Models;
 
-namespace SharpClaw.Application.Infrastructure.Models.Conversation;
+namespace SharpClaw.Application.Infrastructure.Models.Context;
 
 /// <summary>
 /// A conversation that optionally belongs to an agent context.  Each
@@ -15,7 +15,7 @@ namespace SharpClaw.Application.Infrastructure.Models.Conversation;
 /// conversation's own permission set.
 /// </para>
 /// </summary>
-public class ConversationDB : BaseEntity
+public class ChannelDB : BaseEntity
 {
     public required string Title { get; set; }
 
@@ -39,7 +39,7 @@ public class ConversationDB : BaseEntity
     /// context's permission set acts as a default for this conversation.
     /// </summary>
     public Guid? AgentContextId { get; set; }
-    public AgentContextDB? AgentContext { get; set; }
+    public ChannelContextDB? AgentContext { get; set; }
 
     /// <summary>
     /// Optional permission set for this conversation. Overrides the

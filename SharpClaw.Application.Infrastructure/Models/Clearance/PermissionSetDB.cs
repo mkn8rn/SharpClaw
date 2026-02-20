@@ -49,6 +49,40 @@ public class PermissionSetDB : BaseEntity
     public ICollection<TaskManageAccessDB> TaskPermissions { get; set; } = [];
     public ICollection<SkillManageAccessDB> SkillPermissions { get; set; } = [];
 
+    // ── Default resource accesses ─────────────────────────────────
+    // Optional defaults used when starting a job and no specific
+    // resource of that type is provided by the context or conversation.
+
+    public Guid? DefaultSystemUserAccessId { get; set; }
+    public SystemUserAccessDB? DefaultSystemUserAccess { get; set; }
+
+    public Guid? DefaultLocalInfoStorePermissionId { get; set; }
+    public LocalInfoStoreAccessDB? DefaultLocalInfoStorePermission { get; set; }
+
+    public Guid? DefaultExternalInfoStorePermissionId { get; set; }
+    public ExternalInfoStoreAccessDB? DefaultExternalInfoStorePermission { get; set; }
+
+    public Guid? DefaultWebsiteAccessId { get; set; }
+    public WebsiteAccessDB? DefaultWebsiteAccess { get; set; }
+
+    public Guid? DefaultSearchEngineAccessId { get; set; }
+    public SearchEngineAccessDB? DefaultSearchEngineAccess { get; set; }
+
+    public Guid? DefaultContainerAccessId { get; set; }
+    public ContainerAccessDB? DefaultContainerAccess { get; set; }
+
+    public Guid? DefaultAudioDeviceAccessId { get; set; }
+    public AudioDeviceAccessDB? DefaultAudioDeviceAccess { get; set; }
+
+    public Guid? DefaultAgentPermissionId { get; set; }
+    public AgentManagementAccessDB? DefaultAgentPermission { get; set; }
+
+    public Guid? DefaultTaskPermissionId { get; set; }
+    public TaskManageAccessDB? DefaultTaskPermission { get; set; }
+
+    public Guid? DefaultSkillPermissionId { get; set; }
+    public SkillManageAccessDB? DefaultSkillPermission { get; set; }
+
     // ── Clearance whitelists ──────────────────────────────────────
 
     /// <summary>

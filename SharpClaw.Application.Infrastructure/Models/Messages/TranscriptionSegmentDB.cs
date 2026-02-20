@@ -1,7 +1,7 @@
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Contracts.Entities;
 
-namespace SharpClaw.Application.Infrastructure.Models.Conversation;
+namespace SharpClaw.Application.Infrastructure.Models.Messages;
 
 /// <summary>
 /// A single segment of transcribed text produced by a live

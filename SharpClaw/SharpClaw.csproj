@@ -43,6 +43,10 @@
     <DefineConstants>$(DefineConstants);USE_UITESTS</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(CI)'=='true'">
+    <TargetFrameworks>net10.0</TargetFrameworks>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
   </ItemGroup>

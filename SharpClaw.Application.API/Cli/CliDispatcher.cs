@@ -469,7 +469,7 @@ public static class CliDispatcher
         return sub switch
         {
             "new" when args.Length >= 3
-                => await ContextHandlers.Create(
+                => await ChannelContextHandlers.Create(
                     new CreateContextRequest(
                         CliIdMap.Resolve(args[2]),
                         args.Length >= 4 ? string.Join(' ', args[3..]) : null),
@@ -477,22 +477,22 @@ public static class CliDispatcher
             "new" => UsageResult("context new <agentId> [name]"),
 
             "list"
-                => await ContextHandlers.List(svc,
+                => await ChannelContextHandlers.List(svc,
                     args.Length >= 3 ? CliIdMap.Resolve(args[2]) : null),
 
             "get" when args.Length >= 3
-                => await ContextHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+                => await ChannelContextHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
             "get" => UsageResult("context get <id>"),
 
             "update" when args.Length >= 4
-                => await ContextHandlers.Update(
+                => await ChannelContextHandlers.Update(
                     CliIdMap.Resolve(args[2]),
                     new UpdateContextRequest(string.Join(' ', args[3..])),
                     svc),
             "update" => UsageResult("context update <id> <name>"),
 
             "delete" when args.Length >= 3
-                => await ContextHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
+                => await ChannelContextHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
             "delete" => UsageResult("context delete <id>"),
 
             _ => UsageResult($"Unknown sub-command: context {sub}. Try 'help' for usage.")
@@ -563,25 +563,25 @@ public static class CliDispatcher
             "select" => UsageResult("conversation select <id>"),
 
             "get" when args.Length >= 3
-                => await ConversationHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+                => await ChannelHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
             "get" => UsageResult("conversation get <id>"),
 
             "model" when args.Length >= 4
-                => await ConversationHandlers.Update(
+                => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
                     new UpdateConversationRequest(ModelId: CliIdMap.Resolve(args[3])),
                     svc),
             "model" => UsageResult("conversation model <conversationId> <modelId>"),
 
             "attach" when args.Length >= 4
-                => await ConversationHandlers.Update(
+                => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
                     new UpdateConversationRequest(ContextId: CliIdMap.Resolve(args[3])),
                     svc),
             "attach" => UsageResult("conversation attach <conversationId> <contextId>"),
 
             "detach" when args.Length >= 3
-                => await ConversationHandlers.Update(
+                => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
                     new UpdateConversationRequest(ContextId: Guid.Empty),
                     svc),
@@ -616,7 +616,7 @@ public static class CliDispatcher
 
         var title = titleParts.Count > 0 ? string.Join(' ', titleParts) : null;
 
-        var result = await ConversationHandlers.Create(
+        var result = await ChannelHandlers.Create(
             new CreateConversationRequest(agentId, title, ContextId: contextId), svc);
 
         // Auto-select the newly created conversation
@@ -629,7 +629,7 @@ public static class CliDispatcher
     private static async Task<IResult> HandleConversationList(string[] args, ConversationService svc)
     {
         Guid? agentId = args.Length >= 3 ? CliIdMap.Resolve(args[2]) : null;
-        return await ConversationHandlers.List(svc, agentId);
+        return await ChannelHandlers.List(svc, agentId);
     }
 
     private static IResult HandleConversationSelect(string[] args)
@@ -642,7 +642,7 @@ public static class CliDispatcher
     private static async Task<IResult> HandleConversationDelete(string[] args, ConversationService svc)
     {
         var id = CliIdMap.Resolve(args[2]);
-        var result = await ConversationHandlers.Delete(id, svc);
+        var result = await ChannelHandlers.Delete(id, svc);
 
         // Clear selection if the deleted conversation was the active one
         if (_currentConversationId == id)

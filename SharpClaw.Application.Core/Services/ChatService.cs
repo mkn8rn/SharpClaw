@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
+using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;

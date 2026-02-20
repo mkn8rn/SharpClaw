@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using SharpClaw.Contracts.DTOs.Conversations;
+using SharpClaw.Contracts.DTOs.Contexts;
 using SharpClaw.PublicAPI.Infrastructure;
 
 namespace SharpClaw.PublicAPI.Controllers;
@@ -8,20 +8,20 @@ namespace SharpClaw.PublicAPI.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [EnableRateLimiting(Security.RateLimiterConfiguration.GlobalPolicy)]
-public class ConversationsController(InternalApiClient api) : ControllerBase
+public class ChannelContextsController(InternalApiClient api) : ControllerBase
 {
     [HttpPost]
-    public async Task<IActionResult> Create(CreateConversationRequest request, CancellationToken ct)
+    public async Task<IActionResult> Create(CreateContextRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await api.PostAsync<CreateConversationRequest, ConversationResponse>(
-                "/conversations", request, ct);
+            var result = await api.PostAsync<CreateContextRequest, ContextResponse>(
+                "/channel-contexts", request, ct);
             return Ok(result);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
         {
-            return BadRequest(new { error = "Invalid conversation request." });
+            return BadRequest(new { error = "Invalid context request." });
         }
         catch (HttpRequestException)
         {
@@ -35,9 +35,9 @@ public class ConversationsController(InternalApiClient api) : ControllerBase
         try
         {
             var path = agentId is not null
-                ? $"/conversations?agentId={agentId}"
-                : "/conversations";
-            var result = await api.GetAsync<IReadOnlyList<ConversationResponse>>(path, ct);
+                ? $"/channel-contexts?agentId={agentId}"
+                : "/channel-contexts";
+            var result = await api.GetAsync<IReadOnlyList<ContextResponse>>(path, ct);
             return Ok(result);
         }
         catch (HttpRequestException)
@@ -51,12 +51,12 @@ public class ConversationsController(InternalApiClient api) : ControllerBase
     {
         try
         {
-            var result = await api.GetAsync<ConversationResponse>($"/conversations/{id}", ct);
+            var result = await api.GetAsync<ContextResponse>($"/channel-contexts/{id}", ct);
             return result is not null ? Ok(result) : NotFound();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Context not found." });
         }
         catch (HttpRequestException)
         {
@@ -65,17 +65,17 @@ public class ConversationsController(InternalApiClient api) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    public async Task<IActionResult> Update(Guid id, UpdateConversationRequest request, CancellationToken ct)
+    public async Task<IActionResult> Update(Guid id, UpdateContextRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await api.PutAsync<UpdateConversationRequest, ConversationResponse>(
-                $"/conversations/{id}", request, ct);
+            var result = await api.PutAsync<UpdateContextRequest, ContextResponse>(
+                $"/channel-contexts/{id}", request, ct);
             return result is not null ? Ok(result) : NotFound();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Context not found." });
         }
         catch (HttpRequestException)
         {
@@ -88,7 +88,7 @@ public class ConversationsController(InternalApiClient api) : ControllerBase
     {
         try
         {
-            var success = await api.DeleteAsync($"/conversations/{id}", ct);
+            var success = await api.DeleteAsync($"/channel-contexts/{id}", ct);
             return success ? NoContent() : NotFound();
         }
         catch (HttpRequestException)

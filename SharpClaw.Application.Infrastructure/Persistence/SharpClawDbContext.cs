@@ -4,8 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
-using SharpClaw.Application.Infrastructure.Models.Conversation;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
+using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Entities;
@@ -27,8 +27,8 @@ public class SharpClawDbContext(
     public DbSet<ProviderDB> Providers => Set<ProviderDB>();
     public DbSet<ModelDB> Models => Set<ModelDB>();
     public DbSet<AgentDB> Agents => Set<AgentDB>();
-    public DbSet<AgentContextDB> AgentContexts => Set<AgentContextDB>();
-    public DbSet<ConversationDB> Conversations => Set<ConversationDB>();
+    public DbSet<ChannelContextDB> AgentContexts => Set<ChannelContextDB>();
+    public DbSet<ChannelDB> Conversations => Set<ChannelDB>();
     public DbSet<ChatMessageDB> ChatMessages => Set<ChatMessageDB>();
     public DbSet<ScheduledJobDB> ScheduledTasks => Set<ScheduledJobDB>();
 
@@ -129,7 +129,7 @@ public class SharpClawDbContext(
         });
 
         // ── Agent Contexts ────────────────────────────────────────
-        modelBuilder.Entity<AgentContextDB>(e =>
+        modelBuilder.Entity<ChannelContextDB>(e =>
         {
             e.HasIndex(c => new { c.AgentId, c.Name }).IsUnique();
             e.HasMany(c => c.Conversations)
@@ -147,7 +147,7 @@ public class SharpClawDbContext(
         });
 
         // ── Conversations ─────────────────────────────────────────
-        modelBuilder.Entity<ConversationDB>(e =>
+        modelBuilder.Entity<ChannelDB>(e =>
         {
             e.HasOne(c => c.Model)
                 .WithMany(m => m.Conversations)
@@ -236,6 +236,57 @@ public class SharpClawDbContext(
                 .WithOne(w => w.PermissionSet)
                 .HasForeignKey(w => w.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // ── Default resource access FKs ───────────────────────
+            e.HasOne(p => p.DefaultSystemUserAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultSystemUserAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultLocalInfoStorePermission)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultLocalInfoStorePermissionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultExternalInfoStorePermission)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultExternalInfoStorePermissionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultWebsiteAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultWebsiteAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultSearchEngineAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultSearchEngineAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultContainerAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultContainerAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultAudioDeviceAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultAudioDeviceAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultAgentPermission)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultAgentPermissionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultTaskPermission)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultTaskPermissionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultSkillPermission)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultSkillPermissionId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // ── Skills ───────────────────────────────────────────────

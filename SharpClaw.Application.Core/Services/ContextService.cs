@@ -15,7 +15,7 @@ public sealed class ContextService(SharpClawDbContext db)
             .FirstOrDefaultAsync(a => a.Id == request.AgentId, ct)
             ?? throw new ArgumentException($"Agent {request.AgentId} not found.");
 
-        var context = new AgentContextDB
+        var context = new ChannelContextDB
         {
             Name = request.Name ?? $"Context {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm}",
             AgentId = agent.Id,
@@ -81,12 +81,12 @@ public sealed class ContextService(SharpClawDbContext db)
         return true;
     }
 
-    private async Task<AgentContextDB?> LoadContextAsync(Guid id, CancellationToken ct) =>
+    private async Task<ChannelContextDB?> LoadContextAsync(Guid id, CancellationToken ct) =>
         await db.AgentContexts
             .Include(c => c.Agent)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    private static ContextResponse ToResponse(AgentContextDB context, AgentDB agent) =>
+    private static ContextResponse ToResponse(ChannelContextDB context, AgentDB agent) =>
         new(context.Id,
             context.Name,
             agent.Id,
