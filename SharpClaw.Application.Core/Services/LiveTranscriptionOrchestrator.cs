@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;

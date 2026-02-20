@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Context;
-using SharpClaw.Application.Infrastructure.Models.Conversation;
 using SharpClaw.Contracts.DTOs.Conversations;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
@@ -12,7 +11,7 @@ public sealed class ConversationService(SharpClawDbContext db)
     /// <summary>
     /// Creates a new conversation for the given agent.  If no model is
     /// specified the agent's current model is used.  An optional
-    /// <see cref="AgentContextDB"/> can be linked so that the context's
+    /// <see cref="ChannelContextDB"/> can be linked so that the context's
     /// permission set acts as a default.
     /// </summary>
     public async Task<ConversationResponse> CreateAsync(
@@ -30,7 +29,7 @@ public sealed class ConversationService(SharpClawDbContext db)
                   .FirstOrDefaultAsync(m => m.Id == modelId, ct)
               ?? throw new ArgumentException($"Model {modelId} not found.");
 
-        AgentContextDB? context = null;
+        ChannelContextDB? context = null;
         if (request.ContextId is { } ctxId)
         {
             context = await db.AgentContexts
@@ -38,7 +37,7 @@ public sealed class ConversationService(SharpClawDbContext db)
                 ?? throw new ArgumentException($"Context {ctxId} not found.");
         }
 
-        var conversation = new ConversationDB
+        var conversation = new ChannelDB
         {
             Title = request.Title ?? $"Conversation {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm}",
             ModelId = model.Id,
@@ -165,7 +164,7 @@ public sealed class ConversationService(SharpClawDbContext db)
 
     // ── Private helpers ───────────────────────────────────────────
 
-    private async Task<ConversationDB?> LoadConversationAsync(Guid id, CancellationToken ct) =>
+    private async Task<ChannelDB?> LoadConversationAsync(Guid id, CancellationToken ct) =>
         await db.Conversations
             .Include(c => c.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent)
@@ -173,7 +172,7 @@ public sealed class ConversationService(SharpClawDbContext db)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
     private static ConversationResponse ToResponse(
-        ConversationDB conversation, AgentDB agent, ModelDB model, AgentContextDB? context) =>
+        ChannelDB conversation, AgentDB agent, ModelDB model, ChannelContextDB? context) =>
         new(conversation.Id,
             conversation.Title,
             agent.Id,

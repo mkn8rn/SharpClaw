@@ -1,5 +1,4 @@
 using SharpClaw.Application.Infrastructure.Models.Clearance;
-using SharpClaw.Application.Infrastructure.Models.Conversation;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Infrastructure.Models;
@@ -12,7 +11,7 @@ namespace SharpClaw.Application.Infrastructure.Models.Context;
 /// every conversation and task within the context unless overridden by a
 /// per-conversation or per-task grant.
 /// </summary>
-public class AgentContextDB : BaseEntity
+public class ChannelContextDB : BaseEntity
 {
     public required string Name { get; set; }
 
@@ -26,6 +25,6 @@ public class AgentContextDB : BaseEntity
     public Guid? PermissionSetId { get; set; }
     public PermissionSetDB? PermissionSet { get; set; }
 
-    public ICollection<ConversationDB> Conversations { get; set; } = [];
+    public ICollection<ChannelDB> Conversations { get; set; } = [];
     public ICollection<ScheduledJobDB> Tasks { get; set; } = [];
 }

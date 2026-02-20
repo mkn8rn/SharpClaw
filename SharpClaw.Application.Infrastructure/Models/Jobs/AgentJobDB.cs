@@ -1,4 +1,5 @@
-using SharpClaw.Application.Infrastructure.Models.Conversation;
+using SharpClaw.Application.Infrastructure.Models.Context;
+using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
@@ -44,7 +45,7 @@ public class AgentJobDB : BaseEntity
     public ModelDB? TranscriptionModel { get; set; }
 
     public Guid? ConversationId { get; set; }
-    public ConversationDB? Conversation { get; set; }
+    public ChannelDB? Conversation { get; set; }
 
     public string? Language { get; set; }
 

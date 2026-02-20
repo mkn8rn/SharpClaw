@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
+using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
@@ -61,6 +63,14 @@ public sealed class AgentJobService(
 
 
         var effectiveResourceId = request.ResourceId;
+
+        // When no resource is specified for a per-resource action, resolve
+        // the default from permission sets: channel → channel context → agent role.
+        if (!effectiveResourceId.HasValue && IsPerResourceAction(request.ActionType))
+        {
+            effectiveResourceId = await ResolveDefaultResourceIdAsync(
+                request.ActionType, request.ConversationId, agentId, ct);
+        }
 
         var job = new AgentJobDB
         {
@@ -459,6 +469,106 @@ public sealed class AgentJobService(
             or AgentActionType.TranscribeFromAudioDevice
             or AgentActionType.TranscribeFromAudioStream
             or AgentActionType.TranscribeFromAudioFile;
+
+    // ═══════════════════════════════════════════════════════════════
+    // Default resource resolution
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Walks the permission-set hierarchy (channel → channel context → agent
+    /// role) and returns the resource ID from the first default access
+    /// entry that matches <paramref name="actionType"/>.
+    /// </summary>
+    private async Task<Guid?> ResolveDefaultResourceIdAsync(
+        AgentActionType actionType, Guid? conversationId, Guid agentId,
+        CancellationToken ct)
+    {
+        // Collect permission set IDs in priority order.
+        var permissionSetIds = new List<Guid>(3);
+
+        if (conversationId.HasValue)
+        {
+            var conv = await db.Conversations
+                .Include(c => c.AgentContext)
+                .FirstOrDefaultAsync(c => c.Id == conversationId.Value, ct);
+
+            if (conv?.PermissionSetId is { } convPsId)
+                permissionSetIds.Add(convPsId);
+
+            if (conv?.AgentContext?.PermissionSetId is { } ctxPsId)
+                permissionSetIds.Add(ctxPsId);
+        }
+
+        var agent = await db.Agents
+            .Include(a => a.Role)
+            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+        if (agent?.Role?.PermissionSetId is { } rolePsId)
+            permissionSetIds.Add(rolePsId);
+
+        if (permissionSetIds.Count == 0)
+            return null;
+
+        // Load all candidate permission sets with their default access navigations.
+        var permissionSets = await db.PermissionSets
+            .Where(p => permissionSetIds.Contains(p.Id))
+            .Include(p => p.DefaultSystemUserAccess)
+            .Include(p => p.DefaultLocalInfoStorePermission)
+            .Include(p => p.DefaultExternalInfoStorePermission)
+            .Include(p => p.DefaultWebsiteAccess)
+            .Include(p => p.DefaultSearchEngineAccess)
+            .Include(p => p.DefaultContainerAccess)
+            .Include(p => p.DefaultAudioDeviceAccess)
+            .Include(p => p.DefaultAgentPermission)
+            .Include(p => p.DefaultTaskPermission)
+            .Include(p => p.DefaultSkillPermission)
+            .ToListAsync(ct);
+
+        // Check each permission set in priority order.
+        foreach (var psId in permissionSetIds)
+        {
+            var ps = permissionSets.FirstOrDefault(p => p.Id == psId);
+            if (ps is null) continue;
+
+            var resourceId = ExtractDefaultResourceId(ps, actionType);
+            if (resourceId.HasValue)
+                return resourceId;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns the resource ID from the matching default access entry on
+    /// a permission set, or <c>null</c> if no default is configured.
+    /// </summary>
+    private static Guid? ExtractDefaultResourceId(
+        PermissionSetDB permissionSet, AgentActionType actionType) => actionType switch
+    {
+        AgentActionType.ExecuteAsSystemUser
+            => permissionSet.DefaultSystemUserAccess?.SystemUserId,
+        AgentActionType.AccessLocalInfoStore
+            => permissionSet.DefaultLocalInfoStorePermission?.LocalInformationStoreId,
+        AgentActionType.AccessExternalInfoStore
+            => permissionSet.DefaultExternalInfoStorePermission?.ExternalInformationStoreId,
+        AgentActionType.AccessWebsite
+            => permissionSet.DefaultWebsiteAccess?.WebsiteId,
+        AgentActionType.QuerySearchEngine
+            => permissionSet.DefaultSearchEngineAccess?.SearchEngineId,
+        AgentActionType.AccessContainer
+            => permissionSet.DefaultContainerAccess?.ContainerId,
+        AgentActionType.ManageAgent
+            => permissionSet.DefaultAgentPermission?.AgentId,
+        AgentActionType.EditTask
+            => permissionSet.DefaultTaskPermission?.ScheduledTaskId,
+        AgentActionType.AccessSkill
+            => permissionSet.DefaultSkillPermission?.SkillId,
+        AgentActionType.TranscribeFromAudioDevice or
+        AgentActionType.TranscribeFromAudioStream or
+        AgentActionType.TranscribeFromAudioFile
+            => permissionSet.DefaultAudioDeviceAccess?.AudioDeviceId,
+        _ => null,
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // Helpers

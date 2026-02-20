@@ -20,7 +20,7 @@ public class ScheduledJobDB : BaseEntity
     /// permission set acts as a default for this task.
     /// </summary>
     public Guid? AgentContextId { get; set; }
-    public AgentContextDB? AgentContext { get; set; }
+    public ChannelContextDB? AgentContext { get; set; }
 
     /// <summary>Optional per-task permission set override.</summary>
     public Guid? PermissionSetId { get; set; }

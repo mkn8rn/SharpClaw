@@ -6,17 +6,17 @@ using SharpClaw.PublicAPI.Infrastructure;
 namespace SharpClaw.PublicAPI.Controllers;
 
 [ApiController]
-[Route("api/conversations/{conversationId:guid}/chat")]
+[Route("api/channels/{channelId:guid}/chat")]
 [EnableRateLimiting(Security.RateLimiterConfiguration.ChatPolicy)]
 public class ChatController(InternalApiClient api) : ControllerBase
 {
     [HttpPost]
-    public async Task<IActionResult> Send(Guid conversationId, ChatRequest request, CancellationToken ct)
+    public async Task<IActionResult> Send(Guid channelId, ChatRequest request, CancellationToken ct)
     {
         try
         {
             var result = await api.PostAsync<ChatRequest, ChatResponse>(
-                $"/conversations/{conversationId}/chat", request, ct);
+                $"/channels/{channelId}/chat", request, ct);
             return Ok(result);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -34,12 +34,12 @@ public class ChatController(InternalApiClient api) : ControllerBase
     }
 
     [HttpGet("history")]
-    public async Task<IActionResult> History(Guid conversationId, CancellationToken ct)
+    public async Task<IActionResult> History(Guid channelId, CancellationToken ct)
     {
         try
         {
             var result = await api.GetAsync<IReadOnlyList<ChatMessageResponse>>(
-                $"/conversations/{conversationId}/chat", ct);
+                $"/channels/{channelId}/chat", ct);
             return Ok(result);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)

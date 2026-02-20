@@ -1,6 +1,5 @@
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
-using SharpClaw.Application.Infrastructure.Models.Conversation;
 using SharpClaw.Contracts.Entities;
 
 namespace SharpClaw.Infrastructure.Models;
@@ -16,6 +15,6 @@ public class AgentDB : BaseEntity
     public Guid? RoleId { get; set; }
     public RoleDB? Role { get; set; }
 
-    public ICollection<AgentContextDB> Contexts { get; set; } = [];
-    public ICollection<ConversationDB> Conversations { get; set; } = [];
+    public ICollection<ChannelContextDB> Contexts { get; set; } = [];
+    public ICollection<ChannelDB> Conversations { get; set; } = [];
 }
