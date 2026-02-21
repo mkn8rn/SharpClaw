@@ -679,7 +679,7 @@ public static class CliDispatcher
         {
             PrintUsage(
                 "job submit [agentId] <actionType> [resourceId] [--model <id>] [--conv <id>] [--lang <code>]",
-                "  Agent can be omitted when --conv is specified.",
+                "  Agent and resource can be omitted when --conv is specified.",
                 "job list <agentId>",
                 "job status <jobId>",
                 "job approve <jobId>",
@@ -687,9 +687,10 @@ public static class CliDispatcher
                 "job cancel <jobId>",
                 "job listen <jobId>                         Stream live transcription segments",
                 "",
-                "Action types (global): ExecuteAsAdmin, CreateSubAgent, CreateContainer,",
+                "Action types (global): CreateSubAgent, CreateContainer,",
                 "  RegisterInfoStore, EditAnyTask",
-                "Action types (resource): ExecuteAsSystemUser, AccessLocalInfoStore,",
+                "Action types (resource): UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell,",
+                "  AccessLocalInfoStore,",
                 "  AccessExternalInfoStore, AccessWebsite, QuerySearchEngine,",
                 "  AccessContainer, ManageAgent, EditTask, AccessSkill",
                 "Transcription types: TranscribeFromAudioDevice,",

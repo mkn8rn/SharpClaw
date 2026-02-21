@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Application.Infrastructure.Models.Messages;
+using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
@@ -80,6 +81,8 @@ public sealed class AgentJobService(
             ActionType = request.ActionType,
             ResourceId = effectiveResourceId,
             Status = AgentJobStatus.Queued,
+            DangerousShellType = request.DangerousShellType,
+            SafeShellType = request.SafeShellType,
             TranscriptionModelId = request.TranscriptionModelId,
             ConversationId = request.ConversationId,
             Language = request.Language,
@@ -103,9 +106,24 @@ public sealed class AgentJobService(
                 break;
 
             case ClearanceVerdict.PendingApproval:
-                job.Status = AgentJobStatus.AwaitingApproval;
-                AddLog(job, $"Awaiting approval: {result.Reason}");
-                await db.SaveChangesAsync(ct);
+                // Conversation pre-auth counts as ApprovedByWhitelistedUser-
+                // level authority.  If the agent's clearance requirement is
+                // ≤ that level AND the channel/context PS has a matching
+                // grant, the user has already pre-authorised the action.
+                if (request.ConversationId.HasValue
+                    && await HasConversationAuthorizationAsync(
+                        request.ConversationId.Value, job.ActionType,
+                        job.ResourceId, result.EffectiveClearance, ct))
+                {
+                    AddLog(job, "Pre-authorized by conversation/context permission set.");
+                    await ExecuteJobAsync(job, ct);
+                }
+                else
+                {
+                    job.Status = AgentJobStatus.AwaitingApproval;
+                    AddLog(job, $"Awaiting approval: {result.Reason}");
+                    await db.SaveChangesAsync(ct);
+                }
                 break;
 
             case ClearanceVerdict.Denied:
@@ -157,7 +175,9 @@ public sealed class AgentJobService(
 
             case ClearanceVerdict.Denied:
             default:
-                AddLog(job, $"Approval attempt by {FormatCaller(approver)} denied: {result.Reason}", "Warning");
+                job.Status = AgentJobStatus.Denied;
+                job.CompletedAt = DateTimeOffset.UtcNow;
+                AddLog(job, $"Denied: agent permission revoked. Attempt by {FormatCaller(approver)}: {result.Reason}", "Warning");
                 await db.SaveChangesAsync(ct);
                 break;
         }
@@ -416,8 +436,6 @@ public sealed class AgentJobService(
     {
         return actionType switch
         {
-            AgentActionType.ExecuteAsAdmin
-                => actions.ExecuteAsAdminAsync(agentId, caller, ct: ct),
             AgentActionType.CreateSubAgent
                 => actions.CreateSubAgentAsync(agentId, caller, ct: ct),
             AgentActionType.CreateContainer
@@ -426,8 +444,10 @@ public sealed class AgentJobService(
                 => actions.RegisterInfoStoreAsync(agentId, caller, ct: ct),
             AgentActionType.EditAnyTask
                 => actions.EditAnyTaskAsync(agentId, caller, ct: ct),
-            AgentActionType.ExecuteAsSystemUser when resourceId.HasValue
-                => actions.ExecuteAsSystemUserAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
+                => actions.UnsafeExecuteAsDangerousShellAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
+                => actions.ExecuteAsSafeShellAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.AccessLocalInfoStore when resourceId.HasValue
                 => actions.AccessLocalInfoStoreAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.AccessExternalInfoStore when resourceId.HasValue
@@ -457,7 +477,8 @@ public sealed class AgentJobService(
     }
 
     private static bool IsPerResourceAction(AgentActionType type) =>
-        type is AgentActionType.ExecuteAsSystemUser
+        type is AgentActionType.UnsafeExecuteAsDangerousShell
+            or AgentActionType.ExecuteAsSafeShell
             or AgentActionType.AccessLocalInfoStore
             or AgentActionType.AccessExternalInfoStore
             or AgentActionType.AccessWebsite
@@ -512,7 +533,8 @@ public sealed class AgentJobService(
         // Load all candidate permission sets with their default access navigations.
         var permissionSets = await db.PermissionSets
             .Where(p => permissionSetIds.Contains(p.Id))
-            .Include(p => p.DefaultSystemUserAccess)
+            .Include(p => p.DefaultDangerousShellAccess)
+            .Include(p => p.DefaultSafeShellAccess)
             .Include(p => p.DefaultLocalInfoStorePermission)
             .Include(p => p.DefaultExternalInfoStorePermission)
             .Include(p => p.DefaultWebsiteAccess)
@@ -545,8 +567,10 @@ public sealed class AgentJobService(
     private static Guid? ExtractDefaultResourceId(
         PermissionSetDB permissionSet, AgentActionType actionType) => actionType switch
     {
-        AgentActionType.ExecuteAsSystemUser
-            => permissionSet.DefaultSystemUserAccess?.SystemUserId,
+        AgentActionType.UnsafeExecuteAsDangerousShell
+            => permissionSet.DefaultDangerousShellAccess?.SystemUserId,
+        AgentActionType.ExecuteAsSafeShell
+            => permissionSet.DefaultSafeShellAccess?.SystemUserId,
         AgentActionType.AccessLocalInfoStore
             => permissionSet.DefaultLocalInfoStorePermission?.LocalInformationStoreId,
         AgentActionType.AccessExternalInfoStore
@@ -568,6 +592,135 @@ public sealed class AgentJobService(
         AgentActionType.TranscribeFromAudioFile
             => permissionSet.DefaultAudioDeviceAccess?.AudioDeviceId,
         _ => null,
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // Conversation / context pre-authorisation
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Checks whether the channel (or its parent context) has a
+    /// user-defined permission set that pre-authorises the requested
+    /// action.
+    /// <para>
+    /// Conversation pre-auth provides
+    /// <see cref="PermissionClearance.ApprovedByWhitelistedUser"/>-level
+    /// authority — the user who configured the channel/context PS is
+    /// treated as a whitelisted user granting approval in advance.
+    /// </para>
+    /// <para>
+    /// <see cref="PermissionClearance.ApprovedByWhitelistedUser"/> is
+    /// accepted at clearance levels 2 and 4 (which includes whitelisted
+    /// user in its fallback chain).  It is <b>not</b> accepted at
+    /// level 1 (same-level user only) or level 3 (agent-only).
+    /// </para>
+    /// </summary>
+    private async Task<bool> HasConversationAuthorizationAsync(
+        Guid conversationId,
+        AgentActionType actionType,
+        Guid? resourceId,
+        PermissionClearance agentClearance,
+        CancellationToken ct)
+    {
+        // Conversation pre-auth = WhitelistedUser authority.
+        // Only accepted at levels where WhitelistedUser can approve:
+        //   Level 2 (ApprovedByWhitelistedUser) — direct match
+        //   Level 4 (ApprovedByWhitelistedAgent) — fallback chain
+        // NOT accepted at:
+        //   Level 1 (ApprovedBySameLevelUser) — same-level user only
+        //   Level 3 (ApprovedByPermittedAgent) — agent-only
+        if (agentClearance is not (PermissionClearance.ApprovedByWhitelistedUser
+                                or PermissionClearance.ApprovedByWhitelistedAgent))
+            return false;
+
+        var conv = await db.Conversations
+            .Include(c => c.AgentContext)
+            .FirstOrDefaultAsync(c => c.Id == conversationId, ct);
+        if (conv is null) return false;
+
+        // Channel PS first.
+        if (conv.PermissionSetId is { } convPsId)
+        {
+            var convPs = await actions.LoadPermissionSetAsync(convPsId, ct);
+            if (convPs is not null && HasMatchingGrant(convPs, actionType, resourceId))
+                return true;
+        }
+
+        // Channel didn't have it — fall through to context.
+        if (conv.AgentContext?.PermissionSetId is { } ctxPsId)
+        {
+            var ctxPs = await actions.LoadPermissionSetAsync(ctxPsId, ct);
+            if (ctxPs is not null && HasMatchingGrant(ctxPs, actionType, resourceId))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the permission set contains a grant
+    /// that covers the given action type (and resource, for per-resource
+    /// actions).  Wildcard grants (<see cref="WellKnownIds.AllResources"/>)
+    /// match any resource.  The clearance value on the grant is
+    /// irrelevant — only existence matters.
+    /// </summary>
+    private static bool HasMatchingGrant(
+        PermissionSetDB ps, AgentActionType actionType, Guid? resourceId) => actionType switch
+    {
+        // ── Global flags ──────────────────────────────────────────
+        AgentActionType.CreateSubAgent    => ps.CanCreateSubAgents,
+        AgentActionType.CreateContainer   => ps.CanCreateContainers,
+        AgentActionType.RegisterInfoStore => ps.CanRegisterInfoStores,
+        AgentActionType.EditAnyTask       => ps.CanEditAllTasks,
+
+        // ── Per-resource grants ───────────────────────────────────
+        AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
+            => ps.DangerousShellAccesses.Any(a =>
+                a.SystemUserId == resourceId || a.SystemUserId == WellKnownIds.AllResources),
+
+        AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
+            => ps.SafeShellAccesses.Any(a =>
+                a.SystemUserId == resourceId || a.SystemUserId == WellKnownIds.AllResources),
+
+        AgentActionType.AccessLocalInfoStore when resourceId.HasValue
+            => ps.LocalInfoStorePermissions.Any(a =>
+                a.LocalInformationStoreId == resourceId || a.LocalInformationStoreId == WellKnownIds.AllResources),
+
+        AgentActionType.AccessExternalInfoStore when resourceId.HasValue
+            => ps.ExternalInfoStorePermissions.Any(a =>
+                a.ExternalInformationStoreId == resourceId || a.ExternalInformationStoreId == WellKnownIds.AllResources),
+
+        AgentActionType.AccessWebsite when resourceId.HasValue
+            => ps.WebsiteAccesses.Any(a =>
+                a.WebsiteId == resourceId || a.WebsiteId == WellKnownIds.AllResources),
+
+        AgentActionType.QuerySearchEngine when resourceId.HasValue
+            => ps.SearchEngineAccesses.Any(a =>
+                a.SearchEngineId == resourceId || a.SearchEngineId == WellKnownIds.AllResources),
+
+        AgentActionType.AccessContainer when resourceId.HasValue
+            => ps.ContainerAccesses.Any(a =>
+                a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
+
+        AgentActionType.ManageAgent when resourceId.HasValue
+            => ps.AgentPermissions.Any(a =>
+                a.AgentId == resourceId || a.AgentId == WellKnownIds.AllResources),
+
+        AgentActionType.EditTask when resourceId.HasValue
+            => ps.TaskPermissions.Any(a =>
+                a.ScheduledTaskId == resourceId || a.ScheduledTaskId == WellKnownIds.AllResources),
+
+        AgentActionType.AccessSkill when resourceId.HasValue
+            => ps.SkillPermissions.Any(a =>
+                a.SkillId == resourceId || a.SkillId == WellKnownIds.AllResources),
+
+        AgentActionType.TranscribeFromAudioDevice or
+        AgentActionType.TranscribeFromAudioStream or
+        AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
+            => ps.AudioDeviceAccesses.Any(a =>
+                a.AudioDeviceId == resourceId || a.AudioDeviceId == WellKnownIds.AllResources),
+
+        _ => false,
     };
 
     // ═══════════════════════════════════════════════════════════════
@@ -623,6 +776,8 @@ public sealed class AgentJobService(
             CreatedAt: job.CreatedAt,
             StartedAt: job.StartedAt,
             CompletedAt: job.CompletedAt,
+            DangerousShellType: job.DangerousShellType,
+            SafeShellType: job.SafeShellType,
             TranscriptionModelId: job.TranscriptionModelId,
             ConversationId: job.ConversationId,
             Language: job.Language,

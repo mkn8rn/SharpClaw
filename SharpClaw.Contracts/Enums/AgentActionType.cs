@@ -6,14 +6,14 @@ namespace SharpClaw.Contracts.Enums;
 public enum AgentActionType
 {
     // ── Global flags ──────────────────────────────────────────────
-    ExecuteAsAdmin,
     CreateSubAgent,
     CreateContainer,
     RegisterInfoStore,
     EditAnyTask,
 
     // ── Per-resource grants ───────────────────────────────────────
-    ExecuteAsSystemUser,
+    UnsafeExecuteAsDangerousShell,
+    ExecuteAsSafeShell,
     AccessLocalInfoStore,
     AccessExternalInfoStore,
     AccessWebsite,

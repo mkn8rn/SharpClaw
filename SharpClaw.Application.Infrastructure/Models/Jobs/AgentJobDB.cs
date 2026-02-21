@@ -24,6 +24,10 @@ public class AgentJobDB : BaseEntity
     public AgentActionType ActionType { get; set; }
     public Guid? ResourceId { get; set; }
 
+    // ── Shell type (for shell execution actions) ──────────────────
+    public DangerousShellType? DangerousShellType { get; set; }
+    public SafeShellType? SafeShellType { get; set; }
+
     // ── State ─────────────────────────────────────────────────────
     public AgentJobStatus Status { get; set; } = AgentJobStatus.Queued;
     public PermissionClearance EffectiveClearance { get; set; } = PermissionClearance.Unset;

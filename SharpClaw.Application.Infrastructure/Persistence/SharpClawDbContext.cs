@@ -35,7 +35,8 @@ public class SharpClawDbContext(
     // ── Permission resources & grants ─────────────────────────────
     public DbSet<SkillDB> Skills => Set<SkillDB>();
     public DbSet<SystemUserDB> SystemUsers => Set<SystemUserDB>();
-    public DbSet<SystemUserAccessDB> SystemUserAccesses => Set<SystemUserAccessDB>();
+    public DbSet<DangerousShellAccessDB> DangerousShellAccesses => Set<DangerousShellAccessDB>();
+    public DbSet<SafeShellAccessDB> SafeShellAccesses => Set<SafeShellAccessDB>();
     public DbSet<LocalInformationStoreDB> LocalInformationStores => Set<LocalInformationStoreDB>();
     public DbSet<ExternalInformationStoreDB> ExternalInformationStores => Set<ExternalInformationStoreDB>();
     public DbSet<LocalInfoStoreAccessDB> LocalInfoStorePermissions => Set<LocalInfoStoreAccessDB>();
@@ -177,7 +178,12 @@ public class SharpClawDbContext(
         {
             e.Property(p => p.DefaultClearance).HasConversion<string>();
 
-            e.HasMany(p => p.SystemUserAccesses)
+            e.HasMany(p => p.DangerousShellAccesses)
+                .WithOne(s => s.PermissionSet)
+                .HasForeignKey(s => s.PermissionSetId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(p => p.SafeShellAccesses)
                 .WithOne(s => s.PermissionSet)
                 .HasForeignKey(s => s.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -238,9 +244,14 @@ public class SharpClawDbContext(
                 .OnDelete(DeleteBehavior.Cascade);
 
             // ── Default resource access FKs ───────────────────────
-            e.HasOne(p => p.DefaultSystemUserAccess)
+            e.HasOne(p => p.DefaultDangerousShellAccess)
                 .WithMany()
-                .HasForeignKey(p => p.DefaultSystemUserAccessId)
+                .HasForeignKey(p => p.DefaultDangerousShellAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultSafeShellAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultSafeShellAccessId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             e.HasOne(p => p.DefaultLocalInfoStorePermission)
@@ -303,16 +314,28 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.Accesses)
+            e.HasMany(s => s.DangerousShellAccesses)
+                .WithOne(a => a.SystemUser)
+                .HasForeignKey(a => a.SystemUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(s => s.SafeShellAccesses)
                 .WithOne(a => a.SystemUser)
                 .HasForeignKey(a => a.SystemUserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<SystemUserAccessDB>(e =>
+        modelBuilder.Entity<DangerousShellAccessDB>(e =>
         {
-            e.HasIndex(a => new { a.PermissionSetId, a.SystemUserId }).IsUnique();
+            e.HasIndex(a => new { a.PermissionSetId, a.SystemUserId, a.ShellType }).IsUnique();
             e.Property(a => a.Clearance).HasConversion<string>();
+            e.Property(a => a.ShellType).HasConversion<string>();
+        });
+
+        modelBuilder.Entity<SafeShellAccessDB>(e =>
+        {
+            e.HasIndex(a => new { a.PermissionSetId, a.SystemUserId, a.ShellType }).IsUnique();
+            e.Property(a => a.Clearance).HasConversion<string>();
+            e.Property(a => a.ShellType).HasConversion<string>();
         });
 
         // ── Information stores ────────────────────────────────────
@@ -493,6 +516,8 @@ public class SharpClawDbContext(
             e.Property(j => j.ActionType).HasConversion<string>();
             e.Property(j => j.Status).HasConversion<string>();
             e.Property(j => j.EffectiveClearance).HasConversion<string>();
+            e.Property(j => j.DangerousShellType).HasConversion<string>();
+            e.Property(j => j.SafeShellType).HasConversion<string>();
             e.HasOne(j => j.Agent)
                 .WithMany()
                 .HasForeignKey(j => j.AgentId)
@@ -567,7 +592,8 @@ public class SharpClawDbContext(
     /// </summary>
     private static bool IsProtectedWildcardGrant(EntityEntry entry) => entry.Entity switch
     {
-        SystemUserAccessDB          e => e.SystemUserId              == WellKnownIds.AllResources,
+        DangerousShellAccessDB      e => e.SystemUserId              == WellKnownIds.AllResources,
+        SafeShellAccessDB           e => e.SystemUserId              == WellKnownIds.AllResources,
         LocalInfoStoreAccessDB      e => e.LocalInformationStoreId   == WellKnownIds.AllResources,
         ExternalInfoStoreAccessDB   e => e.ExternalInformationStoreId == WellKnownIds.AllResources,
         WebsiteAccessDB             e => e.WebsiteId                 == WellKnownIds.AllResources,
