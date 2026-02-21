@@ -27,13 +27,6 @@ public sealed class AgentActionService(SharpClawDbContext db)
     // Global-flag actions
     // ═══════════════════════════════════════════════════════════════
 
-    public Task<AgentActionResult> ExecuteAsAdminAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanExecuteAsAdmin,
-            "execute as admin", onApproved, ct);
-
     public Task<AgentActionResult> CreateSubAgentAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
@@ -66,13 +59,21 @@ public sealed class AgentActionService(SharpClawDbContext db)
     // Per-resource actions
     // ═══════════════════════════════════════════════════════════════
 
-    public Task<AgentActionResult> ExecuteAsSystemUserAsync(
+    public Task<AgentActionResult> UnsafeExecuteAsDangerousShellAsync(
         Guid agentId, Guid systemUserId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateResourceAccessAsync(
             agentId, systemUserId, caller,
-            p => p.SystemUserAccesses, a => a.SystemUserId, a => a.Clearance,
-            "system user access", onApproved, ct);
+            p => p.DangerousShellAccesses, a => a.SystemUserId, a => a.Clearance,
+            "dangerous shell access", onApproved, ct);
+
+    public Task<AgentActionResult> ExecuteAsSafeShellAsync(
+        Guid agentId, Guid systemUserId, ActionCaller caller,
+        Func<Task>? onApproved = null, CancellationToken ct = default)
+        => EvaluateResourceAccessAsync(
+            agentId, systemUserId, caller,
+            p => p.SafeShellAccesses, a => a.SystemUserId, a => a.Clearance,
+            "safe shell access", onApproved, ct);
 
     public Task<AgentActionResult> AccessLocalInfoStoreAsync(
         Guid agentId, Guid storeId, ActionCaller caller,
@@ -227,12 +228,13 @@ public sealed class AgentActionService(SharpClawDbContext db)
     /// <paramref name="effectiveClearance"/> requirement.
     /// <list type="bullet">
     ///   <item><b>Independent (5)</b> — no caller check needed.</item>
-    ///   <item><b>ApprovedByWhitelistedAgent (4)</b> — whitelisted agent,
-    ///         permitted agent, whitelisted user, or same-level user.</item>
-    ///   <item><b>ApprovedByPermittedAgent (3)</b> — permitted agent or
+    ///   <item><b>ApprovedByWhitelistedAgent (4)</b> — whitelisted agent;
+    ///         falls back to permitted agent, whitelisted user, then
     ///         same-level user.</item>
-    ///   <item><b>ApprovedByWhitelistedUser (2)</b> — whitelisted user or
-    ///         same-level user.</item>
+    ///   <item><b>ApprovedByPermittedAgent (3)</b> — agent-only: only a
+    ///         permitted agent can approve.  No user fallback.</item>
+    ///   <item><b>ApprovedByWhitelistedUser (2)</b> — whitelisted user;
+    ///         falls back to same-level user.</item>
     ///   <item><b>ApprovedBySameLevelUser (1)</b> — same-level user only.</item>
     /// </list>
     /// </summary>
@@ -273,26 +275,16 @@ public sealed class AgentActionService(SharpClawDbContext db)
                 effectiveClearance);
         }
 
-        // ── Level 1: same-level user (included in ALL levels 1-4) ─
-        if (caller.UserId is not null
-            && callerPerms is not null
-            && callerHasSamePermission(callerPerms))
+        // ── Whitelisted agent (level 4 primary) ──────────────────
+        if (caller.AgentId is { } whitelistAgentId
+            && effectiveClearance == PermissionClearance.ApprovedByWhitelistedAgent
+            && agentPerms.ClearanceAgentWhitelist.Any(w => w.AgentId == whitelistAgentId))
         {
             return AgentActionResult.Approve(
-                "Approved by same-level user.", effectiveClearance);
+                "Approved by whitelisted agent.", effectiveClearance);
         }
 
-        // ── Level 2: whitelisted user (levels 2, 4) ──────────────
-        if (caller.UserId is { } whitelistUserId
-            && effectiveClearance is PermissionClearance.ApprovedByWhitelistedUser
-                                  or PermissionClearance.ApprovedByWhitelistedAgent
-            && agentPerms.ClearanceUserWhitelist.Any(w => w.UserId == whitelistUserId))
-        {
-            return AgentActionResult.Approve(
-                "Approved by whitelisted user.", effectiveClearance);
-        }
-
-        // ── Level 3: permitted agent (levels 3, 4) ───────────────
+        // ── Permitted agent (levels 3, 4) ─────────────────────────
         if (caller.AgentId is not null
             && effectiveClearance is PermissionClearance.ApprovedByPermittedAgent
                                   or PermissionClearance.ApprovedByWhitelistedAgent
@@ -303,13 +295,25 @@ public sealed class AgentActionService(SharpClawDbContext db)
                 "Approved by permitted agent.", effectiveClearance);
         }
 
-        // ── Level 4: whitelisted agent (level 4 only) ────────────
-        if (caller.AgentId is { } whitelistAgentId
-            && effectiveClearance == PermissionClearance.ApprovedByWhitelistedAgent
-            && agentPerms.ClearanceAgentWhitelist.Any(w => w.AgentId == whitelistAgentId))
+        // ── Whitelisted user (levels 2, 4) ───────────────────────
+        if (caller.UserId is { } whitelistUserId
+            && effectiveClearance is PermissionClearance.ApprovedByWhitelistedUser
+                                  or PermissionClearance.ApprovedByWhitelistedAgent
+            && agentPerms.ClearanceUserWhitelist.Any(w => w.UserId == whitelistUserId))
         {
             return AgentActionResult.Approve(
-                "Approved by whitelisted agent.", effectiveClearance);
+                "Approved by whitelisted user.", effectiveClearance);
+        }
+
+        // ── Same-level user (levels 1, 2, 4 — NOT 3) ─────────────
+        // Level 3 is agent-only; no user can satisfy it.
+        if (caller.UserId is not null
+            && effectiveClearance is not PermissionClearance.ApprovedByPermittedAgent
+            && callerPerms is not null
+            && callerHasSamePermission(callerPerms))
+        {
+            return AgentActionResult.Approve(
+                "Approved by same-level user.", effectiveClearance);
         }
 
         // ── None of the above matched ────────────────────────────
@@ -341,7 +345,8 @@ public sealed class AgentActionService(SharpClawDbContext db)
         Guid permissionSetId, CancellationToken ct)
     {
         return await db.PermissionSets
-            .Include(p => p.SystemUserAccesses)
+            .Include(p => p.DangerousShellAccesses)
+            .Include(p => p.SafeShellAccesses)
             .Include(p => p.LocalInfoStorePermissions)
             .Include(p => p.ExternalInfoStorePermissions)
             .Include(p => p.WebsiteAccesses)

@@ -10,6 +10,9 @@ AgentActionType ActionType,
 Guid? ResourceId = null,
 Guid? CallerUserId = null,
 Guid? CallerAgentId = null,
+// Shell-specific
+DangerousShellType? DangerousShellType = null,
+SafeShellType? SafeShellType = null,
 // Transcription-specific
 Guid? TranscriptionModelId = null,
 Guid? ConversationId = null,
@@ -22,23 +25,26 @@ public sealed record ApproveAgentJobRequest(
 // ── Responses ─────────────────────────────────────────────────────
 
 public sealed record AgentJobResponse(
-    Guid Id,
-    Guid AgentId,
-    AgentActionType ActionType,
-    Guid? ResourceId,
-    AgentJobStatus Status,
-    PermissionClearance EffectiveClearance,
-    string? ResultData,
-    string? ErrorLog,
-    IReadOnlyList<AgentJobLogResponse> Logs,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset? StartedAt,
-    DateTimeOffset? CompletedAt,
-    // Transcription
-    Guid? TranscriptionModelId = null,
-    Guid? ConversationId = null,
-    string? Language = null,
-    IReadOnlyList<TranscriptionSegmentResponse>? Segments = null);
+Guid Id,
+Guid AgentId,
+AgentActionType ActionType,
+Guid? ResourceId,
+AgentJobStatus Status,
+PermissionClearance EffectiveClearance,
+string? ResultData,
+string? ErrorLog,
+IReadOnlyList<AgentJobLogResponse> Logs,
+DateTimeOffset CreatedAt,
+DateTimeOffset? StartedAt,
+DateTimeOffset? CompletedAt,
+// Shell
+DangerousShellType? DangerousShellType = null,
+SafeShellType? SafeShellType = null,
+// Transcription
+Guid? TranscriptionModelId = null,
+Guid? ConversationId = null,
+string? Language = null,
+IReadOnlyList<TranscriptionSegmentResponse>? Segments = null);
 
 public sealed record AgentJobLogResponse(
     string Message,

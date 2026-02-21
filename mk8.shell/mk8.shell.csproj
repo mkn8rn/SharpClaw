@@ -1,13 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RootNamespace>Mk8.Shell</RootNamespace>
   </PropertyGroup>
-
-  <ItemGroup>
-    <Folder Include="DTOs\Shell\" />
-  </ItemGroup>
 
 </Project>

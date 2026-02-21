@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
+    <ProjectReference Include="..\mk8.shell\mk8.shell.csproj" />
   </ItemGroup>
 
   <ItemGroup>

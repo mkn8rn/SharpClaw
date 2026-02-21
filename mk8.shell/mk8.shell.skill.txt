@@ -1,0 +1,392 @@
+mk8.shell — agent skill reference
+
+You submit JSON scripts. The server compiles and executes them.
+You never interact with a real shell. There is no eval, no pipes,
+no chaining, no shell expansion. Arguments are structured arrays.
+
+
+== submitting a script ================================================
+
+{
+  "operations": [
+    { "verb": "...", "args": ["..."] }
+  ],
+  "options": { ... },
+  "cleanup": [ ... ]
+}
+
+Every operation needs "verb" and "args". All other fields are optional.
+
+
+== verbs and args =====================================================
+
+--- files ---
+FileRead       [path]                read entire file
+FileWrite      [path, content]       overwrite file
+FileAppend     [path, content]       append to file
+FileDelete     [path]                delete file
+FileExists     [path]                returns "true"/"false"
+FileList       [path, pattern?]      list files, optional glob
+FileCopy       [src, dst]            copy file
+FileMove       [src, dst]            move/rename file
+FileHash       [path, algorithm?]    sha256 (default), sha512, md5
+
+--- files: structured edits ---
+FileTemplate   [outputPath]          requires "template" field (see below)
+FilePatch      [targetPath]          requires "patches" field (see below)
+
+--- files: batch ---
+FileWriteMany  [p1, c1, p2, c2...]   pairs of path+content, max 64
+FileCopyMany   [s1, d1, s2, d2...]   pairs of src+dst, max 64
+FileDeleteMany [p1, p2, p3...]       list of paths, max 64
+
+--- directories ---
+DirCreate      [path]                mkdir -p equivalent
+DirDelete      [path]                rm -rf equivalent
+DirList        [path]                immediate children
+DirExists      [path]                returns "true"/"false"
+DirTree        [path, depth?]        recursive listing, depth 1-5, default 3
+
+--- process ---
+ProcRun        [binary, arg, arg...] run an allowlisted binary (see below)
+
+--- git ---
+GitStatus      []
+GitLog         [maxCount?]           defaults to 20
+GitDiff        [path?]
+GitAdd         [pathspec, flags?]    max 16 args
+GitCommit      [message]             exactly 1 arg
+GitPush        [remote?, branch?]
+GitPull        [remote?, branch?]
+GitClone       [url, dest?]
+GitCheckout    [branchOrPath]
+GitBranch      [name?, flags?]
+
+--- http ---
+HttpGet        [url]
+HttpPost       [url, body?]
+HttpPut        [url, body?]
+HttpDelete     [url]
+
+--- text ---
+TextRegex      [input, pattern]      match regex, 2s timeout
+TextReplace    [input, old, new]     literal replacement
+JsonParse      [input]               validate + pretty-print
+JsonQuery      [input, jsonpath]     extract value
+
+--- environment (read-only) ---
+EnvGet         [name]                allowlist only (see below)
+
+--- system info (no args) ---
+SysWhoAmI      []                    current user
+SysPwd         []                    working directory
+SysHostname    []                    machine name
+SysUptime      []
+SysDate        []                    UTC
+
+--- control flow (expanded at compile time, not runtime) ---
+ForEach        []                    requires "forEach" field
+If             []                    requires "if" field
+
+--- composition ---
+Include        [fragmentId]          inline admin-approved fragment
+
+
+== variables ==========================================================
+
+Resolved at compile time. Not shell env vars.
+
+$WORKSPACE   sandbox root directory
+$CWD         working directory
+$USER        OS username
+$PREV        stdout of previous step (only when pipeStepOutput: true)
+
+Use in args: { "args": ["$WORKSPACE/src/app.ts"] }
+
+$PREV is always empty when pipeStepOutput is false (default).
+
+
+== named captures =====================================================
+
+Any step can capture its stdout:
+
+{ "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD_OUT" }
+{ "verb": "FileWrite", "args": ["$WORKSPACE/log.txt", "$BUILD_OUT"] }
+
+Max 16 captures per script. Cannot reuse names. Cannot override
+WORKSPACE, CWD, USER, PREV, ITEM, INDEX.
+
+Captures from process-spawning steps (ProcRun, Git*) are blocked in
+ProcRun args — same rule as $PREV.
+
+
+== per-step fields ====================================================
+
+maxRetries     int       retry on non-zero exit
+stepTimeout    TimeSpan  e.g. "00:02:00", capped by server ceiling
+label          string    unique step label for jump targets
+onFailure      string    "goto:<label>" — forward jumps only
+captureAs      string    capture stdout into named variable
+template       object    for FileTemplate verb only
+patches        array     for FilePatch verb only
+
+
+== options ============================================================
+
+maxRetries       0          script-level retry default
+retryDelay       "00:00:02" doubles each attempt
+stepTimeout      "00:00:30" per-step ceiling
+scriptTimeout    "00:05:00" total script ceiling
+failureMode      "StopOnFirstError" | "ContinueOnError" | "StopAndCleanup"
+maxOutputBytes   1048576    truncation limit for stdout
+maxErrorBytes    262144     truncation limit for stderr
+pipeStepOutput   false      set true to enable $PREV
+
+
+== cleanup ============================================================
+
+When failureMode is "StopAndCleanup", add a "cleanup" array.
+These run after failure with best-effort (ContinueOnError) semantics.
+
+{
+  "operations": [ ... ],
+  "cleanup": [
+    { "verb": "DirDelete", "args": ["$WORKSPACE/tmp"] },
+    { "verb": "FileDelete", "args": ["$WORKSPACE/build.lock"] }
+  ],
+  "options": { "failureMode": "StopAndCleanup" }
+}
+
+
+== labels and failure jumps ===========================================
+
+{ "verb": "ProcRun", "args": ["dotnet", "build"], "onFailure": "goto:cleanup" },
+{ "verb": "ProcRun", "args": ["dotnet", "test"] },
+{ "verb": "FileWrite", "args": ["$WORKSPACE/done.txt", "ok"], "label": "cleanup" }
+
+Forward jumps only. No backward jumps. Labels must be unique.
+Alphanumeric, hyphens, underscores. Max 64 chars.
+
+
+== FileTemplate =======================================================
+
+{
+  "verb": "FileTemplate",
+  "args": ["$WORKSPACE/app/config.json"],
+  "template": {
+    "source": "$WORKSPACE/templates/config.template.json",
+    "values": { "DB_HOST": "db.internal", "PORT": "5432" }
+  }
+}
+
+Replaces {{DB_HOST}} and {{PORT}} in the template. Max 64 keys.
+Values must be literal strings. $ characters in values are rejected.
+
+
+== FilePatch ==========================================================
+
+{
+  "verb": "FilePatch",
+  "args": ["$WORKSPACE/app/config.yaml"],
+  "patches": [
+    { "find": "port: 3000", "replace": "port: 8080" },
+    { "find": "debug: true", "replace": "debug: false" }
+  ]
+}
+
+Literal find/replace applied in order. Max 32 patches.
+$ characters in find/replace are rejected.
+
+
+== ForEach ============================================================
+
+{
+  "verb": "ForEach",
+  "forEach": {
+    "items": ["a.txt", "b.txt", "c.txt"],
+    "body": { "verb": "FileCopy", "args": ["$WORKSPACE/$ITEM", "$WORKSPACE/backup/$ITEM"] }
+  }
+}
+
+$ITEM = current item, $INDEX = 0-based index.
+Max 256 items. Expanded at compile time — not a runtime loop.
+No nested ForEach.
+
+
+== If =================================================================
+
+{
+  "verb": "If",
+  "if": {
+    "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
+    "then": { "verb": "GitAdd", "args": ["."] }
+  }
+}
+
+Predicate kinds:
+  PrevContains  [substring]         true if $PREV contains it
+  PrevEmpty     []                  true if $PREV is blank
+  EnvEquals     [name, expected]    true if env var matches
+  FileExists    [path]              evaluated at runtime
+  DirExists     [path]              evaluated at runtime
+
+No else branch. No boolean operators.
+
+
+== Include ============================================================
+
+{ "verb": "Include", "args": ["setup-workspace"] }
+
+Inlines an admin-approved fragment by ID. You cannot define fragments —
+only reference IDs the server has registered.
+
+
+== ProcRun allowlist ==================================================
+
+Allowed binaries:
+  dotnet node npm npx pip3 cargo make cmake
+  jq tar gzip gunzip unzip zip git
+  echo cat head tail wc sort uniq grep diff sha256sum md5sum base64
+
+Blocked flags per binary:
+  dotnet   → run, script, exec
+  node     → -e, --eval, -p, --print, --input-type
+  npm      → exec, x, start, test, run
+  npx      → -c
+  cargo    → run, script
+  make     → SHELL=, --eval
+  git      → -c, --exec, --upload-pack, --receive-pack
+  tar      → --checkpoint-action, --to-command, --use-compress-program
+
+Passing code files to binaries that execute them is blocked:
+  ProcRun ["node", "script.js"]  → rejected
+
+Permanently blocked (will always fail):
+  bash sh zsh fish cmd powershell pwsh python python3 perl ruby lua php
+  sudo su curl wget find ssh scp rsync nc chmod chown systemctl dd
+
+
+== EnvGet allowlist ===================================================
+
+HOME USERPROFILE USER USERNAME PATH LANG LC_ALL TZ TERM
+PWD HOSTNAME SHELL EDITOR DOTNET_ROOT NODE_ENV
+
+Any name containing KEY, SECRET, TOKEN, PASSWORD, CONN, AUTH,
+PRIVATE, ENCRYPT, JWT, CERTIFICATE, APIKEY is blocked.
+
+
+== HTTP rules =========================================================
+
+Scheme must be http or https. Port must be 80 or 443.
+No embedded credentials in the URL.
+Blocked hosts: localhost, 169.254.169.254, metadata.google.internal.
+Private/link-local IPs are blocked.
+
+
+== path rules =========================================================
+
+All paths must resolve inside $WORKSPACE (the sandbox).
+
+Write targets (.exe .dll .js .mjs .cjs .so .dylib and others) are
+blocked. You can write .sh .py .ps1 .bat etc. because their
+interpreters are blocked in ProcRun.
+
+Build $WORKSPACE-relative paths without knowing the absolute root:
+  $WORKSPACE/src/app.ts       (use $WORKSPACE prefix)
+  $CWD/output/log.txt         (use $CWD prefix)
+
+No .. segments. No absolute paths in path components.
+
+
+== what will always fail ==============================================
+
+- Any verb not in the list above
+- Shell syntax in args: pipes |, chains &&, redirects >, subshells $()
+- Running bash, python, powershell, or any blocked binary
+- Writing .exe, .dll, .js, .so, or other blocked extensions
+- Paths that escape the sandbox via .. or absolute paths
+- $PREV or process-captured variables in ProcRun args
+- $ characters inside template values or patch find/replace
+- More than 1024 total operations after expansion
+- ForEach with more than 256 items
+- Nesting depth greater than 3
+
+
+== common patterns ====================================================
+
+--- build and capture output ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
+    { "verb": "FileWrite", "args": ["$WORKSPACE/build.log", "$BUILD"] }
+  ],
+  "options": { "pipeStepOutput": true }
+}
+
+--- scaffold multiple files ---
+{
+  "operations": [
+    {
+      "verb": "FileWriteMany",
+      "args": [
+        "$WORKSPACE/src/index.ts", "export {}",
+        "$WORKSPACE/src/config.ts", "export const config = {}",
+        "$WORKSPACE/README.md", "# Project"
+      ]
+    }
+  ]
+}
+
+--- conditional deploy ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["dotnet", "build"] },
+    {
+      "verb": "If",
+      "if": {
+        "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
+        "then": { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/out"] }
+      }
+    }
+  ],
+  "options": { "pipeStepOutput": true }
+}
+
+--- backup files before editing ---
+{
+  "operations": [
+    {
+      "verb": "ForEach",
+      "forEach": {
+        "items": ["config.yaml", "settings.json"],
+        "body": { "verb": "FileCopy", "args": ["$WORKSPACE/$ITEM", "$WORKSPACE/backup/$ITEM"] }
+      }
+    },
+    {
+      "verb": "FilePatch",
+      "args": ["$WORKSPACE/config.yaml"],
+      "patches": [{ "find": "port: 3000", "replace": "port: 8080" }]
+    }
+  ]
+}
+
+--- build with cleanup on failure ---
+{
+  "operations": [
+    { "verb": "DirCreate", "args": ["$WORKSPACE/staging"] },
+    { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/staging"] }
+  ],
+  "cleanup": [
+    { "verb": "DirDelete", "args": ["$WORKSPACE/staging"] }
+  ],
+  "options": { "failureMode": "StopAndCleanup" }
+}
+
+--- check file hash ---
+{
+  "operations": [
+    { "verb": "FileHash", "args": ["$WORKSPACE/bin/app.dll", "sha256"], "captureAs": "HASH" },
+    { "verb": "FileWrite", "args": ["$WORKSPACE/checksums.txt", "$HASH"] }
+  ],
+  "options": { "pipeStepOutput": true }
+}

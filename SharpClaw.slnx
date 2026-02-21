@@ -13,6 +13,7 @@
     <Project Path="SharpClaw.PublicAPI/SharpClaw.PublicAPI.csproj" />
   </Folder>
   <Folder Name="/Shared/">
+    <Project Path="mk8.shell/mk8.shell.csproj" Id="b4c429fc-9022-4adc-8ab7-f35e9eb87e87" />
     <Project Path="SharpClaw.Contracts/SharpClaw.Contracts.csproj" />
     <Project Path="SharpClaw.Utils/SharpClaw.Utils.csproj" />
   </Folder>

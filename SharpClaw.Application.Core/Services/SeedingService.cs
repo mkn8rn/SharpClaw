@@ -79,7 +79,6 @@ public sealed class SeedingService(
     private static PermissionSetDB CreateAdminPermissions() => new()
     {
         DefaultClearance = PermissionClearance.Independent,
-        CanExecuteAsAdmin = true,
         CanCreateSubAgents = true,
         CanCreateContainers = true,
         CanRegisterInfoStores = true,
@@ -88,7 +87,8 @@ public sealed class SeedingService(
         // Wildcard grants — access to ALL resources of each type.
         // WellKnownIds.AllResources is recognised as a universal match
         // by AgentActionService and is immutable at runtime.
-        SystemUserAccesses          = [new() { SystemUserId              = WellKnownIds.AllResources }],
+        DangerousShellAccesses      = [new() { SystemUserId              = WellKnownIds.AllResources }],
+        SafeShellAccesses           = [new() { SystemUserId              = WellKnownIds.AllResources }],
         LocalInfoStorePermissions   = [new() { LocalInformationStoreId   = WellKnownIds.AllResources }],
         ExternalInfoStorePermissions = [new() { ExternalInformationStoreId = WellKnownIds.AllResources }],
         WebsiteAccesses             = [new() { WebsiteId                 = WellKnownIds.AllResources }],

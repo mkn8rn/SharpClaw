@@ -39,8 +39,9 @@ ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom
 
 | Category | Values |
 |----------|--------|
-| Global flags | `ExecuteAsAdmin`, `CreateSubAgent`, `CreateContainer`, `RegisterInfoStore`, `EditAnyTask` |
-| Per-resource | `ExecuteAsSystemUser`, `AccessLocalInfoStore`, `AccessExternalInfoStore`, `AccessWebsite`, `QuerySearchEngine`, `AccessContainer`, `ManageAgent`, `EditTask`, `AccessSkill` |
+| Global flags | `CreateSubAgent`, `CreateContainer`, `RegisterInfoStore`, `EditAnyTask` |
+| Per-resource | `UnsafeExecuteAsDangerousShell`, `ExecuteAsSafeShell`, `AccessLocalInfoStore`, `AccessExternalInfoStore`, `AccessWebsite`, `QuerySearchEngine`, `AccessContainer`, `ManageAgent`, `EditTask`, `AccessSkill` |
+| Transcription | `TranscribeFromAudioDevice`, `TranscribeFromAudioStream`, `TranscribeFromAudioFile` |
 
 ### PermissionClearance
 
@@ -426,7 +427,7 @@ set of pre-authorised permission grants. See [Permission Resolution](#permission
   "agentId": "guid",
   "name": "string | null",
   "permissionGrants": [
-    { "actionType": "ExecuteAsAdmin", "grantedClearance": "ApprovedBySameLevelUser" }
+    { "actionType": "UnsafeExecuteAsDangerousShell", "grantedClearance": "ApprovedBySameLevelUser" }
   ]
 }
 ```
@@ -483,7 +484,7 @@ Add or update a permission grant on the context.
 
 ```json
 {
-  "actionType": "ExecuteAsAdmin",
+  "actionType": "UnsafeExecuteAsDangerousShell",
   "grantedClearance": "ApprovedBySameLevelUser"
 }
 ```
@@ -506,7 +507,7 @@ Add or update a permission grant on the context.
   "permissionGrants": [
     {
       "id": "guid",
-      "actionType": "ExecuteAsAdmin",
+      "actionType": "UnsafeExecuteAsDangerousShell",
       "grantedClearance": "ApprovedBySameLevelUser"
     }
   ]
@@ -594,7 +595,7 @@ Add or update a per-conversation permission override.
 
 ```json
 {
-  "actionType": "ExecuteAsAdmin",
+  "actionType": "UnsafeExecuteAsDangerousShell",
   "grantedClearance": "Independent"
 }
 ```
@@ -627,7 +628,7 @@ Add or update a per-conversation permission override.
   ],
   "effectivePermissions": [
     {
-      "actionType": "ExecuteAsAdmin",
+      "actionType": "UnsafeExecuteAsDangerousShell",
       "grantedClearance": "ApprovedBySameLevelUser",
       "source": "context"
     },
@@ -650,6 +651,22 @@ All chat operations are scoped to a conversation.
 
 Send a message and receive the assistant's reply.
 
+When the agent has permissions to perform actions (shell execution,
+info store access, etc.), the assistant can autonomously submit jobs
+during the conversation turn. Tool calls are executed via the same
+`AgentJobService.SubmitAsync` pipeline — the agent's role permissions
+**and** the channel/context permission set are both evaluated.
+
+The channel's permission set is defined by the user and counts as
+`ApprovedByWhitelistedUser`-level pre-authorisation. When the agent's
+role clearance is ≤ 2 (`ApprovedBySameLevelUser` or
+`ApprovedByWhitelistedUser`) and the channel or context has a matching
+grant, the job executes immediately. Clearances ≥ 3
+(`ApprovedByPermittedAgent`, `ApprovedByWhitelistedAgent`) always
+require explicit per-job approval, at which point **the chat stops** —
+no further tool calls are processed until the user approves or denies
+the pending job(s) via `POST /agents/{agentId}/jobs/{jobId}/approve`.
+
 **Request:**
 
 ```json
@@ -671,13 +688,23 @@ Send a message and receive the assistant's reply.
     "role": "assistant",
     "content": "string",
     "timestamp": "datetime"
-  }
+  },
+  "jobResults": [
+    {
+      "id": "guid",
+      "agentId": "guid",
+      "actionType": "ExecuteAsSafeShell",
+      "resourceId": "guid | null",
+      "status": "Completed | Denied | AwaitingApproval",
+      "effectiveClearance": "Independent",
+      "resultData": "string | null",
+      "errorLog": "string | null"
+    }
+  ]
 }
 ```
 
-The conversation's model and the agent's system prompt are used for
-completion. Message history (up to 50 most recent messages in the
-conversation) is included automatically.
+`jobResults` is `null` when no tool calls were made during the turn.
 
 ---
 
@@ -711,7 +738,8 @@ Jobs represent permission-gated agent actions. When a job is submitted,
 the permission system evaluates it immediately:
 
 - **Approved** → executes inline, returns `Completed` or `Failed`.
-- **Pending** → returns `AwaitingApproval` (needs manual approve).
+- **Pending** → checks conversation/context for a user-granted
+  permission. If found → executes. Otherwise → `AwaitingApproval`.
 - **Denied** → returns `Denied`.
 
 ### POST /agents/{agentId}/jobs
@@ -722,10 +750,12 @@ Submit a new job.
 
 ```json
 {
-  "actionType": "ExecuteAsAdmin",
+  "actionType": "ExecuteAsSafeShell",
   "resourceId": "guid | null",
   "callerUserId": "guid | null",
-  "callerAgentId": "guid | null"
+  "callerAgentId": "guid | null",
+  "dangerousShellType": "Bash | PowerShell | CommandPrompt | Git | null",
+  "safeShellType": "Mk8Shell | null"
 }
 ```
 
@@ -787,12 +817,14 @@ Cancel a job.
 {
   "id": "guid",
   "agentId": "guid",
-  "actionType": "ExecuteAsAdmin",
+  "actionType": "ExecuteAsSafeShell",
   "resourceId": "guid | null",
   "status": "Completed",
   "effectiveClearance": "ApprovedBySameLevelUser",
   "resultData": "string | null",
   "errorLog": "string | null",
+  "dangerousShellType": "Bash | null",
+  "safeShellType": "Mk8Shell | null",
   "logs": [
     {
       "message": "string",
@@ -810,33 +842,54 @@ Cancel a job.
 
 ## Permission Resolution
 
-When an agent action is checked, the system resolves the effective
-clearance through a three-level chain:
+When an agent action is submitted as a job, the permission system
+evaluates it through two stages:
+
+### Stage 1 — Agent capability check
+
+The agent's **role permission set** is checked to determine whether the
+agent has the grant at all and what clearance level it requires.
+
+- `Independent` (5) → **approved immediately**, no further checks.
+- Any other clearance level → proceeds to Stage 2.
+- No matching grant → **denied**.
+
+### Stage 2 — Channel / context pre-authorisation
+
+Conversation pre-auth counts as `ApprovedByWhitelistedUser`-level
+authority. The user who configured the channel or context permission
+set is treated as a whitelisted user granting approval in advance.
+
+This means pre-auth only satisfies agent clearances ≤ 2:
+
+| Agent clearance | Pre-auth? | Outcome |
+|----------------|-----------|---------|
+| `ApprovedBySameLevelUser` (1) | ✓ | Executes if channel/context has grant |
+| `ApprovedByWhitelistedUser` (2) | ✓ | Executes if channel/context has grant |
+| `ApprovedByPermittedAgent` (3) | ✗ | Always `AwaitingApproval` |
+| `ApprovedByWhitelistedAgent` (4) | ✗ | Always `AwaitingApproval` |
+
+When the agent's clearance is ≤ 2, the system checks for a matching
+grant in this order:
 
 ```
 ┌──────────────────────────────────────────────────┐
-│ 1. Per-conversation / per-task grant override    │ ← highest priority
-│ 2. Context-level default grant                   │
-│ 3. No auto-approval (manual per-job approval)    │ ← lowest priority
+│ 1. Channel's own permission set                  │ ← checked first
+│ 2. Parent context's permission set               │ ← fallback
+│ 3. No match → AwaitingApproval                   │
 └──────────────────────────────────────────────────┘
 ```
 
-- If the conversation has a grant for the action type → that clearance
-  is used (source: `"conversation"`).
-- Else if the conversation belongs to a context that has a grant → the
-  context's clearance is used (source: `"context"`).
-- Else → no pre-approval; the action goes to `AwaitingApproval` status.
+- If the channel PS has a matching grant (exact resource or wildcard)
+  → **pre-authorised**, executes immediately.
+- If the channel PS does not have it → check the context PS.
+- If neither has it → `AwaitingApproval`. The user must approve via
+  `POST /agents/{agentId}/jobs/{jobId}/approve`.
+
+Only grant **existence** matters for pre-auth — the clearance value
+on the channel/context grant itself is irrelevant.
 
 The `effectivePermissions` array in `ConversationResponse` shows the
 merged result with source attribution.
-
-**Example:** A context grants `ExecuteAsAdmin` at
-`ApprovedBySameLevelUser`. A conversation in that context overrides
-`AccessWebsite` to `Independent`. The effective permissions are:
-
-| Action | Clearance | Source |
-|--------|-----------|--------|
-| `ExecuteAsAdmin` | `ApprovedBySameLevelUser` | `context` |
-| `AccessWebsite` | `Independent` | `conversation` |
 
 Standalone conversations (no context) rely solely on their own grants.

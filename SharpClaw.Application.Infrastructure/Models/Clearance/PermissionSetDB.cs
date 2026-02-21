@@ -21,9 +21,6 @@ public class PermissionSetDB : BaseEntity
 
     // ── Global flags ──────────────────────────────────────────────
 
-    /// <summary>Execute shell commands as administrator / sudo.</summary>
-    public bool CanExecuteAsAdmin { get; set; }
-
     /// <summary>Create sub-agents (must have ≤ the creator's permissions).</summary>
     public bool CanCreateSubAgents { get; set; }
 
@@ -38,7 +35,8 @@ public class PermissionSetDB : BaseEntity
 
     // ── Per-resource grant collections ────────────────────────────
 
-    public ICollection<SystemUserAccessDB> SystemUserAccesses { get; set; } = [];
+    public ICollection<DangerousShellAccessDB> DangerousShellAccesses { get; set; } = [];
+    public ICollection<SafeShellAccessDB> SafeShellAccesses { get; set; } = [];
     public ICollection<LocalInfoStoreAccessDB> LocalInfoStorePermissions { get; set; } = [];
     public ICollection<ExternalInfoStoreAccessDB> ExternalInfoStorePermissions { get; set; } = [];
     public ICollection<WebsiteAccessDB> WebsiteAccesses { get; set; } = [];
@@ -53,8 +51,11 @@ public class PermissionSetDB : BaseEntity
     // Optional defaults used when starting a job and no specific
     // resource of that type is provided by the context or conversation.
 
-    public Guid? DefaultSystemUserAccessId { get; set; }
-    public SystemUserAccessDB? DefaultSystemUserAccess { get; set; }
+    public Guid? DefaultDangerousShellAccessId { get; set; }
+    public DangerousShellAccessDB? DefaultDangerousShellAccess { get; set; }
+
+    public Guid? DefaultSafeShellAccessId { get; set; }
+    public SafeShellAccessDB? DefaultSafeShellAccess { get; set; }
 
     public Guid? DefaultLocalInfoStorePermissionId { get; set; }
     public LocalInfoStoreAccessDB? DefaultLocalInfoStorePermission { get; set; }
