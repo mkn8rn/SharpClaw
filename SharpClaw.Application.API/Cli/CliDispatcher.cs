@@ -528,10 +528,58 @@ public static class CliDispatcher
             Console.WriteLine($"No conversation selected. Opening latest conversation: \"{latest.Title}\" (#{CliIdMap.GetOrAssign(latest.Id)})");
         }
 
-        return await ChatHandlers.Send(
-            _currentConversationId.Value,
-            new ChatRequest(string.Join(' ', args[1..])),
-            sp.GetRequiredService<ChatService>());
+        var chatService = sp.GetRequiredService<ChatService>();
+        var request = new ChatRequest(string.Join(' ', args[1..]));
+        var wroteText = false;
+
+        async Task<bool> CliApprovalCallback(
+            Contracts.DTOs.AgentActions.AgentJobResponse job, CancellationToken ct)
+        {
+            Console.Write("Approve? (y/n): ");
+            var input = await Task.Run(Console.ReadLine, ct);
+            return input?.Trim().Equals("y", StringComparison.OrdinalIgnoreCase) == true;
+        }
+
+        await foreach (var evt in chatService.SendMessageStreamAsync(
+            _currentConversationId.Value, request, CliApprovalCallback))
+        {
+            switch (evt.Type)
+            {
+                case ChatStreamEventType.TextDelta:
+                    Console.Write(evt.Delta);
+                    wroteText = true;
+                    break;
+
+                case ChatStreamEventType.ToolCallStart:
+                    if (wroteText) { Console.WriteLine(); wroteText = false; }
+                    Console.WriteLine($"  [tool] #{CliIdMap.GetOrAssign(evt.Job!.Id)} {evt.Job.ActionType} → {evt.Job.Status}");
+                    break;
+
+                case ChatStreamEventType.ToolCallResult:
+                    Console.WriteLine($"  [result] #{CliIdMap.GetOrAssign(evt.Result!.Id)} → {evt.Result.Status}");
+                    break;
+
+                case ChatStreamEventType.ApprovalRequired:
+                    if (wroteText) { Console.WriteLine(); wroteText = false; }
+                    Console.Write($"  [approval] Job #{CliIdMap.GetOrAssign(evt.PendingJob!.Id)} ({evt.PendingJob.ActionType}) requires approval. ");
+                    break;
+
+                case ChatStreamEventType.ApprovalResult:
+                    Console.WriteLine($"  [approval] → {evt.ApprovalOutcome!.Status}");
+                    break;
+
+                case ChatStreamEventType.Error:
+                    if (wroteText) { Console.WriteLine(); wroteText = false; }
+                    Console.Error.WriteLine($"  [error] {evt.Error}");
+                    break;
+
+                case ChatStreamEventType.Done:
+                    if (wroteText) Console.WriteLine();
+                    break;
+            }
+        }
+
+        return Results.Ok();
     }
 
     private static async Task<IResult?> HandleConversationCommand(string[] args, IServiceProvider sp)
@@ -1255,12 +1303,6 @@ public static class CliDispatcher
 
               resource container add <type> <name> <path>  Create a container
               resource audiodevice add <name> [devId] [d]  Register an audio device
-
-              Transcription: use TranscribeFromAudioDevice with audio device
-                as resourceId.
-                job submit TranscribeFromAudioDevice [deviceId] --conv <id> [--model <id>] [--lang <code>]
-                job listen <jobId>
-                job stop <jobId>
 
               exit / quit                                 Shut down
             """);
