@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Mk8.Shell;
@@ -296,6 +297,19 @@ SessionService session)
         return jobs.Select(ToResponse).ToList();
     }
 
+    /// <summary>Returns the session user ID, or <c>null</c> if not authenticated.</summary>
+    public Guid? GetSessionUserId() => session.UserId;
+
+    /// <summary>
+    /// Evaluates the permission check for an action without creating a job.
+    /// Used by the streaming chat loop to determine whether the session
+    /// user has authority to approve an awaiting job inline.
+    /// </summary>
+    public Task<AgentActionResult> CheckPermissionAsync(
+        Guid agentId, AgentActionType actionType, Guid? resourceId,
+        ActionCaller caller, CancellationToken ct = default)
+        => DispatchPermissionCheckAsync(agentId, actionType, resourceId, caller, ct);
+
     // ═══════════════════════════════════════════════════════════════
     // Transcription: segments & streaming
     // ═══════════════════════════════════════════════════════════════
@@ -508,7 +522,11 @@ SessionService session)
 
         var script = JsonSerializer.Deserialize<Mk8ShellScript>(
             job.ScriptJson,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new JsonStringEnumConverter() }
+            })
             ?? throw new InvalidOperationException(
                 "Failed to deserialise mk8.shell script from ScriptJson.");
 
