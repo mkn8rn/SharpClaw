@@ -12,6 +12,7 @@ Guid? CallerAgentId = null,
 // Shell-specific
 DangerousShellType? DangerousShellType = null,
 SafeShellType? SafeShellType = null,
+string? ScriptJson = null,
 // Transcription-specific
 Guid? TranscriptionModelId = null,
 Guid? ConversationId = null,
@@ -38,6 +39,7 @@ DateTimeOffset? CompletedAt,
 // Shell
 DangerousShellType? DangerousShellType = null,
 SafeShellType? SafeShellType = null,
+string? ScriptJson = null,
 // Transcription
 Guid? TranscriptionModelId = null,
 Guid? ConversationId = null,

@@ -1,4 +1,7 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Engine;
+using Mk8.Shell.Models;
+
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// Resolves and validates filesystem paths against a sandbox root.
@@ -8,6 +11,19 @@ namespace Mk8.Shell;
 /// </summary>
 public static class Mk8PathSanitizer
 {
+    /// <summary>
+    /// GIGABLACKLISTED filenames — mk8.shell commands must NEVER read,
+    /// write, modify, or delete these files under any circumstances.
+    /// They are only managed by the user directly or by mk8.shell.startup.
+    /// Checked on ALL path resolutions (read and write).
+    /// </summary>
+    private static readonly HashSet<string> GigaBlacklistedFilenames =
+        new(StringComparer.OrdinalIgnoreCase)
+    {
+        Mk8SandboxRegistry.SandboxEnvFileName,
+        Mk8SandboxRegistry.SandboxSignedEnvFileName,
+    };
+
     /// <summary>
     /// File extensions that remain blocked on write targets because
     /// an allowed binary on the ProcRun allowlist could directly execute
@@ -31,6 +47,16 @@ public static class Mk8PathSanitizer
         ".js", ".mjs", ".cjs",
         // Windows script host (could be invoked by OS association)
         ".jse", ".wsf", ".wsh", ".msh", ".vbs", ".vbe",
+
+        // ── MSBuild project files (dotnet build executes <Exec> targets) ──
+        // dotnet is on the allowlist; these files trigger arbitrary
+        // command execution via MSBuild <Exec>, <Target>, source
+        // generators, and pre/post build events.
+        ".csproj", ".fsproj", ".vbproj", ".proj",
+        ".targets", ".props", ".sln",
+
+        // ── Cargo build scripts (cargo build executes build.rs) ───
+        ".rs",
     };
 
     public static string Resolve(string userPath, string sandboxRoot)
@@ -58,6 +84,8 @@ public static class Mk8PathSanitizer
         if (OperatingSystem.IsWindows())
             ValidateNoDeviceName(canonical);
 
+        ValidateNotGigaBlacklisted(canonical, userPath);
+
         return canonical;
     }
 
@@ -77,6 +105,7 @@ public static class Mk8PathSanitizer
     public static string ResolveForWrite(string userPath, string sandboxRoot)
     {
         var resolved = Resolve(userPath, sandboxRoot);
+        ValidateNotGitInternals(resolved, userPath);
         ValidateNotExecutableExtension(resolved, userPath);
         ValidateNotDangerousFilename(resolved, userPath);
         return resolved;
@@ -113,6 +142,30 @@ public static class Mk8PathSanitizer
         }
     }
 
+    /// <summary>
+    /// Blocks writes to <c>.git/</c> internal paths.  Prevents:
+    /// <list type="bullet">
+    ///   <item>Hook injection (<c>.git/hooks/pre-commit</c>)</item>
+    ///   <item>Config tampering (<c>.git/config</c>)</item>
+    ///   <item>Object injection (<c>.git/objects/...</c>)</item>
+    ///   <item>HEAD manipulation (<c>.git/HEAD</c>)</item>
+    /// </list>
+    /// </summary>
+    private static void ValidateNotGitInternals(
+        string resolvedPath, string originalPath)
+    {
+        var sep = Path.DirectorySeparatorChar;
+        var gitSegment = $"{sep}.git{sep}";
+
+        if (resolvedPath.Contains(gitSegment, PathComparison)
+            || resolvedPath.EndsWith($"{sep}.git", PathComparison))
+        {
+            throw new Mk8CompileException(Mk8ShellVerb.FileWrite,
+                $"Cannot write to git internals (.git/): '{originalPath}'. " +
+                "Git metadata is managed by git commands, not file writes.");
+        }
+    }
+
     private static void ValidateNotExecutableExtension(
         string resolvedPath, string originalPath)
     {
@@ -130,10 +183,35 @@ public static class Mk8PathSanitizer
     private static readonly HashSet<string> BlockedWriteFilenames =
         new(StringComparer.OrdinalIgnoreCase)
     {
+        // make / cmake
         "Makefile", "makefile", "GNUmakefile",
         "CMakeLists.txt",
         "Dockerfile",
         ".npmrc",
+
+        // dotnet — MSBuild targets can contain <Exec Command="..."/>
+        "Directory.Build.props", "Directory.Build.targets",
+        "Directory.Packages.props",
+        "nuget.config", "NuGet.Config", "NuGet.config",
+
+        // npm / node — lifecycle scripts run during install
+        "package.json",
+
+        // cargo — build.rs runs at build time
+        "build.rs", "Cargo.toml",
+
+        // python — pip3 executes during install
+        "setup.py", "setup.cfg", "pyproject.toml",
+
+        // git — .gitattributes can redirect filter drivers (clean/smudge)
+        // to different file patterns if .git/config has driver definitions.
+        // .gitmodules can redirect submodule URLs.
+        ".gitattributes", ".gitmodules",
+
+        // mk8.shell sandbox env files — also in GigaBlacklistedFilenames
+        // but listed here too for defence-in-depth on the write path.
+        Mk8SandboxRegistry.SandboxEnvFileName,
+        Mk8SandboxRegistry.SandboxSignedEnvFileName,
     };
 
     private static void ValidateNotDangerousFilename(
@@ -144,6 +222,24 @@ public static class Mk8PathSanitizer
             throw new Mk8CompileException(Mk8ShellVerb.FileWrite,
                 $"Cannot write to config file '{fileName}': " +
                 $"it contains executable directives for build tools. " +
+                $"Path: '{originalPath}'.");
+    }
+
+    /// <summary>
+    /// GIGABLACKLIST enforcement. These files are completely off-limits
+    /// to mk8.shell commands — no read, no write, no copy, no move,
+    /// no delete, no hash, no list, nothing. Only the user or
+    /// mk8.shell.startup may touch them.
+    /// </summary>
+    private static void ValidateNotGigaBlacklisted(
+        string resolvedPath, string originalPath)
+    {
+        var fileName = Path.GetFileName(resolvedPath);
+        if (GigaBlacklistedFilenames.Contains(fileName))
+            throw new Mk8CompileException(Mk8ShellVerb.FileRead,
+                $"Access to '{fileName}' is permanently forbidden. " +
+                $"mk8.shell sandbox environment files can only be " +
+                $"managed by the user or mk8.shell.startup. " +
                 $"Path: '{originalPath}'.");
     }
 

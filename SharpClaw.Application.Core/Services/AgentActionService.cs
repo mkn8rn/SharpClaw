@@ -68,11 +68,11 @@ public sealed class AgentActionService(SharpClawDbContext db)
             "dangerous shell access", onApproved, ct);
 
     public Task<AgentActionResult> ExecuteAsSafeShellAsync(
-        Guid agentId, Guid systemUserId, ActionCaller caller,
+        Guid agentId, Guid containerId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateResourceAccessAsync(
-            agentId, systemUserId, caller,
-            p => p.SafeShellAccesses, a => a.SystemUserId, a => a.Clearance,
+            agentId, containerId, caller,
+            p => p.SafeShellAccesses, a => a.ContainerId, a => a.Clearance,
             "safe shell access", onApproved, ct);
 
     public Task<AgentActionResult> AccessLocalInfoStoreAsync(

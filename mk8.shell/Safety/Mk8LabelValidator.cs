@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Engine;
+
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// Validates step labels and <c>onFailure</c> jump targets at compile time.

@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Safety;
+
+namespace Mk8.Shell.Engine;
 
 // ── Script model ──────────────────────────────────────────────────
 
@@ -42,8 +44,7 @@ public sealed record Mk8ShellOperation(
     /// </summary>
     string? CaptureAs = null,
     /// <summary>
-    /// Per-step timeout override. Capped by
-    /// <c>SystemUserDB.DefaultStepTimeoutSeconds</c>.
+    /// Per-step timeout override.
     /// </summary>
     TimeSpan? StepTimeout = null,
     /// <summary>
@@ -274,6 +275,11 @@ public enum Mk8FailureMode
 /// Built server-side at job startup. The agent never supplies this.
 /// </summary>
 public sealed record Mk8WorkspaceContext(
+    /// <summary>
+    /// The sandbox identifier (e.g. "Banana"). Used for audit logging
+    /// and tracing — not for path resolution (use <see cref="SandboxRoot"/>).
+    /// </summary>
+    string SandboxId,
     string SandboxRoot,
     string WorkingDirectory,
     string RunAsUser,
@@ -305,12 +311,9 @@ public enum Mk8CommandKind
     /// </summary>
     Process,
 
-    /// <summary>
-    /// Spawns <c>git</c> via <c>ProcessStartInfo</c>. Same execution
-    /// mechanism as <see cref="Process"/> but the executable is always
-    /// <c>git</c> and args are validated by <see cref="Mk8GitFlagValidator"/>.
-    /// </summary>
-    GitProcess,
+    // GitProcess was removed.  All git operations now require the
+    // dangerous-shell execution path.  A future dedicated project
+    // (e.g. "mk8.safegit") may reintroduce a safe git surface.
 }
 
 public sealed record Mk8CompiledCommand(

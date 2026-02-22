@@ -8,6 +8,12 @@ namespace SharpClaw.Application.Infrastructure.Models.Access;
 /// <summary>
 /// Grants a role the ability to execute commands through a dangerous
 /// (unrestricted) shell as a specific operating-system user.
+/// <para>
+/// Dangerous shells (Bash, PowerShell, CommandPrompt, Git) spawn real
+/// interpreter processes with arbitrary command text.  They are never
+/// routed through mk8.shell.  For sandboxed execution see
+/// <see cref="SafeShellAccessDB"/>.
+/// </para>
 /// </summary>
 public class DangerousShellAccessDB : BaseEntity
 {

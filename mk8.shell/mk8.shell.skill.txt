@@ -4,8 +4,26 @@ You submit JSON scripts. The server compiles and executes them.
 You never interact with a real shell. There is no eval, no pipes,
 no chaining, no shell expansion. Arguments are structured arrays.
 
+Every command executes inside a named sandbox. The sandbox ID
+(e.g. "Banana") identifies which isolated workspace to use.
+The server resolves the sandbox to a local directory, verifies
+its cryptographically signed environment, executes the command
+in an isolated task container, then disposes all state. Nothing
+transfers between commands.
+
+You CANNOT register, create, or manage sandboxes. If a sandbox
+does not exist, tell the user to register it using mk8.shell.startup.
+
 
 == submitting a script ================================================
+
+You provide a sandbox ID and a script. mk8.shell does the rest:
+it looks up the sandbox in its own %APPDATA%/mk8.shell registry,
+verifies the cryptographic signature, builds the workspace, compiles
+your script, executes it, and returns results. The sandbox ID is
+NOT part of the script JSON — it is a separate parameter.
+
+Script format:
 
 {
   "operations": [
@@ -48,19 +66,13 @@ DirExists      [path]                returns "true"/"false"
 DirTree        [path, depth?]        recursive listing, depth 1-5, default 3
 
 --- process ---
-ProcRun        [binary, arg, arg...] run an allowlisted binary (see below)
+ProcRun        [binary, arg, arg...] run a whitelisted command template
 
---- git ---
-GitStatus      []
-GitLog         [maxCount?]           defaults to 20
-GitDiff        [path?]
-GitAdd         [pathspec, flags?]    max 16 args
-GitCommit      [message]             exactly 1 arg
-GitPush        [remote?, branch?]
-GitPull        [remote?, branch?]
-GitClone       [url, dest?]
-GitCheckout    [branchOrPath]
-GitBranch      [name?, flags?]
+--- git (via ProcRun, command-template whitelist) ---
+Git is available through ProcRun with strict constraints.
+Read-only commands: status, log, diff, branch, remote, ls-files, tag, describe.
+Write commands: add, commit, stash, checkout, switch.
+Protected branches are BANNED — see ProcRun section below.
 
 --- http ---
 HttpGet        [url]
@@ -96,10 +108,13 @@ Include        [fragmentId]          inline admin-approved fragment
 
 Resolved at compile time. Not shell env vars.
 
-$WORKSPACE   sandbox root directory
-$CWD         working directory
+$WORKSPACE   sandbox root directory (from local registry)
+$CWD         working directory (defaults to sandbox root)
 $USER        OS username
 $PREV        stdout of previous step (only when pipeStepOutput: true)
+
+Additional variables from the sandbox's signed env file are also
+available (loaded automatically at command startup).
 
 Use in args: { "args": ["$WORKSPACE/src/app.ts"] }
 
@@ -116,7 +131,7 @@ Any step can capture its stdout:
 Max 16 captures per script. Cannot reuse names. Cannot override
 WORKSPACE, CWD, USER, PREV, ITEM, INDEX.
 
-Captures from process-spawning steps (ProcRun, Git*) are blocked in
+Captures from process-spawning steps (ProcRun) are blocked in
 ProcRun args — same rule as $PREV.
 
 
@@ -219,7 +234,7 @@ No nested ForEach.
   "verb": "If",
   "if": {
     "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
-    "then": { "verb": "GitAdd", "args": ["."] }
+    "then": { "verb": "FileWrite", "args": ["$WORKSPACE/status.txt", "build ok"] }
   }
 }
 
@@ -241,29 +256,229 @@ Inlines an admin-approved fragment by ID. You cannot define fragments —
 only reference IDs the server has registered.
 
 
-== ProcRun allowlist ==================================================
+== ProcRun command-template whitelist ==================================
 
-Allowed binaries:
-  dotnet node npm npx pip3 cargo make cmake
-  jq tar gzip gunzip unzip zip git
-  echo cat head tail wc sort uniq grep diff sha256sum md5sum base64
+ProcRun uses a STRICT COMMAND-TEMPLATE WHITELIST. There is no "allowed
+binary + blocked flags" model. Every invocation must match a registered
+template EXACTLY. You cannot inject free text into any argument position.
 
-Blocked flags per binary:
-  dotnet   → run, script, exec
-  node     → -e, --eval, -p, --print, --input-type
-  npm      → exec, x, start, test, run
-  npx      → -c
-  cargo    → run, script
-  make     → SHELL=, --eval
-  git      → -c, --exec, --upload-pack, --receive-pack
-  tar      → --checkpoint-action, --to-command, --use-compress-program
+Templates and word lists are compile-time constants. They cannot be
+changed at runtime.
 
-Passing code files to binaries that execute them is blocked:
-  ProcRun ["node", "script.js"]  → rejected
+--- how argument slots work ---
 
-Permanently blocked (will always fail):
-  bash sh zsh fish cmd powershell pwsh python python3 perl ruby lua php
-  sudo su curl wget find ssh scp rsync nc chmod chown systemctl dd
+Each argument position has a typed slot:
+
+  Choice         must be one of a fixed set (e.g. Release or Debug)
+  SandboxPath    must resolve inside $WORKSPACE
+  AdminWord      must be a single entry from a named word list
+  IntRange       must be an integer in [min, max]
+  ComposedWords  split on spaces, each word must be in a named word list
+                 (max 12 words). Spaces are safe — ArgumentList passes
+                 the whole string as one OS argument. No shell involved.
+  CompoundName   runtime base name + optional compile-time suffix.
+                 Used for project names only (the ONLY runtime exception).
+
+--- CompoundName (project names) ---
+
+Your administrator sets base project names at startup (e.g. "Banana").
+The source defines compile-time suffixes (Api, Core, Tests, etc.).
+You compose by concatenation or dot-separation:
+
+  Base "Banana" with suffixes:
+    "Banana"                → base alone                     → OK
+    "BananaApi"             → base + "Api"                   → OK
+    "Banana.Api"            → base + "." + "Api"             → OK
+    "Banana.Application.API"→ base + "." + "Application.API" → OK
+    "BananaApp123"          → no such suffix "App123"        → REJECTED
+    "FooApi"                → "Foo" not a registered base    → REJECTED
+
+If no base names are configured, dotnet new -n is unavailable.
+dotnet new WITHOUT -n still works (uses directory name).
+
+--- ComposedWords examples ---
+
+Used for git commit messages. You compose by combining words with spaces:
+
+  "Fix build errors"       → ["Fix","build","errors"]      → all in list → OK
+  "Add auth middleware"    → ["Add","auth","middleware"]    → all in list → OK
+  "Api 1 2 3"              → ["Api","1","2","3"]            → all in list → OK
+  "WIP"                    → ["WIP"]                        → in list     → OK
+  "Api123"                 → ["Api123"] as one word         → NOT in list → REJECTED
+  "I hacked the mainframe" → "hacked" NOT in list           → REJECTED
+
+ComposedWords is NOT concatenation. "Api 1 2 3" (4 words) works.
+"Api123" (1 word) does not. This is by design.
+
+--- dotnet commands ---
+
+  dotnet --version
+  dotnet --info
+  dotnet build       [--configuration Release|Debug] [--no-restore] [-o path]
+  dotnet publish     [--configuration Release|Debug] [--no-restore] [-o path]
+  dotnet test        [--configuration Release|Debug] [--no-restore] [--no-build]
+  dotnet clean       [--configuration Release|Debug]
+  dotnet restore     [--no-cache]
+  dotnet format      [--verify-no-changes]
+  dotnet new <template> [-n <name>] [-o path]
+    template: from DotnetTemplates list (console, classlib, webapi, etc.)
+    name: CompoundName — runtime base + optional compile-time suffix
+          (e.g. "BananaApi", "Banana.Core", "Banana")
+  dotnet ef migrations add <name>
+    name: from MigrationNames list (Initial, AddUsers, etc., plus A-Z, 0-9)
+  dotnet ef migrations list
+  dotnet ef migrations script [--idempotent] [-o path]
+  dotnet ef dbcontext info
+  dotnet ef dbcontext list
+
+--- git commands ---
+
+READ-ONLY (no repository state changed):
+
+  git --version
+  git status         [--short | -s | --porcelain]
+  git log --oneline  [-n 1-100] [--all] [--no-decorate]
+  git diff           [--staged] [--cached] [--stat] [--name-only] [--name-status]
+  git diff <path>    [--staged] [--cached]
+  git branch         [--list | -a | --all | -r]
+  git remote         [-v]
+  git remote add <name> <url>    name from RemoteNames, url from runtime config
+  git remote remove <name>       name from RemoteNames
+  git rev-parse HEAD
+  git rev-parse --short HEAD
+  git ls-files
+  git tag --list
+  git tag -l
+  git describe       [--tags] [--always]
+
+WRITE (constrained to word lists):
+
+  git add <paths...>                   SandboxPath (variadic)
+  git add .
+  git add -A
+  git commit -m "<message>"            ComposedWords from CommitWords vocabulary
+  git stash
+  git stash pop
+  git stash list
+  git stash drop
+  git checkout <branch>                AdminWord from BranchNames
+  git checkout -b <branch>             AdminWord from BranchNames
+  git switch <branch>                  AdminWord from BranchNames
+  git switch -c <branch>               AdminWord from BranchNames
+
+PROTECTED BRANCHES — BANNED:
+  main, master, develop, staging, production, live, release, release/*,
+  trunk. These are intentionally excluded from BranchNames. You must
+  NEVER operate on branches used for live or master development. All
+  your work must happen in a feature/bugfix/hotfix branch. Merging to
+  protected branches requires the dangerous-shell path with human
+  approval.
+
+NOT WHITELISTED (require dangerous-shell path):
+  push, pull, merge, rebase, reset, clean, clone, config, submodule,
+  am, apply, filter-branch, cherry-pick, bisect, gc, fsck, reflog.
+
+--- git commit message vocabulary (CommitWords) ---
+
+You compose commit messages by combining words with spaces. Each word
+must be in the CommitWords vocabulary. Max 12 words per message.
+
+Verbs: Add Fix Update Remove Delete Refactor Move Rename Clean Optimize
+       Configure Wire Scaffold Extract Inline Format Implement Replace
+       Merge Split Revert Enable Disable Restore Sync Simplify Improve
+       Reorganize Consolidate Introduce Deprecate Drop Bump Pin Unpin
+Adjectives: Initial Minor Major Quick Temporary Deprecated Breaking
+            Critical Partial Missing Unused Duplicate Stale Draft
+            Experimental Internal Public Private New Old Default Custom Base
+Nouns: commit migration migrations schema tests test build builds
+       errors error typos typo code files file config configuration
+       dependencies dependency imports import comments comment
+       documentation docs README CHANGELOG endpoints endpoint
+       commands command middleware project projects services service
+       method methods class classes interface interfaces logging
+       validation handling namespace namespaces package packages
+       module modules component components feature features bugfix
+       hotfix release version setup cleanup logic flow pipeline
+       workflow response request route routes handler handlers
+       controller query queries index indexes table tables column
+       columns constraint constraints relation relations key keys
+       property properties field fields parameter parameters type
+       types enum enums seed data baseline snapshot template templates
+       factory helper options settings constants
+Domain: auth authentication authorization permissions agents agent
+        channels channel contexts context models model providers
+        provider jobs job tasks task skills skill resources resource
+        containers container devices device messages message roles role
+        users user transcription audio scheduler tokens token encryption
+        API CLI DI EF DB UI REST gRPC JSON YAML XML
+Connectors: up in for to from with and of on at by as into across
+States: work progress checkpoint WIP
+Letters: A-Z (case-insensitive)
+Digits: 0-9
+
+--- node/npm commands ---
+
+  node --version
+  npm --version
+  npm ls             [--depth 0-10] [--all] [--json]
+  npm outdated       [--json]
+
+--- cargo commands ---
+
+  cargo --version
+
+--- archive commands (create/list ONLY, no extraction) ---
+
+  tar -tf <path>
+  tar -cf <out> <inputs...>
+  tar -czf <out> <inputs...>
+  gzip <path>
+  gunzip <path>
+  zip <out> <inputs...>
+  unzip -l <path>
+
+--- read-only tools (SandboxPath args only, no free text) ---
+
+  cat <path>
+  head -n <1-1000> <path>
+  tail -n <1-1000> <path>
+  wc -l|-w|-c <path>
+  sort <path>
+  uniq <path>
+  diff <path1> <path2>
+  sha256sum <path>
+  md5sum <path>
+  base64 <path>
+  base64 -d <path>
+
+--- permanently blocked binaries (cannot be overridden) ---
+
+  bash sh zsh fish dash cmd powershell pwsh
+  python python2 python3 pip pip3 perl ruby lua php
+  npx env xargs nohup sudo su doas pkexec
+  curl wget find ssh scp rsync nc socat
+  chmod chown systemctl crontab dd strace
+
+
+== runtime configuration (admin-set, the ONLY runtime exception) ======
+
+Your administrator provides these at startup via Mk8RuntimeConfig.
+They are baked into the whitelist at construction and cannot change.
+
+  ProjectBases     base project names for dotnet new -n (max 32)
+                   e.g. ["Banana", "SharpClaw"]
+                   Combined with compile-time suffixes:
+                   Api, Core, Infrastructure, Contracts, Tests, Utils,
+                   Client, Server, Worker, Service, Web, Grpc, Shared,
+                   Common, Domain, Data, Models, Handlers, Extensions,
+                   Application.API, Application.Core,
+                   Application.Infrastructure, Application.Contracts,
+                   Application.Tests, PublicAPI, UITests
+
+  GitRemoteUrls    allowed git remote URLs for git remote add (max 16)
+                   e.g. ["https://github.com/org/repo.git"]
+
+If not configured, dotnet new -n and git remote add are unavailable.
 
 
 == EnvGet allowlist ===================================================
@@ -287,9 +502,31 @@ Private/link-local IPs are blocked.
 
 All paths must resolve inside $WORKSPACE (the sandbox).
 
+FORBIDDEN FILES (blocked on ALL operations — read, write, everything):
+  mk8.shell.env, mk8.shell.signed.env
+  These are sandbox environment files managed exclusively by the user
+  or mk8.shell.startup. You cannot read, write, copy, move, delete,
+  hash, or list them. Any attempt will fail.
+
 Write targets (.exe .dll .js .mjs .cjs .so .dylib and others) are
 blocked. You can write .sh .py .ps1 .bat etc. because their
 interpreters are blocked in ProcRun.
+
+Writes to .git/ paths are BLOCKED — you cannot create hooks, modify
+config, or inject objects into .git/ internals. Git metadata is
+managed by whitelisted git commands only.
+
+Write-blocked config filenames:
+  Makefile, GNUmakefile, CMakeLists.txt, Dockerfile, .npmrc,
+  Directory.Build.props, Directory.Build.targets, Directory.Packages.props,
+  nuget.config, package.json, build.rs, Cargo.toml,
+  setup.py, setup.cfg, pyproject.toml, .gitattributes, .gitmodules,
+  mk8.shell.env, mk8.shell.signed.env
+
+Write-blocked extensions:
+  .exe .com .scr .msi .msp .dll .bin .run .appimage .elf .so .dylib
+  .js .mjs .cjs .jse .wsf .wsh .msh .vbs .vbe
+  .csproj .fsproj .vbproj .proj .targets .props .sln .rs
 
 Build $WORKSPACE-relative paths without knowing the absolute root:
   $WORKSPACE/src/app.ts       (use $WORKSPACE prefix)
@@ -303,7 +540,16 @@ No .. segments. No absolute paths in path components.
 - Any verb not in the list above
 - Shell syntax in args: pipes |, chains &&, redirects >, subshells $()
 - Running bash, python, powershell, or any blocked binary
+- Any ProcRun invocation that doesn't match a registered template
+- Unregistered flags on any binary (e.g. git -c, dotnet run)
+- Free text in any argument position (must match a typed slot)
 - Writing .exe, .dll, .js, .so, or other blocked extensions
+- Writing to .git/ paths (hooks, config, objects)
+- Writing .gitattributes or .gitmodules
+- Reading or writing mk8.shell.env or mk8.shell.signed.env
+- Checking out protected branches (main, master, develop, staging,
+  production, live, release/*, trunk)
+- Commit messages containing words not in CommitWords vocabulary
 - Paths that escape the sandbox via .. or absolute paths
 - $PREV or process-captured variables in ProcRun args
 - $ characters inside template values or patch find/replace
@@ -389,4 +635,34 @@ No .. segments. No absolute paths in path components.
     { "verb": "FileWrite", "args": ["$WORKSPACE/checksums.txt", "$HASH"] }
   ],
   "options": { "pipeStepOutput": true }
+}
+
+--- git: create branch, edit, commit ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "checkout", "-b", "feature/auth"] },
+    { "verb": "FileWrite", "args": ["$WORKSPACE/src/auth.cs", "// auth module"] },
+    { "verb": "ProcRun", "args": ["git", "add", "."] },
+    { "verb": "ProcRun", "args": ["git", "commit", "-m", "Add authentication module"] }
+  ]
+}
+
+--- git: check status, diff, and log ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "status", "--short"], "captureAs": "STATUS" },
+    { "verb": "ProcRun", "args": ["git", "diff", "--stat"], "captureAs": "DIFF" },
+    { "verb": "ProcRun", "args": ["git", "log", "--oneline", "-n", "10"], "captureAs": "LOG" },
+    { "verb": "FileWrite", "args": ["$WORKSPACE/git-report.txt", "$STATUS\n\n$DIFF\n\n$LOG"] }
+  ],
+  "options": { "pipeStepOutput": true }
+}
+
+--- git: stash, switch branch, pop ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "stash"] },
+    { "verb": "ProcRun", "args": ["git", "switch", "feature/api"] },
+    { "verb": "ProcRun", "args": ["git", "stash", "pop"] }
+  ]
 }

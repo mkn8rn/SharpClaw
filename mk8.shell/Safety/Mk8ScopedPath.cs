@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Engine;
+
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// Builds workspace-relative paths that can ONLY descend into

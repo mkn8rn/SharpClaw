@@ -1,4 +1,5 @@
-using Mk8.Shell;
+using Mk8.Shell.Engine;
+using Mk8.Shell.Safety;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 
 namespace SharpClaw.Application.Infrastructure.Shell;
@@ -42,6 +43,7 @@ public static class Mk8WorkspaceFactory
         }
 
         return new Mk8WorkspaceContext(
+            SandboxId: systemUser.Username,
             SandboxRoot: sandboxRoot,
             WorkingDirectory: workingDirectory,
             RunAsUser: systemUser.Username,

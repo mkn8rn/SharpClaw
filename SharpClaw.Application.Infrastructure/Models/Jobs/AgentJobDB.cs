@@ -25,8 +25,27 @@ public class AgentJobDB : BaseEntity
     public Guid? ResourceId { get; set; }
 
     // ── Shell type (for shell execution actions) ──────────────────
+    //
+    //  Safe (ExecuteAsSafeShell)     → mk8.shell only (sandboxed DSL).
+    //  Dangerous (UnsafeExecuteAs…)  → real Bash/PowerShell/Cmd/Git.
+    //
+    //  mk8.shell is ALWAYS safe.  Bash/PowerShell/Cmd/Git are ALWAYS
+    //  dangerous.  There is no crossover.
+    //
     public DangerousShellType? DangerousShellType { get; set; }
     public SafeShellType? SafeShellType { get; set; }
+
+    /// <summary>
+    /// Payload submitted with shell jobs.  The format depends on the
+    /// action type:
+    /// <list type="bullet">
+    ///   <item><b>Safe shell</b> (<see cref="AgentActionType.ExecuteAsSafeShell"/>):
+    ///     serialised <see cref="Mk8.Shell.Engine.Mk8ShellScript"/> JSON.</item>
+    ///   <item><b>Dangerous shell</b> (<see cref="AgentActionType.UnsafeExecuteAsDangerousShell"/>):
+    ///     raw command text passed directly to the real shell interpreter.</item>
+    /// </list>
+    /// </summary>
+    public string? ScriptJson { get; set; }
 
     // ── State ─────────────────────────────────────────────────────
     public AgentJobStatus Status { get; set; } = AgentJobStatus.Queued;

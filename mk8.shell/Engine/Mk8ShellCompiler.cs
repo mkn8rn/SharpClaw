@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Safety;
+
+namespace Mk8.Shell.Engine;
 
 /// <summary>
 /// Compiles an <see cref="Mk8ShellScript"/> into a sequence of
@@ -13,8 +15,14 @@ namespace Mk8.Shell;
 ///     external processes like cat, type, or powershell.
 ///   </item>
 ///   <item>
-///     Only ProcRun and Git* verbs produce real process invocations.
-///     These are the only two code paths that call ProcessStartInfo.
+///     Only ProcRun produces real process invocations. This is the
+///     only code path that calls ProcessStartInfo.
+///   </item>
+///   <item>
+///     ProcRun uses a strict command-template whitelist
+///     (<see cref="Mk8CommandWhitelist"/>) — only explicitly
+///     registered command patterns with typed parameter slots are
+///     allowed.  The agent cannot inject free text into any argument.
 ///   </item>
 ///   <item>
 ///     The compiler never emits bash, cmd, or powershell as an
@@ -35,12 +43,25 @@ namespace Mk8.Shell;
 public sealed class Mk8ShellCompiler
 {
     private readonly IMk8FragmentRegistry? _fragmentRegistry;
+    private readonly Mk8CommandWhitelist _whitelist;
 
-    public Mk8ShellCompiler() { }
+    /// <summary>
+    /// Set during <see cref="Compile(Mk8ShellScript, Mk8WorkspaceContext, Mk8ExecutionOptions)"/>
+    /// so <see cref="CompileProcRun"/> can validate paths against the sandbox.
+    /// </summary>
+    private string _sandboxRoot = "";
 
-    public Mk8ShellCompiler(IMk8FragmentRegistry fragmentRegistry)
+    public Mk8ShellCompiler(Mk8CommandWhitelist? whitelist = null)
+    {
+        _whitelist = whitelist ?? Mk8CommandWhitelist.CreateDefault();
+    }
+
+    public Mk8ShellCompiler(
+        IMk8FragmentRegistry fragmentRegistry,
+        Mk8CommandWhitelist? whitelist = null)
     {
         _fragmentRegistry = fragmentRegistry;
+        _whitelist = whitelist ?? Mk8CommandWhitelist.CreateDefault();
     }
 
     /// <summary>
@@ -54,6 +75,8 @@ public sealed class Mk8ShellCompiler
     {
         ArgumentNullException.ThrowIfNull(script);
         ArgumentNullException.ThrowIfNull(workspace);
+
+        _sandboxRoot = workspace.SandboxRoot;
 
         if (script.Operations.Count == 0)
             throw new Mk8CompileException(Mk8ShellVerb.FileRead,
@@ -135,12 +158,15 @@ public sealed class Mk8ShellCompiler
     {
         ArgumentNullException.ThrowIfNull(script);
 
+        _sandboxRoot = Directory.GetCurrentDirectory();
+
         var commands = new List<Mk8CompiledCommand>(script.Operations.Count);
         foreach (var op in script.Operations)
             commands.Add(CompileOperation(op));
 
         var options = script.Options ?? Mk8ExecutionOptions.Default;
         var workspace = new Mk8WorkspaceContext(
+            "test",
             Directory.GetCurrentDirectory(),
             Directory.GetCurrentDirectory(),
             Environment.UserName,
@@ -171,19 +197,10 @@ public sealed class Mk8ShellCompiler
             Mk8ShellVerb.DirExists  => InMemory(op.Verb, RequireArgs(op, 1, 1)),
 
             // ── Process (the ONLY verb that spawns a process) ─────
-            Mk8ShellVerb.ProcRun    => CompileProcRun(op.Args),
+            Mk8ShellVerb.ProcRun    => CompileProcRun(op.Args, _sandboxRoot),
 
-            // ── Git (spawns git binary — args validated) ──────────
-            Mk8ShellVerb.GitStatus   => CompileGit("status", op.Args),
-            Mk8ShellVerb.GitLog      => CompileGitLog(op.Args),
-            Mk8ShellVerb.GitDiff     => CompileGit("diff", op.Args),
-            Mk8ShellVerb.GitAdd      => CompileGitAdd(op.Args),
-            Mk8ShellVerb.GitCommit   => CompileGitCommit(op.Args),
-            Mk8ShellVerb.GitPush     => CompileGit("push", op.Args),
-            Mk8ShellVerb.GitPull     => CompileGit("pull", op.Args),
-            Mk8ShellVerb.GitClone    => CompileGitClone(op.Args),
-            Mk8ShellVerb.GitCheckout => CompileGit("checkout", op.Args),
-            Mk8ShellVerb.GitBranch   => CompileGit("branch", op.Args),
+            // Git verbs removed — all git operations now require the
+            // dangerous-shell path.  See Mk8ShellVerb comments.
 
             // ── ALL remaining → in-memory ─────────────────────────
             Mk8ShellVerb.HttpGet    => InMemory(op.Verb, RequireArgs(op, 1, 1)),
@@ -226,78 +243,29 @@ public sealed class Mk8ShellCompiler
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // ProcRun — the ONLY external process path besides Git
+    // ProcRun — the ONLY external process path
     // ═══════════════════════════════════════════════════════════════
+    //
+    // ProcRun uses a strict command-template whitelist.  Every
+    // invocation must match a registered Mk8AllowedCommand template
+    // exactly — there is no "allowed binary + blocked flags" fallback.
+    // The agent cannot inject free text into any argument position.
+    //
 
-    private static Mk8CompiledCommand CompileProcRun(string[] args)
+    private Mk8CompiledCommand CompileProcRun(string[] args, string sandboxRoot)
     {
         if (args.Length < 1 || args.Length > 64)
             throw new Mk8CompileException(Mk8ShellVerb.ProcRun,
                 $"Expected 1–64 argument(s), got {args.Length}.");
 
         var binary = args[0];
-        if (!Mk8BinaryAllowlist.IsAllowed(binary))
-            throw new Mk8CompileException(Mk8ShellVerb.ProcRun,
-                $"Binary '{binary}' is not in the allowlist.");
-
         var procArgs = args.Length > 1 ? args[1..] : [];
 
-        Mk8BinaryAllowlist.ValidateArgs(binary, procArgs);
+        var error = _whitelist.Validate(binary, procArgs, sandboxRoot);
+        if (error is not null)
+            throw new Mk8CompileException(Mk8ShellVerb.ProcRun, error);
 
         return new Mk8CompiledCommand(Mk8CommandKind.Process, binary, procArgs);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Git
-    // ═══════════════════════════════════════════════════════════════
-
-    private static Mk8CompiledCommand CompileGit(string subCommand, string[] args)
-    {
-        Mk8GitFlagValidator.Validate(subCommand, args);
-        var gitArgs = new string[1 + args.Length];
-        gitArgs[0] = subCommand;
-        args.CopyTo(gitArgs, 1);
-        return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", gitArgs);
-    }
-
-    private static Mk8CompiledCommand CompileGitLog(string[] args)
-    {
-        Mk8GitFlagValidator.Validate("log", args);
-        if (args.Length > 0 && int.TryParse(args[0], out var n) && n > 0)
-            return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", ["log", $"-n{n}"]);
-        return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", ["log", "-n20"]);
-    }
-
-    private static Mk8CompiledCommand CompileGitAdd(string[] args)
-    {
-        if (args.Length < 1 || args.Length > 16)
-            throw new Mk8CompileException(Mk8ShellVerb.GitAdd,
-                $"Expected 1–16 argument(s), got {args.Length}.");
-        Mk8GitFlagValidator.Validate("add", args);
-        var gitArgs = new string[1 + args.Length];
-        gitArgs[0] = "add";
-        args.CopyTo(gitArgs, 1);
-        return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", gitArgs);
-    }
-
-    private static Mk8CompiledCommand CompileGitCommit(string[] args)
-    {
-        if (args.Length != 1)
-            throw new Mk8CompileException(Mk8ShellVerb.GitCommit,
-                $"Expected 1 argument (message), got {args.Length}.");
-        Mk8GitFlagValidator.Validate("commit", args);
-        return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", ["commit", "-m", args[0]]);
-    }
-
-    private static Mk8CompiledCommand CompileGitClone(string[] args)
-    {
-        if (args.Length < 1 || args.Length > 2)
-            throw new Mk8CompileException(Mk8ShellVerb.GitClone,
-                $"Expected 1–2 argument(s), got {args.Length}.");
-        Mk8GitFlagValidator.Validate("clone", args);
-        var gitArgs = new List<string> { "clone", args[0] };
-        if (args.Length > 1) gitArgs.Add(args[1]);
-        return new Mk8CompiledCommand(Mk8CommandKind.GitProcess, "git", [.. gitArgs]);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Infrastructure.Persistence;
@@ -9,7 +10,7 @@ namespace SharpClaw.Application.Services;
 /// Manages audio device CRUD. Transcription job lifecycle is handled
 /// by <see cref="AgentJobService"/> via the job/permission system.
 /// </summary>
-public sealed class TranscriptionService(SharpClawDbContext db)
+public sealed class TranscriptionService(SharpClawDbContext db, IAudioCaptureProvider capture)
 {
     // ═══════════════════════════════════════════════════════════════
     // Audio device CRUD
@@ -66,6 +67,60 @@ public sealed class TranscriptionService(SharpClawDbContext db)
         db.AudioDevices.Remove(device);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Sync — discover system audio devices and import new ones
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Discovers all audio input devices on the current system and
+    /// imports any that are not already in the database. Duplicates
+    /// (matched by <see cref="AudioDeviceDB.DeviceIdentifier"/>) are
+    /// skipped.
+    /// </summary>
+    public async Task<AudioDeviceSyncResult> SyncDevicesAsync(CancellationToken ct = default)
+    {
+        var systemDevices = capture.ListDevices();
+
+        var existingIdentifiers = await db.AudioDevices
+            .Where(d => d.DeviceIdentifier != null)
+            .Select(d => d.DeviceIdentifier!)
+            .ToListAsync(ct);
+
+        var existingSet = new HashSet<string>(
+            existingIdentifiers, StringComparer.OrdinalIgnoreCase);
+
+        var imported = new List<string>();
+        var skipped = new List<string>();
+
+        foreach (var (id, name) in systemDevices)
+        {
+            if (existingSet.Contains(id))
+            {
+                skipped.Add(name);
+                continue;
+            }
+
+            var device = new AudioDeviceDB
+            {
+                Name = name,
+                DeviceIdentifier = id,
+                Description = "Synced from system audio devices",
+            };
+
+            db.AudioDevices.Add(device);
+            imported.Add(name);
+        }
+
+        if (imported.Count > 0)
+            await db.SaveChangesAsync(ct);
+
+        return new AudioDeviceSyncResult(
+            imported.Count,
+            skipped.Count,
+            imported,
+            skipped);
     }
 
     private static AudioDeviceResponse ToResponse(AudioDeviceDB d) =>

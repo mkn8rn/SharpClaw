@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Engine;
+
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// Resolves <c>$VARIABLE</c> shortcuts at compile time.
@@ -41,7 +43,7 @@ public static class Mk8VariableResolver
     /// <summary>
     /// Validates that capture names in the script are legal and within limits.
     /// Returns the set of capture names that originate from process-spawning
-    /// verbs (ProcRun, Git*) — these must be blocked in ProcRun args.
+    /// verbs (ProcRun) — these must be blocked in ProcRun args.
     /// </summary>
     public static HashSet<string> ValidateCaptures(
         IReadOnlyList<Mk8ShellOperation> operations)
@@ -205,13 +207,11 @@ public static class Mk8VariableResolver
         variables["PREV"] = output?.Trim() ?? string.Empty;
     }
 
+    // Git verbs removed — all git operations now require the
+    // dangerous-shell path.  ProcRun is the only process-spawning
+    // verb remaining in mk8.shell.
     private static bool IsProcessVerb(Mk8ShellVerb verb) =>
-        verb is Mk8ShellVerb.ProcRun
-            or Mk8ShellVerb.GitStatus or Mk8ShellVerb.GitLog
-            or Mk8ShellVerb.GitDiff or Mk8ShellVerb.GitAdd
-            or Mk8ShellVerb.GitCommit or Mk8ShellVerb.GitPush
-            or Mk8ShellVerb.GitPull or Mk8ShellVerb.GitClone
-            or Mk8ShellVerb.GitCheckout or Mk8ShellVerb.GitBranch;
+        verb is Mk8ShellVerb.ProcRun;
 
     private static bool IsVarStart(char c) =>
         char.IsLetter(c) || c == '_';

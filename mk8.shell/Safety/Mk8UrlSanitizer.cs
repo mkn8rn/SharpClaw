@@ -1,4 +1,4 @@
-namespace Mk8.Shell;
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// SSRF protection for mk8.shell HTTP verbs.

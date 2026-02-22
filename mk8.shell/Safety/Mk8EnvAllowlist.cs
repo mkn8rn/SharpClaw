@@ -1,4 +1,4 @@
-namespace Mk8.Shell;
+namespace Mk8.Shell.Safety;
 
 /// <summary>
 /// Read-only env var access. Blocks secret-containing names.

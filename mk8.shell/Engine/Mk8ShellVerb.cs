@@ -1,4 +1,4 @@
-namespace Mk8.Shell;
+namespace Mk8.Shell.Engine;
 
 /// <summary>
 /// The closed set of mk8.shell verbs. Every agent command must map to
@@ -30,17 +30,20 @@ public enum Mk8ShellVerb
     // ── Process (allowlisted binaries only) ───────────────────────
     ProcRun,
 
-    // ── Git (dedicated verbs so args are tightly scoped) ──────────
-    GitStatus,
-    GitLog,
-    GitDiff,
-    GitAdd,
-    GitCommit,
-    GitPush,
-    GitPull,
-    GitClone,
-    GitCheckout,
-    GitBranch,
+    // ── Git ───────────────────────────────────────────────────────
+    //
+    // REMOVED.  Git verbs (GitStatus, GitAdd, GitCommit, etc.) were
+    // originally part of mk8.shell but have been pulled out.  Even
+    // with flag validation and UseShellExecute=false, git's own flag
+    // interpreter surface area is too large to guarantee that an
+    // agent cannot destroy or corrupt a repository in an unexpected
+    // way.
+    //
+    // Safe git functionality will be provided by a dedicated future
+    // project (e.g. "mk8.safegit") with a much narrower read-heavy
+    // API surface.  Until then, all git operations require
+    // DangerousShellType.Git via the dangerous-shell execution path.
+    //
 
     // ── HTTP ──────────────────────────────────────────────────────
     HttpGet,

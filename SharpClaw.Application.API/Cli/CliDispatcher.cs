@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API.Handlers;
-using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -15,6 +14,7 @@ using SharpClaw.Contracts.DTOs.Contexts;
 using SharpClaw.Contracts.DTOs.Conversations;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
+using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
@@ -183,7 +183,7 @@ public static class CliDispatcher
             "chat" => await HandleChatCommand(args, sp),
             "job" => await HandleJobCommand(args, sp),
             "role" => await HandleRoleCommand(args, sp),
-            "audiodevice" or "ad" => await HandleAudioDeviceCommand(args, sp),
+            "resource" => await HandleResourceCommand(args, sp),
             "help" or "--help" or "-h" => PrintHelp(),
             _ => null
         };
@@ -1024,82 +1024,148 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
-    private static async Task<IResult?> HandleAudioDeviceCommand(string[] args, IServiceProvider sp)
+    // ═══════════════════════════════════════════════════════════════
+    // Resource (unified: container, audiodevice, ...)
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleResourceCommand(string[] args, IServiceProvider sp)
     {
         if (args.Length < 2)
         {
             PrintUsage(
-                "audiodevice add <name> <deviceIdentifier> [description]",
-                "  Use 'audiodevice devices' to find identifiers.",
-                "  Use 'default' as identifier for system default input.",
-                "audiodevice get <id>",
-                "audiodevice list",
-                "audiodevice update <id> [name] [deviceIdentifier]",
-                "audiodevice delete <id>",
-                "audiodevice devices                       List system audio inputs");
+                "resource <type> <command> [args...]",
+                "",
+                "Types: container, audiodevice",
+                "",
+                "Commands (all types):",
+                "  add      Create a new resource",
+                "  get      Show a resource by ID",
+                "  list     List all resources of this type",
+                "  update   Update a resource by ID",
+                "  delete   Delete a resource by ID",
+                "  sync     Import from system / local registry");
             return Results.Ok();
         }
 
-        var sub = args[1].ToLowerInvariant();
+        var type = args[1].ToLowerInvariant();
+        return type switch
+        {
+            "container" => await HandleResourceContainerCommand(args, sp),
+            "audiodevice" => await HandleResourceAudioDeviceCommand(args, sp),
+            _ => UsageResult($"Unknown resource type: {type}. " +
+                "Available: container, audiodevice")
+        };
+    }
+
+    private static async Task<IResult?> HandleResourceContainerCommand(
+        string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "resource container add mk8shell <name> <path>  Create an mk8shell sandbox",
+                "resource container get <id>                    Show a container",
+                "resource container list                        List all containers",
+                "resource container update <id> [description]   Update a container",
+                "resource container delete <id>                 Delete a container",
+                "resource container sync                        Import from mk8.shell registry");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<ContainerService>();
+
+        return sub switch
+        {
+            "add" when args.Length >= 6
+                && args[3].Equals("mk8shell", StringComparison.OrdinalIgnoreCase)
+                => await ResourceHandlers.CreateContainer(
+                    new CreateContainerRequest(
+                        ContainerType.Mk8Shell,
+                        args[4],
+                        args[5],
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null),
+                    svc),
+            "add" => UsageResult(
+                "resource container add mk8shell <name> <parentPath>",
+                "  Example: resource container add mk8shell Banana D:/"),
+
+            "get" when args.Length >= 4
+                => await ResourceHandlers.GetContainer(CliIdMap.Resolve(args[3]), svc),
+            "get" => UsageResult("resource container get <id>"),
+
+            "list" => await ResourceHandlers.ListContainers(svc),
+
+            "update" when args.Length >= 5
+                => await ResourceHandlers.UpdateContainer(
+                    CliIdMap.Resolve(args[3]),
+                    new UpdateContainerRequest(
+                        Description: string.Join(' ', args[4..])),
+                    svc),
+            "update" => UsageResult("resource container update <id> [description]"),
+
+            "delete" when args.Length >= 4
+                => await ResourceHandlers.DeleteContainer(CliIdMap.Resolve(args[3]), svc),
+            "delete" => UsageResult("resource container delete <id>"),
+
+            "sync" => await ResourceHandlers.SyncContainers(svc),
+
+            _ => UsageResult($"Unknown command: resource container {sub}")
+        };
+    }
+
+    private static async Task<IResult?> HandleResourceAudioDeviceCommand(
+        string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "resource audiodevice add <name> [identifier] [description]",
+                "resource audiodevice get <id>                  Show an audio device",
+                "resource audiodevice list                      List all audio devices",
+                "resource audiodevice update <id> [name] [id]   Update an audio device",
+                "resource audiodevice delete <id>               Delete an audio device",
+                "resource audiodevice sync                      Import system audio devices");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
         var svc = sp.GetRequiredService<TranscriptionService>();
 
         return sub switch
         {
             "add" when args.Length >= 4
-                => await AudioDeviceHandlers.Create(
+                => await ResourceHandlers.CreateAudioDevice(
                     new CreateAudioDeviceRequest(
-                        args[2],
                         args[3],
-                        args.Length >= 5 ? string.Join(' ', args[4..]) : null),
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? string.Join(' ', args[5..]) : null),
                     svc),
-            "add" => UsageResult("audiodevice add <name> <deviceIdentifier> [description]",
-                "  Use 'audiodevice devices' to find identifiers.",
-                "  Use 'default' as identifier for system default input."),
+            "add" => UsageResult("resource audiodevice add <name> [deviceIdentifier] [description]"),
 
-            "get" when args.Length >= 3
-                => await AudioDeviceHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
-            "get" => UsageResult("audiodevice get <id>"),
+            "get" when args.Length >= 4
+                => await ResourceHandlers.GetAudioDevice(CliIdMap.Resolve(args[3]), svc),
+            "get" => UsageResult("resource audiodevice get <id>"),
 
-            "list" => await AudioDeviceHandlers.List(svc),
+            "list" => await ResourceHandlers.ListAudioDevices(svc),
 
-            "update" when args.Length >= 4
-                => await AudioDeviceHandlers.Update(
-                    CliIdMap.Resolve(args[2]),
+            "update" when args.Length >= 5
+                => await ResourceHandlers.UpdateAudioDevice(
+                    CliIdMap.Resolve(args[3]),
                     new UpdateAudioDeviceRequest(
-                        args.Length >= 4 ? args[3] : null,
-                        args.Length >= 5 ? args[4] : null),
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? args[5] : null),
                     svc),
-            "update" => UsageResult("audiodevice update <id> [name] [deviceIdentifier]"),
+            "update" => UsageResult("resource audiodevice update <id> [name] [deviceIdentifier]"),
 
-            "delete" when args.Length >= 3
-                => await AudioDeviceHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
-            "delete" => UsageResult("audiodevice delete <id>"),
+            "delete" when args.Length >= 4
+                => await ResourceHandlers.DeleteAudioDevice(CliIdMap.Resolve(args[3]), svc),
+            "delete" => UsageResult("resource audiodevice delete <id>"),
 
-            "devices" => ListSystemAudioDevices(sp),
+            "sync" => await ResourceHandlers.SyncAudioDevices(svc),
 
-            _ => UsageResult($"Unknown sub-command: audiodevice {sub}. Try 'help' for usage.")
+            _ => UsageResult($"Unknown command: resource audiodevice {sub}")
         };
-    }
-
-    private static IResult ListSystemAudioDevices(IServiceProvider sp)
-    {
-        var capture = sp.GetRequiredService<IAudioCaptureProvider>();
-        var devices = capture.ListDevices();
-
-        if (devices.Count == 0)
-        {
-            Console.WriteLine("No audio input devices found.");
-            return Results.Ok();
-        }
-
-        Console.WriteLine("System audio input devices:");
-        foreach (var (id, name) in devices)
-            Console.WriteLine($"  {name}  →  {id}");
-
-        Console.WriteLine();
-        Console.WriteLine("Use the identifier with 'audiodevice add <name> <identifier>'.");
-        Console.WriteLine("Use 'default' to select the system default input device.");
-        return Results.Ok();
     }
 
     private static IResult PrintHelp()
@@ -1183,13 +1249,12 @@ public static class CliDispatcher
               job cancel <jobId>                           Cancel a job
               job listen <jobId>                           Stream live transcription
 
-              audiodevice add <name> <deviceId> [desc]    Register an audio device
-              audiodevice get <id>                        Show an audio device
-              audiodevice list                            List audio devices
-              audiodevice update <id> [name] [deviceId]   Update an audio device
-              audiodevice delete <id>                     Delete an audio device
-              audiodevice devices                         List system audio inputs
-              (alias: ad)
+              resource <type> <command> [args...]
+                Available types: container, audiodevice
+                Commands (all types): add, get, list, update, delete, sync
+
+              resource container add <type> <name> <path>  Create a container
+              resource audiodevice add <name> [devId] [d]  Register an audio device
 
               Transcription: use TranscribeFromAudioDevice with audio device
                 as resourceId.

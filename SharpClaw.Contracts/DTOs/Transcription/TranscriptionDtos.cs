@@ -20,6 +20,12 @@ public sealed record AudioDeviceResponse(
     Guid? SkillId,
     DateTimeOffset CreatedAt);
 
+public sealed record AudioDeviceSyncResult(
+    int Imported,
+    int Skipped,
+    IReadOnlyList<string> ImportedNames,
+    IReadOnlyList<string> SkippedNames);
+
 // ── Transcription Segment DTOs ────────────────────────────────────
 
 public sealed record TranscriptionSegmentResponse(

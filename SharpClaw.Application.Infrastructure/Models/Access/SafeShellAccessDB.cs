@@ -7,7 +7,13 @@ namespace SharpClaw.Application.Infrastructure.Models.Access;
 
 /// <summary>
 /// Grants a role the ability to execute commands through a safe
-/// (sandboxed, verb-restricted) shell as a specific operating-system user.
+/// (sandboxed, verb-restricted) shell targeting a specific container.
+/// <para>
+/// Safe shells are exclusively mk8.shell — a closed-verb DSL that
+/// never invokes a real shell interpreter.  The <see cref="ContainerId"/>
+/// identifies which sandbox the execution is permitted in.  For
+/// unrestricted shell access see <see cref="DangerousShellAccessDB"/>.
+/// </para>
 /// </summary>
 public class SafeShellAccessDB : BaseEntity
 {
@@ -20,8 +26,11 @@ public class SafeShellAccessDB : BaseEntity
     public Guid PermissionSetId { get; set; }
     public PermissionSetDB PermissionSet { get; set; } = null!;
 
-    public Guid SystemUserId { get; set; }
-    public SystemUserDB SystemUser { get; set; } = null!;
+    /// <summary>
+    /// The container (sandbox) this grant authorises execution in.
+    /// </summary>
+    public Guid ContainerId { get; set; }
+    public ContainerDB Container { get; set; } = null!;
 
     /// <summary>
     /// The safe shell type this grant authorises. Currently only
