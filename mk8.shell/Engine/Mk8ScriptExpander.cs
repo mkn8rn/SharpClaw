@@ -1,4 +1,6 @@
-namespace Mk8.Shell;
+using Mk8.Shell.Safety;
+
+namespace Mk8.Shell.Engine;
 
 /// <summary>
 /// Pre-compilation expansion pass. Runs BEFORE the compiler touches

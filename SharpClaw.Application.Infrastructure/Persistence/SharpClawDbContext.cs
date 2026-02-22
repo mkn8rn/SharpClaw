@@ -318,10 +318,6 @@ public class SharpClawDbContext(
                 .WithOne(a => a.SystemUser)
                 .HasForeignKey(a => a.SystemUserId)
                 .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(s => s.SafeShellAccesses)
-                .WithOne(a => a.SystemUser)
-                .HasForeignKey(a => a.SystemUserId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<DangerousShellAccessDB>(e =>
@@ -333,7 +329,7 @@ public class SharpClawDbContext(
 
         modelBuilder.Entity<SafeShellAccessDB>(e =>
         {
-            e.HasIndex(a => new { a.PermissionSetId, a.SystemUserId, a.ShellType }).IsUnique();
+            e.HasIndex(a => new { a.PermissionSetId, a.ContainerId, a.ShellType }).IsUnique();
             e.Property(a => a.Clearance).HasConversion<string>();
             e.Property(a => a.ShellType).HasConversion<string>();
         });
@@ -423,11 +419,16 @@ public class SharpClawDbContext(
         modelBuilder.Entity<ContainerDB>(e =>
         {
             e.HasIndex(c => c.Name).IsUnique();
+            e.Property(c => c.Type).HasConversion<string>();
             e.HasOne(c => c.Skill)
                 .WithMany()
                 .HasForeignKey(c => c.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
             e.HasMany(c => c.Accesses)
+                .WithOne(a => a.Container)
+                .HasForeignKey(a => a.ContainerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(c => c.SafeShellAccesses)
                 .WithOne(a => a.Container)
                 .HasForeignKey(a => a.ContainerId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -593,7 +594,7 @@ public class SharpClawDbContext(
     private static bool IsProtectedWildcardGrant(EntityEntry entry) => entry.Entity switch
     {
         DangerousShellAccessDB      e => e.SystemUserId              == WellKnownIds.AllResources,
-        SafeShellAccessDB           e => e.SystemUserId              == WellKnownIds.AllResources,
+        SafeShellAccessDB           e => e.ContainerId              == WellKnownIds.AllResources,
         LocalInfoStoreAccessDB      e => e.LocalInformationStoreId   == WellKnownIds.AllResources,
         ExternalInfoStoreAccessDB   e => e.ExternalInformationStoreId == WellKnownIds.AllResources,
         WebsiteAccessDB             e => e.WebsiteId                 == WellKnownIds.AllResources,

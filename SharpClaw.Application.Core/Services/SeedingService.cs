@@ -88,7 +88,7 @@ public sealed class SeedingService(
         // WellKnownIds.AllResources is recognised as a universal match
         // by AgentActionService and is immutable at runtime.
         DangerousShellAccesses      = [new() { SystemUserId              = WellKnownIds.AllResources }],
-        SafeShellAccesses           = [new() { SystemUserId              = WellKnownIds.AllResources }],
+        SafeShellAccesses           = [new() { ContainerId              = WellKnownIds.AllResources }],
         LocalInfoStorePermissions   = [new() { LocalInformationStoreId   = WellKnownIds.AllResources }],
         ExternalInfoStorePermissions = [new() { ExternalInformationStoreId = WellKnownIds.AllResources }],
         WebsiteAccesses             = [new() { WebsiteId                 = WellKnownIds.AllResources }],

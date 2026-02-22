@@ -98,6 +98,7 @@ try
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<LiveTranscriptionOrchestrator>();
     builder.Services.AddScoped<TranscriptionService>();
+    builder.Services.AddScoped<ContainerService>();
 
     // Background tasks
     builder.Services.AddHostedService<ScheduledTaskService>();

@@ -47,5 +47,4 @@ public class SystemUserDB : BaseEntity
     public SkillDB? Skill { get; set; }
 
     public ICollection<DangerousShellAccessDB> DangerousShellAccesses { get; set; } = [];
-    public ICollection<SafeShellAccessDB> SafeShellAccesses { get; set; } = [];
 }

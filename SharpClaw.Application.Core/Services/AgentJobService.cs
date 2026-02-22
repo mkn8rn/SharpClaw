@@ -1,6 +1,11 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
+using Mk8.Shell;
+using Mk8.Shell.Engine;
+using Mk8.Shell.Models;
+using Mk8.Shell.Safety;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Application.Infrastructure.Models.Messages;
@@ -84,6 +89,7 @@ SessionService session)
             Status = AgentJobStatus.Queued,
             DangerousShellType = request.DangerousShellType,
             SafeShellType = request.SafeShellType,
+            ScriptJson = request.ScriptJson,
             TranscriptionModelId = request.TranscriptionModelId,
             ConversationId = request.ConversationId,
             Language = request.Language,
@@ -422,12 +428,255 @@ SessionService session)
         orchestrator.Start(job.Id, model.Id, device.DeviceIdentifier, job.Language);
     }
 
-    private static Task<string?> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
+    // ── Shell execution routing ─────────────────────────────────
+    //
+    //  SAFE  (ExecuteAsSafeShell)             → mk8.shell pipeline
+    //        mk8.shell is sandboxed HARD: closed verb set,
+    //        binary allowlist, path jailing, no real shell
+    //        interpreter is ever invoked.  ALL mk8.shell
+    //        execution is safe by definition.
+    //
+    //  DANGEROUS  (UnsafeExecuteAsDangerousShell) → real shell process
+    //        Bash, PowerShell, CommandPrompt, Git are ALWAYS
+    //        dangerous.  The raw command text is handed to the
+    //        interpreter with no sandboxing.  There is no such
+    //        thing as a "safe" Bash/PowerShell/Cmd/Git execution.
+    //
+    // ──────────────────────────────────────────────────────────────
+
+    private async Task<string?> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
     {
-        _ = ct;
-        return Task.FromResult<string?>(
-            $"Action '{job.ActionType}' executed successfully (resource: {job.ResourceId?.ToString() ?? "n/a"}).");
+        return job.ActionType switch
+        {
+            // Safe shell — always mk8.shell, always sandboxed.
+            AgentActionType.ExecuteAsSafeShell
+                => await ExecuteSafeShellAsync(job, ct),
+
+            // Dangerous shell — real interpreter, unrestricted.
+            AgentActionType.UnsafeExecuteAsDangerousShell
+                => await ExecuteDangerousShellAsync(job, ct),
+
+            _ => $"Action '{job.ActionType}' executed successfully " +
+                 $"(resource: {job.ResourceId?.ToString() ?? "n/a"})."
+        };
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SAFE SHELL — mk8.shell only (sandboxed, verb-restricted DSL)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Executes an <see cref="AgentActionType.ExecuteAsSafeShell"/> job
+    /// through the mk8.shell pipeline.
+    /// <para>
+    /// The job's <see cref="AgentJobDB.ResourceId"/> identifies the
+    /// <see cref="ContainerDB"/> (which must be an mk8shell container).
+    /// mk8.shell is self-contained: the sandbox name is passed to
+    /// <see cref="Mk8TaskContainer.Create"/> which resolves the sandbox
+    /// from its own <c>%APPDATA%/mk8.shell</c> registry, verifies the
+    /// signed environment, and builds the workspace context.
+    /// </para>
+    /// <para>
+    /// Permission check (<see cref="AgentActionService.AccessContainerAsync"/>)
+    /// must have already been evaluated before reaching this method.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ExecuteSafeShellAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(job.ScriptJson))
+            throw new InvalidOperationException(
+                "Safe shell job requires a script payload (ScriptJson) " +
+                "containing an mk8.shell script.");
+
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "Safe shell job requires a ResourceId (Container).");
+
+        var container = await db.Containers
+            .FirstOrDefaultAsync(c => c.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"Container {job.ResourceId} not found.");
+
+        if (container.Type != ContainerType.Mk8Shell)
+            throw new InvalidOperationException(
+                $"Container '{container.Name}' is not an mk8shell container.");
+
+        if (string.IsNullOrWhiteSpace(container.SandboxName))
+            throw new InvalidOperationException(
+                $"Container '{container.Name}' has no sandbox name configured.");
+
+        var script = JsonSerializer.Deserialize<Mk8ShellScript>(
+            job.ScriptJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw new InvalidOperationException(
+                "Failed to deserialise mk8.shell script from ScriptJson.");
+
+        // mk8.shell is self-contained: pass the sandbox name and it
+        // resolves everything from its own local registry.
+        using var taskContainer = Mk8TaskContainer.Create(container.SandboxName);
+
+        var effectiveOptions = script.Options ?? Mk8ExecutionOptions.Default;
+
+        // Compile through the full mk8.shell pipeline
+        // (expand → resolve → sanitize → compile).
+        var compiler = new Mk8ShellCompiler(
+            Mk8CommandWhitelist.CreateDefault(taskContainer.RuntimeConfig));
+        var compiled = compiler.Compile(
+            script, taskContainer.Workspace, effectiveOptions);
+
+        AddLog(job,
+            $"mk8.shell script compiled: {compiled.Commands.Count} command(s), " +
+            $"sandbox '{container.SandboxName}'.");
+        await db.SaveChangesAsync(ct);
+
+        // Execute all compiled commands (safe — never spawns a real shell).
+        var executor = new Mk8ShellExecutor();
+        var result = await executor.ExecuteAsync(compiled, ct);
+
+        // Build a human-readable summary for ResultData.
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"AllSucceeded: {result.AllSucceeded}");
+        summary.AppendLine($"Duration: {result.TotalDuration}");
+        summary.AppendLine($"Steps: {result.Steps.Count}");
+
+        foreach (var step in result.Steps)
+        {
+            var status = step.Success ? "OK" : "FAIL";
+            summary.AppendLine(
+                $"  [{step.StepIndex}] {step.Verb} {status} " +
+                $"({step.Attempts} attempt(s), {step.Duration.TotalMilliseconds:F0}ms)");
+
+            if (!string.IsNullOrWhiteSpace(step.Error))
+                summary.AppendLine($"    Error: {step.Error}");
+        }
+
+        if (!result.AllSucceeded)
+            throw new InvalidOperationException(
+                $"mk8.shell script execution failed.{Environment.NewLine}{summary}");
+
+        return summary.ToString();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DANGEROUS SHELL — real interpreter (Bash/PowerShell/Cmd/Git)
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // Bash, PowerShell, CommandPrompt, and Git are ALWAYS dangerous.
+    // They are never sandboxed through mk8.shell.  The raw command
+    // text is handed directly to the interpreter.  The only protection
+    // is the permission system's clearance requirement.
+    //
+
+    /// <summary>
+    /// Executes an <see cref="AgentActionType.UnsafeExecuteAsDangerousShell"/>
+    /// job by spawning a real shell interpreter process.
+    /// <para>
+    /// <b>This is inherently dangerous.</b>  The raw command from
+    /// <see cref="AgentJobDB.ScriptJson"/> is passed to the shell with
+    /// no sandboxing, no allowlist, and no path validation.  Safety
+    /// relies entirely on the two-level permission clearance check that
+    /// was already evaluated before reaching this point.
+    /// </para>
+    /// <para>
+    /// Cross-platform: Bash on Linux/macOS, PowerShell (pwsh) everywhere,
+    /// CommandPrompt on Windows only, Git everywhere.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ExecuteDangerousShellAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(job.ScriptJson))
+            throw new InvalidOperationException(
+                "Dangerous shell job requires a command payload (ScriptJson).");
+
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "Dangerous shell job requires a ResourceId (SystemUser).");
+
+        if (!job.DangerousShellType.HasValue)
+            throw new InvalidOperationException(
+                "Dangerous shell job requires a DangerousShellType.");
+
+        var systemUser = await db.SystemUsers
+            .FirstOrDefaultAsync(u => u.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"SystemUser {job.ResourceId} not found.");
+
+        var workingDir = systemUser.WorkingDirectory
+            ?? systemUser.SandboxRoot
+            ?? Directory.GetCurrentDirectory();
+
+        // Resolve the shell executable and argument list.
+        var (executable, arguments) = ResolveDangerousShell(
+            job.DangerousShellType.Value, job.ScriptJson);
+
+        AddLog(job,
+            $"Dangerous shell ({job.DangerousShellType}) executing as " +
+            $"'{systemUser.Username}' in '{workingDir}'.");
+        await db.SaveChangesAsync(ct);
+
+        // Spawn the real shell — NO sandboxing, NO allowlist.
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDir,
+        };
+
+        foreach (var arg in arguments)
+            psi.ArgumentList.Add(arg);
+
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        process.Start();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        await process.WaitForExitAsync(ct);
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Dangerous shell '{executable}' exited with code {process.ExitCode}.\n" +
+                $"stderr: {stderr}");
+
+        return string.IsNullOrWhiteSpace(stdout) ? "(no output)" : stdout;
+    }
+
+    /// <summary>
+    /// Maps a <see cref="DangerousShellType"/> to the OS executable and
+    /// the argument list that passes the raw command to the interpreter.
+    /// <para>
+    /// Every value in this enum spawns a real, unrestricted process.
+    /// None of them ever go through mk8.shell.
+    /// </para>
+    /// </summary>
+    private static (string Executable, string[] Arguments) ResolveDangerousShell(
+        DangerousShellType shellType, string command) => shellType switch
+    {
+        // Bash — Linux/macOS (or WSL on Windows).
+        DangerousShellType.Bash => ("bash", ["-c", command]),
+
+        // PowerShell — cross-platform via pwsh.
+        DangerousShellType.PowerShell => (
+            OperatingSystem.IsWindows() ? "powershell" : "pwsh",
+            ["-NoProfile", "-NonInteractive", "-Command", command]),
+
+        // Command Prompt — Windows only.
+        DangerousShellType.CommandPrompt => ("cmd", ["/C", command]),
+
+        // Git — cross-platform, command is the git sub-command + args.
+        DangerousShellType.Git => ("git", command.Split(' ', StringSplitOptions.RemoveEmptyEntries)),
+
+        _ => throw new InvalidOperationException(
+            $"Unsupported dangerous shell type: {shellType}.")
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // Permission dispatch
@@ -573,7 +822,7 @@ SessionService session)
         AgentActionType.UnsafeExecuteAsDangerousShell
             => permissionSet.DefaultDangerousShellAccess?.SystemUserId,
         AgentActionType.ExecuteAsSafeShell
-            => permissionSet.DefaultSafeShellAccess?.SystemUserId,
+            => permissionSet.DefaultSafeShellAccess?.ContainerId,
         AgentActionType.AccessLocalInfoStore
             => permissionSet.DefaultLocalInfoStorePermission?.LocalInformationStoreId,
         AgentActionType.AccessExternalInfoStore
@@ -707,7 +956,7 @@ SessionService session)
 
         AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
             => ps.SafeShellAccesses.Any(a =>
-                a.SystemUserId == resourceId || a.SystemUserId == WellKnownIds.AllResources),
+                a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
 
         AgentActionType.AccessLocalInfoStore when resourceId.HasValue
             => ps.LocalInfoStorePermissions.Any(a =>
@@ -805,6 +1054,7 @@ SessionService session)
             CompletedAt: job.CompletedAt,
             DangerousShellType: job.DangerousShellType,
             SafeShellType: job.SafeShellType,
+            ScriptJson: job.ScriptJson,
             TranscriptionModelId: job.TranscriptionModelId,
             ConversationId: job.ConversationId,
             Language: job.Language,

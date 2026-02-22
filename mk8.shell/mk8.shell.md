@@ -11,9 +11,9 @@ tightly-validated process invocations. Agents never see or interact with a real
 shell. Arguments are always passed as structured arrays — never concatenated
 into a command string — eliminating the injection surface entirely.
 
-**Only ProcRun and Git* verbs spawn external processes.** Everything else
-(file I/O, HTTP, text, env, sysinfo) is executed in-memory via .NET APIs.
-The compiler never emits bash, cmd, or powershell as an executable.
+**Only ProcRun spawns an external process.** Everything else (file I/O,
+HTTP, text, env, sysinfo) is executed in-memory via .NET APIs. The compiler
+never emits bash, cmd, or powershell as an executable.
 
 ## Execution Model
 
@@ -28,7 +28,16 @@ dispatch it:
 |---|---|---|
 | `InMemory` | File, Dir, HTTP, Text, Env, Sys, FileTemplate, FilePatch, FileHash, DirTree | .NET APIs directly (`File.ReadAllTextAsync`, `HttpClient`, `System.Security.Cryptography`, etc.) — no process spawned |
 | `Process` | ProcRun | `System.Diagnostics.Process` with `UseShellExecute = false`, args via `ArgumentList` |
-| `GitProcess` | Git* | Same mechanism as `Process` — executable is always `git`, args validated by `Mk8GitFlagValidator` |
+
+> **Git via command-template whitelist.**  Git operations are available
+> through the strict command-template whitelist (see ProcRun
+> section) — only the exact templates registered in `Mk8GitCommands`
+> can execute, and no unregistered flag can reach git.  Write
+> operations (commit, checkout, switch) are constrained to
+> compile-time word lists.  Protected branches (main, master,
+> develop, staging, production, live, release/*, trunk) are
+> intentionally excluded — agents must work in feature/bugfix/hotfix
+> branches only.
 
 **Why no shell?** `ProcessStartInfo.UseShellExecute = false` combined with
 `ArgumentList.Add(arg)` passes each argument individually to the OS
@@ -49,15 +58,18 @@ parses them.
 
 ## Script Format
 
-A script is an ordered list of operations:
+A script is an ordered list of operations. The caller provides a **sandbox
+ID** and a **script** as separate parameters. mk8.shell handles everything
+else: it resolves the sandbox from its own `%APPDATA%/mk8.shell` registry,
+verifies the signed environment, builds the workspace context, compiles
+the script, executes it, and returns results. The sandbox ID is not part
+of the script JSON.
 
 ```json
 {
   "operations": [
     { "verb": "DirList",   "args": ["$WORKSPACE/app"] },
     { "verb": "FileRead",  "args": ["$WORKSPACE/app/config.json"] },
-    { "verb": "GitStatus", "args": [] },
-    { "verb": "GitAdd",    "args": [".", "--dry-run"] },
     {
       "verb": "ProcRun", "args": ["dotnet", "build"],
       "maxRetries": 2,
@@ -90,8 +102,8 @@ A script is an ordered list of operations:
 |--------------|-------------|--------|-----------------------------------------------------------------|
 | verb         | Mk8ShellVerb| —      | Required. The operation to perform.                              |
 | args         | string[]    | —      | Required. Structured arguments (never shell-concatenated).       |
-| maxRetries   | int?        | null   | Per-step retry count. Overrides script-level default. Capped by SystemUser ceiling. |
-| stepTimeout  | TimeSpan?   | null   | Per-step timeout. Overrides script-level default. Capped by `SystemUserDB.DefaultStepTimeoutSeconds`. |
+| maxRetries   | int?        | null   | Per-step retry count. Overrides script-level default.            |
+| stepTimeout  | TimeSpan?   | null   | Per-step timeout. Overrides script-level default.              |
 | label        | string?     | null   | Step label for jump targets. Unique within script.              |
 | onFailure    | string?     | null   | Forward jump on failure, e.g. `"goto:cleanup"`.                 |
 | captureAs    | string?     | null   | Capture stdout into a named variable (e.g. `"BUILD_OUTPUT"`).   |
@@ -118,10 +130,6 @@ A script is an ordered list of operations:
 - Steps retry on non-zero exit code only (not on compile errors).
 - Per-step `maxRetries` overrides the script-level default.
 - Delay doubles each attempt: `retryDelay * 2^(attempt-1)`.
-- SystemUser-level `DefaultMaxRetries` acts as a **ceiling** — agents cannot
-  request more retries than the administrator configured.
-- SystemUser-level `DefaultStepTimeoutSeconds` acts as a **ceiling** for
-  step timeout.
 
 ### Failure Modes
 
@@ -182,8 +190,6 @@ that the executor uses to skip ahead on failure.
 ### Per-Step Timeout Overrides
 
 Per-step `stepTimeout` overrides the script-level `options.stepTimeout`.
-The value is **capped** by `SystemUserDB.DefaultStepTimeoutSeconds` — agents
-cannot exceed the administrator-configured ceiling.
 
 ```json
 { "verb": "ProcRun",  "args": ["dotnet", "build"],       "stepTimeout": "00:02:00" },
@@ -195,30 +201,74 @@ This allows slow steps (builds) to have generous timeouts while fast steps
 
 ## Workspace Context
 
-The workspace is **built server-side at job startup** from the `SystemUserDB`
-resource — the agent never supplies sandbox paths or working directories.
+mk8.shell is a **self-contained terminal system**. The caller provides a
+sandbox ID and a script — mk8.shell resolves, verifies, compiles, executes,
+and returns results entirely on its own. It does not rely on any external
+system for sandbox resolution, path validation, or environment loading.
 
-### Where It Loads From
+### Sandbox Lifecycle
+
+Every mk8.shell invocation targets a named **sandbox** — an isolated
+directory registered via `mk8.shell.startup`. mk8.shell performs the full
+lifecycle internally via `Mk8TaskContainer.Create(sandboxId)`:
+
+1. **Load global env** from `mk8.shell.base.env` (ships with the assembly).
+2. **Resolve sandbox ID** → local path from mk8.shell's own
+   `%APPDATA%/mk8.shell/sandboxes.json` registry.
+3. **Verify signature** — read `mk8.shell.signed.env` from sandbox root,
+   verify HMAC-SHA256 with the machine-local key.
+4. **Extract env vars** from the verified signed content (never from the
+   unsigned `.env` — that file exists only for user convenience).
+5. **Build `Mk8WorkspaceContext`** with merged environment.
+6. **Compile and execute** the script inside an isolated task container.
+7. **Dispose** — all state is discarded. Nothing transfers between invocations.
+
+### Sandbox Registration
+
+Sandboxes are created exclusively via `mk8.shell.startup` (the
+`Mk8SandboxRegistrar.Register` method). mk8.shell itself has no ability to
+create, modify, or manage sandboxes.
+
+Registration creates:
+- `mk8.shell.env` — user-editable KEY=VALUE file (never read by mk8.shell at runtime)
+- `mk8.shell.signed.env` — cryptographically signed copy (HMAC-SHA256, machine-local key)
+
+Both files are **GIGABLACKLISTED** — mk8.shell commands cannot read, write,
+copy, move, delete, hash, or access them in any way. Only the user or
+mk8.shell.startup may touch them.
+
+Sandbox names must contain only English letters (A-Z, a-z) and digits (0-9).
+
+### Local Registry (`%APPDATA%/mk8.shell/`)
 
 ```
-SystemUserDB
-├── Username           → $USER, ProcessStartInfo.UserName
-├── SandboxRoot        → $WORKSPACE, Mk8PathSanitizer boundary
-├── WorkingDirectory   → $CWD, ProcessStartInfo.WorkingDirectory
-├── DefaultStepTimeoutSeconds  → ceiling for options.stepTimeout
-└── DefaultMaxRetries  → ceiling for options.maxRetries
+%APPDATA%/mk8.shell/
+├── sandboxes.json            ← sandbox ID → { rootPath, registeredAtUtc }
+├── mk8.shell.key             ← 256-bit HMAC signing key (machine-local)
+└── history/
+    ├── Banana_20250101_120000.signed.env
+    └── ...                   ← timestamped backup of every signing
 ```
 
-If `SandboxRoot` is not configured, it defaults to:
-- Linux: `/home/{username}/sandbox`
-- Windows: `C:\Users\{username}\sandbox`
+The signing key ensures that signed env files cannot be copied between
+machines without re-signing.
 
-### CLI Configuration
+### Where Variables Load From
 
 ```
-systemuser add deploy --sandbox /home/deploy/sandbox --workdir /home/deploy/sandbox/app --timeout 60 --retries 3
-systemuser update deploy --sandbox /opt/deploy/workspace
+Sandbox Registry (local)
+├── RootPath               → $WORKSPACE, Mk8PathSanitizer boundary
+└── mk8.shell.signed.env   → additional variables (verified first)
+
+Global (mk8.shell.base.env)
+├── ProjectBases            → Mk8RuntimeConfig for command whitelist
+└── GitRemoteUrls           → Mk8RuntimeConfig for command whitelist
+
+OS
+└── Username                → $USER
 ```
+
+`$CWD` defaults to the sandbox root. `$WORKSPACE` is always the sandbox root.
 
 ### Variable Shortcuts
 
@@ -227,9 +277,9 @@ They are not shell environment variables.
 
 | Variable     | Source                           | Example value                    |
 |--------------|----------------------------------|----------------------------------|
-| `$WORKSPACE` | `SystemUserDB.SandboxRoot`       | `/home/deploy/sandbox`           |
-| `$CWD`       | `SystemUserDB.WorkingDirectory`  | `/home/deploy/sandbox/app`       |
-| `$USER`      | `SystemUserDB.Username`          | `deploy`                         |
+| `$WORKSPACE` | Sandbox root path (from registry)| `/home/deploy/sandbox`           |
+| `$CWD`       | Working directory (= sandbox root)| `/home/deploy/sandbox`          |
+| `$USER`      | OS username                      | `deploy`                         |
 | `$PREV`      | stdout of previous step          | `Build succeeded. 0 warnings.`   |
 
 #### How `$PREV` Works
@@ -249,8 +299,9 @@ When `pipeStepOutput: false` (default), `$PREV` is always empty.
 
 #### Custom Variables
 
-Additional variables can be injected from `ContainerDB` or
-`ChannelContextDB` in the future. Custom variables cannot override
+Additional variables are loaded from the sandbox's signed environment file
+(`mk8.shell.signed.env`). These are verified on every command startup and
+made available as `$NAME` in scripts. Custom variables cannot override
 built-in variables (`WORKSPACE`, `CWD`, `USER`, `PREV`).
 
 #### Named Captures (`captureAs`)
@@ -270,7 +321,7 @@ via `$NAME` in subsequent steps:
 - Names may only contain letters, digits, and underscores.
 - Cannot override built-ins: `WORKSPACE`, `CWD`, `USER`, `PREV`, `ITEM`, `INDEX`.
 - Capture names must be unique within a script.
-- Captured variables from process-spawning steps (ProcRun, Git*) are
+- Captured variables from process-spawning steps (ProcRun) are
   **blocked in ProcRun arguments** — same injection prevention as `$PREV`.
 - Capture size is enforced by existing `maxOutputBytes`.
 
@@ -364,54 +415,223 @@ The verb reads the file, applies patches sequentially, writes the result.
 indented). Depth defaults to 3, max 5. Read-only, in-memory, no glob.
 Path must be in sandbox.
 
-### Process (Allowlisted)
+### Process (Strict Command-Template Whitelist)
 
 | Verb    | Args                         | Description                            |
 |---------|------------------------------|----------------------------------------|
-| ProcRun | `[binary, arg0, arg1, ...]`  | Run an allowlisted binary with args    |
+| ProcRun | `[binary, arg0, arg1, ...]`  | Run a whitelisted command template     |
 
-The binary name (`args[0]`) is checked against a `HashSet<string>`.
-Default allowlist: `dotnet`, `node`, `npm`, `npx`, `cargo`, `make`, `cmake`,
-`jq`, `tar`, `gzip`, `gunzip`, `unzip`, `zip`, `git`, `echo`, `cat`, `head`,
-`tail`, `wc`, `sort`, `uniq`, `grep`, `diff`, `sha256sum`, `md5sum`, `base64`.
+ProcRun uses a **strict command-template whitelist** (`Mk8CommandWhitelist`).
+There is no "allowed binary + blocked flags" model — every invocation must
+match a registered `Mk8AllowedCommand` template EXACTLY.  Each template
+defines fixed prefix args, optional flags with typed values, and positional
+parameter slots.  The agent can NEVER inject free text into any argument
+position.
 
-**Per-binary flag restrictions** (even allowed binaries have blocked flags):
+Templates and word lists are compile-time constants defined in the
+`Commands/` directory (one file per tool category).  They cannot be modified
+at runtime — to change the allowed surface, a developer edits the source file
+and recompiles.
 
-| Binary  | Blocked flags                              | Reason                        |
-|---------|--------------------------------------------|-------------------------------|
-| dotnet  | `run`, `script`, `exec`                    | Can execute arbitrary code    |
-| node    | `-e`, `--eval`, `-p`, `--print`            | Inline JS execution           |
-| npm     | `exec`, `x`                               | Arbitrary package execution   |
-| npx     | `-c`                                       | Inline command                 |
-| cargo   | `run`, `script`                            | Arbitrary code execution       |
-| make    | `SHELL=`, `--eval`                         | Shell override / eval          |
-| git     | `-c`, `--exec`, `--upload-pack`            | Config/command injection       |
-| tar     | `--checkpoint-action`, `--to-command`      | Arbitrary command on extract   |
+#### Slot types
 
-**Permanently excluded (all categories):** `bash`, `sh`, `zsh`, `fish`, `dash`,
-`cmd`, `powershell`, `pwsh`, `python`, `python2`, `python3`, `pip`, `perl`,
-`ruby`, `lua`, `php`, `env`, `xargs`, `nohup`, `sudo`, `su`, `doas`, `pkexec`,
-`curl`, `wget`, `find`, `ssh`, `scp`, `rsync`, `nc`, `socat`, `crontab`,
-`chmod`, `chown`, `systemctl`, `dd`, `strace`.
+| Kind | Description | Example |
+|---|---|---|
+| `Choice` | Value must exactly match one of a fixed set | `Release` or `Debug` |
+| `SandboxPath` | Value must resolve inside the sandbox via `Mk8PathSanitizer` | `$WORKSPACE/src/app.cs` |
+| `AdminWord` | Value must be a single entry from a named word list | `Initial` from MigrationNames |
+| `IntRange` | Value must be an integer in [min, max] | `1`–`100` |
+| `ComposedWords` | Value is split on spaces; each word must be in a named word list (max 12 words) | `"Fix build errors"` → `["Fix","build","errors"]` all in CommitWords |
+| `CompoundName` | Runtime base name + optional compile-time suffix (the ONLY runtime exception) | Base `"Banana"` → `"Banana"`, `"BananaApi"`, `"Banana.Api"` |
+
+#### How ComposedWords works
+
+Spaces are safe — `ProcessStartInfo.ArgumentList.Add("Fix build errors")`
+passes the entire string as one OS-level argument.  No shell tokenizes it.
+
+Each word is validated independently against the word list:
+- `"Fix auth errors"` → `["Fix", "auth", "errors"]` → all in CommitWords → **allowed**
+- `"Api 1 2 3"` → `["Api", "1", "2", "3"]` → all in CommitWords → **allowed**
+- `"Api123"` → tries to match `"Api123"` as one word → NOT in list → **rejected**
+- `"I hacked the mainframe"` → `"hacked"` NOT in list → **rejected**
+
+ComposedWords is NOT concatenation.  `"Api 1 2 3"` is allowed (4 separate
+words) but `"Api123"` is rejected (one word not in the list).  With single
+letters A-Z in the word list, concatenation would accept ANY string,
+defeating the whitelist.  This is why AdminWord (single exact match) is used
+for migration names and branch names.
+
+#### How CompoundName works (project names)
+
+This is the **ONLY runtime exception** in the whitelist.  Project names are
+environment-specific — pre-enumerating all possible base names at compile
+time is impractical.  Creating a project is a one-off setup operation with
+limited abuse surface.
+
+The administrator provides base names at startup via `Mk8RuntimeConfig`:
+
+```csharp
+var config = new Mk8RuntimeConfig { ProjectBases = ["Banana", "SharpClaw"] };
+var whitelist = Mk8CommandWhitelist.CreateDefault(config);
+```
+
+The whitelist pre-computes all valid combinations at construction time:
+
+- `"Banana"` — base alone
+- `"BananaApi"` — base + suffix (direct concatenation)
+- `"Banana.Api"` — base + "." + suffix (dot-separated)
+- `"Banana.Application.API"` — base + "." + compound suffix
+
+Compile-time suffixes (`Mk8DotnetCommands.ProjectSuffixes`): `App`, `Api`,
+`Core`, `Infrastructure`, `Contracts`, `Tests`, `Utils`, `Client`, `Server`,
+`Worker`, `Service`, `Web`, `Grpc`, `Shared`, `Common`, `Domain`, `Data`,
+`Models`, `Handlers`, `Extensions`, plus compound suffixes like
+`Application.API`, `Application.Core`, `PublicAPI`, `UITests`, etc.
+
+If no base names are configured, `dotnet new -n` is unavailable (but
+`dotnet new <template>` without `-n` still works — uses directory name).
+
+#### Allowed command templates
+
+**dotnet** (`Mk8DotnetCommands`):
+
+| Template | Flags | Params |
+|---|---|---|
+| `dotnet --version` | — | — |
+| `dotnet --info` | — | — |
+| `dotnet build` | `--configuration Release\|Debug`, `--no-restore`, `-o SandboxPath` | — |
+| `dotnet publish` | same as build | — |
+| `dotnet test` | `--configuration`, `--no-restore`, `--no-build` | — |
+| `dotnet clean` | `--configuration` | — |
+| `dotnet restore` | `--no-cache` | — |
+| `dotnet format` | `--verify-no-changes` | — |
+| `dotnet new <template> -n <name>` | `-n`/`--name` CompoundName (runtime base + suffix), `-o` SandboxPath | template from DotnetTemplates |
+| `dotnet ef migrations add <name>` | — | name from MigrationNames |
+| `dotnet ef migrations list` | — | — |
+| `dotnet ef migrations script` | `--idempotent`, `-o` SandboxPath | — |
+| `dotnet ef dbcontext info` | — | — |
+| `dotnet ef dbcontext list` | — | — |
+
+Word lists:
+- **MigrationNames**: `Initial`, `Baseline`, `Seed`, `AddUsers`, `AddRoles`, ... `V1`–`V5`, `A`–`Z`, `0`–`9`
+- **ProjectSuffixes**: `App`, `Api`, `Core`, `Infrastructure`, ... `Application.API`, `PublicAPI`, `UITests` (combined with runtime base names via `CompoundName`)
+- **DotnetTemplates**: `console`, `classlib`, `webapi`, `web`, `mvc`, `razor`, `worker`, `mstest`, `nunit`, `xunit`, `blazorserver`, `blazorwasm`, `grpc`, `gitignore`, `editorconfig`, `globaljson`, `tool-manifest`
+
+**git** (`Mk8GitCommands`):
+
+Read-only:
+
+| Template | Flags | Params |
+|---|---|---|
+| `git --version` | — | — |
+| `git status` | `--short`, `-s`, `--porcelain` | — |
+| `git log --oneline` | `-n 1-100`, `--all`, `--no-decorate` | — |
+| `git diff` | `--staged`, `--cached`, `--stat`, `--name-only`, `--name-status` | — |
+| `git diff <path>` | `--staged`, `--cached` | SandboxPath |
+| `git branch` | `--list`, `-a`, `--all`, `-r` | — |
+| `git remote` | `-v` | — |
+| `git remote add <name> <url>` | — | name from RemoteNames, url from GitRemoteUrls (runtime) |
+| `git remote remove <name>` | — | name from RemoteNames |
+| `git rev-parse HEAD` | — | — |
+| `git rev-parse --short HEAD` | — | — |
+| `git ls-files` | — | — |
+| `git tag --list` / `git tag -l` | — | — |
+| `git describe` | `--tags`, `--always` | — |
+
+Write (constrained):
+
+| Template | Flags | Params |
+|---|---|---|
+| `git add <paths>` | — | variadic SandboxPath |
+| `git add .` | — | — |
+| `git add -A` | — | — |
+| `git commit` | `-m` ComposedWords from CommitWords | — |
+| `git stash` / `pop` / `list` / `drop` | — | — |
+| `git checkout <branch>` | — | AdminWord from BranchNames |
+| `git checkout -b <branch>` | — | AdminWord from BranchNames |
+| `git switch <branch>` | — | AdminWord from BranchNames |
+| `git switch -c <branch>` | — | AdminWord from BranchNames |
+
+Word lists:
+- **CommitWords**: vocabulary of ~200 verbs, nouns, adjectives, connectors, letters, digits — agent composes messages by combining words with spaces (max 12 words)
+- **BranchNames**: `feature/*`, `bugfix/*`, `hotfix/*`, plus single letters/digits
+- **RemoteNames**: `origin`, `upstream`, `fork`, `backup`, `mirror`
+- **GitRemoteUrls**: runtime-configured via `Mk8RuntimeConfig.GitRemoteUrls` (max 16)
+
+**Protected branches — BANNED:** `main`, `master`, `develop`, `staging`,
+`production`, `live`, `release`, `release/*`, `trunk`.  These are
+intentionally excluded from BranchNames.  Agents must NEVER operate on
+branches used for live or master development.  Merging to protected
+branches requires `DangerousShellType.Git` with human approval.
+
+Not whitelisted (require dangerous-shell path): `push`, `pull`, `merge`,
+`rebase`, `reset`, `clean`, `clone`, `config`, `submodule`, `am`, `apply`,
+`filter-branch`, `cherry-pick`, `bisect`, `gc`, `fsck`, `reflog`.
+
+#### Runtime configuration (`Mk8RuntimeConfig`)
+
+The **ONLY runtime exception** in the whitelist.  The administrator provides
+environment-specific values at startup:
+
+```csharp
+var config = new Mk8RuntimeConfig
+{
+    ProjectBases = ["Banana", "SharpClaw"],
+    GitRemoteUrls = ["https://github.com/org/repo.git"],
+};
+var whitelist = Mk8CommandWhitelist.CreateDefault(config);
+```
+
+These are baked into the immutable whitelist at construction — they cannot be
+changed after creation.  Caps: max 32 project bases, max 16 git remote URLs.
+
+If no runtime config is provided, `dotnet new -n` and `git remote add` are
+unavailable (the agent gets a clear error message).
+
+**node / npm** (`Mk8NodeNpmCommands`): `node --version`, `npm --version`,
+`npm ls` (with `--depth 0-10`, `--all`, `--json`), `npm outdated` (with `--json`).
+
+**cargo** (`Mk8CargoCommands`): `cargo --version` only.
+
+**Archive tools** (`Mk8ArchiveCommands`): create and list ONLY — no
+extraction (symlink/traversal risk).  `tar -tf`, `tar -cf`, `tar -czf`,
+`gzip`, `gunzip`, `zip`, `unzip -l`.
+
+**Read-only tools** (`Mk8ReadOnlyToolCommands`): `cat`, `head -n`, `tail -n`,
+`wc -l/-w/-c`, `sort`, `uniq`, `diff`, `sha256sum`, `md5sum`,
+`base64`/`base64 -d`.  All accept ONLY SandboxPath arguments.
+
+#### Defence-in-depth layers
+
+1. **Permanently blocked binaries** (`Mk8BinaryAllowlist`): bash, sh, cmd,
+   powershell, python, perl, ruby, curl, wget, find, sudo, chmod, etc.
+   Cannot be overridden even with a template.
+2. **Command-template whitelist** (`Mk8CommandWhitelist`): only registered
+   templates can execute.  Unregistered flags, unknown binaries → rejected.
+3. **Typed parameter slots**: every argument position has a slot type.
+   No free text reaches any process argument.
+4. **`.git/` write protection** (`Mk8PathSanitizer.ResolveForWrite`): blocks
+   all writes to paths containing `.git/`, preventing hook injection and
+   config tampering.
+5. **`.gitattributes` / `.gitmodules` write block**: these filenames are in
+   `BlockedWriteFilenames` to prevent filter driver redirection and
+   submodule URL manipulation.
+6. **Sandbox env GIGABLACKLIST** (`Mk8PathSanitizer.Resolve`): `mk8.shell.env`
+   and `mk8.shell.signed.env` are blocked on ALL operations — read, write,
+   copy, move, delete, hash, list. Enforced in `Resolve()` itself, not just
+   `ResolveForWrite()`. Only the user or mk8.shell.startup may access them.
 
 ### Git
 
-| Verb        | Args                          | Description                    | Equivalent               |
-|-------------|-------------------------------|--------------------------------|--------------------------|
-| GitStatus   | `[]`                          | Show working tree status       | `git status`             |
-| GitLog      | `[maxCount?]`                 | Show commit log                | `git log -n <count>`    |
-| GitDiff     | `[path?]`                     | Show unstaged changes          | `git diff [path]`        |
-| GitAdd      | `[pathspec, flags?]`          | Stage files                    | `git add <pathspec>`     |
-| GitCommit   | `[message]`                   | Commit staged changes          | `git commit -m "msg"`   |
-| GitPush     | `[remote?, branch?]`          | Push to remote                 | `git push`               |
-| GitPull     | `[remote?, branch?]`          | Pull from remote               | `git pull`               |
-| GitClone    | `[url, dest?]`                | Clone a repository             | `git clone <url>`        |
-| GitCheckout | `[branchOrPath]`              | Switch branch or restore file  | `git checkout <ref>`     |
-| GitBranch   | `[name?, flags?]`             | List or create branches        | `git branch [name]`      |
+Git is available through the strict command-template whitelist:
 
-Git verbs compile to `git` as the executable and are **not routed through a
-shell**. Flags like `--exec`, `-c core.sshCommand`, and `--upload-pack` are
-blocked to prevent command injection through git's own flag interpreter.
+- **Only registered templates execute.** `git config`, `git -c`, `git push`,
+  `git pull`, and all other unregistered subcommands/flags are rejected.
+- **Commit messages are composed** from a vocabulary word list — no free text.
+- **Branch names are pre-approved** — protected branches are excluded.
+- **`.git/` internals are write-protected** — agents cannot create hooks,
+  modify config, or inject objects.
+- **No push/pull** — code stays local until a human approves.
 
 ### HTTP
 
@@ -497,7 +717,7 @@ replacement — they are not passed to the process environment. This means:
   the attack: `FileRead malicious.txt` → `$PREV` = file contents →
   `ProcRun dotnet $PREV`.
 - **Named captures from process steps are also blocked in ProcRun arguments.**
-  If `captureAs: "BUILD_OUT"` is set on a ProcRun or Git* step, `$BUILD_OUT`
+  If `captureAs: "BUILD_OUT"` is set on a ProcRun step, `$BUILD_OUT`
   is blocked in all subsequent ProcRun args — same injection prevention.
 
 ### Write Protection (Two-Tier Model)
@@ -532,8 +752,10 @@ The agent cannot execute these because `bash`, `sh`, `python`, `python3`,
 |---|---|---|
 | Native executables | `.exe`, `.com`, `.scr`, `.msi`, `.msp`, `.dll`, `.bin`, `.run`, `.elf`, `.so`, `.dylib`, `.appimage` | OS runs directly |
 | Node.js code files | `.js`, `.mjs`, `.cjs` | `node` is on the allowlist |
+| MSBuild project files | `.csproj`, `.fsproj`, `.vbproj`, `.proj`, `.targets`, `.props`, `.sln` | `dotnet build` executes `<Exec>` targets |
+| Rust source files | `.rs` | `cargo build` executes `build.rs` scripts |
 | Windows script host | `.jse`, `.wsf`, `.wsh`, `.msh`, `.vbs`, `.vbe` | OS can invoke via file association |
-| Build config files | `Makefile`, `GNUmakefile`, `CMakeLists.txt`, `Dockerfile`, `.npmrc` | `make`/`cmake`/`npm` execute these implicitly |
+| Build config files (by name) | `Makefile`, `GNUmakefile`, `CMakeLists.txt`, `Dockerfile`, `.npmrc`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `nuget.config`, `package.json`, `build.rs`, `Cargo.toml`, `setup.py`, `setup.cfg`, `pyproject.toml`, `.gitattributes`, `.gitmodules`, `mk8.shell.env`, `mk8.shell.signed.env` | Build tools execute code from these implicitly / sandbox security |
 
 ##### Why these are blocked: the binary planting attack
 
@@ -604,17 +826,8 @@ ProcRun ["make", "-f", "Makefile"]        → BLOCKED (dangerous config)
 
 ### Execution Limits
 
-System user limits act as **ceilings** that agents cannot exceed:
-
-```
-SystemUserDB.DefaultMaxRetries = 3
-  + Script requests maxRetries = 5
-  → Effective: 3 (capped by system user)
-
-SystemUserDB.DefaultStepTimeoutSeconds = 60
-  + Script requests stepTimeout = 120s
-  → Effective: 60s (capped by system user)
-```
+Execution options provide ceilings for retries and timeouts. Per-step
+overrides can extend but not exceed script-level defaults.
 
 ## Control Flow
 
@@ -657,7 +870,7 @@ No else branch, no boolean operators, no nesting beyond depth 3.
   "verb": "If",
   "if": {
     "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
-    "then": { "verb": "GitAdd", "args": ["."] }
+    "then": { "verb": "FileWrite", "args": ["$WORKSPACE/status.txt", "build ok"] }
   }
 }
 ```
@@ -788,7 +1001,7 @@ Mk8VariableResolver.ResolveArgs()    ← resolves $WORKSPACE, $CWD, $USER, $CAPT
        │                                ($PREV + process captures blocked for ProcRun)
        ▼
 Mk8PathSanitizer.Resolve()           ← validates paths in sandbox
-Mk8PathSanitizer.ResolveForWrite()   ← + blocks executable extensions
+Mk8PathSanitizer.ResolveForWrite()   ← + blocks executable extensions + project files
        │
        ▼
 Mk8ShellCompiler.CompileOperation()  ← verb dispatch
@@ -796,8 +1009,7 @@ Mk8ShellCompiler.CompileOperation()  ← verb dispatch
        ├─ File/Dir/HTTP/Text/Env/Sys  → InMemory marker (.NET APIs)
        ├─ FileTemplate/FilePatch       → InMemory (template/patch validation)
        ├─ FileHash/DirTree             → InMemory (algorithm/depth validation)
-       ├─ ProcRun                      → Mk8BinaryAllowlist + ValidateArgs
-       └─ Git*                         → Mk8GitFlagValidator
+       └─ ProcRun                      → Mk8BinaryAllowlist + ValidateArgs
        │
        ▼
 Mk8CompiledScript
