@@ -1,4 +1,5 @@
 using Mk8.Shell.Engine;
+using Mk8.Shell.Safety;
 
 namespace Mk8.Shell.Models;
 
@@ -9,12 +10,14 @@ namespace Mk8.Shell.Models;
 /// <para>
 /// Lifecycle for every command execution:
 /// <list type="number">
-///   <item>Load global env from <c>mk8.shell.base.env</c>.</item>
+///   <item>Load global env from <c>mk8.shell.base.env</c> (cached at startup).</item>
 ///   <item>Look up sandbox ID in local <c>%APPDATA%/mk8.shell/sandboxes.json</c>.</item>
 ///   <item>Resolve sandbox root path.</item>
-///   <item>Read <c>mk8.shell.signed.env</c> from sandbox root.</item>
+///   <item>Read <c>mk8.shell.signed.env</c> from sandbox root (fresh every execution).</item>
 ///   <item>Verify signature against local key.</item>
 ///   <item>Extract env vars from the verified signed content.</item>
+///   <item>Merge vocabularies + FreeText config from global + sandbox.</item>
+///   <item>Build gigablacklist from compile-time + global + sandbox patterns.</item>
 ///   <item>Build <see cref="Mk8WorkspaceContext"/> with merged env.</item>
 ///   <item>Execute the command.</item>
 ///   <item>Dispose — all state is discarded.</item>
@@ -38,38 +41,47 @@ public sealed class Mk8TaskContainer : IDisposable
     /// </summary>
     public Mk8RuntimeConfig RuntimeConfig { get; }
 
+    /// <summary>
+    /// FreeText configuration merged from global + sandbox env.
+    /// </summary>
+    public Mk8FreeTextConfig FreeTextConfig { get; }
+
+    /// <summary>
+    /// Env-sourced vocabularies merged from global + sandbox env.
+    /// Keys are list names, values are word arrays. Additive merge.
+    /// </summary>
+    public Dictionary<string, string[]> EnvVocabularies { get; }
+
+    /// <summary>
+    /// Gigablacklist instance with compile-time patterns + custom
+    /// patterns from global base.env + sandbox env. Built fresh
+    /// per execution so sandbox-level patterns are never stale.
+    /// </summary>
+    public Mk8GigaBlacklist GigaBlacklist { get; }
+
     private bool _disposed;
 
     private Mk8TaskContainer(
         Mk8Sandbox sandbox,
         Mk8WorkspaceContext workspace,
-        Mk8RuntimeConfig runtimeConfig)
+        Mk8RuntimeConfig runtimeConfig,
+        Mk8FreeTextConfig freeTextConfig,
+        Dictionary<string, string[]> envVocabularies,
+        Mk8GigaBlacklist gigaBlacklist)
     {
         Sandbox = sandbox;
         Workspace = workspace;
         RuntimeConfig = runtimeConfig;
+        FreeTextConfig = freeTextConfig;
+        EnvVocabularies = envVocabularies;
+        GigaBlacklist = gigaBlacklist;
     }
 
     /// <summary>
     /// Creates an isolated task container for the given sandbox ID.
     /// Performs the full initialization sequence: global env → registry
-    /// lookup → signature verification → env loading.
+    /// lookup → signature verification → env loading → vocabulary merge.
     /// </summary>
-    /// <param name="sandboxId">
-    /// The sandbox identifier (e.g. "Banana"). Must match a registered
-    /// sandbox in the local <c>%APPDATA%/mk8.shell</c> registry.
-    /// </param>
-    /// <param name="registry">
-    /// Local sandbox registry. If <c>null</c>, uses the default
-    /// <c>%APPDATA%/mk8.shell</c> location.
-    /// </param>
-    /// <exception cref="Mk8SandboxNotFoundException">
-    /// Thrown when the sandbox ID is not registered on this machine.
-    /// </exception>
-    /// <exception cref="Mk8SandboxSignatureException">
-    /// Thrown when the signed env file is missing, corrupted, or was
-    /// signed on a different machine.
-    /// </exception>
     public static Mk8TaskContainer Create(
         string sandboxId,
         Mk8SandboxRegistry? registry = null)
@@ -106,7 +118,26 @@ public sealed class Mk8TaskContainer : IDisposable
         // Step 4: Parse env vars from verified content.
         var sandboxVars = Mk8SandboxEnvParser.Parse(envContent);
 
-        // Step 5: Build sandbox model.
+        // Step 5: Merge FreeText config (sandbox overrides global).
+        var sandboxFreeTextJson = sandboxVars.GetValueOrDefault("MK8_FREETEXT_CONFIG");
+        var sandboxFreeTextConfig = sandboxFreeTextJson is not null
+            ? Mk8FreeTextConfig.Parse(sandboxFreeTextJson)
+            : null;
+        var mergedFreeTextConfig = globalEnv.FreeText.MergeWith(sandboxFreeTextConfig);
+
+        // Step 6: Merge vocabularies (global + sandbox, additive).
+        var mergedVocabs = MergeVocabularies(globalEnv.Vocabularies, sandboxVars);
+
+        // Step 7: Build gigablacklist (compile-time + global + sandbox, additive).
+        // Disable flags are base.env-only — sandbox env cannot override them.
+        var mergedBlacklistPatterns = MergeBlacklist(
+            globalEnv.CustomBlacklist, sandboxVars);
+        var gigaBlacklist = new Mk8GigaBlacklist(
+            mergedBlacklistPatterns,
+            disableHardcoded: globalEnv.DisableHardcodedGigablacklist,
+            disableMk8shellEnvs: globalEnv.DisableMk8shellEnvsGigablacklist);
+
+        // Step 8: Build sandbox model.
         var sandbox = new Mk8Sandbox
         {
             Id = sandboxId,
@@ -114,10 +145,7 @@ public sealed class Mk8TaskContainer : IDisposable
             RegisteredAtUtc = entry.RegisteredAtUtc,
         };
 
-        // Step 6: Build workspace context.
-        // Sandbox env vars are loaded as additional variables. The
-        // sandbox root becomes $WORKSPACE, and working directory
-        // defaults to the sandbox root.
+        // Step 9: Build workspace context.
         var workspace = new Mk8WorkspaceContext(
             SandboxId: sandboxId,
             SandboxRoot: sandboxRoot,
@@ -125,15 +153,85 @@ public sealed class Mk8TaskContainer : IDisposable
             RunAsUser: Environment.UserName,
             Variables: sandboxVars);
 
-        return new Mk8TaskContainer(sandbox, workspace, runtimeConfig);
+        return new Mk8TaskContainer(
+            sandbox, workspace, runtimeConfig,
+            mergedFreeTextConfig, mergedVocabs, gigaBlacklist);
+    }
+
+    /// <summary>
+    /// Merges vocabularies from global env + sandbox env vars.
+    /// Sandbox env keys like <c>MK8_VOCAB_CommitWords=word1,word2,word3</c>
+    /// add to the global vocabulary (never replace).
+    /// </summary>
+    private static Dictionary<string, string[]> MergeVocabularies(
+        Dictionary<string, string[]> globalVocabs,
+        Dictionary<string, string> sandboxVars)
+    {
+        const string vocabPrefix = "MK8_VOCAB_";
+        var merged = new Dictionary<string, string[]>(
+            globalVocabs, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (key, value) in sandboxVars)
+        {
+            if (!key.StartsWith(vocabPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var listName = key[vocabPrefix.Length..];
+            if (string.IsNullOrWhiteSpace(listName))
+                continue;
+
+            var sandboxWords = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (sandboxWords.Length == 0)
+                continue;
+
+            if (merged.TryGetValue(listName, out var existing))
+            {
+                // Additive merge: combine both arrays (dedup at whitelist level)
+                var combined = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+                foreach (var w in sandboxWords)
+                    combined.Add(w);
+                merged[listName] = [.. combined];
+            }
+            else
+            {
+                merged[listName] = sandboxWords;
+            }
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Merges custom blacklist patterns from global env + sandbox env vars.
+    /// Sandbox env key <c>MK8_BLACKLIST</c> is a comma-separated list of
+    /// additional patterns. Both sources are additive.
+    /// </summary>
+    private static string[]? MergeBlacklist(
+        string[] globalPatterns,
+        Dictionary<string, string> sandboxVars)
+    {
+        var sandboxRaw = sandboxVars.GetValueOrDefault("MK8_BLACKLIST");
+        var sandboxPatterns = sandboxRaw?.Split(',',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var hasGlobal = globalPatterns is { Length: > 0 };
+        var hasSandbox = sandboxPatterns is { Length: > 0 };
+
+        if (!hasGlobal && !hasSandbox)
+            return null;
+
+        var all = new List<string>();
+        if (hasGlobal)
+            all.AddRange(globalPatterns);
+        if (hasSandbox)
+            all.AddRange(sandboxPatterns!);
+
+        return Mk8GigaBlacklist.ValidateCustomPatterns([.. all]);
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        // No unmanaged resources — the point of Dispose is to make
-        // the "create → use → discard" lifecycle explicit and to
-        // guarantee that no reference to sandbox state leaks out.
     }
 }

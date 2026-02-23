@@ -108,6 +108,9 @@ public sealed class Mk8ShellCompiler
                 ? Mk8VariableResolver.ResolveArgsForProc(op.Args, variables, procRunBlocked)
                 : Mk8VariableResolver.ResolveArgs(op.Args, variables);
 
+            // Gigablacklist — unconditional on ALL resolved args.
+            _whitelist.GigaBlacklist.EnforceAllInMemory(op.Verb.ToString(), resolvedArgs);
+
             // Path validation against sandbox.
             resolvedArgs = ValidatePathArgs(op.Verb, resolvedArgs, workspace.SandboxRoot);
 
@@ -135,6 +138,9 @@ public sealed class Mk8ShellCompiler
                 var resolvedArgs = op.Verb == Mk8ShellVerb.ProcRun
                     ? Mk8VariableResolver.ResolveArgsForProc(op.Args, variables, procRunBlocked)
                     : Mk8VariableResolver.ResolveArgs(op.Args, variables);
+
+                // Gigablacklist — unconditional on cleanup args too.
+                _whitelist.GigaBlacklist.EnforceAllInMemory(op.Verb.ToString(), resolvedArgs);
 
                 resolvedArgs = ValidatePathArgs(op.Verb, resolvedArgs, workspace.SandboxRoot);
 
