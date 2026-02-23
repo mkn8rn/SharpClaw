@@ -55,14 +55,14 @@ SessionService session)
         SubmitAgentJobRequest request,
         CancellationToken ct = default)
     {
-        // When no agent is specified, infer from the conversation
-        if (agentId == Guid.Empty && request.ConversationId is { } convId)
+        // When no agent is specified, infer from the channel
+        if (agentId == Guid.Empty && request.ChannelId is { } chId)
         {
-            var conv = await db.Conversations
+            var ch = await db.Channels
                 .Include(c => c.AgentContext)
-                .FirstOrDefaultAsync(c => c.Id == convId, ct)
-                ?? throw new InvalidOperationException($"Conversation {convId} not found.");
-            agentId = conv.AgentId;
+                .FirstOrDefaultAsync(c => c.Id == chId, ct)
+                ?? throw new InvalidOperationException($"Channel {chId} not found.");
+            agentId = ch.AgentId;
         }
 
         if (agentId == Guid.Empty)
@@ -77,7 +77,7 @@ SessionService session)
         if (!effectiveResourceId.HasValue && IsPerResourceAction(request.ActionType))
         {
             effectiveResourceId = await ResolveDefaultResourceIdAsync(
-                request.ActionType, request.ConversationId, agentId, ct);
+                request.ActionType, request.ChannelId, agentId, ct);
         }
 
         var job = new AgentJobDB
@@ -92,7 +92,7 @@ SessionService session)
             SafeShellType = request.SafeShellType,
             ScriptJson = request.ScriptJson,
             TranscriptionModelId = request.TranscriptionModelId,
-            ConversationId = request.ConversationId,
+            ChannelId = request.ChannelId,
             Language = request.Language,
         };
 
@@ -114,18 +114,18 @@ SessionService session)
                 break;
 
             case ClearanceVerdict.PendingApproval:
-                // Conversation pre-auth counts as ApprovedByWhitelistedUser-
+                // Channel pre-auth counts as ApprovedByWhitelistedUser-
                 // level authority for levels 2 and 4.  For level 1
                 // (ApprovedBySameLevelUser), the session user must also
                 // personally hold the same permission via their own role.
                 // Level 3 (agent-only) is never pre-authorised.
-                if (request.ConversationId.HasValue
-                    && await HasConversationAuthorizationAsync(
-                        request.ConversationId.Value, job.ActionType,
+                if (request.ChannelId.HasValue
+                    && await HasChannelAuthorizationAsync(
+                        request.ChannelId.Value, job.ActionType,
                         job.ResourceId, result.EffectiveClearance,
                         session.UserId, ct))
                 {
-                    AddLog(job, "Pre-authorized by conversation/context permission set.");
+                    AddLog(job, "Pre-authorized by channel/context permission set.");
                     await ExecuteJobAsync(job, ct);
                 }
                 else
@@ -775,22 +775,22 @@ SessionService session)
     /// entry that matches <paramref name="actionType"/>.
     /// </summary>
     private async Task<Guid?> ResolveDefaultResourceIdAsync(
-        AgentActionType actionType, Guid? conversationId, Guid agentId,
+        AgentActionType actionType, Guid? channelId, Guid agentId,
         CancellationToken ct)
     {
         // Collect permission set IDs in priority order.
         var permissionSetIds = new List<Guid>(3);
 
-        if (conversationId.HasValue)
+        if (channelId.HasValue)
         {
-            var conv = await db.Conversations
+            var ch = await db.Channels
                 .Include(c => c.AgentContext)
-                .FirstOrDefaultAsync(c => c.Id == conversationId.Value, ct);
+                .FirstOrDefaultAsync(c => c.Id == channelId.Value, ct);
 
-            if (conv?.PermissionSetId is { } convPsId)
-                permissionSetIds.Add(convPsId);
+            if (ch?.PermissionSetId is { } chPsId)
+                permissionSetIds.Add(chPsId);
 
-            if (conv?.AgentContext?.PermissionSetId is { } ctxPsId)
+            if (ch?.AgentContext?.PermissionSetId is { } ctxPsId)
                 permissionSetIds.Add(ctxPsId);
         }
 
@@ -869,7 +869,7 @@ SessionService session)
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // Conversation / context pre-authorisation
+    // Channel / context pre-authorisation
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -877,43 +877,43 @@ SessionService session)
     /// user-defined permission set that pre-authorises the requested
     /// action.
     /// <para>
-    /// Conversation pre-auth provides
+    /// Channel pre-auth provides
     /// <see cref="PermissionClearance.ApprovedByWhitelistedUser"/>-level
     /// authority — the user who configured the channel/context PS is
     /// treated as a whitelisted user granting approval in advance.
     /// </para>
     /// <para>
     /// <b>Level 1 (<see cref="PermissionClearance.ApprovedBySameLevelUser"/>):</b>
-    /// the conversation PS must contain the grant <b>and</b> the session
+    /// the channel PS must contain the grant <b>and</b> the session
     /// user (<paramref name="callerUserId"/>) must personally hold the
     /// same permission (with any non-<see cref="PermissionClearance.Unset"/>
     /// clearance) via their own role.
     /// </para>
     /// <para>
-    /// <b>Levels 2 and 4:</b> the conversation/context PS grant alone
+    /// <b>Levels 2 and 4:</b> the channel/context PS grant alone
     /// is sufficient — no additional user check is needed.
     /// </para>
     /// <para>
     /// <b>Level 3 (<see cref="PermissionClearance.ApprovedByPermittedAgent"/>):</b>
-    /// agent-only — conversation pre-auth is never accepted.
+    /// agent-only — channel pre-auth is never accepted.
     /// </para>
     /// </summary>
-    private async Task<bool> HasConversationAuthorizationAsync(
-        Guid conversationId,
+    private async Task<bool> HasChannelAuthorizationAsync(
+        Guid channelId,
         AgentActionType actionType,
         Guid? resourceId,
         PermissionClearance agentClearance,
         Guid? callerUserId,
         CancellationToken ct)
     {
-        // Level 3 is agent-only — no user/conversation pre-auth applies.
+        // Level 3 is agent-only — no user/channel pre-auth applies.
         if (agentClearance is not (PermissionClearance.ApprovedBySameLevelUser
                                 or PermissionClearance.ApprovedByWhitelistedUser
                                 or PermissionClearance.ApprovedByWhitelistedAgent))
             return false;
 
         // Level 1: the session user must personally hold the permission.
-        // Verify via the user's own role PS before checking the conversation PS.
+        // Verify via the user's own role PS before checking the channel PS.
         if (agentClearance == PermissionClearance.ApprovedBySameLevelUser)
         {
             if (callerUserId is null)
@@ -931,21 +931,21 @@ SessionService session)
                 return false;
         }
 
-        var conv = await db.Conversations
+        var ch = await db.Channels
             .Include(c => c.AgentContext)
-            .FirstOrDefaultAsync(c => c.Id == conversationId, ct);
-        if (conv is null) return false;
+            .FirstOrDefaultAsync(c => c.Id == channelId, ct);
+        if (ch is null) return false;
 
         // Channel PS first.
-        if (conv.PermissionSetId is { } convPsId)
+        if (ch.PermissionSetId is { } chPsId)
         {
-            var convPs = await actions.LoadPermissionSetAsync(convPsId, ct);
-            if (convPs is not null && HasMatchingGrant(convPs, actionType, resourceId))
+            var chPs = await actions.LoadPermissionSetAsync(chPsId, ct);
+            if (chPs is not null && HasMatchingGrant(chPs, actionType, resourceId))
                 return true;
         }
 
         // Channel didn't have it — fall through to context.
-        if (conv.AgentContext?.PermissionSetId is { } ctxPsId)
+        if (ch.AgentContext?.PermissionSetId is { } ctxPsId)
         {
             var ctxPs = await actions.LoadPermissionSetAsync(ctxPsId, ct);
             if (ctxPs is not null && HasMatchingGrant(ctxPs, actionType, resourceId))
@@ -1078,7 +1078,7 @@ SessionService session)
             SafeShellType: job.SafeShellType,
             ScriptJson: job.ScriptJson,
             TranscriptionModelId: job.TranscriptionModelId,
-            ConversationId: job.ConversationId,
+            ChannelId: job.ChannelId,
             Language: job.Language,
             Segments: IsTranscriptionAction(job.ActionType)
                 ? job.TranscriptionSegments

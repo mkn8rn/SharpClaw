@@ -31,24 +31,24 @@ public sealed partial class ChatService(
     private const int MaxToolCallRounds = 10;
 
     public async Task<ChatResponse> SendMessageAsync(
-        Guid conversationId, ChatRequest request, CancellationToken ct = default)
+        Guid channelId, ChatRequest request, CancellationToken ct = default)
     {
-        var conversation = await db.Conversations
+        var channel = await db.Channels
             .Include(c => c.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent)
-            .FirstOrDefaultAsync(c => c.Id == conversationId, ct)
-            ?? throw new ArgumentException($"Conversation {conversationId} not found.");
+            .FirstOrDefaultAsync(c => c.Id == channelId, ct)
+            ?? throw new ArgumentException($"Channel {channelId} not found.");
 
-        var model = conversation.Model;
+        var model = channel.Model;
         var provider = model.Provider;
-        var agent = conversation.Agent;
+        var agent = channel.Agent;
 
         if (string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
 
-        // Build conversation: recent history + new user message
+        // Build channel history: recent messages + new user message
         var history = await db.ChatMessages
-            .Where(m => m.ConversationId == conversationId)
+            .Where(m => m.ChannelId == channelId)
             .OrderByDescending(m => m.CreatedAt)
             .Take(MaxHistoryMessages)
             .OrderBy(m => m.CreatedAt)
@@ -67,24 +67,24 @@ public sealed partial class ChatService(
         var loopResult = useNativeTools
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, conversationId, ct)
+                history, agent.Id, channelId, ct)
             : await RunTextToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, conversationId, ct);
+                history, agent.Id, channelId, ct);
 
         // Persist both messages
         var userMessage = new ChatMessageDB
         {
             Role = "user",
             Content = request.Message,
-            ConversationId = conversationId
+            ChannelId = channelId
         };
 
         var assistantMessage = new ChatMessageDB
         {
             Role = "assistant",
             Content = loopResult.AssistantContent,
-            ConversationId = conversationId
+            ChannelId = channelId
         };
 
         db.ChatMessages.Add(userMessage);
@@ -98,10 +98,10 @@ public sealed partial class ChatService(
     }
 
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
-        Guid conversationId, int limit = 50, CancellationToken ct = default)
+        Guid channelId, int limit = 50, CancellationToken ct = default)
     {
         return await db.ChatMessages
-            .Where(m => m.ConversationId == conversationId)
+            .Where(m => m.ChannelId == channelId)
             .OrderByDescending(m => m.CreatedAt)
             .Take(limit)
             .OrderBy(m => m.CreatedAt)
@@ -126,26 +126,26 @@ public sealed partial class ChatService(
     /// </list>
     /// </summary>
     public async IAsyncEnumerable<ChatStreamEvent> SendMessageStreamAsync(
-        Guid conversationId,
+        Guid channelId,
         ChatRequest request,
         Func<AgentJobResponse, CancellationToken, Task<bool>> approvalCallback,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var conversation = await db.Conversations
+        var channel = await db.Channels
             .Include(c => c.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent)
-            .FirstOrDefaultAsync(c => c.Id == conversationId, ct)
-            ?? throw new ArgumentException($"Conversation {conversationId} not found.");
+            .FirstOrDefaultAsync(c => c.Id == channelId, ct)
+            ?? throw new ArgumentException($"Channel {channelId} not found.");
 
-        var model = conversation.Model;
+        var model = channel.Model;
         var provider = model.Provider;
-        var agent = conversation.Agent;
+        var agent = channel.Agent;
 
         if (string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
 
         var history = await db.ChatMessages
-            .Where(m => m.ConversationId == conversationId)
+            .Where(m => m.ChannelId == channelId)
             .OrderByDescending(m => m.CreatedAt)
             .Take(MaxHistoryMessages)
             .OrderBy(m => m.CreatedAt)
@@ -217,7 +217,7 @@ public sealed partial class ChatService(
                     CallerAgentId: agent.Id,
                     SafeShellType: SafeShellType.Mk8Shell,
                     ScriptJson: parsed.ScriptJson,
-                    ConversationId: conversationId);
+                    ChannelId: channelId);
 
                 var jobResponse = await jobService.SubmitAsync(agent.Id, jobRequest, ct);
 
@@ -277,14 +277,14 @@ public sealed partial class ChatService(
         {
             Role = "user",
             Content = request.Message,
-            ConversationId = conversationId
+            ChannelId = channelId
         };
 
         var assistantMessage = new ChatMessageDB
         {
             Role = "assistant",
             Content = assistantContent,
-            ConversationId = conversationId
+            ChannelId = channelId
         };
 
         db.ChatMessages.Add(userMessage);
@@ -354,7 +354,7 @@ public sealed partial class ChatService(
         string? systemPrompt,
         IReadOnlyList<ChatCompletionMessage> dbHistory,
         Guid agentId,
-        Guid conversationId,
+        Guid channelId,
         CancellationToken ct)
     {
         var messages = new List<ToolAwareMessage>(dbHistory.Count);
@@ -395,7 +395,7 @@ public sealed partial class ChatService(
                     CallerAgentId: agentId,
                     SafeShellType: SafeShellType.Mk8Shell,
                     ScriptJson: parsed.ScriptJson,
-                    ConversationId: conversationId);
+                    ChannelId: channelId);
 
                 var jobResponse = await jobService.SubmitAsync(agentId, jobRequest, ct);
                 jobResults.Add(jobResponse);
@@ -433,7 +433,7 @@ public sealed partial class ChatService(
         string systemPrompt,
         List<ChatCompletionMessage> history,
         Guid agentId,
-        Guid conversationId,
+        Guid channelId,
         CancellationToken ct)
     {
         var jobResults = new List<AgentJobResponse>();
@@ -464,7 +464,7 @@ public sealed partial class ChatService(
                     CallerAgentId: agentId,
                     SafeShellType: SafeShellType.Mk8Shell,
                     ScriptJson: call.ScriptJson,
-                    ConversationId: conversationId);
+                    ChannelId: channelId);
 
                 var jobResponse = await jobService.SubmitAsync(agentId, jobRequest, ct);
                 jobResults.Add(jobResponse);

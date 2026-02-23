@@ -21,7 +21,7 @@ public class ChatController(InternalApiClient api) : ControllerBase
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Channel not found." });
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
         {
@@ -44,7 +44,7 @@ public class ChatController(InternalApiClient api) : ControllerBase
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Channel not found." });
         }
         catch (HttpRequestException)
         {

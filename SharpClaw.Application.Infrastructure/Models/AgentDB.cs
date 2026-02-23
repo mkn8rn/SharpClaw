@@ -16,5 +16,5 @@ public class AgentDB : BaseEntity
     public RoleDB? Role { get; set; }
 
     public ICollection<ChannelContextDB> Contexts { get; set; } = [];
-    public ICollection<ChannelDB> Conversations { get; set; } = [];
+    public ICollection<ChannelDB> Channels { get; set; } = [];
 }

@@ -8,6 +8,6 @@ public class ChatMessageDB : BaseEntity
     public required string Role { get; set; }
     public required string Content { get; set; }
 
-    public Guid ConversationId { get; set; }
-    public ChannelDB Conversation { get; set; } = null!;
+    public Guid ChannelId { get; set; }
+    public ChannelDB Channel { get; set; } = null!;
 }

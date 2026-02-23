@@ -6,10 +6,10 @@ using SharpClaw.Infrastructure.Models;
 namespace SharpClaw.Application.Infrastructure.Models.Context;
 
 /// <summary>
-/// Groups conversations and tasks under a shared set of pre-authorised
+/// Groups channels and tasks under a shared set of pre-authorised
 /// permissions.  Context-level permission grants apply automatically to
-/// every conversation and task within the context unless overridden by a
-/// per-conversation or per-task grant.
+/// every channel and task within the context unless overridden by a
+/// per-channel or per-task grant.
 /// </summary>
 public class ChannelContextDB : BaseEntity
 {
@@ -20,11 +20,11 @@ public class ChannelContextDB : BaseEntity
 
     /// <summary>
     /// Optional permission set for this context. Applies automatically to
-    /// every conversation and task within the context unless overridden.
+    /// every channel and task within the context unless overridden.
     /// </summary>
     public Guid? PermissionSetId { get; set; }
     public PermissionSetDB? PermissionSet { get; set; }
 
-    public ICollection<ChannelDB> Conversations { get; set; } = [];
+    public ICollection<ChannelDB> Channels { get; set; } = [];
     public ICollection<ScheduledJobDB> Tasks { get; set; } = [];
 }

@@ -15,7 +15,7 @@ SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
 // Transcription-specific
 Guid? TranscriptionModelId = null,
-Guid? ConversationId = null,
+Guid? ChannelId = null,
 string? Language = null);
 
 public sealed record ApproveAgentJobRequest(
@@ -42,7 +42,7 @@ SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
 // Transcription
 Guid? TranscriptionModelId = null,
-Guid? ConversationId = null,
+Guid? ChannelId = null,
 string? Language = null,
 IReadOnlyList<TranscriptionSegmentResponse>? Segments = null);
 
