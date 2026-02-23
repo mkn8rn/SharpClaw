@@ -1,22 +1,21 @@
-using SharpClaw.Contracts.DTOs.Contexts;
 using SharpClaw.Contracts.Enums;
 
-namespace SharpClaw.Contracts.DTOs.Conversations;
+namespace SharpClaw.Contracts.DTOs.Channels;
 
-public sealed record CreateConversationRequest(
+public sealed record CreateChannelRequest(
     Guid AgentId,
     string? Title = null,
     Guid? ModelId = null,
     Guid? ContextId = null,
     Guid? PermissionSetId = null);
 
-public sealed record UpdateConversationRequest(
+public sealed record UpdateChannelRequest(
     string? Title = null,
     Guid? ModelId = null,
     Guid? ContextId = null,
     Guid? PermissionSetId = null);
 
-public sealed record ConversationResponse(
+public sealed record ChannelResponse(
     Guid Id,
     string Title,
     Guid AgentId,

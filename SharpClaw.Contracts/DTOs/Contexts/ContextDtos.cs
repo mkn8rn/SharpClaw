@@ -26,7 +26,7 @@ public sealed record ContextResponse(
 
 /// <summary>
 /// The effective permission for an action type after resolving the
-/// context → conversation / task override chain.
+/// context → channel / task override chain.
 /// </summary>
 public sealed record EffectivePermissionResponse(
     AgentActionType ActionType,

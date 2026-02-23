@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using SharpClaw.Contracts.DTOs.Conversations;
+using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.PublicAPI.Infrastructure;
 
 namespace SharpClaw.PublicAPI.Controllers;
@@ -11,17 +11,17 @@ namespace SharpClaw.PublicAPI.Controllers;
 public class ChannelsController(InternalApiClient api) : ControllerBase
 {
     [HttpPost]
-    public async Task<IActionResult> Create(CreateConversationRequest request, CancellationToken ct)
+    public async Task<IActionResult> Create(CreateChannelRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await api.PostAsync<CreateConversationRequest, ConversationResponse>(
+            var result = await api.PostAsync<CreateChannelRequest, ChannelResponse>(
                 "/channels", request, ct);
             return Ok(result);
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
         {
-            return BadRequest(new { error = "Invalid conversation request." });
+            return BadRequest(new { error = "Invalid channel request." });
         }
         catch (HttpRequestException)
         {
@@ -37,7 +37,7 @@ public class ChannelsController(InternalApiClient api) : ControllerBase
             var path = agentId is not null
                 ? $"/channels?agentId={agentId}"
                 : "/channels";
-            var result = await api.GetAsync<IReadOnlyList<ConversationResponse>>(path, ct);
+            var result = await api.GetAsync<IReadOnlyList<ChannelResponse>>(path, ct);
             return Ok(result);
         }
         catch (HttpRequestException)
@@ -51,12 +51,12 @@ public class ChannelsController(InternalApiClient api) : ControllerBase
     {
         try
         {
-            var result = await api.GetAsync<ConversationResponse>($"/channels/{id}", ct);
+            var result = await api.GetAsync<ChannelResponse>($"/channels/{id}", ct);
             return result is not null ? Ok(result) : NotFound();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Channel not found." });
         }
         catch (HttpRequestException)
         {
@@ -65,17 +65,17 @@ public class ChannelsController(InternalApiClient api) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    public async Task<IActionResult> Update(Guid id, UpdateConversationRequest request, CancellationToken ct)
+    public async Task<IActionResult> Update(Guid id, UpdateChannelRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await api.PutAsync<UpdateConversationRequest, ConversationResponse>(
+            var result = await api.PutAsync<UpdateChannelRequest, ChannelResponse>(
                 $"/channels/{id}", request, ct);
             return result is not null ? Ok(result) : NotFound();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "Conversation not found." });
+            return NotFound(new { error = "Channel not found." });
         }
         catch (HttpRequestException)
         {

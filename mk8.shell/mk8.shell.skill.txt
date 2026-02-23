@@ -1,1764 +1,375 @@
 mk8.shell — agent skill reference
 
-You submit JSON scripts. The server compiles and executes them.
-You never interact with a real shell. There is no eval, no pipes,
-no chaining, no shell expansion. Arguments are structured arrays.
-
-Every command executes inside a named sandbox. The sandbox ID
-(e.g. "Banana") identifies which isolated workspace to use.
-The server resolves the sandbox to a local directory, verifies
-its cryptographically signed environment, executes the command
-in an isolated task container, then disposes all state. Nothing
-transfers between commands.
-
-You CANNOT register, create, or manage sandboxes. If a sandbox
-does not exist, tell the user to register it using mk8.shell.startup.
-
-
-== submitting a script ================================================
-
-You provide a sandbox ID and a script. mk8.shell does the rest:
-it looks up the sandbox in its own %APPDATA%/mk8.shell registry,
-verifies the cryptographic signature, builds the workspace, compiles
-your script, executes it, and returns results. The sandbox ID is
-NOT part of the script JSON — it is a separate parameter.
-
-Script format:
+=====================================================================
+1) SCRIPT STRUCTURE
+=====================================================================
 
 {
   "operations": [
-    { "verb": "...", "args": ["..."] }
+    { "verb": "...", "args": [ ... ] }
   ],
   "options": { ... },
   "cleanup": [ ... ]
 }
 
-Every operation needs "verb" and "args". All other fields are optional.
-
-
-== verbs and args =====================================================
-
---- files ---
-FileRead       [path]                read entire file
-FileWrite      [path, content]       overwrite file
-FileAppend     [path, content]       append to file
-FileDelete     [path]                delete file
-FileExists     [path]                returns "true"/"false"
-FileList       [path, pattern?]      list files, optional glob
-FileCopy       [src, dst]            copy file
-FileMove       [src, dst]            move/rename file
-FileHash       [path, algorithm?]    sha256 (default), sha512, md5
-FileInfo       [path]                size, created, modified, attributes
-
---- files: structured edits ---
-FileTemplate   [outputPath]          requires "template" field (see below)
-FilePatch      [targetPath]          requires "patches" field (see below)
-
---- files: batch ---
-FileWriteMany  [p1, c1, p2, c2...]   pairs of path+content, max 64
-FileCopyMany   [s1, d1, s2, d2...]   pairs of src+dst, max 64
-FileDeleteMany [p1, p2, p3...]       list of paths, max 64
-
---- directories ---
-DirCreate      [path]                mkdir -p equivalent
-DirDelete      [path]                rm -rf equivalent
-DirList        [path]                immediate children
-DirExists      [path]                returns "true"/"false"
-DirTree        [path, depth?]        recursive listing, depth 1-5, default 3
-
---- process ---
-ProcRun        [binary, arg, arg...] run a whitelisted command template
-
---- git (via ProcRun, command-template whitelist) ---
-Git is available through ProcRun with strict constraints.
-Read-only commands: status, log, diff, branch, remote, ls-files, tag, describe.
-Write commands: add, commit, stash, checkout, switch.
-Protected branches are BANNED — see ProcRun section below.
-
---- http ---
-HttpGet        [url]
-HttpPost       [url, body?]
-HttpPut        [url, body?]
-HttpDelete     [url]
-
---- text ---
-TextRegex      [input, pattern]      match regex, 2s timeout
-TextReplace    [input, old, new]     literal replacement
-JsonParse      [input]               validate + pretty-print
-JsonQuery      [input, jsonpath]     extract value
-
---- text: extended (pure string ops, no I/O) ---
-TextSplit      [input, delimiter]    split, newline-separated output
-TextJoin       [delimiter, parts...] join 1-32 parts with delimiter
-TextTrim       [input]               trim whitespace
-TextLength     [input]               character count
-TextSubstring  [input, start, len?]  extract substring (0-based)
-TextLines      [input]               line count + content
-TextToUpper    [input]               uppercase (invariant)
-TextToLower    [input]               lowercase (invariant)
-TextBase64Encode [input]             base64-encode UTF-8 string
-TextBase64Decode [input]             decode base64 to UTF-8
-TextUrlEncode  [input]               URL-encode
-TextUrlDecode  [input]               URL-decode
-TextHtmlEncode [input]               HTML-encode
-TextContains   [input, substring]    returns "True"/"False"
-TextStartsWith [input, value]        returns "True"/"False"
-TextEndsWith   [input, value]        returns "True"/"False"
-TextMatch      [input, pattern]      regex match, "True"/"False", 2s timeout
-TextHash       [input, algorithm?]   hash string (sha256/sha512/md5)
-TextSort       [input, direction?]   sort lines: asc (default), desc, numeric
-TextUniq       [input]               remove consecutive duplicate lines
-TextCount      [input, substring?]   count occurrences, or lines/words/chars
-TextIndexOf    [input, substring]    first index of substring (-1 if not found)
-TextLastIndexOf [input, substring]   last index of substring (-1 if not found)
-TextRemove     [input, old]          remove all occurrences of substring
-TextWordCount  [input]               word count (whitespace-split)
-TextReverse    [input]               reverse string
-TextPadLeft    [input, width, char?] left-pad to total width (default space)
-TextPadRight   [input, width, char?] right-pad to total width (default space)
-TextRepeat     [input, count]        repeat N times (max 256, output capped)
-JsonMerge      [json1, json2]        shallow-merge objects (second wins)
-JsonKeys       [input]               top-level keys (newline-separated)
-JsonCount      [input]               element count from JSON array
-JsonType       [input]               root token type (object/array/string/etc.)
-
---- json: construction/mutation (pure in-memory, no I/O) ---
-JsonFromPairs  [k1, v1, k2, v2...]   build JSON object from key-value pairs (max 64 pairs)
-JsonSet        [json, key, value]    set/overwrite a key in a JSON object
-JsonRemoveKey  [json, key]           remove a key from a JSON object
-JsonGet        [json, indexOrKey]    get value by key (object) or index (array)
-JsonCompact    [json]                minify JSON (remove whitespace)
-JsonStringify  [value]               wrap raw string as properly-escaped JSON string
-JsonArrayFrom  [items...]            build JSON array from arguments (max 64 items)
-
---- file inspection (read-only, in-memory) ---
-FileLineCount  [path]                line count
-FileHead       [path, lines?]        first N lines (default 10, max 1000)
-FileTail       [path, lines?]        last N lines (default 10, max 1000)
-FileSearch     [path, literal]       literal substring match with line numbers
-FileDiff       [path1, path2]        line-by-line diff
-FileGlob       [path, pattern, depth?] recursive file search by glob (max depth 10, max 1000)
-
---- directory inspection ---
-DirFileCount   [path, pattern?]      count files, optional glob
-DirEmpty       [path]                returns "True"/"False" — is directory empty?
-
---- file type detection (read-only, in-memory) ---
-FileMimeType   [path]                MIME type via magic-byte header matching
-FileEncoding   [path]                encoding via BOM + heuristics (utf-8, ascii, etc.)
-
---- file comparison (read-only) ---
-FileEqual      [path1, path2]        byte-for-byte comparison, returns "True"/"False"
-FileChecksum   [path, expected, algo?] hash file + compare to expected, returns "True"/"False"
-
---- path manipulation (pure string ops, no I/O) ---
-PathJoin       [parts...]            join path segments (platform-aware, 2-16 parts)
-PathDir        [path]                directory portion (Path.GetDirectoryName)
-PathFile       [path]                filename portion (Path.GetFileName)
-PathExt        [path]                extension (Path.GetExtension)
-PathStem       [path]                filename without extension
-PathChangeExt  [path, ext]           change extension (Path.ChangeExtension)
-
---- identity/value generation ---
-GuidNew        []                    new GUID (Guid.NewGuid)
-GuidNewShort   []                    8-char hex from GUID
-RandomInt      [min, max]            random integer in [min, max], range 0-1000000
-
---- time arithmetic (pure DateTimeOffset math) ---
-TimeFormat     [unixSec, format?]    format Unix timestamp as human-readable
-TimeParse      [dateString, fmt?]    parse date string to Unix seconds
-TimeAdd        [unixSec, seconds]    add seconds to timestamp
-TimeDiff       [unixSec1, unixSec2]  absolute difference in seconds
-
---- version comparison ---
-VersionCompare [v1, v2]              compare semver strings: -1, 0, or 1
-VersionParse   [input]               extract first semver from string
-
---- encoding/conversion ---
-HexEncode      [input]               UTF-8 string → hex string
-HexDecode      [hexString]           hex string → UTF-8 string
-BaseConvert    [value, from, to]     convert between bases 2/8/10/16
-
---- regex capture groups ---
-TextRegexGroups [input, pattern]     named/numbered groups as JSON, 2s timeout
-
---- script control/debugging ---
-Echo           [message]             returns message as-is (identity function)
-Sleep          [seconds]             pause 0.1-30 seconds
-Assert         [actual, expected, msg?] fail step if values don't match
-Fail           [message]             always fail with message
-
---- environment (read-only) ---
-EnvGet         [name]                allowlist only (see below)
-
---- system info (no args unless noted) ---
-SysWhoAmI      []                    current user
-SysPwd         []                    working directory
-SysHostname    []                    machine name
-SysUptime      []
-SysDate        []                    UTC
-SysDiskUsage   [path?]               drive space (total/available/used)
-SysDirSize     [path]                recursive directory size in bytes
-SysMemory      []                    process memory + GC heap
-SysProcessList []                    running processes (PID + name, max 200)
-SysDateFormat  [format?]             formatted UTC date (restricted chars, max 32)
-SysTimestamp   []                    Unix epoch seconds
-SysOsInfo      []                    OS + arch + .NET runtime
-SysCpuCount    []                    processor count
-SysTempDir     []                    temp directory path (read-only)
-
---- clipboard (write-only) ---
-ClipboardSet   [content]             set OS clipboard text (no read)
-
---- math (safe arithmetic) ---
-MathEval       [expression]          +, -, *, /, %, (), decimals only
-
---- url validation (in-memory, no browser launch) ---
-OpenUrl        [url]                 validate HTTPS URL, return as string
-
---- network diagnostics (in-memory, no process) ---
-NetPing        [host, count?]        ICMP echo, 1-10 pings, SSRF-protected
-NetDns         [hostname]            DNS lookup, private IPs hidden
-NetTlsCert     [hostname, port?]     TLS cert inspection (expiry, subject, SANs)
-NetHttpStatus  [url]                 HTTP HEAD — status code + headers only
-NetTcpConnect  [host, port, timeout?] TCP port open check (1-30s timeout, default 5)
-HttpLatency    [url, count?]         timed HEAD requests — min/avg/max ms (1-10, default 3)
-
---- sysadmin: file age/staleness (read-only) ---
-FileAge        [path]                seconds since last modification
-FileNewerThan  [path, seconds]       "True"/"False" — modified within N seconds
-
---- sysadmin: process search (read-only) ---
-ProcessFind    [name]                find by name substring, PID+name+mem, max 50
-
---- sysadmin: system discovery (read-only) ---
-SysDriveList   []                    all drives: name, type, total/free/used%
-SysNetInfo     []                    network interfaces: name, status, IPs
-EnvList        []                    all allowed env vars with current values
-
---- sysadmin: regex file search (read-only) ---
-FileSearchRegex [path, pattern]      regex search in file, 2s timeout, max 500 matches
-
---- sysadmin: tabular text (pure string ops) ---
-TextColumn     [input, index, delim?] extract column N (0-based), default whitespace
-TextTable      [input, delimiter?]   align columns for display, default tab
-
---- sysadmin: directory comparison (read-only) ---
-DirCompare     [path1, path2]        compare directory trees (names only)
-DirHash        [path, algo?, pattern?] hash all files → manifest (max 500)
-
---- sysadmin: human-readable formatting ---
-FormatBytes    [bytes]               1048576 → "1.00 MB"
-FormatDuration [seconds]             3661 → "1h 1m 1s"
-
---- sysadmin: system log viewing (read-only, secret-redacted) ---
-SysLogRead     [source, lines?, filter?] read system logs, most recent first
-                                     Windows sources: application, system, security
-                                     Linux sources: syslog, auth, kern, daemon, messages
-                                     lines: 1-500 (default 50), filter: literal substring
-                                     Output is SECRET-REDACTED (KEY=, TOKEN=, etc.)
-SysLogSources  []                    list available log sources on current OS
-
---- sysadmin: service status (read-only) ---
-SysServiceList [filter?]             list OS services with status, optional name filter
-SysServiceStatus [name]              detailed status of a specific service
-
---- archive extraction (in-memory, pre-validated) ---
-ArchiveExtract [archivePath, outputDir]  extract .zip/.tar.gz safely
-
---- mk8.shell introspection (compile-time resolved, no I/O) ---
-Mk8Blacklist   []                    all effective gigablacklist patterns
-Mk8Vocab       [listName]            words in a vocabulary (sorted)
-Mk8VocabList   []                    all vocabulary names + word counts
-Mk8FreeText    [commandKey?]         FreeText config (global or per-command)
-Mk8Env         []                    merged env vars (secrets redacted)
-Mk8Info        []                    sandbox ID, OS, .NET, arch, CPU, machine
-Mk8Templates   []                    all ProcRun command template descriptions
-Mk8Verbs       []                    all available verb names
-Mk8Skills      []                    skill reference (this document, from embedded resource)
-Mk8Docs        []                    full documentation (from embedded resource)
-
---- control flow (expanded at compile time, not runtime) ---
-ForEach        []                    requires "forEach" field
-If             []                    requires "if" field
-
---- composition ---
-Include        [fragmentId]          inline admin-approved fragment
-
-
-== variables ==========================================================
-
-Resolved at compile time. Not shell env vars.
-
-$WORKSPACE   sandbox root directory (from local registry)
-$CWD         working directory (defaults to sandbox root)
-$USER        OS username
-$PREV        stdout of previous step (only when pipeStepOutput: true)
-
-Additional variables from the sandbox's signed env file are also
-available (loaded automatically at command startup).
-
-Use in args: { "args": ["$WORKSPACE/src/app.ts"] }
-
-$PREV is always empty when pipeStepOutput is false (default).
-
-
-== named captures =====================================================
-
-Any step can capture its stdout:
-
-{ "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD_OUT" }
-{ "verb": "FileWrite", "args": ["$WORKSPACE/log.txt", "$BUILD_OUT"] }
-
-Max 16 captures per script. Cannot reuse names. Cannot override
-WORKSPACE, CWD, USER, PREV, ITEM, INDEX.
-
-Captures from process-spawning steps (ProcRun) are blocked in
-ProcRun args — same rule as $PREV.
-
-
-== per-step fields ====================================================
-
-maxRetries     int       retry on non-zero exit
-stepTimeout    TimeSpan  e.g. "00:02:00", capped by server ceiling
-label          string    unique step label for jump targets
-onFailure      string    "goto:<label>" — forward jumps only
-captureAs      string    capture stdout into named variable
-template       object    for FileTemplate verb only
-patches        array     for FilePatch verb only
-
-
-== options ============================================================
-
-maxRetries       0          script-level retry default
-retryDelay       "00:00:02" doubles each attempt
-stepTimeout      "00:00:30" per-step ceiling
-scriptTimeout    "00:05:00" total script ceiling
-failureMode      "StopOnFirstError" | "ContinueOnError" | "StopAndCleanup"
-maxOutputBytes   1048576    truncation limit for stdout
-maxErrorBytes    262144     truncation limit for stderr
-pipeStepOutput   false      set true to enable $PREV
-
-
-== cleanup ============================================================
-
-When failureMode is "StopAndCleanup", add a "cleanup" array.
-These run after failure with best-effort (ContinueOnError) semantics.
-
-{
-  "operations": [ ... ],
-  "cleanup": [
-    { "verb": "DirDelete", "args": ["$WORKSPACE/tmp"] },
-    { "verb": "FileDelete", "args": ["$WORKSPACE/build.lock"] }
-  ],
-  "options": { "failureMode": "StopAndCleanup" }
-}
-
-
-== labels and failure jumps ===========================================
-
-{ "verb": "ProcRun", "args": ["dotnet", "build"], "onFailure": "goto:cleanup" },
-{ "verb": "ProcRun", "args": ["dotnet", "test"] },
-{ "verb": "FileWrite", "args": ["$WORKSPACE/done.txt", "ok"], "label": "cleanup" }
-
-Forward jumps only. No backward jumps. Labels must be unique.
-Alphanumeric, hyphens, underscores. Max 64 chars.
-
-
-== FileTemplate =======================================================
-
-{
-  "verb": "FileTemplate",
-  "args": ["$WORKSPACE/app/config.json"],
-  "template": {
-    "source": "$WORKSPACE/templates/config.template.json",
-    "values": { "DB_HOST": "db.internal", "PORT": "5432" }
-  }
-}
-
-Replaces {{DB_HOST}} and {{PORT}} in the template. Max 64 keys.
-Values must be literal strings. $ characters in values are rejected.
-
-
-== FilePatch ==========================================================
-
-{
-  "verb": "FilePatch",
-  "args": ["$WORKSPACE/app/config.yaml"],
-  "patches": [
-    { "find": "port: 3000", "replace": "port: 8080" },
-    { "find": "debug: true", "replace": "debug: false" }
-  ]
-}
-
-Literal find/replace applied in order. Max 32 patches.
-$ characters in find/replace are rejected.
-
-
-== ForEach ============================================================
+- Sandbox ID is provided separately (NOT inside JSON).
+- Every operation requires: "verb", "args".
+- Paths must resolve inside $WORKSPACE.
+- No absolute paths. No "..".
+- No shell syntax in args.
+
+Compile-time variables:
+  $WORKSPACE  sandbox root
+  $CWD        working directory
+  $USER       OS user
+  $PREV       previous stdout (only if pipeStepOutput=true)
+
+Captures:
+  "captureAs": "NAME"
+  Max 16 captures.
+  Cannot override WORKSPACE, CWD, USER, PREV, ITEM, INDEX.
+  Captured values cannot be used inside ProcRun args.
+
+Script options:
+  maxRetries
+  retryDelay
+  stepTimeout
+  scriptTimeout
+  failureMode: StopOnFirstError | ContinueOnError | StopAndCleanup
+  pipeStepOutput
+  maxOutputBytes
+  maxErrorBytes
+
+Cleanup runs only when failureMode = StopAndCleanup.
+
+Labels:
+  "label": "name"
+  "onFailure": "goto:label"
+  Forward jumps only.
+
+=====================================================================
+2) CONTROL FLOW
+=====================================================================
+
+ForEach (compile-time expansion, max 256 items, no nesting):
 
 {
   "verb": "ForEach",
   "forEach": {
-    "items": ["a.txt", "b.txt", "c.txt"],
-    "body": { "verb": "FileCopy", "args": ["$WORKSPACE/$ITEM", "$WORKSPACE/backup/$ITEM"] }
+    "items": ["a.txt","b.txt"],
+    "body": { "verb": "FileCopy", "args": ["$WORKSPACE/$ITEM","$WORKSPACE/backup/$ITEM"] }
   }
 }
 
-$ITEM = current item, $INDEX = 0-based index.
-Max 256 items. Expanded at compile time — not a runtime loop.
-No nested ForEach.
+$ITEM = current value
+$INDEX = 0-based index
 
+If (no else, no boolean chaining):
 
-== If =================================================================
+Predicate kinds:
+  PrevContains
+  PrevEmpty
+  PrevStartsWith
+  PrevEndsWith
+  PrevEquals
+  PrevMatch
+  PrevLineCount (eq|gt|lt|gte|lte)
+  CaptureEmpty
+  CaptureContains
+  EnvEquals
+  FileExists
+  DirExists
+
+Example:
 
 {
   "verb": "If",
   "if": {
-    "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
-    "then": { "verb": "FileWrite", "args": ["$WORKSPACE/status.txt", "build ok"] }
+    "predicate": { "kind":"PrevContains","args":["Build succeeded"] },
+    "then": { "verb":"FileWrite","args":["$WORKSPACE/status.txt","ok"] }
   }
 }
 
-Predicate kinds (all case-insensitive):
-  PrevContains    [substring]         true if $PREV contains it
-  PrevEmpty       []                  true if $PREV is blank
-  PrevStartsWith  [value]             true if $PREV starts with value
-  PrevEndsWith    [value]             true if $PREV ends with value
-  PrevEquals      [value]             true if $PREV equals value exactly
-  PrevMatch       [pattern]           true if $PREV matches regex (2s timeout)
-  PrevLineCount   [operator, count]   true if $PREV line count satisfies condition
-                                      operators: eq, gt, lt, gte, lte
-  CaptureEmpty    [name]              true if named capture is empty/whitespace
-  CaptureContains [name, substring]   true if named capture contains substring
-  EnvEquals       [name, expected]    true if env var matches
-  FileExists      [path]              evaluated at runtime
-  DirExists       [path]              evaluated at runtime
-
-No else branch. No boolean operators.
-
-
-== Include ============================================================
-
-{ "verb": "Include", "args": ["setup-workspace"] }
-
-Inlines an admin-approved fragment by ID. You cannot define fragments —
-only reference IDs the server has registered.
-
-
-== ProcRun command-template whitelist ==================================
-
-ProcRun uses a STRICT COMMAND-TEMPLATE WHITELIST. There is no "allowed
-binary + blocked flags" model. Every invocation must match a registered
-template EXACTLY. You cannot inject free text into any argument position.
-
-Templates and word lists are compile-time constants. They cannot be
-changed at runtime.
-
---- how argument slots work ---
-
-Each argument position has a typed slot:
-
-  Choice         must be one of a fixed set (e.g. Release or Debug)
-  SandboxPath    must resolve inside $WORKSPACE
-  AdminWord      must be a single entry from a named word list
-  IntRange       must be an integer in [min, max]
-  ComposedWords  split on spaces, each word must be in a named word list
-                 (max 12 words). Spaces are safe — ArgumentList passes
-                 the whole string as one OS argument. No shell involved.
-  CompoundName   runtime base name + optional compile-time suffix.
-                 Used for project names only (the ONLY runtime exception).
-
---- CompoundName (project names) ---
-
-Your administrator sets base project names at startup (e.g. "Banana").
-The source defines compile-time suffixes (Api, Core, Tests, etc.).
-You compose by concatenation or dot-separation:
-
-  Base "Banana" with suffixes:
-    "Banana"                → base alone                     → OK
-    "BananaApi"             → base + "Api"                   → OK
-    "Banana.Api"            → base + "." + "Api"             → OK
-    "Banana.Application.API"→ base + "." + "Application.API" → OK
-    "BananaApp123"          → no such suffix "App123"        → REJECTED
-    "FooApi"                → "Foo" not a registered base    → REJECTED
-
-If no base names are configured, dotnet new -n is unavailable.
-dotnet new WITHOUT -n still works (uses directory name).
-
---- ComposedWords examples ---
-
-Used for git commit messages. You compose by combining words with spaces:
-
-  "Fix build errors"       → ["Fix","build","errors"]      → all in list → OK
-  "Add auth middleware"    → ["Add","auth","middleware"]    → all in list → OK
-  "Api 1 2 3"              → ["Api","1","2","3"]            → all in list → OK
-  "WIP"                    → ["WIP"]                        → in list     → OK
-  "Api123"                 → ["Api123"] as one word         → NOT in list → REJECTED
-  "I hacked the mainframe" → "hacked" NOT in list           → REJECTED
-
-ComposedWords is NOT concatenation. "Api 1 2 3" (4 words) works.
-"Api123" (1 word) does not. This is by design.
-
---- FreeText (sanitized free-form text) ---
-
-Some slots (like git commit -m) use FreeText. When FreeText is ENABLED
-for that command (via base.env or sandbox env), you can write arbitrary
-text subject to these rules:
-  - Max length enforced (default 200 chars, configurable per-verb)
-  - Control characters blocked (only printable + spaces)
-  - Secret patterns blocked (KEY=, TOKEN=, PASSWORD=, etc.)
-  - Gigablacklist patterns blocked (see "what will always fail" section)
-
-When FreeText is DISABLED (the default), the slot falls back to
-ComposedWords — each word must be in the vocabulary.
-
-FreeText can NEVER be enabled for unsafe binaries: bash, node, curl,
-python, etc. This is hardcoded and immutable.
-
-Your administrator controls this via mk8.shell.base.env (global) and
-per-sandbox env files. You cannot change it.
-
---- Vocabularies (env-sourced) ---
-
-The word lists for ComposedWords come from BOTH compile-time source code
-AND env files. Your administrator can add custom words per-sandbox:
-
-  MK8_VOCAB_CommitWords=Sprint,Backlog,Standup,Retrospective
-  MK8_VOCAB_BranchNames=feature/sprint-1,feature/sprint-2
-
-Global + sandbox vocabularies merge additively (both contribute).
-Words from either source are valid.
-
---- dotnet commands ---
-
-  dotnet --version
-  dotnet --info
-  dotnet --list-sdks
-  dotnet --list-runtimes
-  dotnet tool list   [-g | --global]
-  dotnet sln list
-  dotnet list reference
-  dotnet list package [--outdated] [--deprecated] [--vulnerable]
-                      [--include-transitive] [--format json]
-  dotnet nuget list source [--format json|Detailed|Short]
-  dotnet workload list
-  dotnet sdk check
-  dotnet build       [--configuration Release|Debug] [--no-restore] [-o path]
-                     [--verbosity quiet|minimal|normal|detailed|diagnostic]
-  dotnet publish     [--configuration Release|Debug] [--no-restore] [-o path]
-                     [--verbosity quiet|minimal|normal|detailed|diagnostic]
-  dotnet test        [--configuration Release|Debug] [--no-restore] [--no-build]
-                     [--verbosity quiet|minimal|normal|detailed|diagnostic]
-  dotnet clean       [--configuration Release|Debug] [--verbosity ...]
-  dotnet restore     [--no-cache] [--verbosity ...]
-  dotnet format      [--verify-no-changes] [--verbosity ...]
-  dotnet new <template> [-n <name>] [-o path]
-    template: from DotnetTemplates list (console, classlib, webapi, etc.)
-    name: CompoundName — runtime base + optional compile-time suffix
-          (e.g. "BananaApi", "Banana.Core", "Banana")
-  dotnet ef migrations add <name>
-    name: FreeText with MigrationNames fallback.
-    When FreeText enabled: any valid C# identifier (PascalCase, letters/
-    digits/underscores, no spaces, no leading digit, max 128 chars).
-    When disabled: from MigrationNames list (Initial, AddUsers, etc., plus A-Z, 0-9)
-  dotnet ef migrations list
-  dotnet ef migrations script [--idempotent] [-o path]
-  dotnet ef dbcontext info
-  dotnet ef dbcontext list
-
---- git commands ---
-
-READ-ONLY (no repository state changed):
-
-  git --version
-  git status         [--short | -s | --porcelain | --branch]
-  git log --oneline  [-n 1-100] [--all] [--no-decorate] [--graph] [--reverse]
-  git log --oneline -- <path>  [-n 1-100] [--all] [--no-decorate]
-  git diff           [--staged] [--cached] [--stat] [--name-only] [--name-status] [--word-diff]
-  git diff <path>    [--staged] [--cached]
-  git branch         [--list | -a | --all | -r]
-  git remote         [-v]
-  git remote add <name> <url>    name from RemoteNames, url from runtime config
-  git remote remove <name>       name from RemoteNames
-  git rev-parse HEAD
-  git rev-parse --short HEAD
-  git ls-files       [--modified] [--deleted] [--others] [--ignored]
-  git tag --list
-  git tag -l
-  git describe       [--tags] [--always] [--long] [--abbrev 1-40]
-  git stash show     [--stat] [--patch | -p]
-  git blame <path>   [-L range]            range from BlameLineRanges (1,10 1,20 etc.)
-  git clean -n       [-d]                  dry-run only — NO -f slot, cannot delete
-  git clean --dry-run [-d]                 same as above
-  git count-objects  [-v] [-H]             repo size statistics
-  git cherry         [-v]                  unpushed commits
-  git shortlog -sn   [--all] [--no-merges] contributor summary
-  git rev-list --count HEAD               total commit count
-
-WRITE (constrained to word lists):
-
-  git add <paths...>                   SandboxPath (variadic)
-  git add .
-  git add -A
-  git commit -m "<message>"            FreeText with CommitWords fallback
-  git stash
-  git stash pop
-  git stash list     [--oneline]
-  git stash drop
-  git tag <name>                       FreeText with TagNames fallback (lightweight)
-  git tag -a <name> -m "<message>"     FreeText for both name and message (annotated)
-  git tag -d <name>                    FreeText with TagNames fallback (delete local)
-  git checkout <branch>                AdminWord from BranchNames
-  git checkout -b <branch>             AdminWord from BranchNames
-  git switch <branch>                  AdminWord from BranchNames
-  git switch -c <branch>               AdminWord from BranchNames
-
-TAG RULES:
-  Tag names (when FreeText enabled): valid git ref names only — no spaces,
-  no "..", no "~^:?*[\", cannot start/end with "." or "/", cannot end with
-  ".lock", no consecutive slashes, max 128 chars.
-  Tag names (when FreeText disabled): from TagNames list only (v0.1.0,
-  v1.0.0-alpha, baseline, checkpoint, etc.).
-  Tag messages follow the same rules as commit messages.
-  Tag push is NOT whitelisted — requires dangerous-shell path.
-
-PROTECTED BRANCHES — BANNED:
-  main, master, develop, staging, production, live, release, release/*,
-  trunk. These are intentionally excluded from BranchNames. You must
-  NEVER operate on branches used for live or master development. All
-  your work must happen in a feature/bugfix/hotfix branch. Merging to
-  protected branches requires the dangerous-shell path with human
-  approval.
-
-NOT WHITELISTED (require dangerous-shell path):
-  push, pull, merge, rebase, reset, clean -f, clone, config, submodule,
-  am, apply, filter-branch, cherry-pick, bisect, gc, fsck, reflog.
-
---- git commit message vocabulary (CommitWords) ---
-
-You compose commit messages by combining words with spaces. Each word
-must be in the CommitWords vocabulary. Max 12 words per message.
-
-Verbs: Add Fix Update Remove Delete Refactor Move Rename Clean Optimize
-       Configure Wire Scaffold Extract Inline Format Implement Replace
-       Merge Split Revert Enable Disable Restore Sync Simplify Improve
-       Reorganize Consolidate Introduce Deprecate Drop Bump Pin Unpin
-Adjectives: Initial Minor Major Quick Temporary Deprecated Breaking
-            Critical Partial Missing Unused Duplicate Stale Draft
-            Experimental Internal Public Private New Old Default Custom Base
-Nouns: commit migration migrations schema tests test build builds
-       errors error typos typo code files file config configuration
-       dependencies dependency imports import comments comment
-       documentation docs README CHANGELOG endpoints endpoint
-       commands command middleware project projects services service
-       method methods class classes interface interfaces logging
-       validation handling namespace namespaces package packages
-       module modules component components feature features bugfix
-       hotfix release version setup cleanup logic flow pipeline
-       workflow response request route routes handler handlers
-       controller query queries index indexes table tables column
-       columns constraint constraints relation relations key keys
-       property properties field fields parameter parameters type
-       types enum enums seed data baseline snapshot template templates
-       factory helper options settings constants
-Domain: auth authentication authorization permissions agents agent
-        channels channel contexts context models model providers
-        provider jobs job tasks task skills skill resources resource
-        containers container devices device messages message roles role
-        users user transcription audio scheduler tokens token encryption
-        API CLI DI EF DB UI REST gRPC JSON YAML XML
-Connectors: up in for to from with and of on at by as into across
-States: work progress checkpoint WIP
-Letters: A-Z (case-insensitive)
-Digits: 0-9
-
---- node/npm commands ---
-
-  node --version
-  npm --version
-  npm ls             [--depth 0-10] [--all] [--json] [--prod] [--dev] [--long]
-  npm outdated       [--json]
-  npm audit          [--json] [--production] [--omit dev] (NO --fix)
-  npm cache verify
-  npm doctor
-  npm fund
-  npm prefix
-
---- cargo commands ---
-
-  cargo --version
-
---- version checks (read-only, no args) ---
-
-  python3 --version       (version-check exception — otherwise blocked)
-  ruby --version          (version-check exception — otherwise blocked)
-  perl --version          (version-check exception — otherwise blocked)
-  php --version           (version-check exception — otherwise blocked)
-  java --version
-  javac --version
-  go version
-  rustc --version
-  swift --version
-  cmake --version         (version-check exception — otherwise blocked)
-  gcc --version
-  g++ --version
-  clang --version
-  docker --version
-  kubectl version --client
-  deno --version
-  bun --version
-  terraform --version
-
---- archive commands (create/list via ProcRun) ---
-
-  tar -tf <path>
-  tar -tvf <path>              verbose listing with sizes and dates
-  tar -cf <out> <inputs...>
-  tar -czf <out> <inputs...>
-  gzip <path>
-  gunzip <path>
-  zip <out> <inputs...>
-  unzip -l <path>
-
---- read-only tools (SandboxPath args only, no free text) ---
-
-  cat <path>
-  head -n <1-1000> <path>
-  tail -n <1-1000> <path>
-  wc -l|-w|-c <path>
-  sort <path>
-  uniq <path>
-  diff <path1> <path2>
-  sha256sum <path>
-  md5sum <path>
-  base64 <path>
-  base64 -d <path>
-
---- openssl certificate inspection (read-only, SandboxPath only) ---
-
-  openssl x509 -in <cert> -noout -text         full cert dump
-  openssl x509 -in <cert> -noout -enddate      expiry date
-  openssl x509 -in <cert> -noout -subject       subject line
-  openssl x509 -in <cert> -noout -issuer        issuer line
-  openssl x509 -in <cert> -noout -serial        serial number
-  openssl x509 -in <cert> -noout -fingerprint -sha256  SHA-256 fingerprint
-
-  Only x509 -in <file> -noout is whitelisted. No other openssl subcommand
-  (s_client, enc, genrsa, req, etc.) is registered.
-
---- tool existence checks (which/where) ---
-
-  which <binary>                   Linux/macOS — check if binary is on PATH
-  where <binary>                   Windows — check if binary is on PATH
-
-  The binary argument is restricted to binaries already in the whitelist
-  (dotnet, git, node, npm, cargo, tar, openssl, cat, head, tail, etc.).
-  Reveals nothing the agent couldn't discover by running the binary itself.
-
---- permanently blocked binaries (cannot be overridden) ---
-
-  bash sh zsh fish dash cmd powershell pwsh
-  python python2 python3 pip pip3 perl ruby lua php
-  npx env xargs nohup sudo su doas pkexec
-  curl wget find ssh scp rsync nc socat
-  chmod chown systemctl crontab dd strace
-
-  Exception: python3/ruby/perl/php/cmake --version are allowed via
-  version-check carve-out. ALL other arguments remain blocked.
-
-
-== runtime configuration (admin-set, the ONLY runtime exception) ======
-
-Your administrator provides these at startup via Mk8RuntimeConfig.
-They are baked into the whitelist at construction and cannot change.
-
-  ProjectBases     base project names for dotnet new -n (max 32)
-                   e.g. ["Banana", "SharpClaw"]
-                   Combined with compile-time suffixes:
-                   Api, Core, Infrastructure, Contracts, Tests, Utils,
-                   Client, Server, Worker, Service, Web, Grpc, Shared,
-                   Common, Domain, Data, Models, Handlers, Extensions,
-                   Application.API, Application.Core,
-                   Application.Infrastructure, Application.Contracts,
-                   Application.Tests, PublicAPI, UITests
-
-  GitRemoteUrls    allowed git remote URLs for git remote add (max 16)
-                   e.g. ["https://github.com/org/repo.git"]
-
-If not configured, dotnet new -n and git remote add are unavailable.
-
-
-== EnvGet allowlist ===================================================
-
-HOME USERPROFILE USER USERNAME PATH LANG LC_ALL TZ TERM
-PWD HOSTNAME SHELL EDITOR DOTNET_ROOT NODE_ENV
-
-Any name containing KEY, SECRET, TOKEN, PASSWORD, CONN, AUTH,
-PRIVATE, ENCRYPT, JWT, CERTIFICATE, APIKEY is blocked.
-
-
-== HTTP rules =========================================================
-
-Scheme must be http or https. Port must be 80 or 443.
-No embedded credentials in the URL.
-Blocked hosts: localhost, 169.254.169.254, metadata.google.internal.
-Private/link-local IPs are blocked.
-
-
-== path rules =========================================================
-
-All paths must resolve inside $WORKSPACE (the sandbox).
-
-FORBIDDEN FILES (blocked on ALL operations — read, write, everything):
-  mk8.shell.env, mk8.shell.signed.env
-  These are sandbox environment files managed exclusively by the user
-  or mk8.shell.startup. You cannot read, write, copy, move, delete,
-  hash, or list them. Any attempt will fail.
-
-Write targets (.exe .dll .js .mjs .cjs .so .dylib and others) are
-blocked. You can write .sh .py .ps1 .bat etc. because their
-interpreters are blocked in ProcRun.
-
-Writes to .git/ paths are BLOCKED — you cannot create hooks, modify
-config, or inject objects into .git/ internals. Git metadata is
-managed by whitelisted git commands only.
-
-Write-blocked config filenames:
-  Makefile, GNUmakefile, CMakeLists.txt, Dockerfile, .npmrc,
-  Directory.Build.props, Directory.Build.targets, Directory.Packages.props,
-  nuget.config, package.json, build.rs, Cargo.toml,
-  setup.py, setup.cfg, pyproject.toml, .gitattributes, .gitmodules,
-  mk8.shell.env, mk8.shell.signed.env
+=====================================================================
+3) PROC RUN (STRICT WHITELIST)
+=====================================================================
+
+- Must match a registered command template EXACTLY.
+- No unregistered flags.
+- No arbitrary binaries.
+- No shell.
+- No free text unless slot explicitly supports FreeText.
+- Unsafe binaries (bash, python, curl, node, etc.) are blocked.
+
+Slot types:
+  Choice
+  SandboxPath
+  AdminWord
+  IntRange
+  ComposedWords (each word from vocab list)
+  CompoundName (project base + compile-time suffix)
+  FreeText (only if enabled)
+
+Protected branches (BANNED):
+  main, master, develop, staging, production, live, release, release/*, trunk
+
+Not whitelisted:
+  push, pull, merge, rebase, reset, clone, config, submodule, etc.
+
+=====================================================================
+4) CRITICAL RESTRICTIONS
+=====================================================================
+
+Forbidden files (ALL operations blocked):
+  mk8.shell.env
+  mk8.shell.signed.env
+
+Write-blocked filenames:
+  Makefile
+  CMakeLists.txt
+  Dockerfile
+  .npmrc
+  Directory.Build.props
+  Directory.Packages.props
+  nuget.config
+  package.json
+  build.rs
+  Cargo.toml
+  setup.py
+  pyproject.toml
+  .gitattributes
+  .gitmodules
 
 Write-blocked extensions:
-  .exe .com .scr .msi .msp .dll .bin .run .appimage .elf .so .dylib
-  .js .mjs .cjs .jse .wsf .wsh .msh .vbs .vbe
-  .csproj .fsproj .vbproj .proj .targets .props .sln .rs
+  .exe .dll .so .dylib .js .mjs .cjs .vbs .sln .csproj .targets .props .rs ...
 
-Build $WORKSPACE-relative paths without knowing the absolute root:
-  $WORKSPACE/src/app.ts       (use $WORKSPACE prefix)
-  $CWD/output/log.txt         (use $CWD prefix)
+Writes to .git/ paths are blocked.
 
-No .. segments. No absolute paths in path components.
+ArchiveExtract:
+  Fails on traversal, symlinks, blocked extensions, >256MB.
 
+HTTP rules:
+  Only http/https
+  Ports 80/443
+  No embedded credentials
+  Private IPs blocked
+  localhost blocked
 
-== what will always fail ==============================================
+EnvGet allowlist:
+  HOME USERPROFILE USER USERNAME PATH LANG LC_ALL TZ TERM
+  PWD HOSTNAME SHELL EDITOR DOTNET_ROOT NODE_ENV
 
-- Any verb not in the list above
-- Shell syntax in args: pipes |, chains &&, redirects >, subshells $()
-- Running bash, python, powershell, or any blocked binary
-- Any ProcRun invocation that doesn't match a registered template
-- Unregistered flags on any binary (e.g. git -c, dotnet run)
-- Free text in any argument position (must match a typed slot)
-- Writing .exe, .dll, .js, .so, or other blocked extensions
-- Writing to .git/ paths (hooks, config, objects)
-- Writing .gitattributes or .gitmodules
-- Reading or writing mk8.shell.env or mk8.shell.signed.env
-- Checking out protected branches (main, master, develop, staging,
-  production, live, release/*, trunk)
-- Commit messages containing words not in CommitWords vocabulary
-  (unless FreeText is enabled for "git commit" by the administrator)
-- Paths that escape the sandbox via .. or absolute paths
-- $PREV or process-captured variables in ProcRun args
-- $ characters inside template values or patch find/replace
-- MathEval with letters, functions, or expressions longer than 256 chars
-- OpenUrl with non-https scheme, private IPs, or embedded credentials
-- NetPing/NetDns with IP literals, .internal/.local/.corp hostnames
-- ArchiveExtract with path traversal, symlinks, blocked extensions, or >256MB
-- TextSubstring with negative start or length
-- TextHash/TextMatch with unsupported algorithm or invalid regex
-- FileHead/FileTail with line count > 1000 or < 1
-- SysDateFormat with format string > 32 chars or invalid characters
-- JsonMerge with non-object JSON inputs
-- FileGlob with depth > 10
-- NetTlsCert with port outside 1-65535
-- NetHttpStatus with non-https URL or private IP
-- openssl subcommands other than x509 -in <file> -noout
-- More than 1024 total operations after expansion
-- ForEach with more than 256 items
-- Nesting depth greater than 3
-- JsonFromPairs with odd argument count or > 128 args
-- JsonArrayFrom with > 64 items
-- RandomInt outside 0-1000000 or min > max
-- Sleep outside 0.1-30 seconds
-- TimeFormat with non-integer timestamp
-- BaseConvert with unsupported base (only 2, 8, 10, 16)
-- VersionCompare with unparseable version strings
-- FileChecksum with unsupported algorithm
-- NetTcpConnect with port outside 1-65535 or timeout outside 1-30
-- HttpLatency with count outside 1-10 or non-HTTPS URL
-- FileNewerThan with negative seconds
-- TextColumn with column index outside 0-100
-- DirHash with unsupported algorithm or > 500 files
-- SysLogRead with unknown source or line count outside 1-500
-- SysLogRead may return "Access denied" for security logs without elevation
-- ANY argument containing gigablacklisted patterns fail with:
-    "Gigablacklisted term not allowed: [term]"
-    Two compile-time groups:
-      (1) mk8.shell env/key filenames (mk8.shell.env, .signed.env,
-          .base.env, .key)
-      (2) hardcoded destructive patterns (shell injection, rm -rf,
-          format, mkfs, dd, block devices, shutdown/reboot, kill-all,
-          /etc/shadow, fork bombs, DROP DATABASE/TABLE, xp_cmdshell,
-          registry/service manipulation, privilege escalation)
-    Custom patterns from CustomBlacklist (base.env) + MK8_BLACKLIST
-    (sandbox env) are additive.
-    Base.env flags: DisableHardcodedGigablacklist disables group 2
-    (test-only, strongly discouraged). DisableMk8shellEnvsGigablacklist
-    additionally disables group 1 (only when hardcoded also disabled).
-    Both flags base.env-only, ignored in sandbox env.
-- FreeText with control characters (null, newlines, tabs)
-- FreeText with secret-like patterns (KEY=, TOKEN=, PASSWORD=, etc.)
-- FreeText exceeding max length (default 200, configurable per-verb)
-- FreeText on unsafe binaries (bash, node, curl, python, etc.) — always rejected
-- Migration names (FreeText) with spaces, leading digits, or non-identifier chars
-- Tag names (FreeText) with "..", "~^:?*[\", ".lock" suffix, or leading/trailing "."/"/"
-- Tag push (not whitelisted — requires dangerous-shell path)
+Gigablacklist:
+  Destructive patterns always blocked.
+  Env/key filenames always blocked.
+  Any argument containing blocked pattern fails.
 
+Hard limits:
+  Max 1024 operations
+  Max 16 captures
+  Nesting depth <= 3
+  ForEach <= 256 items
 
-== introspection verbs =================================================
+=====================================================================
+5) USEFUL EXAMPLES
+=====================================================================
 
-Mk8Blacklist  []              → all effective gigablacklist patterns
-Mk8Vocab      [listName]      → words in a named vocabulary (sorted)
-Mk8VocabList  []              → all vocabulary names with word counts
-Mk8FreeText   [commandKey?]   → FreeText config (global or per-command)
-Mk8Env        []              → merged environment vars (secrets redacted)
-Mk8Info       []              → sandbox ID, OS, .NET, architecture, etc.
-Mk8Templates  []              → all registered ProcRun command templates
-Mk8Verbs      []              → all available verb names
-Mk8Skills     []              → skill reference (this document)
-Mk8Docs       []              → full mk8.shell documentation
+---------------------------------------------------------------------
+A) BUILD → HASH → BASE64 → WRITE
+---------------------------------------------------------------------
 
-All resolved at compile time — output is baked in, no runtime I/O.
-Use these to discover available tools, vocabularies, and constraints.
-When an error occurs, these verbs help you fix it:
-  - Got a vocab/word error?   → Mk8Vocab to see allowed words
-  - Got a blocked binary?     → Mk8Templates to see allowed commands
-  - Got a blacklist error?    → Mk8Blacklist to see blocked patterns
-  - Got a FreeText error?     → Mk8FreeText to check per-command config
-  - Need the sandbox root?    → Mk8Info for workspace + OS info
-  - Need full documentation?  → Mk8Docs or Mk8Skills
-
-Example: check what words are available for commit messages:
-  { "verb": "Mk8Vocab", "args": ["CommitWords"] }
-
-Example: check if FreeText is enabled for git commit:
-  { "verb": "Mk8FreeText", "args": ["git commit"] }
-
-
-== common patterns ====================================================
-
---- build and capture output ---
 {
   "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/build.log", "$BUILD"] }
+    { "verb":"ProcRun","args":["dotnet","build"],"captureAs":"BUILD" },
+    { "verb":"TextHash","args":["$BUILD","sha256"],"captureAs":"HASH" },
+    { "verb":"TextBase64Encode","args":["$HASH"],"captureAs":"B64" },
+    { "verb":"FileWrite","args":["$WORKSPACE/build-hash.b64","$B64"] }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- scaffold multiple files ---
-{
-  "operations": [
-    {
-      "verb": "FileWriteMany",
-      "args": [
-        "$WORKSPACE/src/index.ts", "export {}",
-        "$WORKSPACE/src/config.ts", "export const config = {}",
-        "$WORKSPACE/README.md", "# Project"
-      ]
-    }
-  ]
-}
+---------------------------------------------------------------------
+B) BUILD WITH CLEANUP ON FAILURE
+---------------------------------------------------------------------
 
---- conditional deploy ---
 {
   "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"] },
-    {
-      "verb": "If",
-      "if": {
-        "predicate": { "kind": "PrevContains", "args": ["Build succeeded"] },
-        "then": { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/out"] }
-      }
-    }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- backup files before editing ---
-{
-  "operations": [
-    {
-      "verb": "ForEach",
-      "forEach": {
-        "items": ["config.yaml", "settings.json"],
-        "body": { "verb": "FileCopy", "args": ["$WORKSPACE/$ITEM", "$WORKSPACE/backup/$ITEM"] }
-      }
-    },
-    {
-      "verb": "FilePatch",
-      "args": ["$WORKSPACE/config.yaml"],
-      "patches": [{ "find": "port: 3000", "replace": "port: 8080" }]
-    }
-  ]
-}
-
---- build with cleanup on failure ---
-{
-  "operations": [
-    { "verb": "DirCreate", "args": ["$WORKSPACE/staging"] },
-    { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/staging"] }
+    { "verb":"DirCreate","args":["$WORKSPACE/staging"] },
+    { "verb":"ProcRun","args":["dotnet","publish","-o","$WORKSPACE/staging"] }
   ],
   "cleanup": [
-    { "verb": "DirDelete", "args": ["$WORKSPACE/staging"] }
+    { "verb":"DirDelete","args":["$WORKSPACE/staging"] }
   ],
-  "options": { "failureMode": "StopAndCleanup" }
+  "options": { "failureMode":"StopAndCleanup" }
 }
 
---- check file hash ---
-{
-  "operations": [
-    { "verb": "FileHash", "args": ["$WORKSPACE/bin/app.dll", "sha256"], "captureAs": "HASH" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/checksums.txt", "$HASH"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
+---------------------------------------------------------------------
+C) CONDITIONAL PUBLISH AFTER BUILD
+---------------------------------------------------------------------
 
---- git: create branch, edit, commit ---
 {
   "operations": [
-    { "verb": "ProcRun", "args": ["git", "checkout", "-b", "feature/auth"] },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/src/auth.cs", "// auth module"] },
-    { "verb": "ProcRun", "args": ["git", "add", "."] },
-    { "verb": "ProcRun", "args": ["git", "commit", "-m", "Add authentication module"] }
-  ]
-}
-
---- git: check status, diff, and log ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "status", "--short"], "captureAs": "STATUS" },
-    { "verb": "ProcRun", "args": ["git", "diff", "--stat"], "captureAs": "DIFF" },
-    { "verb": "ProcRun", "args": ["git", "log", "--oneline", "-n", "10"], "captureAs": "LOG" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/git-report.txt", "$STATUS\n\n$DIFF\n\n$LOG"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- git: stash, switch branch, pop ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "stash"] },
-    { "verb": "ProcRun", "args": ["git", "switch", "feature/api"] },
-    { "verb": "ProcRun", "args": ["git", "stash", "pop"] }
-  ]
-}
-
---- git: create lightweight tag ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "tag", "v1.0.0"] }
-  ]
-}
-
---- git: create annotated tag with message ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "tag", "-a", "v1.0.0", "-m", "Initial stable release"] }
-  ]
-}
-
---- git: list and delete a tag ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "tag", "--list"], "captureAs": "TAGS" },
-    { "verb": "ProcRun", "args": ["git", "tag", "-d", "v0.1.0-alpha"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- dotnet ef: create migration with descriptive name ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "ef", "migrations", "add", "AddUserPreferencesTable"] },
-    { "verb": "ProcRun", "args": ["dotnet", "ef", "migrations", "list"], "captureAs": "MIGRATIONS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/migrations.txt", "$MIGRATIONS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- check file metadata ---
-{
-  "operations": [
-    { "verb": "FileInfo", "args": ["$WORKSPACE/bin/app.dll"] }
-  ]
-}
-
---- check disk space and directory size ---
-{
-  "operations": [
-    { "verb": "SysDiskUsage", "args": [] },
-    { "verb": "SysDirSize", "args": ["$WORKSPACE/bin"] },
-    { "verb": "SysMemory", "args": [] }
-  ]
-}
-
---- copy result to clipboard ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "ClipboardSet", "args": ["$BUILD"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- calculate and write result ---
-{
-  "operations": [
-    { "verb": "MathEval", "args": ["(1024 * 1024) / 8"], "captureAs": "RESULT" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/calc.txt", "$RESULT"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- validate a URL ---
-{
-  "operations": [
-    { "verb": "OpenUrl", "args": ["https://api.example.com/health"], "captureAs": "URL" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/url.txt", "$URL"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- ping a host ---
-{
-  "operations": [
-    { "verb": "NetPing", "args": ["api.example.com", "3"] }
-  ]
-}
-
---- DNS lookup ---
-{
-  "operations": [
-    { "verb": "NetDns", "args": ["api.example.com"], "captureAs": "DNS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/dns.txt", "$DNS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- extract archive ---
-{
-  "operations": [
-    { "verb": "ArchiveExtract", "args": ["$WORKSPACE/data.zip", "$WORKSPACE/extracted"] },
-    { "verb": "DirTree", "args": ["$WORKSPACE/extracted"] }
-  ]
-}
-
---- check installed runtimes ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "--list-sdks"], "captureAs": "SDKS" },
-    { "verb": "ProcRun", "args": ["python3", "--version"], "captureAs": "PY" },
-    { "verb": "ProcRun", "args": ["java", "--version"], "captureAs": "JAVA" },
-    { "verb": "ProcRun", "args": ["go", "version"], "captureAs": "GO" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/runtime-versions.txt",
-      "dotnet:\n$SDKS\n\npython3:\n$PY\n\njava:\n$JAVA\n\ngo:\n$GO"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- search file for literal text ---
-{
-  "operations": [
-    { "verb": "FileSearch", "args": ["$WORKSPACE/src/config.json", "port"], "captureAs": "MATCHES" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/search-results.txt", "$MATCHES"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- compare two config files ---
-{
-  "operations": [
-    { "verb": "FileDiff", "args": ["$WORKSPACE/config.yaml", "$WORKSPACE/config.backup.yaml"] }
-  ]
-}
-
---- first 20 lines of a log file ---
-{
-  "operations": [
-    { "verb": "FileHead", "args": ["$WORKSPACE/logs/app.log", "20"] }
-  ]
-}
-
---- build, hash the output, and base64-encode ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "TextHash", "args": ["$BUILD", "sha256"], "captureAs": "HASH" },
-    { "verb": "TextBase64Encode", "args": ["$HASH"], "captureAs": "B64" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/build-hash.b64", "$B64"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- merge two JSON configs ---
-{
-  "operations": [
-    { "verb": "FileRead", "args": ["$WORKSPACE/defaults.json"], "captureAs": "DEFAULTS" },
-    { "verb": "FileRead", "args": ["$WORKSPACE/overrides.json"], "captureAs": "OVERRIDES" },
-    { "verb": "JsonMerge", "args": ["$DEFAULTS", "$OVERRIDES"], "captureAs": "MERGED" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/config.json", "$MERGED"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- split build output into lines and count ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "TextLines", "args": ["$BUILD"], "captureAs": "LINES" },
-    { "verb": "TextContains", "args": ["$BUILD", "Build succeeded"], "captureAs": "OK" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/build-summary.txt", "$LINES\nSuccess: $OK"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- system environment snapshot ---
-{
-  "operations": [
-    { "verb": "SysOsInfo", "args": [], "captureAs": "OS" },
-    { "verb": "SysCpuCount", "args": [], "captureAs": "CPU" },
-    { "verb": "SysMemory", "args": [], "captureAs": "MEM" },
-    { "verb": "SysTimestamp", "args": [], "captureAs": "TS" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/env-snapshot.txt",
-      "Timestamp: $TS\n\n$OS\n\nCPUs: $CPU\n\n$MEM"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- count files in build output ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/out"] },
-    { "verb": "DirFileCount", "args": ["$WORKSPACE/out"], "captureAs": "COUNT" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/publish-count.txt", "$COUNT files published"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- check TLS certificate expiry ---
-{
-  "operations": [
-    { "verb": "NetTlsCert", "args": ["api.example.com"], "captureAs": "CERT" },
-    { "verb": "TextContains", "args": ["$CERT", "EXPIRING SOON"], "captureAs": "EXPIRING" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/cert-report.txt", "$CERT"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- health check with status only (no body downloaded) ---
-{
-  "operations": [
-    { "verb": "NetHttpStatus", "args": ["https://api.example.com/health"], "captureAs": "STATUS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/health.txt", "$STATUS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- find all .cs files recursively ---
-{
-  "operations": [
-    { "verb": "FileGlob", "args": ["$WORKSPACE/src", "*.cs", "8"], "captureAs": "FILES" },
-    { "verb": "TextCount", "args": ["$FILES"], "captureAs": "STATS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/cs-files.txt", "$FILES\n\n$STATS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- sort and deduplicate build warnings ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "TextSort", "args": ["$BUILD"], "captureAs": "SORTED" },
-    { "verb": "TextUniq", "args": ["$SORTED"], "captureAs": "UNIQUE" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/warnings.txt", "$UNIQUE"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- inspect a certificate file with openssl ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["openssl", "x509", "-in", "$WORKSPACE/certs/server.pem", "-noout", "-text"], "captureAs": "CERT_TEXT" },
-    { "verb": "ProcRun", "args": ["openssl", "x509", "-in", "$WORKSPACE/certs/server.pem", "-noout", "-enddate"], "captureAs": "EXPIRY" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/cert-info.txt", "$CERT_TEXT\n\nExpiry: $EXPIRY"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- check which tools are installed ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["which", "dotnet"], "captureAs": "DOTNET_PATH" },
-    { "verb": "ProcRun", "args": ["which", "node"], "captureAs": "NODE_PATH" },
-    { "verb": "ProcRun", "args": ["which", "docker"], "captureAs": "DOCKER_PATH" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/tools.txt",
-      "dotnet: $DOTNET_PATH\nnode: $NODE_PATH\ndocker: $DOCKER_PATH"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- npm security audit ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["npm", "audit", "--json"], "captureAs": "AUDIT" },
-    { "verb": "JsonKeys", "args": ["$AUDIT"], "captureAs": "KEYS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/audit.json", "$AUDIT"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- conditional action based on line count ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "test"], "captureAs": "TEST" },
+    { "verb":"ProcRun","args":["dotnet","build"] },
     {
-      "verb": "If",
+      "verb":"If",
       "if": {
-        "predicate": { "kind": "PrevLineCount", "args": ["gt", "5"] },
-        "then": { "verb": "FileWrite", "args": ["$WORKSPACE/test-verbose.log", "$TEST"] }
+        "predicate": { "kind":"PrevContains","args":["Build succeeded"] },
+        "then": { "verb":"ProcRun","args":["dotnet","publish","-o","$WORKSPACE/out"] }
       }
     }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- git blame + file history ---
+---------------------------------------------------------------------
+D) GIT: BRANCH → EDIT → COMMIT
+---------------------------------------------------------------------
+
 {
   "operations": [
-    { "verb": "ProcRun", "args": ["git", "blame", "$WORKSPACE/src/Program.cs"], "captureAs": "BLAME" },
-    { "verb": "ProcRun", "args": ["git", "log", "--oneline", "--", "$WORKSPACE/src/Program.cs"], "captureAs": "HISTORY" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/code-report.txt", "Blame:\n$BLAME\n\nHistory:\n$HISTORY"] }
-  ],
-  "options": { "pipeStepOutput": true }
+    { "verb":"ProcRun","args":["git","checkout","-b","feature/auth"] },
+    { "verb":"FileWrite","args":["$WORKSPACE/src/auth.cs","// auth module"] },
+    { "verb":"ProcRun","args":["git","add","."] },
+    { "verb":"ProcRun","args":["git","commit","-m","Add authentication module"] }
+  ]
 }
 
---- detect file type and encoding ---
-{
-  "operations": [
-    { "verb": "FileMimeType", "args": ["$WORKSPACE/data/unknown.bin"], "captureAs": "MIME" },
-    { "verb": "FileEncoding", "args": ["$WORKSPACE/src/config.txt"], "captureAs": "ENC" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/file-info.txt", "MIME: $MIME\nEncoding: $ENC"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
+---------------------------------------------------------------------
+E) VERIFY FILE COPY INTEGRITY
+---------------------------------------------------------------------
 
---- check if output dir is empty before build ---
 {
   "operations": [
-    { "verb": "DirEmpty", "args": ["$WORKSPACE/out"], "captureAs": "IS_EMPTY" },
+    { "verb":"FileCopy","args":["$WORKSPACE/data.db","$WORKSPACE/backup/data.db"] },
+    { "verb":"FileEqual","args":["$WORKSPACE/data.db","$WORKSPACE/backup/data.db"],"captureAs":"MATCH" },
     {
-      "verb": "If",
+      "verb":"If",
       "if": {
-        "predicate": { "kind": "CaptureContains", "args": ["IS_EMPTY", "True"] },
-        "then": { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/out"] }
+        "predicate": { "kind":"CaptureContains","args":["MATCH","False"] },
+        "then": { "verb":"Fail","args":["Backup verification failed"] }
       }
     }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- check NuGet packages for vulnerabilities ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "list", "package", "--vulnerable", "--format", "json"], "captureAs": "VULN" },
-    { "verb": "JsonType", "args": ["$VULN"], "captureAs": "TYPE" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/vuln-report.json", "$VULN"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
+---------------------------------------------------------------------
+F) SDK VERSION ENFORCEMENT
+---------------------------------------------------------------------
 
---- git repo summary ---
 {
   "operations": [
-    { "verb": "ProcRun", "args": ["git", "rev-list", "--count", "HEAD"], "captureAs": "COMMITS" },
-    { "verb": "ProcRun", "args": ["git", "count-objects", "-v", "-H"], "captureAs": "SIZE" },
-    { "verb": "ProcRun", "args": ["git", "shortlog", "-sn", "--all", "--no-merges"], "captureAs": "AUTHORS" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/repo-summary.txt",
-      "Total commits: $COMMITS\n\nRepo size:\n$SIZE\n\nAuthors:\n$AUTHORS"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- build JSON config programmatically ---
-{
-  "operations": [
-    { "verb": "JsonFromPairs", "args": ["host", "localhost", "port", "5432", "ssl", "true"], "captureAs": "CONFIG" },
-    { "verb": "JsonSet", "args": ["$CONFIG", "database", "myapp"], "captureAs": "CONFIG" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/config.json", "$CONFIG"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- extract filename from glob results ---
-{
-  "operations": [
-    { "verb": "FileGlob", "args": ["$WORKSPACE/src", "*.cs", "5"], "captureAs": "FILES" },
-    { "verb": "TextSplit", "args": ["$FILES", "\n"], "captureAs": "LINES" },
-    { "verb": "PathFile", "args": ["$WORKSPACE/src/Controllers/HomeController.cs"], "captureAs": "NAME" },
-    { "verb": "PathStem", "args": ["$WORKSPACE/src/app.config.json"], "captureAs": "STEM" }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- verify file copy integrity ---
-{
-  "operations": [
-    { "verb": "FileCopy", "args": ["$WORKSPACE/data/important.db", "$WORKSPACE/backup/important.db"] },
-    { "verb": "FileEqual", "args": ["$WORKSPACE/data/important.db", "$WORKSPACE/backup/important.db"], "captureAs": "MATCH" },
+    { "verb":"ProcRun","args":["dotnet","--version"],"captureAs":"VER" },
+    { "verb":"VersionParse","args":["$VER"],"captureAs":"PARSED" },
+    { "verb":"VersionCompare","args":["$PARSED","8.0.0"],"captureAs":"CMP" },
     {
-      "verb": "If",
+      "verb":"If",
       "if": {
-        "predicate": { "kind": "CaptureContains", "args": ["MATCH", "False"] },
-        "then": { "verb": "Fail", "args": ["Backup verification failed — files differ"] }
+        "predicate": { "kind":"CaptureContains","args":["CMP","-1"] },
+        "then": { "verb":"Fail","args":["SDK version too old"] }
       }
     }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- check SDK version meets minimum ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "--version"], "captureAs": "VER" },
-    { "verb": "VersionParse", "args": ["$VER"], "captureAs": "PARSED" },
-    { "verb": "VersionCompare", "args": ["$PARSED", "8.0.0"], "captureAs": "CMP" },
-    {
-      "verb": "If",
-      "if": {
-        "predicate": { "kind": "CaptureContains", "args": ["CMP", "-1"] },
-        "then": { "verb": "Fail", "args": ["SDK version too old — need >= 8.0.0"] }
-      }
-    }
-  ],
-  "options": { "pipeStepOutput": true }
-}
+---------------------------------------------------------------------
+G) FULL INFRASTRUCTURE HEALTH CHECK
+---------------------------------------------------------------------
 
---- generate unique build tag ---
 {
   "operations": [
-    { "verb": "GuidNewShort", "args": [], "captureAs": "TAG" },
-    { "verb": "SysTimestamp", "args": [], "captureAs": "TS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/build-tag.txt", "$TS-$TAG"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- compute build elapsed time ---
-{
-  "operations": [
-    { "verb": "SysTimestamp", "args": [], "captureAs": "START" },
-    { "verb": "ProcRun", "args": ["dotnet", "build"] },
-    { "verb": "SysTimestamp", "args": [], "captureAs": "END" },
-    { "verb": "TimeDiff", "args": ["$START", "$END"], "captureAs": "ELAPSED" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/build-time.txt", "Build took $ELAPSED seconds"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- extract regex capture groups from version string ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "--version"], "captureAs": "VER" },
-    { "verb": "TextRegexGroups", "args": ["$VER", "(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)"], "captureAs": "GROUPS" },
-    { "verb": "JsonGet", "args": ["$GROUPS", "major"], "captureAs": "MAJOR" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/version.txt", "Major: $MAJOR\nFull: $GROUPS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- assert build output contains expected string ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "build"], "captureAs": "BUILD" },
-    { "verb": "TextContains", "args": ["$BUILD", "Build succeeded"], "captureAs": "OK" },
-    { "verb": "Assert", "args": ["$OK", "True", "Build did not succeed"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- hex encode a hash for embedding ---
-{
-  "operations": [
-    { "verb": "HexEncode", "args": ["Hello, World!"], "captureAs": "HEX" },
-    { "verb": "HexDecode", "args": ["$HEX"], "captureAs": "DECODED" },
-    { "verb": "Assert", "args": ["$DECODED", "Hello, World!"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- build JSON array of project files ---
-{
-  "operations": [
-    { "verb": "JsonArrayFrom", "args": ["src/app.cs", "src/config.cs", "src/utils.cs"], "captureAs": "FILES" },
-    { "verb": "JsonCompact", "args": ["$FILES"], "captureAs": "COMPACT" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/files.json", "$COMPACT"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- rate-limited health checks ---
-{
-  "operations": [
-    { "verb": "NetHttpStatus", "args": ["https://api.example.com/health"], "captureAs": "S1" },
-    { "verb": "Sleep", "args": ["2"] },
-    { "verb": "NetHttpStatus", "args": ["https://api.example.com/health"], "captureAs": "S2" },
-    { "verb": "Sleep", "args": ["2"] },
-    { "verb": "NetHttpStatus", "args": ["https://api.example.com/health"], "captureAs": "S3" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/health-log.txt", "Check 1:\n$S1\n\nCheck 2:\n$S2\n\nCheck 3:\n$S3"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- convert port number between bases ---
-{
-  "operations": [
-    { "verb": "BaseConvert", "args": ["8080", "10", "16"], "captureAs": "HEX_PORT" },
-    { "verb": "BaseConvert", "args": ["8080", "10", "2"], "captureAs": "BIN_PORT" },
-    { "verb": "Echo", "args": ["Port 8080 = 0x$HEX_PORT = 0b$BIN_PORT"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- verify checksum of downloaded artifact ---
-{
-  "operations": [
-    { "verb": "FileChecksum", "args": ["$WORKSPACE/artifacts/app.zip", "a1b2c3d4e5f6...", "sha256"], "captureAs": "VALID" },
-    {
-      "verb": "If",
-      "if": {
-        "predicate": { "kind": "CaptureContains", "args": ["VALID", "False"] },
-        "then": { "verb": "Fail", "args": ["Checksum verification failed — artifact may be corrupted"] }
-      }
-    }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- format timestamp for filenames ---
-{
-  "operations": [
-    { "verb": "SysTimestamp", "args": [], "captureAs": "TS" },
-    { "verb": "TimeFormat", "args": ["$TS", "yyyy-MM-dd'T'HH-mm-ss"], "captureAs": "FORMATTED" },
-    { "verb": "GuidNewShort", "args": [], "captureAs": "ID" },
-    { "verb": "PathJoin", "args": ["$WORKSPACE", "backups", "$FORMATTED-$ID.tar.gz"], "captureAs": "BACKUP_PATH" },
-    { "verb": "Echo", "args": ["Backup path: $BACKUP_PATH"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- check if a service port is open ---
-{
-  "operations": [
-    { "verb": "NetTcpConnect", "args": ["db.example.com", "5432", "5"], "captureAs": "DB" },
-    { "verb": "NetTcpConnect", "args": ["redis.example.com", "6379"], "captureAs": "REDIS" },
-    { "verb": "NetTcpConnect", "args": ["api.example.com", "443"], "captureAs": "API" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/port-check.txt",
-      "PostgreSQL (5432): $DB\nRedis (6379): $REDIS\nAPI (443): $API"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- measure API latency ---
-{
-  "operations": [
-    { "verb": "HttpLatency", "args": ["https://api.example.com/health", "5"], "captureAs": "LATENCY" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/latency-report.txt", "$LATENCY"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- check if log file is stale ---
-{
-  "operations": [
-    { "verb": "FileAge", "args": ["$WORKSPACE/logs/app.log"], "captureAs": "AGE" },
-    { "verb": "FormatDuration", "args": ["$AGE"], "captureAs": "AGE_HUMAN" },
-    { "verb": "FileNewerThan", "args": ["$WORKSPACE/logs/app.log", "300"], "captureAs": "FRESH" },
-    {
-      "verb": "If",
-      "if": {
-        "predicate": { "kind": "CaptureContains", "args": ["FRESH", "False"] },
-        "then": { "verb": "FileWrite", "args": ["$WORKSPACE/alert.txt", "Log stale! Age: $AGE_HUMAN"] }
-      }
-    }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- find a specific process ---
-{
-  "operations": [
-    { "verb": "ProcessFind", "args": ["dotnet"], "captureAs": "PROCS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/dotnet-procs.txt", "$PROCS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- disk and drive inventory ---
-{
-  "operations": [
-    { "verb": "SysDriveList", "args": [], "captureAs": "DRIVES" },
-    { "verb": "SysNetInfo", "args": [], "captureAs": "NETS" },
-    { "verb": "EnvList", "args": [], "captureAs": "ENVS" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/system-inventory.txt",
-      "Drives:\n$DRIVES\n\nNetwork:\n$NETS\n\nEnvironment:\n$ENVS"
-    ]}
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- grep for errors in log file ---
-{
-  "operations": [
-    { "verb": "FileSearchRegex", "args": ["$WORKSPACE/logs/app.log", "ERROR|WARN|FATAL"], "captureAs": "ERRORS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/error-report.txt", "$ERRORS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- extract column from tabular output ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["git", "shortlog", "-sn", "--all"], "captureAs": "AUTHORS" },
-    { "verb": "TextColumn", "args": ["$AUTHORS", "1"], "captureAs": "NAMES" },
-    { "verb": "TextColumn", "args": ["$AUTHORS", "0"], "captureAs": "COUNTS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/contributors.txt", "Names:\n$NAMES\n\nCounts:\n$COUNTS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- compare deployment directories ---
-{
-  "operations": [
-    { "verb": "DirCompare", "args": ["$WORKSPACE/deploy-v1", "$WORKSPACE/deploy-v2"], "captureAs": "DIFF" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/deploy-diff.txt", "$DIFF"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- generate integrity manifest ---
-{
-  "operations": [
-    { "verb": "DirHash", "args": ["$WORKSPACE/release", "sha256"], "captureAs": "MANIFEST" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/release/checksums.txt", "$MANIFEST"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- format build output sizes ---
-{
-  "operations": [
-    { "verb": "ProcRun", "args": ["dotnet", "publish", "-o", "$WORKSPACE/out"] },
-    { "verb": "SysDirSize", "args": ["$WORKSPACE/out"], "captureAs": "SIZE_RAW" },
-    { "verb": "TextRegexGroups", "args": ["$SIZE_RAW", "(?<bytes>\\d+) bytes"], "captureAs": "GROUPS" },
-    { "verb": "JsonGet", "args": ["$GROUPS", "bytes"], "captureAs": "BYTES" },
-    { "verb": "FormatBytes", "args": ["$BYTES"], "captureAs": "HUMAN" },
-    { "verb": "Echo", "args": ["Published output: $HUMAN"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
-
---- full infrastructure health check ---
-{
-  "operations": [
-    { "verb": "NetTcpConnect", "args": ["db.example.com", "5432"], "captureAs": "DB_PORT" },
-    { "verb": "NetHttpStatus", "args": ["https://api.example.com/health"], "captureAs": "API_STATUS" },
-    { "verb": "HttpLatency", "args": ["https://api.example.com/health", "3"], "captureAs": "API_LATENCY" },
-    { "verb": "NetTlsCert", "args": ["api.example.com"], "captureAs": "CERT" },
-    { "verb": "SysDriveList", "args": [], "captureAs": "DISKS" },
-    { "verb": "SysMemory", "args": [], "captureAs": "MEM" },
-    { "verb": "ProcessFind", "args": ["dotnet"], "captureAs": "PROCS" },
-    { "verb": "FileWrite", "args": [
+    { "verb":"NetTcpConnect","args":["db.example.com","5432"],"captureAs":"DB" },
+    { "verb":"NetHttpStatus","args":["https://api.example.com/health"],"captureAs":"STATUS" },
+    { "verb":"HttpLatency","args":["https://api.example.com/health","3"],"captureAs":"LAT" },
+    { "verb":"NetTlsCert","args":["api.example.com"],"captureAs":"CERT" },
+    { "verb":"SysDriveList","args":[],"captureAs":"DISKS" },
+    { "verb":"SysMemory","args":[],"captureAs":"MEM" },
+    { "verb":"ProcessFind","args":["dotnet"],"captureAs":"PROCS" },
+    { "verb":"FileWrite","args":[
       "$WORKSPACE/health-report.txt",
-      "=== Port Check ===\nDB (5432): $DB_PORT\n\n=== API Status ===\n$API_STATUS\n\n=== API Latency ===\n$API_LATENCY\n\n=== TLS Certificate ===\n$CERT\n\n=== Disk Space ===\n$DISKS\n\n=== Memory ===\n$MEM\n\n=== Dotnet Processes ===\n$PROCS"
+      "DB:\n$DB\n\nStatus:\n$STATUS\n\nLatency:\n$LAT\n\nCert:\n$CERT\n\nDisks:\n$DISKS\n\nMemory:\n$MEM\n\nProcesses:\n$PROCS"
     ]}
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- read recent application logs ---
+---------------------------------------------------------------------
+H) DIRECTORY HASH MANIFEST
+---------------------------------------------------------------------
+
 {
   "operations": [
-    { "verb": "SysLogSources", "args": [], "captureAs": "SOURCES" },
-    { "verb": "SysLogRead", "args": ["application", "100"], "captureAs": "APP_LOG" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/app-events.txt", "Available:\n$SOURCES\n\nRecent:\n$APP_LOG"] }
+    { "verb":"DirHash","args":["$WORKSPACE/release","sha256"],"captureAs":"MANIFEST" },
+    { "verb":"FileWrite","args":["$WORKSPACE/release/checksums.txt","$MANIFEST"] }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- search system logs for errors ---
+---------------------------------------------------------------------
+I) MERGE JSON CONFIGS
+---------------------------------------------------------------------
+
 {
   "operations": [
-    { "verb": "SysLogRead", "args": ["system", "200", "error"], "captureAs": "SYS_ERRORS" },
-    { "verb": "SysLogRead", "args": ["application", "200", "error"], "captureAs": "APP_ERRORS" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/error-logs.txt",
-      "=== System Errors ===\n$SYS_ERRORS\n\n=== Application Errors ===\n$APP_ERRORS"
-    ]}
+    { "verb":"FileRead","args":["$WORKSPACE/defaults.json"],"captureAs":"A" },
+    { "verb":"FileRead","args":["$WORKSPACE/overrides.json"],"captureAs":"B" },
+    { "verb":"JsonMerge","args":["$A","$B"],"captureAs":"MERGED" },
+    { "verb":"FileWrite","args":["$WORKSPACE/config.json","$MERGED"] }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- check service status ---
+---------------------------------------------------------------------
+J) BUILD TIME MEASUREMENT
+---------------------------------------------------------------------
+
 {
   "operations": [
-    { "verb": "SysServiceStatus", "args": ["w3svc"], "captureAs": "IIS" },
-    { "verb": "SysServiceStatus", "args": ["postgresql"], "captureAs": "PG" },
-    { "verb": "FileWrite", "args": [
-      "$WORKSPACE/service-check.txt",
-      "IIS:\n$IIS\n\nPostgreSQL:\n$PG"
-    ]}
+    { "verb":"SysTimestamp","args":[],"captureAs":"START" },
+    { "verb":"ProcRun","args":["dotnet","build"] },
+    { "verb":"SysTimestamp","args":[],"captureAs":"END" },
+    { "verb":"TimeDiff","args":["$START","$END"],"captureAs":"ELAPSED" },
+    { "verb":"FileWrite","args":["$WORKSPACE/build-time.txt","Build took $ELAPSED seconds"] }
   ],
   "options": { "pipeStepOutput": true }
 }
 
---- list all running services matching a filter ---
-{
-  "operations": [
-    { "verb": "SysServiceList", "args": ["sql"], "captureAs": "SQL_SVCS" },
-    { "verb": "FileWrite", "args": ["$WORKSPACE/sql-services.txt", "$SQL_SVCS"] }
-  ],
-  "options": { "pipeStepOutput": true }
-}
+---------------------------------------------------------------------
+K) SYSTEM DIAGNOSTIC SNAPSHOT
+---------------------------------------------------------------------
 
---- full sysadmin diagnostic ---
 {
   "operations": [
-    { "verb": "SysOsInfo", "args": [], "captureAs": "OS" },
-    { "verb": "SysDriveList", "args": [], "captureAs": "DISKS" },
-    { "verb": "SysNetInfo", "args": [], "captureAs": "NET" },
-    { "verb": "SysMemory", "args": [], "captureAs": "MEM" },
-    { "verb": "ProcessFind", "args": ["dotnet"], "captureAs": "PROCS" },
-    { "verb": "SysLogRead", "args": ["system", "50", "error"], "captureAs": "SYS_ERRS" },
-    { "verb": "SysServiceList", "args": [], "captureAs": "SVCS" },
-    { "verb": "SysUptime", "args": [], "captureAs": "UP" },
-    { "verb": "FileWrite", "args": [
+    { "verb":"SysOsInfo","args":[],"captureAs":"OS" },
+    { "verb":"SysDriveList","args":[],"captureAs":"DISKS" },
+    { "verb":"SysNetInfo","args":[],"captureAs":"NET" },
+    { "verb":"SysMemory","args":[],"captureAs":"MEM" },
+    { "verb":"SysUptime","args":[],"captureAs":"UP" },
+    { "verb":"SysServiceList","args":[],"captureAs":"SVCS" },
+    { "verb":"FileWrite","args":[
       "$WORKSPACE/diagnostic.txt",
-      "=== OS ===\n$OS\n\n=== Uptime ===\n$UP\n\n=== Disks ===\n$DISKS\n\n=== Network ===\n$NET\n\n=== Memory ===\n$MEM\n\n=== Dotnet Processes ===\n$PROCS\n\n=== System Errors ===\n$SYS_ERRS\n\n=== Services ===\n$SVCS"
+      "OS:\n$OS\n\nUptime:\n$UP\n\nDisks:\n$DISKS\n\nNetwork:\n$NET\n\nMemory:\n$MEM\n\nServices:\n$SVCS"
     ]}
   ],
   "options": { "pipeStepOutput": true }
 }
+
+=====================================================================
+INTROSPECTION (COMPILE-TIME)
+=====================================================================
+
+Mk8Blacklist
+Mk8Vocab
+Mk8VocabList
+Mk8FreeText
+Mk8Env
+Mk8Info
+Mk8Templates
+Mk8Verbs
+Mk8Skills
+Mk8Docs
+
+Use these to discover runtime constraints, vocabularies, and template availability.
+
+End of reference.

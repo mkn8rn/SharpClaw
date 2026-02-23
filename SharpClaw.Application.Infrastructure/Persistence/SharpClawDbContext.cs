@@ -28,7 +28,7 @@ public class SharpClawDbContext(
     public DbSet<ModelDB> Models => Set<ModelDB>();
     public DbSet<AgentDB> Agents => Set<AgentDB>();
     public DbSet<ChannelContextDB> AgentContexts => Set<ChannelContextDB>();
-    public DbSet<ChannelDB> Conversations => Set<ChannelDB>();
+    public DbSet<ChannelDB> Channels => Set<ChannelDB>();
     public DbSet<ChatMessageDB> ChatMessages => Set<ChatMessageDB>();
     public DbSet<ScheduledJobDB> ScheduledTasks => Set<ScheduledJobDB>();
 
@@ -119,7 +119,7 @@ public class SharpClawDbContext(
                 .WithOne(c => c.Agent)
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(a => a.Conversations)
+            e.HasMany(a => a.Channels)
                 .WithOne(c => c.Agent)
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -133,7 +133,7 @@ public class SharpClawDbContext(
         modelBuilder.Entity<ChannelContextDB>(e =>
         {
             e.HasIndex(c => new { c.AgentId, c.Name }).IsUnique();
-            e.HasMany(c => c.Conversations)
+            e.HasMany(c => c.Channels)
                 .WithOne(conv => conv.AgentContext!)
                 .HasForeignKey(conv => conv.AgentContextId)
                 .OnDelete(DeleteBehavior.SetNull);
@@ -147,16 +147,16 @@ public class SharpClawDbContext(
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
-        // ── Conversations ─────────────────────────────────────────
+        // ── Channels ──────────────────────────────────────────────
         modelBuilder.Entity<ChannelDB>(e =>
         {
             e.HasOne(c => c.Model)
-                .WithMany(m => m.Conversations)
+                .WithMany(m => m.Channels)
                 .HasForeignKey(c => c.ModelId)
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasMany(c => c.ChatMessages)
-                .WithOne(m => m.Conversation)
-                .HasForeignKey(m => m.ConversationId)
+                .WithOne(m => m.Channel)
+                .HasForeignKey(m => m.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(c => c.PermissionSet)
                 .WithMany()
@@ -532,9 +532,9 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(j => j.TranscriptionModelId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasOne(j => j.Conversation)
+            e.HasOne(j => j.Channel)
                 .WithMany()
-                .HasForeignKey(j => j.ConversationId)
+                .HasForeignKey(j => j.ChannelId)
                 .OnDelete(DeleteBehavior.SetNull);
             e.HasMany(j => j.TranscriptionSegments)
                 .WithOne(s => s.AgentJob)

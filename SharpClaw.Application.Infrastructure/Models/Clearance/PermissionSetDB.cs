@@ -6,7 +6,7 @@ namespace SharpClaw.Application.Infrastructure.Models.Clearance;
 
 /// <summary>
 /// A reusable set of permissions that can be attached to a role, context,
-/// or conversation. Defines what actions the holder is permitted to
+/// or channel. Defines what actions the holder is permitted to
 /// perform and at what clearance level.
 /// </summary>
 public class PermissionSetDB : BaseEntity
@@ -49,7 +49,7 @@ public class PermissionSetDB : BaseEntity
 
     // ── Default resource accesses ─────────────────────────────────
     // Optional defaults used when starting a job and no specific
-    // resource of that type is provided by the context or conversation.
+    // resource of that type is provided by the context or channel.
 
     public Guid? DefaultDangerousShellAccessId { get; set; }
     public DangerousShellAccessDB? DefaultDangerousShellAccess { get; set; }

@@ -91,7 +91,7 @@ try
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ModelService>();
     builder.Services.AddScoped<AgentService>();
-    builder.Services.AddScoped<ConversationService>();
+    builder.Services.AddScoped<ChannelService>();
     builder.Services.AddScoped<ContextService>();
     builder.Services.AddScoped<AgentActionService>();
     builder.Services.AddScoped<AgentJobService>();

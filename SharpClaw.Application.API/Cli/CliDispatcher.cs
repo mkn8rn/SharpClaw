@@ -11,7 +11,7 @@ using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Auth;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Contexts;
-using SharpClaw.Contracts.DTOs.Conversations;
+using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.DTOs.Containers;
@@ -31,7 +31,7 @@ public static class CliDispatcher
 
     private static string? _currentUser;
     private static Guid? _currentUserId;
-    private static Guid? _currentConversationId;
+    private static Guid? _currentChannelId;
     private static bool IsLoggedIn => _currentUser is not null;
 
     [Conditional("DEBUG")]
@@ -81,7 +81,7 @@ public static class CliDispatcher
             {
                 _currentUser = null;
                 _currentUserId = null;
-                _currentConversationId = null;
+                _currentChannelId = null;
                 Console.WriteLine("Logged out.");
                 DebugLog("Response: Logged out.");
                 Console.WriteLine();
@@ -179,7 +179,7 @@ public static class CliDispatcher
             "model" => await HandleModelCommand(args, sp),
             "agent" => await HandleAgentCommand(args, sp),
             "context" or "ctx" => await HandleContextCommand(args, sp),
-            "conversation" or "conv" => await HandleConversationCommand(args, sp),
+            "channel" or "chan" => await HandleChannelCommand(args, sp),
             "chat" => await HandleChatCommand(args, sp),
             "job" => await HandleJobCommand(args, sp),
             "role" => await HandleRoleCommand(args, sp),
@@ -511,21 +511,21 @@ public static class CliDispatcher
             return Results.Ok();
         }
 
-        var convSvc = sp.GetRequiredService<ConversationService>();
+        var channelSvc = sp.GetRequiredService<ChannelService>();
 
-        // Auto-select latest conversation if none is selected
-        if (_currentConversationId is null)
+        // Auto-select latest channel if none is selected
+        if (_currentChannelId is null)
         {
-            var latest = await convSvc.GetLatestActiveAsync();
+            var latest = await channelSvc.GetLatestActiveAsync();
             if (latest is null)
             {
-                Console.Error.WriteLine("Error: No conversation selected and no conversations exist.");
-                Console.Error.WriteLine("Create one first: conversation new <agentId> [title]");
+                Console.Error.WriteLine("Error: No channel selected and no channels exist.");
+                Console.Error.WriteLine("Create one first: channel new <agentId> [title]");
                 return Results.Ok();
             }
 
-            _currentConversationId = latest.Id;
-            Console.WriteLine($"No conversation selected. Opening latest conversation: \"{latest.Title}\" (#{CliIdMap.GetOrAssign(latest.Id)})");
+            _currentChannelId = latest.Id;
+            Console.WriteLine($"No channel selected. Opening latest channel: \"{latest.Title}\" (#{CliIdMap.GetOrAssign(latest.Id)})");
         }
 
         var chatService = sp.GetRequiredService<ChatService>();
@@ -541,7 +541,7 @@ public static class CliDispatcher
         }
 
         await foreach (var evt in chatService.SendMessageStreamAsync(
-            _currentConversationId.Value, request, CliApprovalCallback))
+            _currentChannelId.Value, request, CliApprovalCallback))
         {
             switch (evt.Type)
             {
@@ -582,72 +582,72 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
-    private static async Task<IResult?> HandleConversationCommand(string[] args, IServiceProvider sp)
+    private static async Task<IResult?> HandleChannelCommand(string[] args, IServiceProvider sp)
     {
         if (args.Length < 2)
         {
             PrintUsage(
-                "conversation new <agentId> [--context <ctxId>] [title]",
-                "                                           Create a conversation",
-                "conversation list [agentId]                List conversations",
-                "conversation select <id>                   Select active conversation",
-                "conversation get <id>                      Show conversation details",
-                "conversation model <id> <modelId>          Change conversation model",
-                "conversation attach <id> <contextId>       Attach to a context",
-                "conversation detach <id>                   Detach from context",
-                "conversation delete <id>                   Delete a conversation");
+                "channel new <agentId> [--context <ctxId>] [title]",
+                "                                           Create a channel",
+                "channel list [agentId]                     List channels",
+                "channel select <id>                        Select active channel",
+                "channel get <id>                           Show channel details",
+                "channel model <id> <modelId>               Change channel model",
+                "channel attach <id> <contextId>            Attach to a context",
+                "channel detach <id>                        Detach from context",
+                "channel delete <id>                        Delete a channel");
             return Results.Ok();
         }
 
         var sub = args[1].ToLowerInvariant();
-        var svc = sp.GetRequiredService<ConversationService>();
+        var svc = sp.GetRequiredService<ChannelService>();
 
         return sub switch
         {
             "new" when args.Length >= 3
-                => await HandleConversationNew(args, svc),
-            "new" => UsageResult("conversation new <agentId> [--context <ctxId>] [title]"),
+                => await HandleChannelNew(args, svc),
+            "new" => UsageResult("channel new <agentId> [--context <ctxId>] [title]"),
 
-            "list" => await HandleConversationList(args, svc),
+            "list" => await HandleChannelList(args, svc),
 
             "select" when args.Length >= 3
-                => HandleConversationSelect(args),
-            "select" => UsageResult("conversation select <id>"),
+                => HandleChannelSelect(args),
+            "select" => UsageResult("channel select <id>"),
 
             "get" when args.Length >= 3
                 => await ChannelHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
-            "get" => UsageResult("conversation get <id>"),
+            "get" => UsageResult("channel get <id>"),
 
             "model" when args.Length >= 4
                 => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
-                    new UpdateConversationRequest(ModelId: CliIdMap.Resolve(args[3])),
+                    new UpdateChannelRequest(ModelId: CliIdMap.Resolve(args[3])),
                     svc),
-            "model" => UsageResult("conversation model <conversationId> <modelId>"),
+            "model" => UsageResult("channel model <channelId> <modelId>"),
 
             "attach" when args.Length >= 4
                 => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
-                    new UpdateConversationRequest(ContextId: CliIdMap.Resolve(args[3])),
+                    new UpdateChannelRequest(ContextId: CliIdMap.Resolve(args[3])),
                     svc),
-            "attach" => UsageResult("conversation attach <conversationId> <contextId>"),
+            "attach" => UsageResult("channel attach <channelId> <contextId>"),
 
             "detach" when args.Length >= 3
                 => await ChannelHandlers.Update(
                     CliIdMap.Resolve(args[2]),
-                    new UpdateConversationRequest(ContextId: Guid.Empty),
+                    new UpdateChannelRequest(ContextId: Guid.Empty),
                     svc),
-            "detach" => UsageResult("conversation detach <conversationId>"),
+            "detach" => UsageResult("channel detach <channelId>"),
 
             "delete" when args.Length >= 3
-                => await HandleConversationDelete(args, svc),
-            "delete" => UsageResult("conversation delete <id>"),
+                => await HandleChannelDelete(args, svc),
+            "delete" => UsageResult("channel delete <id>"),
 
-            _ => UsageResult($"Unknown sub-command: conversation {sub}. Try 'help' for usage.")
+            _ => UsageResult($"Unknown sub-command: channel {sub}. Try 'help' for usage.")
         };
     }
 
-    private static async Task<IResult> HandleConversationNew(string[] args, ConversationService svc)
+    private static async Task<IResult> HandleChannelNew(string[] args, ChannelService svc)
     {
         var agentId = CliIdMap.Resolve(args[2]);
         Guid? contextId = null;
@@ -669,36 +669,36 @@ public static class CliDispatcher
         var title = titleParts.Count > 0 ? string.Join(' ', titleParts) : null;
 
         var result = await ChannelHandlers.Create(
-            new CreateConversationRequest(agentId, title, ContextId: contextId), svc);
+            new CreateChannelRequest(agentId, title, ContextId: contextId), svc);
 
-        // Auto-select the newly created conversation
-        if (result is IValueHttpResult { Value: ConversationResponse conv })
-            _currentConversationId = conv.Id;
+        // Auto-select the newly created channel
+        if (result is IValueHttpResult { Value: ChannelResponse ch })
+            _currentChannelId = ch.Id;
 
         return result;
     }
 
-    private static async Task<IResult> HandleConversationList(string[] args, ConversationService svc)
+    private static async Task<IResult> HandleChannelList(string[] args, ChannelService svc)
     {
         Guid? agentId = args.Length >= 3 ? CliIdMap.Resolve(args[2]) : null;
         return await ChannelHandlers.List(svc, agentId);
     }
 
-    private static IResult HandleConversationSelect(string[] args)
+    private static IResult HandleChannelSelect(string[] args)
     {
-        _currentConversationId = CliIdMap.Resolve(args[2]);
-        Console.WriteLine($"Conversation #{args[2]} selected.");
+        _currentChannelId = CliIdMap.Resolve(args[2]);
+        Console.WriteLine($"Channel #{args[2]} selected.");
         return Results.Ok();
     }
 
-    private static async Task<IResult> HandleConversationDelete(string[] args, ConversationService svc)
+    private static async Task<IResult> HandleChannelDelete(string[] args, ChannelService svc)
     {
         var id = CliIdMap.Resolve(args[2]);
         var result = await ChannelHandlers.Delete(id, svc);
 
-        // Clear selection if the deleted conversation was the active one
-        if (_currentConversationId == id)
-            _currentConversationId = null;
+        // Clear selection if the deleted channel was the active one
+        if (_currentChannelId == id)
+            _currentChannelId = null;
 
         return result;
     }
@@ -840,7 +840,7 @@ public static class CliDispatcher
                 actionType,
                 resourceId,
                 TranscriptionModelId: modelId,
-                ConversationId: convId,
+                ChannelId: convId,
                 Language: language),
             svc);
     }
@@ -1265,17 +1265,17 @@ public static class CliDispatcher
               context update <id> <name>                  Rename a context
               context delete <id>                         Delete a context
 
-              conversation new <agentId> [--context <id>] [title]
-                                                          Start a conversation
-              conversation list [agentId]                 List conversations
-              conversation select <id>                    Select active conversation
-              conversation get <id>                       Show conversation details
-              conversation model <id> <modelId>           Change conversation model
-              conversation attach <id> <contextId>        Attach to a context
-              conversation detach <id>                    Detach from context
-              conversation delete <id>                    Delete a conversation
+              channel new <agentId> [--context <id>] [title]
+                                                          Start a channel
+              channel list [agentId]                      List channels
+              channel select <id>                         Select active channel
+              channel get <id>                            Show channel details
+              channel model <id> <modelId>                Change channel model
+              channel attach <id> <contextId>             Attach to a context
+              channel detach <id>                         Detach from context
+              channel delete <id>                         Delete a channel
 
-              chat <message>                              Chat in active conversation
+              chat <message>                              Chat in active channel
 
               role list                                    List all roles
 
