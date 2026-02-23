@@ -58,6 +58,23 @@ public enum Mk8SlotKind
     /// </para>
     /// </summary>
     CompoundName,
+
+    /// <summary>
+    /// Sanitized free-form text with length limits. Only allowed when
+    /// <see cref="Mk8FreeTextConfig.Enabled"/> is <c>true</c> AND the
+    /// specific command is not in <see cref="Mk8FreeTextConfig.UnsafeBinaries"/>.
+    /// <para>
+    /// When FreeText is disabled (globally or per-verb), validation
+    /// falls back to <see cref="ComposedWords"/> using the same
+    /// <see cref="Mk8Slot.WordListName"/>.
+    /// </para>
+    /// <para>
+    /// Sanitization: max length enforced, control characters blocked,
+    /// gigablacklist patterns checked, env-secret patterns
+    /// (<c>KEY=</c>, <c>TOKEN=</c>, etc.) blocked.
+    /// </para>
+    /// </summary>
+    FreeText,
 }
 
 /// <summary>
@@ -76,7 +93,13 @@ public sealed record Mk8Slot(
     /// Only valid on the last <see cref="Mk8AllowedCommand.Params"/> slot.
     /// At least one value is required when <see cref="Required"/> is true.
     /// </summary>
-    bool Variadic = false);
+    bool Variadic = false,
+    /// <summary>
+    /// Maximum character length for <see cref="Mk8SlotKind.FreeText"/> slots.
+    /// Overrides the global <see cref="Mk8FreeTextConfig.MaxLength"/> when
+    /// set to a positive value.
+    /// </summary>
+    int MaxFreeTextLength = 0);
 
 /// <summary>
 /// An optional flag definition within a command template.
@@ -120,15 +143,36 @@ public sealed class Mk8CommandWhitelist
     /// </summary>
     private readonly HashSet<string>? _validProjectNames;
 
+    /// <summary>
+    /// FreeText configuration. Controls whether FreeText slots are
+    /// enabled and per-verb granular overrides.
+    /// </summary>
+    private readonly Mk8FreeTextConfig _freeTextConfig;
+
+    /// <summary>
+    /// Gigablacklist instance with compile-time + env-sourced patterns.
+    /// </summary>
+    private readonly Mk8GigaBlacklist _gigaBlacklist;
+
     private Mk8CommandWhitelist(
         Mk8AllowedCommand[] commands,
         Dictionary<string, HashSet<string>> wordLists,
-        HashSet<string>? validProjectNames)
+        HashSet<string>? validProjectNames,
+        Mk8FreeTextConfig freeTextConfig,
+        Mk8GigaBlacklist gigaBlacklist)
     {
         _commands = commands;
         _wordLists = wordLists;
         _validProjectNames = validProjectNames;
+        _freeTextConfig = freeTextConfig;
+        _gigaBlacklist = gigaBlacklist;
     }
+
+    /// <summary>
+    /// Returns the gigablacklist instance used by this whitelist,
+    /// so the compiler can use the same instance for in-memory verbs.
+    /// </summary>
+    public Mk8GigaBlacklist GigaBlacklist => _gigaBlacklist;
 
     /// <summary>
     /// Returns the compile-time contents of a named word list, or
@@ -143,9 +187,16 @@ public sealed class Mk8CommandWhitelist
     /// Validates a ProcRun invocation against all registered templates.
     /// Returns <c>null</c> if a match is found, or a detailed error
     /// message if no template matches.
+    /// <para>
+    /// Enforces the gigablacklist on ALL arguments before template
+    /// matching — any match throws <see cref="Mk8GigaBlacklistException"/>.
+    /// </para>
     /// </summary>
     public string? Validate(string binary, string[] args, string sandboxRoot)
     {
+        // ── Gigablacklist — unconditional, runs first ─────────────
+        _gigaBlacklist.EnforceAll(binary, args);
+
         var name = Path.GetFileName(binary);
 
         if (Mk8BinaryAllowlist.IsPermanentlyBlocked(name))
@@ -231,7 +282,9 @@ public sealed class Mk8CommandWhitelist
                         flagValue = remaining[i];
                     }
 
-                    var valError = ValidateSlot(flagDef.Value, flagValue, sandboxRoot);
+                    var valError = ValidateSlot(
+                        flagDef.Value, flagValue, sandboxRoot,
+                        cmd.Description, cmd.Binary);
                     if (valError is not null)
                         return $"Flag '{flagName}' value: {valError}";
                 }
@@ -253,7 +306,9 @@ public sealed class Mk8CommandWhitelist
         {
             if (i < trailing.Count)
             {
-                var error = ValidateSlot(paramDefs[i], trailing[i], sandboxRoot);
+                var error = ValidateSlot(
+                    paramDefs[i], trailing[i], sandboxRoot,
+                    cmd.Description, cmd.Binary);
                 if (error is not null)
                     return $"Parameter '{paramDefs[i].Name}': {error}";
             }
@@ -273,7 +328,9 @@ public sealed class Mk8CommandWhitelist
 
             foreach (var va in varArgs)
             {
-                var error = ValidateSlot(varSlot, va, sandboxRoot);
+                var error = ValidateSlot(
+                    varSlot, va, sandboxRoot,
+                    cmd.Description, cmd.Binary);
                 if (error is not null)
                     return $"Parameter '{varSlot.Name}': {error}";
             }
@@ -285,7 +342,9 @@ public sealed class Mk8CommandWhitelist
     /// <summary>Maximum words in a <see cref="Mk8SlotKind.ComposedWords"/> value.</summary>
     public const int MaxComposedWords = 12;
 
-    private string? ValidateSlot(Mk8Slot slot, string value, string sandboxRoot)
+    private string? ValidateSlot(
+        Mk8Slot slot, string value, string sandboxRoot,
+        string commandDescription, string binary)
     {
         return slot.Kind switch
         {
@@ -306,6 +365,9 @@ public sealed class Mk8CommandWhitelist
             Mk8SlotKind.ComposedWords => ValidateComposedWords(slot.WordListName!, value),
 
             Mk8SlotKind.CompoundName => ValidateCompoundName(value),
+
+            Mk8SlotKind.FreeText => ValidateFreeText(
+                slot, value, commandDescription, binary),
 
             _ => $"Unknown slot kind: {slot.Kind}."
         };
@@ -381,6 +443,166 @@ public sealed class Mk8CommandWhitelist
                "compile-time suffix (direct concatenation or dot-separated).";
     }
 
+    // ── FreeText validation ───────────────────────────────────────
+
+    /// <summary>
+    /// Patterns in FreeText values that indicate embedded secrets.
+    /// Case-insensitive check — blocks <c>KEY=xxx</c>, <c>token:xxx</c>, etc.
+    /// </summary>
+    private static readonly string[] SecretPatterns =
+    [
+        "KEY=", "SECRET=", "TOKEN=", "PASSWORD=", "PASSWD=",
+        "CREDENTIAL=", "CONN=", "CONNECTION_STRING=",
+        "PRIVATE=", "ENCRYPT=", "JWT=", "BEARER=",
+        "CERTIFICATE=", "APIKEY=", "API_KEY=",
+        "KEY:", "SECRET:", "TOKEN:", "PASSWORD:",
+        "AUTHORIZATION:", "BEARER:",
+    ];
+
+    private string? ValidateFreeText(
+        Mk8Slot slot, string value,
+        string commandDescription, string binary)
+    {
+        // If FreeText is disabled for this command, fall back to ComposedWords
+        // (or AdminWord for single-word fallback lists like MigrationNames/TagNames)
+        if (!_freeTextConfig.IsEnabledFor(commandDescription, binary))
+        {
+            if (slot.WordListName is null)
+                return "FreeText is disabled and no fallback word list is configured.";
+
+            return ValidateComposedWords(slot.WordListName, value);
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+            return "Value cannot be empty.";
+
+        // Max length: per-slot override > per-verb config > global config
+        var maxLen = slot.MaxFreeTextLength > 0
+            ? slot.MaxFreeTextLength
+            : _freeTextConfig.GetMaxLength(commandDescription);
+
+        if (value.Length > maxLen)
+            return $"FreeText too long ({value.Length} chars). Maximum is {maxLen}.";
+
+        // Block control characters (null, newlines, tabs, etc.)
+        foreach (var ch in value)
+        {
+            if (char.IsControl(ch) && ch != ' ')
+                return $"FreeText contains control character (U+{(int)ch:X4}). " +
+                       "Only printable characters and spaces are allowed.";
+        }
+
+        // Block secret patterns
+        foreach (var pattern in SecretPatterns)
+        {
+            if (value.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                return $"FreeText contains secret-like pattern '{pattern}'. " +
+                       "Secrets must never appear in command arguments.";
+        }
+
+        // Gigablacklist is already enforced at the Validate() level,
+        // but defense-in-depth: check again on the individual value
+        var gbMatch = _gigaBlacklist.Check(value);
+        if (gbMatch is not null)
+            throw new Mk8GigaBlacklistException(gbMatch,
+                $"FreeText value for '{commandDescription}' contains gigablacklisted term.");
+
+        // ── Command-specific extra validation ─────────────────────
+        var extraError = ValidateFreeTextExtra(slot, value, commandDescription);
+        if (extraError is not null)
+            return extraError;
+
+        return null;
+    }
+
+    // ── Command-specific FreeText constraints ─────────────────────
+
+    /// <summary>
+    /// Additional validation rules for specific command descriptions.
+    /// These enforce domain constraints beyond generic sanitization,
+    /// e.g. C# identifier rules for migration names, git-ref rules
+    /// for tag names.
+    /// </summary>
+    private static string? ValidateFreeTextExtra(
+        Mk8Slot slot, string value, string commandDescription)
+    {
+        return commandDescription switch
+        {
+            "dotnet ef migrations add" => ValidateCSharpIdentifier(value),
+            "git tag create" or "git tag annotated" or "git tag delete"
+                when slot.Name == "name" => ValidateGitRefName(value),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Validates that the value is a valid C# identifier: starts with a
+    /// letter or underscore, contains only letters, digits, and
+    /// underscores, no spaces, no special characters. EF generates a
+    /// class from this name.
+    /// </summary>
+    private static string? ValidateCSharpIdentifier(string value)
+    {
+        if (value.Contains(' '))
+            return "Migration name cannot contain spaces. " +
+                   "Use PascalCase like 'AddUserPreferences'.";
+
+        if (!char.IsLetter(value[0]) && value[0] != '_')
+            return $"Migration name must start with a letter or underscore. " +
+                   $"Got '{value[0]}'.";
+
+        foreach (var ch in value)
+        {
+            if (!char.IsLetterOrDigit(ch) && ch != '_')
+                return $"Migration name contains invalid character '{ch}'. " +
+                       "Only letters, digits, and underscores are allowed.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Characters forbidden in git ref names (tag names, branch names).
+    /// See <c>git check-ref-format</c>.
+    /// </summary>
+    private static readonly char[] GitRefForbiddenChars =
+        [' ', '~', '^', ':', '?', '*', '[', '\\', '\t', '\n', '\r'];
+
+    /// <summary>
+    /// Validates that the value is a valid git ref name for tags.
+    /// No spaces, no <c>..</c>, no <c>~^:?*[\</c>, no control chars,
+    /// cannot start/end with <c>.</c> or <c>/</c>, cannot end with
+    /// <c>.lock</c>.
+    /// </summary>
+    private static string? ValidateGitRefName(string value)
+    {
+        if (value.Contains(".."))
+            return "Tag name cannot contain '..'.";
+
+        if (value.Contains("@{"))
+            return "Tag name cannot contain '@{'.";
+
+        if (value.StartsWith('.') || value.StartsWith('/'))
+            return "Tag name cannot start with '.' or '/'.";
+
+        if (value.EndsWith('.') || value.EndsWith('/'))
+            return "Tag name cannot end with '.' or '/'.";
+
+        if (value.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            return "Tag name cannot end with '.lock'.";
+
+        if (value.Contains("//"))
+            return "Tag name cannot contain consecutive slashes.";
+
+        foreach (var ch in GitRefForbiddenChars)
+        {
+            if (value.Contains(ch))
+                return $"Tag name contains forbidden character '{ch}'.";
+        }
+
+        return null;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Factory — aggregates compile-time constants + runtime config
     // ═══════════════════════════════════════════════════════════════
@@ -391,7 +613,26 @@ public sealed class Mk8CommandWhitelist
     /// optional runtime configuration for project names and git
     /// remote URLs.
     /// </summary>
-    public static Mk8CommandWhitelist CreateDefault(Mk8RuntimeConfig? runtime = null)
+    /// <param name="runtime">Runtime config (project bases, git URLs).</param>
+    /// <param name="freeTextConfig">
+    /// FreeText config merged from global + sandbox env. If <c>null</c>,
+    /// FreeText is disabled (all FreeText slots fall back to ComposedWords).
+    /// </param>
+    /// <param name="envVocabularies">
+    /// Additional vocabularies loaded from env files. Keys are word list
+    /// names (e.g., <c>"CommitWords"</c>), values are arrays of words.
+    /// These are merged additively with compile-time constants — env
+    /// words ADD to the list, they never replace it.
+    /// </param>
+    /// <param name="gigaBlacklist">
+    /// Gigablacklist instance with compile-time + env-sourced patterns.
+    /// If <c>null</c>, a default instance (compile-time only) is used.
+    /// </param>
+    public static Mk8CommandWhitelist CreateDefault(
+        Mk8RuntimeConfig? runtime = null,
+        Mk8FreeTextConfig? freeTextConfig = null,
+        Dictionary<string, string[]>? envVocabularies = null,
+        Mk8GigaBlacklist? gigaBlacklist = null)
     {
         if (runtime?.ProjectBases.Length > Mk8RuntimeConfig.MaxProjectBases)
             throw new ArgumentException(
@@ -405,7 +646,7 @@ public sealed class Mk8CommandWhitelist
         var wordLists = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var commands = new List<Mk8AllowedCommand>();
 
-        // Aggregate every command category.
+        // Aggregate every command category (compile-time constants).
         Aggregate(wordLists, commands, Mk8DotnetCommands.GetWordLists(), Mk8DotnetCommands.GetCommands());
         Aggregate(wordLists, commands, Mk8GitCommands.GetWordLists(), Mk8GitCommands.GetCommands());
         Aggregate(wordLists, commands, Mk8NodeNpmCommands.GetWordLists(), Mk8NodeNpmCommands.GetCommands());
@@ -415,6 +656,25 @@ public sealed class Mk8CommandWhitelist
         Aggregate(wordLists, commands, Mk8VersionCheckCommands.GetWordLists(), Mk8VersionCheckCommands.GetCommands());
         Aggregate(wordLists, commands, Mk8OpensslCommands.GetWordLists(), Mk8OpensslCommands.GetCommands());
         Aggregate(wordLists, commands, Mk8ToolCheckCommands.GetWordLists(), Mk8ToolCheckCommands.GetCommands());
+
+        // ── Env-sourced vocabularies (additive merge) ─────────────
+        // Words from env files ADD to the compile-time lists — they
+        // never replace. This lets users extend vocabularies per-sandbox
+        // by adding words to their mk8.shell.env file.
+
+        if (envVocabularies is not null)
+        {
+            foreach (var (name, words) in envVocabularies)
+            {
+                if (!wordLists.TryGetValue(name, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    wordLists[name] = set;
+                }
+                foreach (var w in words)
+                    set.Add(w);
+            }
+        }
 
         // ── Runtime word lists (the ONLY runtime exception) ───────
 
@@ -445,7 +705,10 @@ public sealed class Mk8CommandWhitelist
             }
         }
 
-        return new Mk8CommandWhitelist([.. commands], wordLists, validProjectNames);
+        return new Mk8CommandWhitelist(
+            [.. commands], wordLists, validProjectNames,
+            freeTextConfig ?? new Mk8FreeTextConfig(),
+            gigaBlacklist ?? new Mk8GigaBlacklist());
     }
 
     private static void Aggregate(

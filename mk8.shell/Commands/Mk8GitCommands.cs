@@ -180,6 +180,35 @@ public static class Mk8GitCommands
         "1,200", "1,500", "1,1000",
     ];
 
+    /// <summary>
+    /// Pre-approved tag names for <c>git tag</c> create/delete.
+    /// Agents cannot create or delete arbitrary tag names.
+    /// <para>
+    /// When FreeText is enabled for <c>"git tag create"</c>, the agent
+    /// can write descriptive tag names subject to git-ref safety
+    /// validation (no spaces, no <c>..</c>, no <c>~^:</c>, no control
+    /// chars, max 128 chars). When disabled, falls back to this list.
+    /// </para>
+    /// </summary>
+    public static readonly string[] TagNames =
+    [
+        // Semantic version tags
+        "v0.1.0", "v0.2.0", "v0.3.0", "v0.4.0", "v0.5.0",
+        "v0.6.0", "v0.7.0", "v0.8.0", "v0.9.0",
+        "v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0", "v1.4.0", "v1.5.0",
+        "v2.0.0", "v2.1.0", "v2.2.0", "v2.3.0",
+        "v3.0.0", "v3.1.0",
+
+        // Pre-release variants
+        "v0.1.0-alpha", "v0.1.0-beta", "v0.1.0-rc1", "v0.1.0-rc2",
+        "v1.0.0-alpha", "v1.0.0-beta", "v1.0.0-rc1", "v1.0.0-rc2",
+        "v2.0.0-alpha", "v2.0.0-beta", "v2.0.0-rc1",
+
+        // Milestone tags
+        "baseline", "checkpoint", "snapshot", "draft",
+        "initial", "stable", "latest",
+    ];
+
     // ── Registration (called once at startup by Mk8CommandWhitelist) ──
 
     internal static KeyValuePair<string, string[]>[] GetWordLists() =>
@@ -188,6 +217,7 @@ public static class Mk8GitCommands
         new("BranchNames", BranchNames),
         new("RemoteNames", RemoteNames),
         new("BlameLineRanges", BlameLineRanges),
+        new("TagNames", TagNames),
     ];
 
     internal static Mk8AllowedCommand[] GetCommands()
@@ -314,9 +344,15 @@ public static class Mk8GitCommands
             new("git add all dot", "git", ["add", "."]),
             new("git add all flag", "git", ["add", "-A"]),
 
-            // commit (message composed from vocabulary words with spaces)
+            // commit — FreeText with ComposedWords fallback.
+            // When FreeText is enabled (via base.env/sandbox env), the
+            // agent can write free-form commit messages (sanitized: max
+            // length, control chars blocked, secret patterns blocked,
+            // gigablacklist enforced). When disabled, falls back to
+            // ComposedWords from the CommitWords vocabulary.
             new("git commit", "git", ["commit"],
-                Flags: [new("-m", new Mk8Slot("message", Mk8SlotKind.ComposedWords, WordListName: "CommitWords"))]),
+                Flags: [new("-m", new Mk8Slot("message", Mk8SlotKind.FreeText,
+                    WordListName: "CommitWords", MaxFreeTextLength: 200))]),
 
             // stash
             new("git stash", "git", ["stash"]),
@@ -324,6 +360,24 @@ public static class Mk8GitCommands
             new("git stash list", "git", ["stash", "list"],
                 Flags: [new("--oneline")]),
             new("git stash drop", "git", ["stash", "drop"]),
+
+            // tag create — FreeText with TagNames fallback.
+            // Lightweight tag (no message):
+            new("git tag create", "git", ["tag"],
+                Params: [new Mk8Slot("name", Mk8SlotKind.FreeText,
+                    WordListName: "TagNames", MaxFreeTextLength: 128)]),
+
+            // Annotated tag with message — FreeText for both name and message.
+            new("git tag annotated", "git", ["tag", "-a"],
+                Flags: [new("-m", new Mk8Slot("message", Mk8SlotKind.FreeText,
+                    WordListName: "CommitWords", MaxFreeTextLength: 200))],
+                Params: [new Mk8Slot("name", Mk8SlotKind.FreeText,
+                    WordListName: "TagNames", MaxFreeTextLength: 128)]),
+
+            // tag delete (local only — push requires dangerous-shell path)
+            new("git tag delete", "git", ["tag", "-d"],
+                Params: [new Mk8Slot("name", Mk8SlotKind.FreeText,
+                    WordListName: "TagNames", MaxFreeTextLength: 128)]),
 
             // checkout / switch (branch MUST come from word list)
             new("git checkout branch", "git", ["checkout"],

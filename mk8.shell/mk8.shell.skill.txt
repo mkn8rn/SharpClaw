@@ -488,6 +488,36 @@ Used for git commit messages. You compose by combining words with spaces:
 ComposedWords is NOT concatenation. "Api 1 2 3" (4 words) works.
 "Api123" (1 word) does not. This is by design.
 
+--- FreeText (sanitized free-form text) ---
+
+Some slots (like git commit -m) use FreeText. When FreeText is ENABLED
+for that command (via base.env or sandbox env), you can write arbitrary
+text subject to these rules:
+  - Max length enforced (default 200 chars, configurable per-verb)
+  - Control characters blocked (only printable + spaces)
+  - Secret patterns blocked (KEY=, TOKEN=, PASSWORD=, etc.)
+  - Gigablacklist patterns blocked (see "what will always fail" section)
+
+When FreeText is DISABLED (the default), the slot falls back to
+ComposedWords — each word must be in the vocabulary.
+
+FreeText can NEVER be enabled for unsafe binaries: bash, node, curl,
+python, etc. This is hardcoded and immutable.
+
+Your administrator controls this via mk8.shell.base.env (global) and
+per-sandbox env files. You cannot change it.
+
+--- Vocabularies (env-sourced) ---
+
+The word lists for ComposedWords come from BOTH compile-time source code
+AND env files. Your administrator can add custom words per-sandbox:
+
+  MK8_VOCAB_CommitWords=Sprint,Backlog,Standup,Retrospective
+  MK8_VOCAB_BranchNames=feature/sprint-1,feature/sprint-2
+
+Global + sandbox vocabularies merge additively (both contribute).
+Words from either source are valid.
+
 --- dotnet commands ---
 
   dotnet --version
@@ -516,7 +546,10 @@ ComposedWords is NOT concatenation. "Api 1 2 3" (4 words) works.
     name: CompoundName — runtime base + optional compile-time suffix
           (e.g. "BananaApi", "Banana.Core", "Banana")
   dotnet ef migrations add <name>
-    name: from MigrationNames list (Initial, AddUsers, etc., plus A-Z, 0-9)
+    name: FreeText with MigrationNames fallback.
+    When FreeText enabled: any valid C# identifier (PascalCase, letters/
+    digits/underscores, no spaces, no leading digit, max 128 chars).
+    When disabled: from MigrationNames list (Initial, AddUsers, etc., plus A-Z, 0-9)
   dotnet ef migrations list
   dotnet ef migrations script [--idempotent] [-o path]
   dotnet ef dbcontext info
@@ -556,15 +589,27 @@ WRITE (constrained to word lists):
   git add <paths...>                   SandboxPath (variadic)
   git add .
   git add -A
-  git commit -m "<message>"            ComposedWords from CommitWords vocabulary
+  git commit -m "<message>"            FreeText with CommitWords fallback
   git stash
   git stash pop
   git stash list     [--oneline]
   git stash drop
+  git tag <name>                       FreeText with TagNames fallback (lightweight)
+  git tag -a <name> -m "<message>"     FreeText for both name and message (annotated)
+  git tag -d <name>                    FreeText with TagNames fallback (delete local)
   git checkout <branch>                AdminWord from BranchNames
   git checkout -b <branch>             AdminWord from BranchNames
   git switch <branch>                  AdminWord from BranchNames
   git switch -c <branch>               AdminWord from BranchNames
+
+TAG RULES:
+  Tag names (when FreeText enabled): valid git ref names only — no spaces,
+  no "..", no "~^:?*[\", cannot start/end with "." or "/", cannot end with
+  ".lock", no consecutive slashes, max 128 chars.
+  Tag names (when FreeText disabled): from TagNames list only (v0.1.0,
+  v1.0.0-alpha, baseline, checkpoint, etc.).
+  Tag messages follow the same rules as commit messages.
+  Tag push is NOT whitelisted — requires dangerous-shell path.
 
 PROTECTED BRANCHES — BANNED:
   main, master, develop, staging, production, live, release, release/*,
@@ -801,6 +846,7 @@ No .. segments. No absolute paths in path components.
 - Checking out protected branches (main, master, develop, staging,
   production, live, release/*, trunk)
 - Commit messages containing words not in CommitWords vocabulary
+  (unless FreeText is enabled for "git commit" by the administrator)
 - Paths that escape the sandbox via .. or absolute paths
 - $PREV or process-captured variables in ProcRun args
 - $ characters inside template values or patch find/replace
@@ -835,6 +881,28 @@ No .. segments. No absolute paths in path components.
 - DirHash with unsupported algorithm or > 500 files
 - SysLogRead with unknown source or line count outside 1-500
 - SysLogRead may return "Access denied" for security logs without elevation
+- ANY argument containing gigablacklisted patterns fail with:
+    "Gigablacklisted term not allowed: [term]"
+    Two compile-time groups:
+      (1) mk8.shell env/key filenames (mk8.shell.env, .signed.env,
+          .base.env, .key)
+      (2) hardcoded destructive patterns (shell injection, rm -rf,
+          format, mkfs, dd, block devices, shutdown/reboot, kill-all,
+          /etc/shadow, fork bombs, DROP DATABASE/TABLE, xp_cmdshell,
+          registry/service manipulation, privilege escalation)
+    Custom patterns from CustomBlacklist (base.env) + MK8_BLACKLIST
+    (sandbox env) are additive.
+    Base.env flags: DisableHardcodedGigablacklist disables group 2
+    (test-only, strongly discouraged). DisableMk8shellEnvsGigablacklist
+    additionally disables group 1 (only when hardcoded also disabled).
+    Both flags base.env-only, ignored in sandbox env.
+- FreeText with control characters (null, newlines, tabs)
+- FreeText with secret-like patterns (KEY=, TOKEN=, PASSWORD=, etc.)
+- FreeText exceeding max length (default 200, configurable per-verb)
+- FreeText on unsafe binaries (bash, node, curl, python, etc.) — always rejected
+- Migration names (FreeText) with spaces, leading digits, or non-identifier chars
+- Tag names (FreeText) with "..", "~^:?*[\", ".lock" suffix, or leading/trailing "."/"/"
+- Tag push (not whitelisted — requires dangerous-shell path)
 
 
 == common patterns ====================================================
@@ -944,6 +1012,39 @@ No .. segments. No absolute paths in path components.
     { "verb": "ProcRun", "args": ["git", "switch", "feature/api"] },
     { "verb": "ProcRun", "args": ["git", "stash", "pop"] }
   ]
+}
+
+--- git: create lightweight tag ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "tag", "v1.0.0"] }
+  ]
+}
+
+--- git: create annotated tag with message ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "tag", "-a", "v1.0.0", "-m", "Initial stable release"] }
+  ]
+}
+
+--- git: list and delete a tag ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["git", "tag", "--list"], "captureAs": "TAGS" },
+    { "verb": "ProcRun", "args": ["git", "tag", "-d", "v0.1.0-alpha"] }
+  ],
+  "options": { "pipeStepOutput": true }
+}
+
+--- dotnet ef: create migration with descriptive name ---
+{
+  "operations": [
+    { "verb": "ProcRun", "args": ["dotnet", "ef", "migrations", "add", "AddUserPreferencesTable"] },
+    { "verb": "ProcRun", "args": ["dotnet", "ef", "migrations", "list"], "captureAs": "MIGRATIONS" },
+    { "verb": "FileWrite", "args": ["$WORKSPACE/migrations.txt", "$MIGRATIONS"] }
+  ],
+  "options": { "pipeStepOutput": true }
 }
 
 --- check file metadata ---

@@ -151,8 +151,14 @@ public static class Mk8DotnetCommands
                 Params: [new Mk8Slot("template", Mk8SlotKind.AdminWord, WordListName: "DotnetTemplates")]),
 
             // ── EF — safe operations only ─────────────────────────
+            // migrations add — FreeText with MigrationNames fallback.
+            // When FreeText is enabled, the agent can write descriptive
+            // migration names like "AddUserPreferencesTable". The value
+            // is additionally validated as a C# identifier (alphanumeric
+            // + underscores, no leading digit) since EF generates a class.
             new("dotnet ef migrations add", "dotnet", ["ef", "migrations", "add"],
-                Params: [new Mk8Slot("name", Mk8SlotKind.AdminWord, WordListName: "MigrationNames")]),
+                Params: [new Mk8Slot("name", Mk8SlotKind.FreeText,
+                    WordListName: "MigrationNames", MaxFreeTextLength: 128)]),
 
             new("dotnet ef migrations list", "dotnet", ["ef", "migrations", "list"]),
 

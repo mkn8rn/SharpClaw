@@ -539,7 +539,11 @@ SessionService session)
         // Compile through the full mk8.shell pipeline
         // (expand → resolve → sanitize → compile).
         var compiler = new Mk8ShellCompiler(
-            Mk8CommandWhitelist.CreateDefault(taskContainer.RuntimeConfig));
+            Mk8CommandWhitelist.CreateDefault(
+                taskContainer.RuntimeConfig,
+                taskContainer.FreeTextConfig,
+                taskContainer.EnvVocabularies,
+                taskContainer.GigaBlacklist));
         var compiled = compiler.Compile(
             script, taskContainer.Workspace, effectiveOptions);
 

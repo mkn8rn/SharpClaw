@@ -496,6 +496,134 @@ Compile-time suffixes (`Mk8DotnetCommands.ProjectSuffixes`): `App`, `Api`,
 If no base names are configured, `dotnet new -n` is unavailable (but
 `dotnet new <template>` without `-n` still works — uses directory name).
 
+#### FreeText — Sanitized Free-Form Text
+
+A new slot kind that allows agents to write arbitrary text (e.g., commit
+messages) without being constrained to a fixed vocabulary. **When disabled**
+(the default), slots typed as `FreeText` fall back to `ComposedWords`
+validation using the same word list.
+
+**Configuration** is loaded from `mk8.shell.base.env` (global) and the
+sandbox's signed env (local). Local overrides global for scalar values;
+per-verb entries merge additively.
+
+```json
+{
+  "FreeText": {
+    "enabled": false,
+    "maxLength": 200,
+    "perVerb": {
+      "git commit": { "enabled": true, "maxLength": 200 },
+      "git tag create": { "enabled": true, "maxLength": 128 },
+      "git tag annotated": { "enabled": true, "maxLength": 200 },
+      "git tag delete": { "enabled": true, "maxLength": 128 },
+      "dotnet ef migrations add": { "enabled": true, "maxLength": 128 }
+    }
+  }
+}
+```
+
+**Unsafe binaries** — the following can NEVER have FreeText-typed slots,
+regardless of configuration. This is a compile-time constant:
+
+> `bash`, `sh`, `zsh`, `cmd`, `powershell`, `pwsh`, `python`, `python3`,
+> `ruby`, `perl`, `lua`, `php`, `node`, `npx`, `deno`, `bun`, `sudo`,
+> `su`, `chmod`, `chown`, `curl`, `wget`, `ssh`, `scp`
+
+**Sanitization** (when FreeText IS enabled):
+
+1. **Max length**: per-slot override → per-verb config → global config.
+2. **Control characters**: all except space are blocked (null, newlines, tabs).
+3. **Secret patterns**: `KEY=`, `TOKEN=`, `PASSWORD=`, `APIKEY=`, etc.
+4. **Gigablacklist**: the full gigablacklist is enforced on every value.
+
+**Command-specific extra validation** (applied after generic sanitization):
+
+- **`dotnet ef migrations add`**: value must be a valid C# identifier —
+  starts with a letter or underscore, contains only letters/digits/underscores,
+  no spaces. EF generates a class from the name.
+- **`git tag create`/`git tag annotated`/`git tag delete`** (name slot):
+  value must be a valid git ref name — no spaces, no `..`, no `~^:?*[\`,
+  cannot start/end with `.` or `/`, cannot end with `.lock`, no consecutive
+  slashes.
+
+**FreeText commands** currently registered:
+
+| Command | Slot | Fallback | Max Length | Extra Validation |
+|---|---|---|---|---|
+| `git commit -m` | message | CommitWords | 200 | — |
+| `git tag <name>` | name | TagNames | 128 | git-ref safe |
+| `git tag -a <name> -m <msg>` | name | TagNames | 128 | git-ref safe |
+| `git tag -a <name> -m <msg>` | message | CommitWords | 200 | — |
+| `git tag -d <name>` | name | TagNames | 128 | git-ref safe |
+| `dotnet ef migrations add` | name | MigrationNames | 128 | C# identifier |
+
+#### Vocabularies — Env-Sourced Word Lists
+
+Vocabularies for `ComposedWords` / `FreeText`-fallback are no longer
+purely compile-time. They are now loaded from env files and merged
+additively with the hardcoded constants from `Commands/` source files.
+
+**On first startup**, if `mk8.shell.base.env` is missing or empty, all
+compile-time vocabularies are serialized into it as defaults.
+
+**Per-sandbox vocabularies** use env keys prefixed with `MK8_VOCAB_`:
+
+```
+MK8_VOCAB_CommitWords=Sprint,Backlog,Standup,Retrospective
+MK8_VOCAB_BranchNames=feature/sprint-1,feature/sprint-2
+```
+
+Global and sandbox vocabularies **add together** — neither overrides
+the other. A word in either source is valid.
+
+#### Gigablacklist Enforcement
+
+The gigablacklist is an **unconditional, non-bypassable** safety layer
+that runs on ALL arguments of ALL commands (both ProcRun and in-memory
+verbs) after variable resolution and before any other validation.
+
+If ANY pattern in the list appears ANYWHERE in ANY argument, the entire
+operation fails before compilation with `Mk8GigaBlacklistException`:
+
+```
+Gigablacklisted term not allowed: [mk8.shell.env] — Argument '...' contains gigablacklisted term.
+```
+
+The gigablacklist includes two compile-time groups plus env-sourced
+custom patterns:
+
+1. **mk8.shell env patterns** — `mk8.shell.env`, `mk8.shell.signed.env`,
+   `mk8.shell.base.env`, `mk8.shell.key`. These protect the sandbox's
+   own configuration and signing keys from agent access.
+2. **Hardcoded patterns** — shell injection markers, destructive
+   filesystem commands (rm -rf, format, mkfs, dd, diskpart, shred),
+   raw block-device paths (/dev/sda, \\.\PhysicalDrive), system control
+   commands (shutdown, reboot, halt, poweroff), process kill-all patterns,
+   sensitive system files (/etc/shadow, /etc/sudoers), fork bombs, SQL
+   destruction (DROP DATABASE, DROP TABLE, xp_cmdshell), Windows
+   registry/service manipulation, and privilege escalation commands.
+3. **Custom patterns** — loaded from `CustomBlacklist` in base.env
+   (global, cached at startup) and `MK8_BLACKLIST` in sandbox signed env
+   (loaded fresh per execution). Both sources merge additively. Patterns
+   shorter than 2 characters are silently ignored.
+
+**Disable flags** (base.env-only, ignored in sandbox env):
+
+| Flag | Default | Effect |
+|---|---|---|
+| `DisableHardcodedGigablacklist` | `false` | Disables group 2 (hardcoded patterns). Group 1 (env patterns) stays active. |
+| `DisableMk8shellEnvsGigablacklist` | `false` | Only takes effect when `DisableHardcodedGigablacklist` is also `true`. Disables group 1 (env patterns). |
+
+> **⚠ WARNING:** `DisableHardcodedGigablacklist` should essentially
+> never be set to `true` except in a dedicated test environment. The
+> hardcoded patterns exist for a reason — they prevent agents from
+> producing arguments referencing catastrophically destructive commands.
+> Even when hardcoded patterns are disabled, the mk8.shell env/key
+> patterns remain active by default. Setting *both* flags to `true`
+> removes ALL compile-time protection — only custom patterns remain.
+> This is strongly discouraged even in test environments.
+
 #### Allowed command templates
 
 **dotnet** (`Mk8DotnetCommands`):
@@ -520,7 +648,7 @@ If no base names are configured, `dotnet new -n` is unavailable (but
 | `dotnet restore` | `--no-cache`, `--verbosity` | — |
 | `dotnet format` | `--verify-no-changes`, `--verbosity` | — |
 | `dotnet new <template> -n <name>` | `-n`/`--name` CompoundName (runtime base + suffix), `-o` SandboxPath | template from DotnetTemplates |
-| `dotnet ef migrations add <name>` | — | name from MigrationNames |
+| `dotnet ef migrations add <name>` | — | name: FreeText (C# identifier) with MigrationNames fallback |
 | `dotnet ef migrations list` | — | — |
 | `dotnet ef migrations script` | `--idempotent`, `-o` SandboxPath | — |
 | `dotnet ef dbcontext info` | — | — |
@@ -567,9 +695,12 @@ Write (constrained):
 | `git add <paths>` | — | variadic SandboxPath |
 | `git add .` | — | — |
 | `git add -A` | — | — |
-| `git commit` | `-m` ComposedWords from CommitWords | — |
+| `git commit` | `-m` FreeText with CommitWords fallback | — |
 | `git stash` / `pop` / `drop` | — | — |
 | `git stash list` | `--oneline` | — |
+| `git tag <name>` | — | FreeText (git-ref safe) with TagNames fallback |
+| `git tag -a <name> -m <msg>` | `-m` FreeText with CommitWords fallback | FreeText (git-ref safe) with TagNames fallback |
+| `git tag -d <name>` | — | FreeText (git-ref safe) with TagNames fallback |
 | `git checkout <branch>` | — | AdminWord from BranchNames |
 | `git checkout -b <branch>` | — | AdminWord from BranchNames |
 | `git switch <branch>` | — | AdminWord from BranchNames |
@@ -581,6 +712,7 @@ Word lists:
 - **RemoteNames**: `origin`, `upstream`, `fork`, `backup`, `mirror`
 - **GitRemoteUrls**: runtime-configured via `Mk8RuntimeConfig.GitRemoteUrls` (max 16)
 - **BlameLineRanges**: pre-approved `-L` ranges (`1,10`, `1,20`, `1,50`, `1,100`, `1,200`, `1,500`, `1,1000`)
+- **TagNames**: `v0.1.0`–`v3.1.0`, pre-release variants (`-alpha`, `-beta`, `-rc1`, `-rc2`), milestones (`baseline`, `checkpoint`, `snapshot`, `draft`, `initial`, `stable`, `latest`)
 
 **Protected branches — BANNED:** `main`, `master`, `develop`, `staging`,
 `production`, `live`, `release`, `release/*`, `trunk`.  These are

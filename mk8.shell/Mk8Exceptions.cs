@@ -36,3 +36,17 @@ public sealed class Mk8UrlViolationException(
     public string AttemptedUrl { get; } = attemptedUrl;
     public string Reason { get; } = reason;
 }
+
+/// <summary>
+/// Thrown when a gigablacklisted pattern is detected anywhere in a
+/// command invocation. This is an unconditional, non-bypassable safety
+/// check that runs before compilation.
+/// </summary>
+public sealed class Mk8GigaBlacklistException(
+    string foundTerm, string context)
+    : InvalidOperationException(
+        $"Gigablacklisted term not allowed: [{foundTerm}] — {context}")
+{
+    public string FoundTerm { get; } = foundTerm;
+    public string Context { get; } = context;
+}
