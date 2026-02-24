@@ -18,10 +18,11 @@ Timestamps are ISO 8601 (`DateTimeOffset`).
 - [Providers](#providers)
 - [Models](#models)
 - [Agents](#agents)
-- [Contexts](#contexts)
-- [Conversations](#conversations)
+- [Channel contexts](#channel-contexts)
+- [Channels](#channels)
 - [Chat](#chat)
 - [Agent Jobs](#agent-jobs)
+- [Resources](#resources)
 - [Permission Resolution](#permission-resolution)
 
 ---
@@ -413,14 +414,18 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 
 ---
 
-## Contexts
+## Channel contexts
 
-A context is a named group of conversations and tasks that share a common
-set of pre-authorised permission grants. See [Permission Resolution](#permission-resolution).
+The API exposes a first-class resource called `channel-contexts` (route
+group: `/channel-contexts`). These are the same "context" objects used
+by the permission system to provide group-level permission grants for
+channels and conversations.
 
-### POST /contexts
+### POST /channel-contexts
 
-**Request:**
+Create a new channel context.
+
+Request body (example):
 
 ```json
 {
@@ -432,55 +437,42 @@ set of pre-authorised permission grants. See [Permission Resolution](#permission
 }
 ```
 
-**Response `200`:** `ContextResponse`
+Response `200`: `ContextResponse`
 
----
+### GET /channel-contexts?agentId={guid}
 
-### GET /contexts?agentId={guid}
+List channel contexts. Optional `agentId` filter.
 
-List contexts. Optional `agentId` filter.
+Response `200`: `ContextResponse[]`
 
-**Response `200`:** `ContextResponse[]`
+### GET /channel-contexts/{id}
 
----
+Response `200`: `ContextResponse` or `404` when not found.
 
-### GET /contexts/{id}
+### PUT /channel-contexts/{id}
 
-**Response `200`:** `ContextResponse`
-**Response `404`:** Not found.
+Update a context (e.g. rename).
 
----
-
-### PUT /contexts/{id}
-
-**Request:**
+Request body:
 
 ```json
-{
-  "name": "string | null"
-}
+{ "name": "string | null" }
 ```
 
-**Response `200`:** `ContextResponse`
-**Response `404`:** Not found.
+Response `200`: `ContextResponse` or `404` when not found.
 
----
+### DELETE /channel-contexts/{id}
 
-### DELETE /contexts/{id}
+Deletes the context. Conversations and channels inside it are detached
+instead of deleted.
 
-Deletes the context. Conversations and tasks inside it are detached
-(set to standalone), not deleted.
+Response `204` or `404` when not found.
 
-**Response `204`:** Deleted.
-**Response `404`:** Not found.
-
----
-
-### POST /contexts/{id}/grant
+### POST /channel-contexts/{id}/grant
 
 Add or update a permission grant on the context.
 
-**Request:**
+Request body:
 
 ```json
 {
@@ -489,12 +481,9 @@ Add or update a permission grant on the context.
 }
 ```
 
-**Response `200`:** `ContextResponse` (updated, including all grants).
-**Response `404`:** Not found.
+Response `200`: `ContextResponse` (updated) or `404` when not found.
 
----
-
-### ContextResponse
+ContextResponse shape (example):
 
 ```json
 {
@@ -504,27 +493,22 @@ Add or update a permission grant on the context.
   "agentName": "string",
   "createdAt": "datetime",
   "updatedAt": "datetime",
-  "permissionGrants": [
-    {
-      "id": "guid",
-      "actionType": "UnsafeExecuteAsDangerousShell",
-      "grantedClearance": "ApprovedBySameLevelUser"
-    }
-  ]
+  "permissionGrants": [ ... ]
 }
 ```
 
 ---
 
-## Conversations
+## Channels
 
-A conversation belongs to an agent and optionally to a context. Each
-conversation has its own model (changeable mid-conversation), title,
-chat history, and permission grant overrides.
+Channels are the primary REST surface for sending messages and
+containing chat history. The route group is `/channels`.
 
-### POST /conversations
+### POST /channels
 
-**Request:**
+Create a new channel.
+
+Request (example):
 
 ```json
 {
@@ -532,203 +516,148 @@ chat history, and permission grant overrides.
   "title": "string | null",
   "modelId": "guid | null",
   "contextId": "guid | null",
-  "permissionGrants": [
-    { "actionType": "AccessWebsite", "grantedClearance": "Independent" }
-  ]
+  "permissionGrants": [ ... ]
 }
 ```
 
-- `modelId` defaults to the agent's current model if omitted.
-- `contextId` is optional; when set the context's grants become defaults.
+Response `200`: `ChannelResponse`
 
-**Response `200`:** `ConversationResponse`
+### GET /channels?agentId={guid}
+
+List channels. Optional `agentId` filter.
+
+Response `200`: `ChannelResponse[]`
+
+### GET /channels/{id}
+
+Response `200`: `ChannelResponse` or `404` when not found.
+
+### PUT /channels/{id}
+
+Update channel properties.
+
+Request (example):
+
+```json
+{ "title": "string | null", "modelId": "guid | null", "contextId": "guid | null" }
+```
+
+Response `200`: `ChannelResponse` or `404` when not found.
+
+### DELETE /channels/{id}
+
+Response `204` or `404` when not found.
 
 ---
 
-### GET /conversations?agentId={guid}
+## Chat (per-channel)
 
-List conversations. Optional `agentId` filter.
+All chat operations are scoped to a channel id. Endpoints live under
+`/channels/{id}/chat`.
 
-**Response `200`:** `ConversationResponse[]`
+### POST /channels/{id}/chat
 
----
+Send a message and receive the assistant's reply. Body:
 
-### GET /conversations/{id}
+```json
+{ "message": "string" }
+```
 
-**Response `200`:** `ConversationResponse`
-**Response `404`:** Not found.
-
----
-
-### PUT /conversations/{id}
-
-**Request:**
+Response `200` (example):
 
 ```json
 {
-  "title": "string | null",
-  "modelId": "guid | null",
-  "contextId": "guid | null"
+  "userMessage": { "role": "user", "content": "string", "timestamp": "datetime" },
+  "assistantMessage": { "role": "assistant", "content": "string", "timestamp": "datetime" },
+  "jobResults": [ /* Agent job results, if any */ ]
 }
 ```
 
-- Set `contextId` to a valid GUID to attach to a context.
-- Set `contextId` to `"00000000-0000-0000-0000-000000000000"` to detach.
+When the assistant submits agent jobs during the turn the same
+permission-resolution rules apply (see [Permission Resolution](#permission-resolution)).
 
-**Response `200`:** `ConversationResponse`
-**Response `404`:** Not found.
+### GET /channels/{id}/chat
 
----
+Retrieve chat history for a channel (most recent messages, chronological order).
 
-### DELETE /conversations/{id}
-
-**Response `204`:** Deleted.
-**Response `404`:** Not found.
+Response `200`: an array of message objects.
 
 ---
 
-### POST /conversations/{id}/grant
+## Chat streaming (SSE)
 
-Add or update a per-conversation permission override.
+The API exposes an SSE-based streaming chat endpoint which pauses for
+inline approvals. Use the following endpoints under the channel route
+group:
 
-**Request:**
+POST /channels/{id}/chat/stream
+
+- Streams `ChatStreamEvent` items as server-sent events (`text/event-stream`).
+- When a job requires approval the stream emits an `approval_required`
+  event and waits for the client to POST to the companion approve
+  endpoint.
+
+POST /channels/{id}/chat/stream/approve/{jobId}
+
+- Companion endpoint used by the client to resolve a pending approval
+  emitted by a running SSE stream. Body:
 
 ```json
-{
-  "actionType": "UnsafeExecuteAsDangerousShell",
-  "grantedClearance": "Independent"
-}
+{ "approved": true }
 ```
 
-**Response `200`:** `ConversationResponse` (updated).
-**Response `404`:** Not found.
+Response `200` on success, or `404` when no pending approval exists.
 
 ---
 
-### ConversationResponse
+## Transcription streaming
 
-```json
-{
-  "id": "guid",
-  "title": "string",
-  "agentId": "guid",
-  "agentName": "string",
-  "modelId": "guid",
-  "modelName": "string",
-  "contextId": "guid | null",
-  "contextName": "string | null",
-  "createdAt": "datetime",
-  "updatedAt": "datetime",
-  "permissionGrants": [
-    {
-      "id": "guid",
-      "actionType": "AccessWebsite",
-      "grantedClearance": "Independent"
-    }
-  ],
-  "effectivePermissions": [
-    {
-      "actionType": "UnsafeExecuteAsDangerousShell",
-      "grantedClearance": "ApprovedBySameLevelUser",
-      "source": "context"
-    },
-    {
-      "actionType": "AccessWebsite",
-      "grantedClearance": "Independent",
-      "source": "conversation"
-    }
-  ]
-}
-```
+Two streaming transports are provided for live transcription segments.
+
+WebSocket:
+
+    /jobs/{jobId}/ws
+
+- Connect with WebSocket; the server will send JSON text frames with
+  transcription segment objects.
+
+SSE:
+
+    /jobs/{jobId}/stream
+
+- Server-sent events with transcription segments in `data` frames.
+
+Both endpoints return `404` if the job is not found or has no active
+subscription.
 
 ---
 
-## Chat
+## Resources
 
-All chat operations are scoped to a conversation.
+The API exposes multiple resource types under the `/resources` group.
+Examples implemented in the handlers include containers and audio
+devices.
 
-### POST /conversations/{conversationId}/chat
+### Containers
 
-Send a message and receive the assistant's reply.
+POST /resources/containers
+GET  /resources/containers
+GET  /resources/containers/{id}
+PUT  /resources/containers/{id}
+DELETE /resources/containers/{id}
+POST /resources/containers/sync
 
-When the agent has permissions to perform actions (shell execution,
-info store access, etc.), the assistant can autonomously submit jobs
-during the conversation turn. Tool calls are executed via the same
-`AgentJobService.SubmitAsync` pipeline — the agent's role permissions
-**and** the channel/context permission set are both evaluated.
+Typical request/response bodies are `CreateContainerRequest`, `ContainerResponse`,
+etc.
 
-The channel's permission set is defined by the user and counts as
-`ApprovedByWhitelistedUser`-level pre-authorisation. When the agent's
-role clearance is ≤ 2 (`ApprovedBySameLevelUser` or
-`ApprovedByWhitelistedUser`) and the channel or context has a matching
-grant, the job executes immediately. Clearances ≥ 3
-(`ApprovedByPermittedAgent`, `ApprovedByWhitelistedAgent`) always
-require explicit per-job approval, at which point **the chat stops** —
-no further tool calls are processed until the user approves or denies
-the pending job(s) via `POST /agents/{agentId}/jobs/{jobId}/approve`.
+### Audio devices
 
-**Request:**
-
-```json
-{
-  "message": "string"
-}
-```
-
-**Response `200`:**
-
-```json
-{
-  "userMessage": {
-    "role": "user",
-    "content": "string",
-    "timestamp": "datetime"
-  },
-  "assistantMessage": {
-    "role": "assistant",
-    "content": "string",
-    "timestamp": "datetime"
-  },
-  "jobResults": [
-    {
-      "id": "guid",
-      "agentId": "guid",
-      "actionType": "ExecuteAsSafeShell",
-      "resourceId": "guid | null",
-      "status": "Completed | Denied | AwaitingApproval",
-      "effectiveClearance": "Independent",
-      "resultData": "string | null",
-      "errorLog": "string | null"
-    }
-  ]
-}
-```
-
-`jobResults` is `null` when no tool calls were made during the turn.
-
----
-
-### GET /conversations/{conversationId}/chat
-
-Retrieve chat history for a conversation (most recent 50 messages,
-chronological order).
-
-**Response `200`:**
-
-```json
-[
-  {
-    "role": "user",
-    "content": "string",
-    "timestamp": "datetime"
-  },
-  {
-    "role": "assistant",
-    "content": "string",
-    "timestamp": "datetime"
-  }
-]
-```
+POST /resources/audiodevices
+GET  /resources/audiodevices
+GET  /resources/audiodevices/{id}
+PUT  /resources/audiodevices/{id}
+DELETE /resources/audiodevices/{id}
+POST /resources/audiodevices/sync
 
 ---
 
@@ -798,7 +727,6 @@ The approver's identity is re-evaluated against the clearance
 requirement.
 
 **Response `200`:** `AgentJobResponse`
-**Response `404`:** Not found.
 
 ---
 
@@ -856,40 +784,11 @@ agent has the grant at all and what clearance level it requires.
 
 ### Stage 2 — Channel / context pre-authorisation
 
-Conversation pre-auth counts as `ApprovedByWhitelistedUser`-level
-authority. The user who configured the channel or context permission
-set is treated as a whitelisted user granting approval in advance.
+The channel/context pre-authorisation logic is used to determine whether a
+pending job can execute immediately without per-job approval.
 
-This means pre-auth only satisfies agent clearances ≤ 2:
+- Conversation/channel pre-auth counts as `ApprovedByWhitelistedUser`-level authority.
+- This satisfies agent clearances ≤ 2 (`ApprovedBySameLevelUser`, `ApprovedByWhitelistedUser`).
+- Clearances ≥ 3 (`ApprovedByPermittedAgent`, `ApprovedByWhitelistedAgent`) always require explicit per-job approval.
 
-| Agent clearance | Pre-auth? | Outcome |
-|----------------|-----------|---------|
-| `ApprovedBySameLevelUser` (1) | ✓ | Executes if channel/context has grant |
-| `ApprovedByWhitelistedUser` (2) | ✓ | Executes if channel/context has grant |
-| `ApprovedByPermittedAgent` (3) | ✗ | Always `AwaitingApproval` |
-| `ApprovedByWhitelistedAgent` (4) | ✗ | Always `AwaitingApproval` |
-
-When the agent's clearance is ≤ 2, the system checks for a matching
-grant in this order:
-
-```
-┌──────────────────────────────────────────────────┐
-│ 1. Channel's own permission set                  │ ← checked first
-│ 2. Parent context's permission set               │ ← fallback
-│ 3. No match → AwaitingApproval                   │
-└──────────────────────────────────────────────────┘
-```
-
-- If the channel PS has a matching grant (exact resource or wildcard)
-  → **pre-authorised**, executes immediately.
-- If the channel PS does not have it → check the context PS.
-- If neither has it → `AwaitingApproval`. The user must approve via
-  `POST /agents/{agentId}/jobs/{jobId}/approve`.
-
-Only grant **existence** matters for pre-auth — the clearance value
-on the channel/context grant itself is irrelevant.
-
-The `effectivePermissions` array in `ConversationResponse` shows the
-merged result with source attribution.
-
-Standalone conversations (no context) rely solely on their own grants.
+The resolver checks in order: channel's own permission set → parent context → fallback (AwaitingApproval).
