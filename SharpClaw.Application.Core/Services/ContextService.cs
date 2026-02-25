@@ -19,7 +19,8 @@ public sealed class ContextService(SharpClawDbContext db)
         {
             Name = request.Name ?? $"Context {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm}",
             AgentId = agent.Id,
-            PermissionSetId = request.PermissionSetId
+            PermissionSetId = request.PermissionSetId,
+            DisableChatHeader = request.DisableChatHeader ?? false
         };
 
         db.AgentContexts.Add(context);
@@ -67,6 +68,9 @@ public sealed class ContextService(SharpClawDbContext db)
                 ? null
                 : request.PermissionSetId;
 
+        if (request.DisableChatHeader is not null)
+            context.DisableChatHeader = request.DisableChatHeader.Value;
+
         await db.SaveChangesAsync(ct);
         return ToResponse(context, context.Agent);
     }
@@ -92,6 +96,7 @@ public sealed class ContextService(SharpClawDbContext db)
             agent.Id,
             agent.Name,
             context.PermissionSetId,
+            context.DisableChatHeader,
             context.CreatedAt,
             context.UpdatedAt);
 }

@@ -107,6 +107,7 @@ of the script JSON.
 | label        | string?     | null   | Step label for jump targets. Unique within script.              |
 | onFailure    | string?     | null   | Forward jump on failure, e.g. `"goto:cleanup"`.                 |
 | captureAs    | string?     | null   | Capture stdout into a named variable (e.g. `"BUILD_OUTPUT"`).   |
+| workingDirectory | string? | null   | Per-step CWD override (sandbox-scoped). ProcRun uses this as `ProcessStartInfo.WorkingDirectory`. |
 | forEach      | Mk8ForEach? | null   | Loop body for `ForEach` verb.                                    |
 | if           | Mk8Conditional? | null | Predicate + guarded op for `If` verb.                           |
 | template     | Mk8FileTemplate? | null | Template definition for `FileTemplate` verb.                   |

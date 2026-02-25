@@ -122,16 +122,27 @@ public sealed class Mk8ShellCompiler
             // Path validation against sandbox.
             resolvedArgs = ValidatePathArgs(op.Verb, resolvedArgs, workspace.SandboxRoot);
 
-            // Validate FileTemplate source path is in sandbox.
+            // Resolve FileTemplate source path + store in operation for compilation.
+            var resolvedOp = op with { Args = resolvedArgs };
             if (op.Verb == Mk8ShellVerb.FileTemplate && op.Template is not null)
             {
-                Mk8PathSanitizer.Resolve(
+                var resolvedSource = Mk8PathSanitizer.Resolve(
                     Mk8VariableResolver.ResolveArg(op.Template.Source, variables),
                     workspace.SandboxRoot);
+                resolvedOp = resolvedOp with { Template = op.Template with { Source = resolvedSource } };
             }
 
-            var resolvedOp = op with { Args = resolvedArgs };
-            commands.Add(CompileOperation(resolvedOp));
+            var compiled = CompileOperation(resolvedOp);
+
+            // Resolve and validate per-step WorkingDirectory.
+            if (!string.IsNullOrWhiteSpace(op.WorkingDirectory))
+            {
+                var resolvedWd = Mk8VariableResolver.ResolveArg(op.WorkingDirectory, variables);
+                Mk8PathSanitizer.Resolve(resolvedWd, workspace.SandboxRoot);
+                compiled = compiled with { WorkingDirectory = resolvedWd };
+            }
+
+            commands.Add(compiled);
         }
 
         // Phase 6: Compile cleanup operations (same pipeline).
@@ -153,7 +164,25 @@ public sealed class Mk8ShellCompiler
                 resolvedArgs = ValidatePathArgs(op.Verb, resolvedArgs, workspace.SandboxRoot);
 
                 var resolvedOp = op with { Args = resolvedArgs };
-                cleanupCommands.Add(CompileOperation(resolvedOp));
+                if (op.Verb == Mk8ShellVerb.FileTemplate && op.Template is not null)
+                {
+                    var resolvedSource = Mk8PathSanitizer.Resolve(
+                        Mk8VariableResolver.ResolveArg(op.Template.Source, variables),
+                        workspace.SandboxRoot);
+                    resolvedOp = resolvedOp with { Template = op.Template with { Source = resolvedSource } };
+                }
+
+                var compiled = CompileOperation(resolvedOp);
+
+                // Resolve and validate per-step WorkingDirectory.
+                if (!string.IsNullOrWhiteSpace(op.WorkingDirectory))
+                {
+                    var resolvedWd = Mk8VariableResolver.ResolveArg(op.WorkingDirectory, variables);
+                    Mk8PathSanitizer.Resolve(resolvedWd, workspace.SandboxRoot);
+                    compiled = compiled with { WorkingDirectory = resolvedWd };
+                }
+
+                cleanupCommands.Add(compiled);
             }
         }
 
@@ -622,7 +651,20 @@ public sealed class Mk8ShellCompiler
                     "first write it to a file with FileWrite, then read it separately.");
         }
 
-        return InMemory(Mk8ShellVerb.FileTemplate, op.Args);
+        // Encode source path + key-value pairs into compiled args:
+        // [outputPath, sourcePath, key1, value1, key2, value2, ...]
+        var compiledArgs = new List<string>(2 + op.Template.Values.Count * 2)
+        {
+            op.Args[0],        // output path (already resolved + write-validated)
+            op.Template.Source  // source path (already resolved by Compile method)
+        };
+        foreach (var (key, value) in op.Template.Values)
+        {
+            compiledArgs.Add(key);
+            compiledArgs.Add(value);
+        }
+
+        return InMemory(Mk8ShellVerb.FileTemplate, compiledArgs.ToArray());
     }
 
     private static Mk8CompiledCommand CompileFilePatch(Mk8ShellOperation op)
@@ -661,7 +703,19 @@ public sealed class Mk8ShellCompiler
                     "Use literal strings only.");
         }
 
-        return InMemory(Mk8ShellVerb.FilePatch, op.Args);
+        // Encode patches into compiled args:
+        // [targetPath, find1, replace1, find2, replace2, ...]
+        var compiledArgs = new List<string>(1 + op.Patches.Count * 2)
+        {
+            op.Args[0] // target path (already resolved + write-validated)
+        };
+        foreach (var patch in op.Patches)
+        {
+            compiledArgs.Add(patch.Find);
+            compiledArgs.Add(patch.Replace);
+        }
+
+        return InMemory(Mk8ShellVerb.FilePatch, compiledArgs.ToArray());
     }
 
     /// <summary>

@@ -17,8 +17,7 @@ namespace Mk8.Shell.Engine;
 /// <see cref="Contracts.Enums.SafeShellType.Mk8Shell"/> jobs
 /// exclusively.  All file, dir, text, HTTP, env, and sysinfo verbs
 /// are handled in-memory via .NET APIs.  Only
-/// <see cref="Mk8CommandKind.Process"/> and
-/// <see cref="Mk8CommandKind.GitProcess"/> spawn external processes,
+/// <see cref="Mk8CommandKind.Process"/> spawns external processes,
 /// and even those go through binary-allowlist validation, path
 /// sandboxing, and argument sanitisation before being dispatched via
 /// <see cref="ProcessStartInfo"/> with <c>UseShellExecute = false</c>.
@@ -224,7 +223,7 @@ public sealed class Mk8ShellExecutor
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
-            WorkingDirectory = workspace.WorkingDirectory,
+            WorkingDirectory = cmd.WorkingDirectory ?? workspace.WorkingDirectory,
         };
 
         foreach (var arg in cmd.Arguments)
@@ -958,43 +957,64 @@ public sealed class Mk8ShellExecutor
     }
 
     /// <summary>
-    /// FileTemplate: reads template source, replaces {{key}} with values,
-    /// writes to target path. Template and values come from the original
-    /// operation metadata — the compiled command only carries the output path.
-    /// <para>
-    /// Since compiled commands don't carry template data, this requires
-    /// the template source + values be encoded into the arguments by
-    /// the caller or a higher-level orchestrator. For now, the compiled
-    /// command carries args[0] = output path and the template data must
-    /// be accessible. This is a simplified implementation that reads the
-    /// source from args and uses a convention for values.
-    /// </para>
+    /// FileTemplate: reads template source, replaces <c>{{key}}</c> with values,
+    /// writes to target path. The compiler encodes the template source path
+    /// and key-value pairs into the compiled command's arguments:
+    /// <c>[outputPath, sourcePath, key1, value1, key2, value2, ...]</c>.
     /// </summary>
-    private static Task<string> FileTemplateAsync(
+    private static async Task<string> FileTemplateAsync(
         Mk8CompiledCommand cmd,
         Mk8WorkspaceContext workspace,
         CancellationToken ct)
     {
-        // FileTemplate is an in-memory marker. The actual template source
-        // and values are resolved at compile time. The compiled command's
-        // args[0] is the output path. Template execution is handled by
-        // the higher-level orchestrator that has access to the original
-        // operation and its Template property.
+        // Args: [outputPath, sourcePath, key1, value1, key2, value2, ...]
         var outputPath = cmd.Arguments[0];
-        return Task.FromResult($"FileTemplate applied to {outputPath}");
+        var sourcePath = cmd.Arguments[1];
+
+        var template = await File.ReadAllTextAsync(sourcePath, ct);
+
+        // Apply {{KEY}} replacements.
+        for (var i = 2; i < cmd.Arguments.Length; i += 2)
+        {
+            var key = cmd.Arguments[i];
+            var value = cmd.Arguments[i + 1];
+            template = template.Replace($"{{{{{key}}}}}", value, StringComparison.Ordinal);
+        }
+
+        var dir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(outputPath, template, ct);
+
+        var replacements = (cmd.Arguments.Length - 2) / 2;
+        return $"FileTemplate: {sourcePath} → {outputPath} ({replacements} replacement(s))";
     }
 
     /// <summary>
     /// FilePatch: reads file, applies ordered find/replace patches, writes
-    /// result. Same limitation as FileTemplate — patch data comes from the
-    /// original operation metadata.
+    /// result. The compiler encodes patches into the compiled command's
+    /// arguments: <c>[targetPath, find1, replace1, find2, replace2, ...]</c>.
     /// </summary>
-    private static Task<string> FilePatchAsync(
+    private static async Task<string> FilePatchAsync(
         Mk8CompiledCommand cmd,
         CancellationToken ct)
     {
+        // Args: [targetPath, find1, replace1, find2, replace2, ...]
         var targetPath = cmd.Arguments[0];
-        return Task.FromResult($"FilePatch applied to {targetPath}");
+
+        var content = await File.ReadAllTextAsync(targetPath, ct);
+
+        var patchCount = (cmd.Arguments.Length - 1) / 2;
+        for (var i = 1; i < cmd.Arguments.Length; i += 2)
+        {
+            var find = cmd.Arguments[i];
+            var replace = cmd.Arguments[i + 1];
+            content = content.Replace(find, replace, StringComparison.Ordinal);
+        }
+
+        await File.WriteAllTextAsync(targetPath, content, ct);
+
+        return $"FilePatch: applied {patchCount} patch(es) to {targetPath}";
     }
 
     // ═══════════════════════════════════════════════════════════════

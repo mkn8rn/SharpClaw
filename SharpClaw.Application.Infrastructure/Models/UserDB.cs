@@ -10,6 +10,12 @@ public class UserDB : BaseEntity
     public required byte[] PasswordSalt { get; set; }
 
     /// <summary>
+    /// Free-form user bio included in chat headers so agents know
+    /// who they are talking to.
+    /// </summary>
+    public string? Bio { get; set; }
+
+    /// <summary>
     /// Any access token issued before this timestamp is considered invalid.
     /// Set to <see cref="DateTimeOffset.UtcNow"/> to invalidate all current access tokens.
     /// </summary>

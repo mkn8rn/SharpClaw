@@ -5,10 +5,9 @@ using Mk8.Shell.Safety;
 namespace Mk8.Shell.Models;
 
 /// <summary>
-/// Global environment loaded from <c>mk8.shell.base.env</c> which ships
-/// alongside the assembly. This file is a JSON document containing
-/// project bases, git remote URLs, vocabularies, FreeText config, and
-/// any other environment-wide settings.
+/// Global environment loaded from <c>%APPDATA%/mk8.shell/mk8.shell.base.env</c>.
+/// This file is a JSON document containing project bases, git remote URLs,
+/// vocabularies, FreeText config, and any other environment-wide settings.
 /// <para>
 /// On first startup, if the file does not exist or is empty, the
 /// hardcoded compile-time vocabularies from the <c>Commands/</c> files
@@ -165,10 +164,14 @@ public sealed class Mk8GlobalEnv
             _cached = null;
     }
 
+    private static readonly string BaseEnvPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "mk8.shell",
+        "mk8.shell.base.env");
+
     private static Mk8GlobalEnv LoadFromDisk()
     {
-        var assemblyDir = AppContext.BaseDirectory;
-        var envPath = Path.Combine(assemblyDir, "Environment", "mk8.shell.base.env");
+        var envPath = BaseEnvPath;
 
         // Auto-seed: if file missing or empty, write defaults
         if (!File.Exists(envPath) || string.IsNullOrWhiteSpace(File.ReadAllText(envPath)))

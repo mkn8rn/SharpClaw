@@ -5,13 +5,15 @@ public sealed record CreateChannelRequest(
     string? Title = null,
     Guid? ContextId = null,
     Guid? PermissionSetId = null,
-    IReadOnlyList<Guid>? AllowedAgentIds = null);
+    IReadOnlyList<Guid>? AllowedAgentIds = null,
+    bool? DisableChatHeader = null);
 
 public sealed record UpdateChannelRequest(
     string? Title = null,
     Guid? ContextId = null,
     Guid? PermissionSetId = null,
-    IReadOnlyList<Guid>? AllowedAgentIds = null);
+    IReadOnlyList<Guid>? AllowedAgentIds = null,
+    bool? DisableChatHeader = null);
 
 public sealed record ChannelResponse(
     Guid Id,
@@ -23,5 +25,6 @@ public sealed record ChannelResponse(
     Guid? PermissionSetId,
     Guid? EffectivePermissionSetId,
     IReadOnlyList<Guid> AllowedAgentIds,
+    bool DisableChatHeader,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

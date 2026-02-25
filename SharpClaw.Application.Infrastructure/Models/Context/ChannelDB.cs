@@ -42,6 +42,13 @@ public class ChannelDB : BaseEntity
     public PermissionSetDB? PermissionSet { get; set; }
 
     /// <summary>
+    /// When <see langword="true"/>, the per-message user metadata header
+    /// is not prepended to messages sent on this channel. Overrides the
+    /// context-level setting.
+    /// </summary>
+    public bool DisableChatHeader { get; set; }
+
+    /// <summary>
     /// Additional agents allowed to operate on this channel.  The
     /// primary <see cref="Agent"/> is always implicitly allowed and
     /// is NOT included in this collection.  When a job or chat

@@ -25,6 +25,12 @@ public class ChannelContextDB : BaseEntity
     public Guid? PermissionSetId { get; set; }
     public PermissionSetDB? PermissionSet { get; set; }
 
+    /// <summary>
+    /// Default value for <see cref="ChannelDB.DisableChatHeader"/> for
+    /// channels inside this context. Individual channels can override.
+    /// </summary>
+    public bool DisableChatHeader { get; set; }
+
     public ICollection<ChannelDB> Channels { get; set; } = [];
     public ICollection<ScheduledJobDB> Tasks { get; set; } = [];
 }

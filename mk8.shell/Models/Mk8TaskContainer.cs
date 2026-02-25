@@ -10,7 +10,7 @@ namespace Mk8.Shell.Models;
 /// <para>
 /// Lifecycle for every command execution:
 /// <list type="number">
-///   <item>Load global env from <c>mk8.shell.base.env</c> (cached at startup).</item>
+///   <item>Load global env from <c>%APPDATA%/mk8.shell/mk8.shell.base.env</c> (cached at startup).</item>
 ///   <item>Look up sandbox ID in local <c>%APPDATA%/mk8.shell/sandboxes.json</c>.</item>
 ///   <item>Resolve sandbox root path.</item>
 ///   <item>Read <c>mk8.shell.signed.env</c> from sandbox root (fresh every execution).</item>
