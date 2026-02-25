@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
+using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -32,11 +33,14 @@ public sealed partial class ChatService(
     private const int MaxToolCallRounds = 10;
 
     public async Task<ChatResponse> SendMessageAsync(
-        Guid channelId, ChatRequest request, CancellationToken ct = default)
+        Guid channelId, ChatRequest request,
+        Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback = null,
+        CancellationToken ct = default)
     {
         var channel = await db.Channels
             .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -63,15 +67,24 @@ public sealed partial class ChatService(
         var useNativeTools = client.SupportsNativeToolCalling;
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, useNativeTools);
 
+        // Build chat header for the user message (if enabled)
+        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, ct);
+        var messageForModel = chatHeader is not null
+            ? chatHeader + request.Message
+            : request.Message;
+
+        // Replace last history entry with the header-prefixed version for model
+        history[^1] = new ChatCompletionMessage("user", messageForModel);
+
         using var httpClient = httpClientFactory.CreateClient();
 
         var loopResult = useNativeTools
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, channelId, ct)
+                history, agent.Id, channelId, approvalCallback, ct)
             : await RunTextToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, channelId, ct);
+                history, agent.Id, channelId, approvalCallback, ct);
 
         // Persist both messages
         var userMessage = new ChatMessageDB
@@ -133,6 +146,96 @@ public sealed partial class ChatService(
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Chat header
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Builds a compact metadata header that is prepended to the user
+    /// message content so the agent knows who is talking.  Returns
+    /// <see langword="null"/> when headers are disabled for the channel
+    /// (either at channel level or inherited from the context).
+    /// </summary>
+    private async Task<string?> BuildChatHeaderAsync(
+        ChannelDB channel, ChatClientType clientType, CancellationToken ct)
+    {
+        // Channel-level flag takes precedence; fall back to context.
+        var disabled = channel.DisableChatHeader
+            || (channel.AgentContext?.DisableChatHeader ?? false);
+
+        if (disabled)
+            return null;
+
+        var userId = jobService.GetSessionUserId();
+        if (userId is null)
+            return null;
+
+        var user = await db.Users
+            .Include(u => u.Role)
+            .ThenInclude(r => r!.PermissionSet)
+            .ThenInclude(ps => ps!.DangerousShellAccesses)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+
+        if (user is null)
+            return null;
+
+        // Load remaining grant collections if the user has a permission set
+        PermissionSetDB? ps = null;
+        if (user.Role?.PermissionSetId is { } psId)
+        {
+            ps = await db.PermissionSets
+                .Include(p => p.SafeShellAccesses)
+                .Include(p => p.ContainerAccesses)
+                .Include(p => p.WebsiteAccesses)
+                .Include(p => p.SearchEngineAccesses)
+                .Include(p => p.LocalInfoStorePermissions)
+                .Include(p => p.ExternalInfoStorePermissions)
+                .Include(p => p.AudioDeviceAccesses)
+                .Include(p => p.AgentPermissions)
+                .Include(p => p.TaskPermissions)
+                .Include(p => p.SkillPermissions)
+                .AsSplitQuery()
+                .FirstOrDefaultAsync(p => p.Id == psId, ct);
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("[user: ").Append(user.Username);
+        sb.Append(" | via: ").Append(clientType);
+
+        if (user.Role is not null && ps is not null)
+        {
+            var grants = new List<string>();
+            if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
+            if (ps.CanCreateContainers) grants.Add("CreateContainers");
+            if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
+            if (ps.CanEditAllTasks) grants.Add("EditAllTasks");
+            if (ps.DangerousShellAccesses.Count > 0) grants.Add("DangerousShell");
+            if (ps.SafeShellAccesses.Count > 0) grants.Add("SafeShell");
+            if (ps.ContainerAccesses.Count > 0) grants.Add("ContainerAccess");
+            if (ps.WebsiteAccesses.Count > 0) grants.Add("WebsiteAccess");
+            if (ps.SearchEngineAccesses.Count > 0) grants.Add("SearchEngineAccess");
+            if (ps.LocalInfoStorePermissions.Count > 0) grants.Add("LocalInfoStore");
+            if (ps.ExternalInfoStorePermissions.Count > 0) grants.Add("ExternalInfoStore");
+            if (ps.AudioDeviceAccesses.Count > 0) grants.Add("AudioDevice");
+            if (ps.AgentPermissions.Count > 0) grants.Add("ManageAgent");
+            if (ps.TaskPermissions.Count > 0) grants.Add("EditTask");
+            if (ps.SkillPermissions.Count > 0) grants.Add("AccessSkill");
+
+            if (grants.Count > 0)
+                sb.Append(" | role: ").Append(user.Role.Name)
+                  .Append(" (").Append(string.Join(", ", grants)).Append(')');
+            else
+                sb.Append(" | role: ").Append(user.Role.Name);
+        }
+
+        if (!string.IsNullOrWhiteSpace(user.Bio))
+            sb.Append(" | bio: ").Append(user.Bio);
+
+        sb.AppendLine("]");
+        return sb.ToString();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Streaming chat
     // ═══════════════════════════════════════════════════════════════
 
@@ -157,6 +260,7 @@ public sealed partial class ChatService(
         var channel = await db.Channels
             .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -180,6 +284,11 @@ public sealed partial class ChatService(
         var apiKey = ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, nativeToolCalling: true);
+
+        // Build chat header for the user message (if enabled)
+        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, ct);
+        if (chatHeader is not null)
+            history[^1] = new ChatCompletionMessage("user", chatHeader + request.Message);
 
         using var httpClient = httpClientFactory.CreateClient();
 
@@ -392,6 +501,7 @@ public sealed partial class ChatService(
         IReadOnlyList<ChatCompletionMessage> dbHistory,
         Guid agentId,
         Guid channelId,
+        Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct)
     {
         var messages = new List<ToolAwareMessage>(dbHistory.Count);
@@ -412,7 +522,7 @@ public sealed partial class ChatService(
             // Record assistant turn with tool calls
             messages.Add(ToolAwareMessage.AssistantWithToolCalls(result.ToolCalls, result.Content));
 
-            var anyAwaitingApproval = false;
+            var anyUnresolvableApproval = false;
 
             foreach (var tc in result.ToolCalls)
             {
@@ -427,6 +537,27 @@ public sealed partial class ChatService(
                 var jobRequest = await BuildJobRequestAsync(parsed, agentId, ct);
 
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+
+                // ── Inline approval (when callback available) ────
+                if (jobResponse.Status == AgentJobStatus.AwaitingApproval
+                    && approvalCallback is not null)
+                {
+                    var canApprove = await CanSessionUserApproveAsync(
+                        agentId, jobRequest.ActionType, jobRequest.ResourceId, ct);
+
+                    if (canApprove)
+                    {
+                        var approved = await approvalCallback(jobResponse, ct);
+                        jobResponse = approved
+                            ? await jobService.ApproveAsync(jobResponse.Id, new ApproveAgentJobRequest(), ct) ?? jobResponse
+                            : await jobService.CancelAsync(jobResponse.Id, ct) ?? jobResponse;
+                    }
+                    else
+                    {
+                        jobResponse = await jobService.CancelAsync(jobResponse.Id, ct) ?? jobResponse;
+                    }
+                }
+
                 jobResults.Add(jobResponse);
 
                 var resultContent =
@@ -437,10 +568,10 @@ public sealed partial class ChatService(
                 messages.Add(ToolAwareMessage.ToolResult(tc.Id, resultContent));
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
-                    anyAwaitingApproval = true;
+                    anyUnresolvableApproval = true;
             }
 
-            if (anyAwaitingApproval)
+            if (anyUnresolvableApproval)
             {
                 var finalResult = await client.ChatCompletionWithToolsAsync(
                     httpClient, apiKey, modelName, systemPrompt, messages, AllTools, ct);
@@ -463,6 +594,7 @@ public sealed partial class ChatService(
         List<ChatCompletionMessage> history,
         Guid agentId,
         Guid channelId,
+        Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct)
     {
         var jobResults = new List<AgentJobResponse>();
@@ -481,13 +613,34 @@ public sealed partial class ChatService(
             history.Add(new ChatCompletionMessage("assistant", assistantContent));
 
             var toolResultBuilder = new StringBuilder();
-            var anyAwaitingApproval = false;
+            var anyUnresolvableApproval = false;
 
             foreach (var call in toolCalls)
             {
                 var jobRequest = await BuildJobRequestAsync(call, agentId, ct);
 
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+
+                // ── Inline approval (when callback available) ────
+                if (jobResponse.Status == AgentJobStatus.AwaitingApproval
+                    && approvalCallback is not null)
+                {
+                    var canApprove = await CanSessionUserApproveAsync(
+                        agentId, jobRequest.ActionType, jobRequest.ResourceId, ct);
+
+                    if (canApprove)
+                    {
+                        var approved = await approvalCallback(jobResponse, ct);
+                        jobResponse = approved
+                            ? await jobService.ApproveAsync(jobResponse.Id, new ApproveAgentJobRequest(), ct) ?? jobResponse
+                            : await jobService.CancelAsync(jobResponse.Id, ct) ?? jobResponse;
+                    }
+                    else
+                    {
+                        jobResponse = await jobService.CancelAsync(jobResponse.Id, ct) ?? jobResponse;
+                    }
+                }
+
                 jobResults.Add(jobResponse);
 
                 toolResultBuilder.AppendLine(
@@ -496,12 +649,12 @@ public sealed partial class ChatService(
                     (jobResponse.ErrorLog is not null ? $" error={jobResponse.ErrorLog}" : ""));
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
-                    anyAwaitingApproval = true;
+                    anyUnresolvableApproval = true;
             }
 
             history.Add(new ChatCompletionMessage("user", toolResultBuilder.ToString()));
 
-            if (anyAwaitingApproval)
+            if (anyUnresolvableApproval)
             {
                 assistantContent = await client.ChatCompletionAsync(
                     httpClient, apiKey, modelName, systemPrompt, history, ct);
@@ -857,7 +1010,11 @@ public sealed partial class ChatService(
                                     "type": "object",
                                     "properties": {
                                         "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } }
+                                        "args": { "type": "array", "items": { "type": "string" } },
+                                        "workingDirectory": {
+                                            "type": "string",
+                                            "description": "Optional per-step working directory override (e.g. '$WORKSPACE/bananaapp'). ProcRun processes spawn with this as their CWD instead of the sandbox root. Use this instead of flags like git -C which are not in the template whitelist."
+                                        }
                                     },
                                     "required": ["verb", "args"]
                                 }
@@ -869,7 +1026,11 @@ public sealed partial class ChatService(
                                     "type": "object",
                                     "properties": {
                                         "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } }
+                                        "args": { "type": "array", "items": { "type": "string" } },
+                                        "workingDirectory": {
+                                            "type": "string",
+                                            "description": "Optional per-step working directory override."
+                                        }
                                     },
                                     "required": ["verb", "args"]
                                 }

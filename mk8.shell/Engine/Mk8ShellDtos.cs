@@ -56,7 +56,20 @@ public sealed record Mk8ShellOperation(
     /// When <see cref="Verb"/> is <see cref="Mk8ShellVerb.FilePatch"/>,
     /// this defines the ordered find/replace patches to apply.
     /// </summary>
-    IReadOnlyList<Mk8PatchEntry>? Patches = null);
+    IReadOnlyList<Mk8PatchEntry>? Patches = null,
+    /// <summary>
+    /// Optional per-step working directory override. Must be a sandbox-
+    /// scoped path (absolute within the sandbox or <c>$WORKSPACE/...</c>).
+    /// When set, <see cref="Mk8ShellVerb.ProcRun"/> processes spawn with
+    /// this directory as their CWD instead of the default
+    /// <see cref="Mk8WorkspaceContext.WorkingDirectory"/>.
+    /// <para>
+    /// Typical use: running git commands inside a cloned subdirectory
+    /// (e.g. <c>"$WORKSPACE/bananaapp"</c>) when the sandbox root is not
+    /// itself a git repository.
+    /// </para>
+    /// </summary>
+    string? WorkingDirectory = null);
 
 /// <summary>
 /// An ordered list of <see cref="Mk8ShellOperation"/>s submitted as
@@ -344,7 +357,13 @@ public enum Mk8CommandKind
 public sealed record Mk8CompiledCommand(
     Mk8CommandKind Kind,
     string Executable,
-    string[] Arguments);
+    string[] Arguments,
+    /// <summary>
+    /// Resolved per-step working directory. When non-null, the executor
+    /// uses this as <c>ProcessStartInfo.WorkingDirectory</c> instead of
+    /// the workspace default. Already validated as sandbox-scoped.
+    /// </summary>
+    string? WorkingDirectory = null);
 
 public sealed record Mk8CompiledScript(
 IReadOnlyList<Mk8CompiledCommand> Commands,

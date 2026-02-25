@@ -32,6 +32,7 @@ public static class CliDispatcher
     private static string? _currentUser;
     private static Guid? _currentUserId;
     private static Guid? _currentChannelId;
+    private static bool _chatMode;
     private static bool IsLoggedIn => _currentUser is not null;
 
     [Conditional("DEBUG")]
@@ -52,7 +53,11 @@ public static class CliDispatcher
 
         while (!ct.IsCancellationRequested)
         {
-            var prompt = IsLoggedIn ? $"sharpclaw ({_currentUser})> " : "sharpclaw> ";
+            var prompt = !IsLoggedIn
+                ? "sharpclaw> "
+                : _chatMode
+                    ? $"sharpclaw ({_currentUser}) 💬> "
+                    : $"sharpclaw ({_currentUser})> ";
             Console.Write(prompt);
 
             string? line;
@@ -82,6 +87,7 @@ public static class CliDispatcher
                 _currentUser = null;
                 _currentUserId = null;
                 _currentChannelId = null;
+                _chatMode = false;
                 Console.WriteLine("Logged out.");
                 DebugLog("Response: Logged out.");
                 Console.WriteLine();
@@ -96,6 +102,19 @@ public static class CliDispatcher
                 DebugLog("Response: Not logged in, command rejected.");
                 Console.WriteLine();
                 continue;
+            }
+
+            // In chat mode, only !-prefixed escape commands break out;
+            // everything else is sent as a chat message.
+            if (_chatMode)
+            {
+                if (TryHandleChatModeEscape(line))
+                {
+                    Console.WriteLine();
+                    continue;
+                }
+
+                args = ["chat", .. args];
             }
 
             try
@@ -184,6 +203,7 @@ public static class CliDispatcher
             "job" => await HandleJobCommand(args, sp),
             "role" => await HandleRoleCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
+            "bio" => await HandleBioCommand(args, sp),
             "help" or "--help" or "-h" => PrintHelp(),
             _ => null
         };
@@ -251,7 +271,7 @@ public static class CliDispatcher
                 "provider delete <providerId>",
                 "provider set-key <providerId> <apiKey>",
                 "provider login <providerId>",
-                "provider sync <providerId>");
+                "provider sync-models <providerId>");
             return Results.Ok();
         }
 
@@ -300,9 +320,9 @@ public static class CliDispatcher
                 => await HandleDeviceCodeLoginAsync(CliIdMap.Resolve(args[2]), svc, ct: default),
             "login" => UsageResult("provider login <id>"),
 
-            "sync" when args.Length >= 3
+            "sync-models" when args.Length >= 3
                 => await HandleProviderSync(CliIdMap.Resolve(args[2]), svc),
-            "sync" => UsageResult("provider sync <id>"),
+            "sync-models" => UsageResult("provider sync-models <id>"),
 
             "refresh-caps" when args.Length >= 3
                 => await HandleRefreshCaps(CliIdMap.Resolve(args[2]), svc),
@@ -503,12 +523,46 @@ public static class CliDispatcher
         };
     }
 
+    /// <summary>
+    /// In chat mode only <c>!chat toggle</c>, <c>!chat exit</c>,
+    /// <c>!toggle</c>, and <c>!exit</c> are recognised as escape
+    /// commands that switch back to normal CLI mode.
+    /// Returns <c>true</c> if the input was an escape command (already handled).
+    /// </summary>
+    private static bool TryHandleChatModeEscape(string line)
+    {
+        var trimmed = line.TrimStart();
+        if (trimmed.Length == 0 || trimmed[0] != '!')
+            return false;
+
+        var command = trimmed[1..].Trim().ToLowerInvariant();
+        if (command is "chat toggle" or "chat exit" or "toggle" or "exit")
+        {
+            _chatMode = false;
+            Console.WriteLine("Chat mode OFF \u2014 normal command mode.");
+            return true;
+        }
+
+        return false;
+    }
+
     private static async Task<IResult?> HandleChatCommand(string[] args, IServiceProvider sp)
     {
+        // ── chat toggle ──────────────────────────────────────────
+        if (args.Length >= 2 && args[1].Equals("toggle", StringComparison.OrdinalIgnoreCase))
+        {
+            _chatMode = !_chatMode;
+            Console.WriteLine(_chatMode
+                ? "Chat mode ON — all input is sent as chat. Type !exit or !chat toggle to return to normal mode."
+                : "Chat mode OFF — normal command mode.");
+            return Results.Ok();
+        }
+
         if (args.Length < 2)
         {
             PrintUsage(
                 "chat [--agent <id>] <message>",
+                "  chat toggle                             Toggle chat mode on/off",
                 "  --agent overrides the channel's default agent.");
             return Results.Ok();
         }
@@ -548,11 +602,11 @@ public static class CliDispatcher
         }
 
         var chatService = sp.GetRequiredService<ChatService>();
-        var request = new ChatRequest(string.Join(' ', messageParts), agentId);
+        var request = new ChatRequest(string.Join(' ', messageParts), agentId, ChatClientType.CLI);
         var wroteText = false;
 
         async Task<bool> CliApprovalCallback(
-            Contracts.DTOs.AgentActions.AgentJobResponse job, CancellationToken ct)
+            AgentJobResponse job, CancellationToken ct)
         {
             Console.Write("Approve? (y/n): ");
             var input = await Task.Run(Console.ReadLine, ct);
@@ -1295,98 +1349,108 @@ public static class CliDispatcher
         };
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Bio
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleBioCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "bio get                                   Show your bio",
+                "bio set <text>                            Set your bio",
+                "bio clear                                 Remove your bio");
+            return Results.Ok();
+        }
+
+        var sub = args[1].ToLowerInvariant();
+        var db = sp.GetRequiredService<SharpClawDbContext>();
+
+        return sub switch
+        {
+            "get" => await HandleBioGet(db),
+            "set" when args.Length >= 3 => await HandleBioSet(db, string.Join(' ', args[2..])),
+            "set" => UsageResult("bio set <text>"),
+            "clear" => await HandleBioSet(db, null),
+            _ => UsageResult($"Unknown sub-command: bio {sub}. Try 'bio get', 'bio set', or 'bio clear'.")
+        };
+    }
+
+    private static async Task<IResult> HandleBioGet(SharpClawDbContext db)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == _currentUserId);
+        if (user is null) return Results.NotFound();
+
+        Console.WriteLine(string.IsNullOrEmpty(user.Bio)
+            ? "(no bio set)"
+            : user.Bio);
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> HandleBioSet(SharpClawDbContext db, string? bio)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == _currentUserId);
+        if (user is null) return Results.NotFound();
+
+        user.Bio = bio;
+        await db.SaveChangesAsync();
+
+        Console.WriteLine(bio is not null ? $"Bio updated." : "Bio cleared.");
+        return Results.Ok();
+    }
+
     private static IResult PrintHelp()
     {
         Console.WriteLine("""
             SharpClaw - Shell Agent
 
-            IDs can be full GUIDs or short #numbers shown in command output.
-            Short IDs are CLI-only and do not persist between restarts.
+            IDs: full GUIDs or short #numbers from output (session-only).
+            Most entities support: add, get, list, update, delete.
 
-            Commands:
-              register <username> <password>              Register and log in
-              login <username> <password>                 Log in
-              logout                                      Log out
+            Auth:
+              register <user> <pass>          login <user> <pass>          logout
 
-              provider add <name> <type> [endpoint]       Add a provider
-                Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI,
-                       GoogleGemini, ZAI, VercelAIGateway, XAI, Groq,
-                       Cerebras, Mistral, GitHubCopilot, Custom
-              provider get <id>                           Show a provider
-              provider list                               List providers
-              provider update <id> <name> [endpoint]      Update a provider
-              provider delete <id>                        Delete a provider
-              provider set-key <id> <apiKey>              Set API key for a provider
-              provider login <id>                         Authenticate via device code flow
-              provider sync <id>                          Sync models from provider API
-              provider refresh-caps <id>                  Re-infer model capabilities
+            Provider:  provider <sub> [args]    (add, get, list, update, delete)
+              provider add <name> <type> [endpoint]
+                Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,
+                  ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom
+              provider set-key <id> <apiKey>   login <id>   sync-models <id>   refresh-caps <id>
 
-              model add <name> <providerId> [--cap <caps>]  Add a model
-                Capabilities (comma-separated): Chat, Transcription,
-                  ImageGeneration, Embedding, TextToSpeech
-              model get <id>                              Show a model
-              model list                                  List models
-              model update <id> <name> [--cap <caps>]     Update a model
-              model delete <id>                           Delete a model
+            Model:     model <sub> [args]       (add, get, list, update, delete)
+              model add <name> <providerId> [--cap Chat,Transcription,...]
 
-              agent add <name> <modelId> [system prompt]  Create an agent
-              agent get <id>                              Show an agent
-              agent list                                  List agents
-              agent update <id> <name> [modelId] [prompt]
-                                                          Update an agent
-              agent role <id> <roleId>                    Assign a role to an agent
-              agent role <id> none                        Remove agent role
-              agent delete <id>                           Delete an agent
+            Agent:     agent <sub> [args]       (add, get, list, update, delete)
+              agent add <name> <modelId> [system prompt]
+              agent role <id> <roleId|none>              role list
 
-              context new <agentId> [name]                Create a context
-              context list [agentId]                      List contexts
-              context get <id>                            Show context details
-              context update <id> <name>                  Rename a context
-              context delete <id>                         Delete a context
+            Context:   context|ctx <sub> [args] (new, get, list, update, delete)
+              context new <agentId> [name]
 
+            Channel:   channel|chan <sub> [args] (new, get, list, select, delete)
               channel new <agentId> [--context <id>] [title]
-                                                          Start a channel
-              channel list [agentId]                      List channels
-              channel select <id>                         Select active channel
-              channel get <id>                            Show channel details
-              channel attach <id> <contextId>             Attach to a context
-              channel detach <id>                         Detach from context
-              channel agents <id>                         List allowed agents
-              channel agents <id> add <agentId>           Allow an agent
-              channel agents <id> remove <agentId>        Remove an allowed agent
-              channel delete <id>                         Delete a channel
+              channel attach|detach <id> [contextId]
+              channel agents <id> [add|remove <agentId>]
 
-              chat [--agent <id>] <message>               Chat in active channel
+            Chat:
+              chat [--agent <id>] <message>    Send a message in the active channel
+              chat toggle                      Toggle chat mode (all input → chat)
+                In chat mode: !exit or !chat toggle to return to normal mode.
 
-              role list                                    List all roles
+            Bio:       bio get | set <text> | clear
 
-              job submit <type> [resourceId] [--conv <id>] [--agent <id>] [--model <id>] [--lang <code>]
-                                                          Submit a job on the current channel
-                Uses current channel by default, or --conv to override.
-                --agent overrides the channel's default agent.
-                Global types: ExecuteAsAdmin, CreateSubAgent,
-                  CreateContainer, RegisterInfoStore, EditAnyTask
-                Resource types: ExecuteAsSystemUser, AccessLocalInfoStore,
-                  AccessExternalInfoStore, AccessWebsite, QuerySearchEngine,
-                  AccessContainer, ManageAgent, EditTask, AccessSkill
-                Transcription types: TranscribeFromAudioDevice,
-                  TranscribeFromAudioStream (API only),
-                  TranscribeFromAudioFile (API only)
-              job list [channelId]                         List jobs (current channel if omitted)
-              job status <jobId>                           Check job status & logs
-              job approve <jobId>                          Approve a pending job
-              job stop <jobId>                             Stop a transcription job
-              job cancel <jobId>                           Cancel a job
-              job listen <jobId>                           Stream live transcription
+            Job:       job <sub> [args]
+              job submit <actionType> [resourceId] [--conv <id>] [--agent <id>]
+                  [--model <id>] [--lang <code>]
+              job list [channelId]   status <id>   approve <id>   cancel <id>
+              job stop <id>          listen <id>   (transcription jobs)
 
-              resource <type> <command> [args...]
-                Available types: container, audiodevice
-                Commands (all types): add, get, list, update, delete, sync
+            Resource:  resource <type> <sub>    (add, get, list, update, delete, sync)
+              Types: container, audiodevice
+              resource container add mk8shell <name> <path>
+              resource audiodevice add <name> [identifier]
 
-              resource container add <type> <name> <path>  Create a container
-              resource audiodevice add <name> [devId] [d]  Register an audio device
-
-              exit / quit                                 Shut down
+              exit / quit
             """);
         return Results.Ok();
     }

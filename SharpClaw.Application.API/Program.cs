@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Mk8.Shell.Models;
 using Serilog;
 using SharpClaw.Application.API.Api;
 using SharpClaw.Application.API.Cli;
@@ -114,6 +115,9 @@ try
 
     // Initialize infrastructure (loads persisted data into InMemory DB)
     await app.Services.InitializeInfrastructureAsync();
+
+    // Seed mk8.shell base env on first startup
+    Mk8GlobalEnv.Load();
 
     // CLI mode: handle command and exit
     if (await CliDispatcher.TryHandleAsync(args, app.Services))

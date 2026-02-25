@@ -7,11 +7,13 @@ namespace SharpClaw.Contracts.DTOs.Contexts;
 public sealed record CreateContextRequest(
     Guid AgentId,
     string? Name = null,
-    Guid? PermissionSetId = null);
+    Guid? PermissionSetId = null,
+    bool? DisableChatHeader = null);
 
 public sealed record UpdateContextRequest(
     string? Name = null,
-    Guid? PermissionSetId = null);
+    Guid? PermissionSetId = null,
+    bool? DisableChatHeader = null);
 
 public sealed record ContextResponse(
     Guid Id,
@@ -19,6 +21,7 @@ public sealed record ContextResponse(
     Guid AgentId,
     string AgentName,
     Guid? PermissionSetId,
+    bool DisableChatHeader,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 

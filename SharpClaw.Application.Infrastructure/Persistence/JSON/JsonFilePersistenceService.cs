@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Entities;
@@ -18,11 +19,14 @@ public sealed class JsonFilePersistenceService(
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles
+        ReferenceHandler = ReferenceHandler.IgnoreCycles,
+        Converters = { new JsonStringEnumConverter(), new NullableGuidConverter() }
     };
 
     /// <summary>
-    /// Loads all JSON files from the data directory into the InMemory database.
+    /// Loads all per-entity JSON files from the data directory into the InMemory database.
+    /// Each entity type has its own sub-folder under the data directory, and each entity
+    /// is stored as an individual <c>{Id}.json</c> file.
     /// Call once at startup after the DbContext is configured.
     /// </summary>
     public async Task LoadAsync(CancellationToken ct = default)
@@ -42,25 +46,30 @@ public sealed class JsonFilePersistenceService(
 
         foreach (var entityType in context.Model.GetEntityTypes())
         {
-            var clrType = entityType.ClrType;
-            var filePath = GetFilePath(clrType);
-
-            if (!File.Exists(filePath))
+            // Skip shared-type entities (e.g. many-to-many join tables)
+            // — they don't have their own DbSet or JSON file.
+            if (entityType.HasSharedClrType)
                 continue;
 
-            try
+            var clrType = entityType.ClrType;
+            var entityDir = GetEntityDirectory(clrType);
+
+            if (!Directory.Exists(entityDir))
+                continue;
+
+            var navProps = navigations.GetValueOrDefault(clrType);
+            var files = Directory.GetFiles(entityDir, "*.json");
+
+            foreach (var file in files)
             {
-                var json = await File.ReadAllTextAsync(filePath, ct);
-                var listType = typeof(List<>).MakeGenericType(clrType);
-                var entities = JsonSerializer.Deserialize(json, listType, JsonOptions);
-
-                if (entities is not System.Collections.IEnumerable enumerable)
-                    continue;
-
-                var navProps = navigations.GetValueOrDefault(clrType);
-
-                foreach (var entity in enumerable)
+                try
                 {
+                    var json = await File.ReadAllTextAsync(file, ct);
+                    var entity = JsonSerializer.Deserialize(json, clrType, JsonOptions);
+
+                    if (entity is null)
+                        continue;
+
                     // Clear navigation properties so EF only tracks this entity
                     // by its foreign-key columns, not the nested object graph.
                     if (navProps is not null)
@@ -69,15 +78,15 @@ public sealed class JsonFilePersistenceService(
                             prop!.SetValue(entity, null);
                     }
 
-                    context.Add(entity!);
+                    context.Add(entity);
                 }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to load {Type} from {Path}", clrType.Name, file);
+                }
+            }
 
-                logger.LogDebug("Loaded {Type} from {Path}", clrType.Name, filePath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to load {Type} from {Path}", clrType.Name, filePath);
-            }
+            logger.LogDebug("Loaded {Count} {Type} from {Path}", files.Length, clrType.Name, entityDir);
         }
 
         await context.SaveChangesAsync(ct);
@@ -85,7 +94,9 @@ public sealed class JsonFilePersistenceService(
     }
 
     /// <summary>
-    /// Saves all tracked entity types from the InMemory database to JSON files.
+    /// Saves all tracked entity types from the InMemory database to individual JSON files.
+    /// Each entity is written as <c>{DataDirectory}/{EntityType}/{Id}.json</c>.
+    /// Orphan files for deleted entities are removed.
     /// </summary>
     public async Task FlushAsync(CancellationToken ct = default)
     {
@@ -93,8 +104,13 @@ public sealed class JsonFilePersistenceService(
 
         foreach (var entityType in context.Model.GetEntityTypes())
         {
+            // Skip shared-type entities (e.g. many-to-many join tables)
+            if (entityType.HasSharedClrType)
+                continue;
+
             var clrType = entityType.ClrType;
-            var filePath = GetFilePath(clrType);
+            var entityDir = GetEntityDirectory(clrType);
+            Directory.CreateDirectory(entityDir);
 
             try
             {
@@ -105,20 +121,36 @@ public sealed class JsonFilePersistenceService(
                     .Invoke(context, null)!;
 
                 var entities = await queryable.ToListAsync(ct);
-                var json = JsonSerializer.Serialize(entities, entities.GetType(), JsonOptions);
-                await File.WriteAllTextAsync(filePath, json, ct);
+                var activeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                logger.LogDebug("Flushed {Count} {Type} to {Path}", entities.Count, clrType.Name, filePath);
+                foreach (var entity in entities)
+                {
+                    var id = ((BaseEntity)entity).Id;
+                    activeIds.Add($"{id}.json");
+
+                    var filePath = Path.Combine(entityDir, $"{id}.json");
+                    var json = JsonSerializer.Serialize(entity, clrType, JsonOptions);
+                    await File.WriteAllTextAsync(filePath, json, ct);
+                }
+
+                // Remove orphan files for entities that no longer exist
+                foreach (var file in Directory.GetFiles(entityDir, "*.json"))
+                {
+                    if (!activeIds.Contains(Path.GetFileName(file)))
+                        File.Delete(file);
+                }
+
+                logger.LogDebug("Flushed {Count} {Type} to {Path}", entities.Count, clrType.Name, entityDir);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to flush {Type} to {Path}", clrType.Name, filePath);
+                logger.LogError(ex, "Failed to flush {Type} to {Path}", clrType.Name, entityDir);
             }
         }
     }
 
-    private string GetFilePath(Type entityType)
-        => Path.Combine(options.DataDirectory, $"{entityType.Name}.json");
+    private string GetEntityDirectory(Type entityType)
+        => Path.Combine(options.DataDirectory, entityType.Name);
 
     private void DetachAll()
     {
@@ -126,5 +158,20 @@ public sealed class JsonFilePersistenceService(
         {
             entry.State = EntityState.Detached;
         }
+    }
+
+    /// <summary>
+    /// Handles JSON <c>null</c> for non-nullable <see cref="Guid"/> properties
+    /// by substituting <see cref="Guid.Empty"/>. This prevents deserialization
+    /// failures when old data files contain <c>null</c> for foreign-key columns
+    /// that were later made non-nullable.
+    /// </summary>
+    private sealed class NullableGuidConverter : JsonConverter<Guid>
+    {
+        public override Guid Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.TokenType == JsonTokenType.Null ? Guid.Empty : reader.GetGuid();
+
+        public override void Write(Utf8JsonWriter writer, Guid value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
     }
 }

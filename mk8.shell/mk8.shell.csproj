@@ -8,13 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="Environment\mk8.shell.base.env" />
-    <Content Include="Environment\mk8.shell.base.env">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
-
-  <ItemGroup>
     <EmbeddedResource Include="mk8.shell.skill.txt" LogicalName="Mk8.Shell.mk8.shell.skill.txt" />
     <EmbeddedResource Include="mk8.shell.md" LogicalName="Mk8.Shell.mk8.shell.md" />
   </ItemGroup>
@@ -22,6 +15,10 @@
   <ItemGroup>
     <PackageReference Include="System.Diagnostics.EventLog" />
     <PackageReference Include="System.ServiceProcess.ServiceController" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Environment\" />
   </ItemGroup>
 
 </Project>

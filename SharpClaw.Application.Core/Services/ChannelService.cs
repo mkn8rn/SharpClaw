@@ -33,7 +33,8 @@ public sealed class ChannelService(SharpClawDbContext db)
             Title = request.Title ?? $"Channel {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm}",
             AgentId = agent.Id,
             AgentContextId = context?.Id,
-            PermissionSetId = request.PermissionSetId
+            PermissionSetId = request.PermissionSetId,
+            DisableChatHeader = request.DisableChatHeader ?? false
         };
 
         if (request.AllowedAgentIds is { Count: > 0 } agentIds)
@@ -134,6 +135,9 @@ public sealed class ChannelService(SharpClawDbContext db)
             }
         }
 
+        if (request.DisableChatHeader is not null)
+            channel.DisableChatHeader = request.DisableChatHeader.Value;
+
         await db.SaveChangesAsync(ct);
         return ToResponse(channel, channel.Agent, channel.AgentContext);
     }
@@ -186,6 +190,7 @@ public sealed class ChannelService(SharpClawDbContext db)
             channel.PermissionSetId,
             channel.PermissionSetId ?? context?.PermissionSetId,
             channel.AllowedAgents.Select(a => a.Id).ToList(),
+            channel.DisableChatHeader,
             channel.CreatedAt,
             channel.UpdatedAt);
 }
