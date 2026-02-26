@@ -14,6 +14,7 @@ Guid? CallerAgentId = null,
 DangerousShellType? DangerousShellType = null,
 SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
+string? WorkingDirectory = null,
 // Transcription-specific
 Guid? TranscriptionModelId = null,
 string? Language = null);
@@ -41,6 +42,7 @@ DateTimeOffset? CompletedAt,
 DangerousShellType? DangerousShellType = null,
 SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
+string? WorkingDirectory = null,
 // Transcription
 Guid? TranscriptionModelId = null,
 string? Language = null,

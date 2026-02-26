@@ -7,9 +7,11 @@ using Mk8.Shell;
 using Mk8.Shell.Engine;
 using Mk8.Shell.Models;
 using Mk8.Shell.Safety;
+using Mk8.Shell.Startup;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Application.Infrastructure.Models.Messages;
+using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Transcription;
@@ -98,6 +100,7 @@ SessionService session)
             DangerousShellType = request.DangerousShellType,
             SafeShellType = request.SafeShellType,
             ScriptJson = request.ScriptJson,
+            WorkingDirectory = request.WorkingDirectory,
             TranscriptionModelId = request.TranscriptionModelId,
             Language = request.Language,
         };
@@ -475,6 +478,24 @@ SessionService session)
             AgentActionType.UnsafeExecuteAsDangerousShell
                 => await ExecuteDangerousShellAsync(job, ct),
 
+            // Agent lifecycle
+            AgentActionType.CreateSubAgent
+                => await ExecuteCreateSubAgentAsync(job, ct),
+            AgentActionType.ManageAgent
+                => await ExecuteManageAgentAsync(job, ct),
+
+            // Container lifecycle
+            AgentActionType.CreateContainer
+                => await ExecuteCreateContainerAsync(job, ct),
+
+            // Task management
+            AgentActionType.EditTask
+                => await ExecuteEditTaskAsync(job, ct),
+
+            // Knowledge / skills
+            AgentActionType.AccessSkill
+                => await ExecuteAccessSkillAsync(job, ct),
+
             _ => $"Action '{job.ActionType}' executed successfully " +
                  $"(resource: {job.ResourceId?.ToString() ?? "n/a"})."
         };
@@ -630,7 +651,8 @@ SessionService session)
             ?? throw new InvalidOperationException(
                 $"SystemUser {job.ResourceId} not found.");
 
-        var workingDir = systemUser.WorkingDirectory
+        var workingDir = job.WorkingDirectory
+            ?? systemUser.WorkingDirectory
             ?? systemUser.SandboxRoot
             ?? Directory.GetCurrentDirectory();
 
@@ -706,6 +728,272 @@ SessionService session)
     };
 
     // ═══════════════════════════════════════════════════════════════
+    // CREATE SUB-AGENT
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class CreateSubAgentPayload
+    {
+        public string? Name { get; set; }
+        public string? ModelId { get; set; }
+        public string? SystemPrompt { get; set; }
+    }
+
+    private async Task<string?> ExecuteCreateSubAgentAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(job.ScriptJson))
+            throw new InvalidOperationException(
+                "CreateSubAgent requires a JSON payload in ScriptJson.");
+
+        var payload = JsonSerializer.Deserialize<CreateSubAgentPayload>(
+            job.ScriptJson, _payloadJsonOptions)
+            ?? throw new InvalidOperationException(
+                "Failed to deserialise CreateSubAgent payload.");
+
+        if (string.IsNullOrWhiteSpace(payload.Name))
+            throw new InvalidOperationException(
+                "CreateSubAgent payload requires a 'name' field.");
+
+        if (!Guid.TryParse(payload.ModelId, out var modelId))
+            throw new InvalidOperationException(
+                "CreateSubAgent payload requires a valid 'modelId' GUID.");
+
+        var model = await db.Models
+            .Include(m => m.Provider)
+            .FirstOrDefaultAsync(m => m.Id == modelId, ct)
+            ?? throw new InvalidOperationException(
+                $"Model {modelId} not found.");
+
+        var agent = new AgentDB
+        {
+            Name = payload.Name,
+            SystemPrompt = payload.SystemPrompt,
+            ModelId = model.Id,
+        };
+
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync(ct);
+
+        AddLog(job, $"Sub-agent '{agent.Name}' created (id={agent.Id}).");
+        return $"Created sub-agent '{agent.Name}' (id={agent.Id}, model={model.Name}).";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CREATE CONTAINER
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class CreateContainerPayload
+    {
+        public string? Name { get; set; }
+        public string? Path { get; set; }
+        public string? Description { get; set; }
+    }
+
+    private async Task<string?> ExecuteCreateContainerAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(job.ScriptJson))
+            throw new InvalidOperationException(
+                "CreateContainer requires a JSON payload in ScriptJson.");
+
+        var payload = JsonSerializer.Deserialize<CreateContainerPayload>(
+            job.ScriptJson, _payloadJsonOptions)
+            ?? throw new InvalidOperationException(
+                "Failed to deserialise CreateContainer payload.");
+
+        if (string.IsNullOrWhiteSpace(payload.Name))
+            throw new InvalidOperationException(
+                "CreateContainer payload requires a 'name' field.");
+
+        if (string.IsNullOrWhiteSpace(payload.Path))
+            throw new InvalidOperationException(
+                "CreateContainer payload requires a 'path' field.");
+
+        var sandboxName = payload.Name;
+        var sandboxDir = Path.Combine(
+            Path.GetFullPath(payload.Path), sandboxName);
+
+        var exists = await db.Containers.AnyAsync(
+            c => c.Type == ContainerType.Mk8Shell
+                 && c.SandboxName == sandboxName, ct);
+
+        if (exists)
+            throw new InvalidOperationException(
+                $"An mk8shell container with sandbox name '{sandboxName}' already exists.");
+
+        Mk8SandboxRegistrar.Register(sandboxName, sandboxDir);
+
+        var container = new ContainerDB
+        {
+            Name = $"mk8shell:{sandboxName}",
+            Type = ContainerType.Mk8Shell,
+            SandboxName = sandboxName,
+            Description = payload.Description,
+        };
+
+        db.Containers.Add(container);
+        await db.SaveChangesAsync(ct);
+
+        AddLog(job, $"Container '{container.Name}' created (id={container.Id}).");
+        return $"Created mk8shell container '{sandboxName}' at '{sandboxDir}' (id={container.Id}).";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MANAGE AGENT
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class ManageAgentPayload
+    {
+        public string? TargetId { get; set; }
+        public string? Name { get; set; }
+        public string? SystemPrompt { get; set; }
+        public string? ModelId { get; set; }
+    }
+
+    private async Task<string?> ExecuteManageAgentAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "ManageAgent requires a ResourceId (target agent).");
+
+        var agent = await db.Agents
+            .Include(a => a.Model).ThenInclude(m => m.Provider)
+            .FirstOrDefaultAsync(a => a.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"Agent {job.ResourceId} not found.");
+
+        ManageAgentPayload? payload = null;
+        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
+        {
+            payload = JsonSerializer.Deserialize<ManageAgentPayload>(
+                job.ScriptJson, _payloadJsonOptions);
+        }
+
+        var changes = new List<string>();
+
+        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
+        {
+            agent.Name = newName;
+            changes.Add($"name='{newName}'");
+        }
+
+        if (payload?.SystemPrompt is not null)
+        {
+            agent.SystemPrompt = payload.SystemPrompt;
+            changes.Add("systemPrompt updated");
+        }
+
+        if (payload?.ModelId is { } modelIdStr && Guid.TryParse(modelIdStr, out var newModelId))
+        {
+            var model = await db.Models
+                .Include(m => m.Provider)
+                .FirstOrDefaultAsync(m => m.Id == newModelId, ct)
+                ?? throw new InvalidOperationException($"Model {newModelId} not found.");
+            agent.ModelId = model.Id;
+            agent.Model = model;
+            changes.Add($"model='{model.Name}'");
+        }
+
+        if (changes.Count == 0)
+            return $"Agent '{agent.Name}' (id={agent.Id}) — no changes applied.";
+
+        await db.SaveChangesAsync(ct);
+
+        var summary = string.Join(", ", changes);
+        AddLog(job, $"Agent '{agent.Name}' updated: {summary}.");
+        return $"Updated agent '{agent.Name}' (id={agent.Id}): {summary}.";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // EDIT TASK
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class EditTaskPayload
+    {
+        public string? TargetId { get; set; }
+        public string? Name { get; set; }
+        public int? RepeatIntervalMinutes { get; set; }
+        public int? MaxRetries { get; set; }
+    }
+
+    private async Task<string?> ExecuteEditTaskAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "EditTask requires a ResourceId (target task).");
+
+        var task = await db.ScheduledTasks
+            .FirstOrDefaultAsync(t => t.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"ScheduledTask {job.ResourceId} not found.");
+
+        EditTaskPayload? payload = null;
+        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
+        {
+            payload = JsonSerializer.Deserialize<EditTaskPayload>(
+                job.ScriptJson, _payloadJsonOptions);
+        }
+
+        var changes = new List<string>();
+
+        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
+        {
+            task.Name = newName;
+            changes.Add($"name='{newName}'");
+        }
+
+        if (payload?.RepeatIntervalMinutes is { } intervalMinutes)
+        {
+            task.RepeatInterval = intervalMinutes > 0
+                ? TimeSpan.FromMinutes(intervalMinutes)
+                : null;
+            changes.Add($"repeatInterval={task.RepeatInterval?.ToString() ?? "none"}");
+        }
+
+        if (payload?.MaxRetries is { } retries)
+        {
+            task.MaxRetries = retries;
+            changes.Add($"maxRetries={retries}");
+        }
+
+        if (changes.Count == 0)
+            return $"Task '{task.Name}' (id={task.Id}) — no changes applied.";
+
+        await db.SaveChangesAsync(ct);
+
+        var summary = string.Join(", ", changes);
+        AddLog(job, $"Task '{task.Name}' updated: {summary}.");
+        return $"Updated task '{task.Name}' (id={task.Id}): {summary}.";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ACCESS SKILL
+    // ═══════════════════════════════════════════════════════════════
+
+    private async Task<string?> ExecuteAccessSkillAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "AccessSkill requires a ResourceId (target skill).");
+
+        var skill = await db.Skills
+            .FirstOrDefaultAsync(s => s.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"Skill {job.ResourceId} not found.");
+
+        AddLog(job, $"Skill '{skill.Name}' accessed.");
+        return $"Skill: {skill.Name}\n\n{skill.SkillText}";
+    }
+
+    private static readonly JsonSerializerOptions _payloadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    // ═══════════════════════════════════════════════════════════════
     // Permission dispatch
     // ═══════════════════════════════════════════════════════════════
 
@@ -721,8 +1009,6 @@ SessionService session)
                 => actions.CreateContainerAsync(agentId, caller, ct: ct),
             AgentActionType.RegisterInfoStore
                 => actions.RegisterInfoStoreAsync(agentId, caller, ct: ct),
-            AgentActionType.EditAnyTask
-                => actions.EditAnyTaskAsync(agentId, caller, ct: ct),
             AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
                 => actions.UnsafeExecuteAsDangerousShellAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
@@ -971,7 +1257,6 @@ SessionService session)
         AgentActionType.CreateSubAgent    => ps.CanCreateSubAgents,
         AgentActionType.CreateContainer   => ps.CanCreateContainers,
         AgentActionType.RegisterInfoStore => ps.CanRegisterInfoStores,
-        AgentActionType.EditAnyTask       => ps.CanEditAllTasks,
 
         // ── Per-resource grants ───────────────────────────────────
         AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
@@ -1080,6 +1365,7 @@ SessionService session)
             DangerousShellType: job.DangerousShellType,
             SafeShellType: job.SafeShellType,
             ScriptJson: job.ScriptJson,
+            WorkingDirectory: job.WorkingDirectory,
             TranscriptionModelId: job.TranscriptionModelId,
             Language: job.Language,
             Segments: IsTranscriptionAction(job.ActionType)

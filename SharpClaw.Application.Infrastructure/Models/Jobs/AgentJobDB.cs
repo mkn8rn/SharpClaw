@@ -47,6 +47,13 @@ public class AgentJobDB : BaseEntity
     /// </summary>
     public string? ScriptJson { get; set; }
 
+    /// <summary>
+    /// Absolute path where the dangerous shell process should be
+    /// spawned.  Overrides the <see cref="SystemUserDB.WorkingDirectory"/>
+    /// when set.  Not validated or sandboxed — dangerous by design.
+    /// </summary>
+    public string? WorkingDirectory { get; set; }
+
     // ── State ─────────────────────────────────────────────────────
     public AgentJobStatus Status { get; set; } = AgentJobStatus.Queued;
     public PermissionClearance EffectiveClearance { get; set; } = PermissionClearance.Unset;

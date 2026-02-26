@@ -30,9 +30,6 @@ public class PermissionSetDB : BaseEntity
     /// <summary>Register new local or external information stores.</summary>
     public bool CanRegisterInfoStores { get; set; }
 
-    /// <summary>Edit any scheduled task (when false, per-task grants apply).</summary>
-    public bool CanEditAllTasks { get; set; }
-
     // ── Per-resource grant collections ────────────────────────────
 
     public ICollection<DangerousShellAccessDB> DangerousShellAccesses { get; set; } = [];

@@ -48,13 +48,6 @@ public sealed class AgentActionService(SharpClawDbContext db)
             agentId, caller, p => p.CanRegisterInfoStores,
             "register information stores", onApproved, ct);
 
-    public Task<AgentActionResult> EditAnyTaskAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanEditAllTasks,
-            "edit all tasks", onApproved, ct);
-
     // ═══════════════════════════════════════════════════════════════
     // Per-resource actions
     // ═══════════════════════════════════════════════════════════════
