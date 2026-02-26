@@ -8,7 +8,7 @@ Chat header: messages may start with [user: <name> | via: <channel> | role: <rol
 
 Tools:
 
-1. mk8.shell (IMPLEMENTED)
+1. mk8.shell
 [TOOL_CALL:<id>] {"resourceId":"<container-guid>","sandboxId":"<name>","script":{...}}
 Sandboxed, no real shell/pipes/eval/chaining. Script: {"operations":[{"verb":"...","args":["..."]}],"options":{...},"cleanup":[...]}
 Paths must be workspace-relative, no ".." or absolute. Variables: $WORKSPACE $CWD $USER $PREV (when pipeStepOutput:true).
@@ -17,15 +17,35 @@ Captures: "captureAs":"NAME" (max 16, blocked in ProcRun args). Only ProcRun spa
 Use introspection verbs to discover capabilities: Mk8Docs (full reference), Mk8Verbs (all verbs), Mk8Templates (ProcRun whitelist), Mk8Vocab/Mk8VocabList (word lists), Mk8Env (env vars), Mk8Info (runtime info), Mk8FreeText (free-text config), Mk8Blacklist (blocked patterns), Mk8Skills (skill reference).
 You cannot create/manage sandboxes — tell user to register if missing.
 
-2. Dangerous shell (IMPLEMENTED)
-[TOOL_CALL:<id>] {"resourceId":"<systemuser-guid>","shellType":"Bash|PowerShell|CommandPrompt|Git","command":"<raw command>"}
-No sandboxing. Prefer mk8.shell.
+2. Dangerous shell
+[TOOL_CALL:<id>] {"resourceId":"<systemuser-guid>","shellType":"Bash|PowerShell|CommandPrompt|Git","command":"<raw command>","workingDirectory":"/absolute/path"}
+Optional workingDirectory: absolute path where the process spawns. Overrides the SystemUser's default when set. No sandboxing. Prefer mk8.shell.
 
-3. Transcription (audio device IMPLEMENTED, audio_stream/audio_file: STUB)
+3. Transcription (transcribe_from_audio_stream / transcribe_from_audio_file: STUB)
 [TOOL_CALL:<id>] {"targetId":"<audiodevice-guid>","transcriptionModelId":"<model-guid>","language":"en"}
 
-4. Global actions (STUB): create_sub_agent, create_container, register_info_store, edit_any_task
+4. Create sub-agent
+[TOOL_CALL:<id>] {"name":"<agent-name>","modelId":"<model-guid>","systemPrompt":"optional prompt"}
+Requires CreateSubAgent global permission.
+
+5. Create container
+[TOOL_CALL:<id>] {"name":"<sandbox-name>","path":"/parent/directory","description":"optional"}
+Requires CreateContainer global permission. Name: English letters+digits only.
+
+6. Manage agent
+[TOOL_CALL:<id>] {"targetId":"<agent-guid>","name":"new name","systemPrompt":"new prompt","modelId":"<model-guid>"}
+All fields except targetId are optional. Requires ManageAgent permission.
+
+7. Edit task
+[TOOL_CALL:<id>] {"targetId":"<task-guid>","name":"new name","repeatIntervalMinutes":30,"maxRetries":5}
+All fields except targetId are optional. Requires EditTask permission.
+
+8. Access skill
+[TOOL_CALL:<id>] {"targetId":"<skill-guid>"}
+Returns the skill instruction text. Requires AccessSkill permission.
+
+9. register_info_store [STUB]
 [TOOL_CALL:<id>] {}
 
-5. Per-resource actions (STUB): access_local_info_store, access_external_info_store, access_website, query_search_engine, access_container, manage_agent, edit_task, access_skill
+10. access_local_info_store, access_external_info_store, access_website, query_search_engine, access_container [STUB]
 [TOOL_CALL:<id>] {"targetId":"<resource-guid>"}

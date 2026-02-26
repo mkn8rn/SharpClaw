@@ -208,7 +208,6 @@ public sealed partial class ChatService(
             if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
             if (ps.CanCreateContainers) grants.Add("CreateContainers");
             if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
-            if (ps.CanEditAllTasks) grants.Add("EditAllTasks");
             if (ps.DangerousShellAccesses.Count > 0) grants.Add("DangerousShell");
             if (ps.SafeShellAccesses.Count > 0) grants.Add("SafeShell");
             if (ps.ContainerAccesses.Count > 0) grants.Add("ContainerAccess");
@@ -479,6 +478,7 @@ public sealed partial class ChatService(
             DangerousShellType: parsed.DangerousShellType,
             SafeShellType: parsed.SafeShellType,
             ScriptJson: parsed.ScriptJson,
+            WorkingDirectory: parsed.WorkingDirectory,
             TranscriptionModelId: parsed.TranscriptionModelId,
             Language: parsed.Language);
     }
@@ -690,16 +690,29 @@ public sealed partial class ChatService(
             DangerousShellType? dangerousShell = Enum.TryParse<DangerousShellType>(
                 payload.ShellType, ignoreCase: true, out var ds) ? ds : null;
 
+            // For non-shell/non-transcription actions, pass the full
+            // arguments JSON as ScriptJson so DispatchExecutionAsync
+            // can deserialize action-specific fields from it.
+            var scriptJson = actionType switch
+            {
+                AgentActionType.ExecuteAsSafeShell
+                    => payload.Script is { } script ? script.GetRawText() : null,
+                AgentActionType.UnsafeExecuteAsDangerousShell
+                    => payload.Command,
+                _ => toolCall.ArgumentsJson,
+            };
+
             return new ParsedToolCall(
                 toolCall.Id,
                 actionType,
                 resourceId,
                 payload.SandboxId,
-                payload.Script is { } script ? script.GetRawText() : payload.Command,
+                scriptJson,
                 dangerousShell,
                 actionType == AgentActionType.ExecuteAsSafeShell ? SafeShellType.Mk8Shell : null,
                 transcriptionModelId,
-                payload.Language);
+                payload.Language,
+                payload.WorkingDirectory);
         }
         catch (JsonException)
         {
@@ -717,7 +730,6 @@ public sealed partial class ChatService(
         ["create_sub_agent"]               = AgentActionType.CreateSubAgent,
         ["create_container"]               = AgentActionType.CreateContainer,
         ["register_info_store"]            = AgentActionType.RegisterInfoStore,
-        ["edit_any_task"]                   = AgentActionType.EditAnyTask,
         ["access_local_info_store"]        = AgentActionType.AccessLocalInfoStore,
         ["access_external_info_store"]     = AgentActionType.AccessExternalInfoStore,
         ["access_website"]                 = AgentActionType.AccessWebsite,
@@ -831,7 +843,8 @@ public sealed partial class ChatService(
                         actionType == AgentActionType.ExecuteAsSafeShell
                             ? SafeShellType.Mk8Shell : null,
                         transcriptionModelId,
-                        payload.Language));
+                        payload.Language,
+                        payload.WorkingDirectory));
                 }
             }
             catch (JsonException)
@@ -896,18 +909,23 @@ public sealed partial class ChatService(
         var globalSchema = BuildGlobalActionSchema();
         var dangerousShellSchema = BuildDangerousShellSchema();
         var transcriptionSchema = BuildTranscriptionSchema();
+        var createSubAgentSchema = BuildCreateSubAgentSchema();
+        var createContainerSchema = BuildCreateContainerSchema();
+        var manageAgentSchema = BuildManageAgentSchema();
+        var editTaskSchema = BuildEditTaskSchema();
 
         return
         [
-            // ── Implemented ──────────────────────────────────────
+            // ── Shell execution ───────────────────────────────
             new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
             new("execute_dangerous_shell",
                 "Execute a raw shell command via Bash, PowerShell, CommandPrompt, or Git. "
                 + "Requires UnsafeExecuteAsDangerousShell permission. The command string is "
-                + "passed directly to the interpreter with NO sandboxing.",
+                + "passed directly to the interpreter with NO sandboxing. "
+                + "Optional workingDirectory overrides the SystemUser's default CWD.",
                 dangerousShellSchema),
 
-            // ── Transcription (implemented) ──────────────────────
+            // ── Transcription ────────────────────────────────
             new("transcribe_from_audio_device",
                 "Start live transcription from a system audio device. Requires a "
                 + "transcription-capable model and an audio device resource.",
@@ -921,27 +939,25 @@ public sealed partial class ChatService(
                 + "execute but produce a stub result.]",
                 transcriptionSchema),
 
-            // ── Global flags (stubbed) ───────────────────────────
+            // ── Global flags ─────────────────────────────────────
             new("create_sub_agent",
-                "Create a new sub-agent. [NOT YET IMPLEMENTED — job will execute but "
-                + "produce a stub result.] Requires CreateSubAgent global permission.",
-                globalSchema),
+                "Create a new sub-agent under the calling agent. Provide a name, "
+                + "modelId (GUID of the model to use), and optional systemPrompt. "
+                + "Requires CreateSubAgent global permission.",
+                createSubAgentSchema),
             new("create_container",
-                "Create a new container resource. [NOT YET IMPLEMENTED — job will execute "
-                + "but produce a stub result.] Requires CreateContainer global permission.",
-                globalSchema),
+                "Create a new mk8.shell sandbox container. Provide a name (English "
+                + "letters and digits only) and a path (parent directory where the "
+                + "sandbox folder will be created). Requires CreateContainer global "
+                + "permission.",
+                createContainerSchema),
             new("register_info_store",
                 "Register a new information store (local or external). [NOT YET "
                 + "IMPLEMENTED — job will execute but produce a stub result.] Requires "
                 + "RegisterInfoStore global permission.",
                 globalSchema),
-            new("edit_any_task",
-                "Edit any scheduled task regardless of ownership. [NOT YET IMPLEMENTED "
-                + "— job will execute but produce a stub result.] Requires EditAnyTask "
-                + "global permission.",
-                globalSchema),
 
-            // ── Per-resource (stubbed) ───────────────────────────
+            // ── Per-resource ─────────────────────────────────────
             new("access_local_info_store",
                 "Query or retrieve data from a local information store. [NOT YET "
                 + "IMPLEMENTED — job will execute but produce a stub result.] "
@@ -968,19 +984,19 @@ public sealed partial class ChatService(
                 + "Requires AccessContainer permission for the target resource.",
                 resourceOnly),
             new("manage_agent",
-                "Manage another agent (update, configure). [NOT YET IMPLEMENTED — job "
-                + "will execute but produce a stub result.] Requires ManageAgent "
-                + "permission for the target agent.",
-                resourceOnly),
+                "Update another agent's name, system prompt, or model. Provide "
+                + "targetId (the agent GUID) and the fields to update. "
+                + "Requires ManageAgent permission for the target.",
+                manageAgentSchema),
             new("edit_task",
-                "Edit a specific scheduled task. [NOT YET IMPLEMENTED — job will execute "
-                + "but produce a stub result.] Requires EditTask permission for the "
-                + "target task.",
-                resourceOnly),
+                "Edit a specific scheduled task's name, interval, or retry "
+                + "settings. Provide targetId (the task GUID) and the fields "
+                + "to update. Requires EditTask permission.",
+                editTaskSchema),
             new("access_skill",
-                "Access or invoke a registered skill. [NOT YET IMPLEMENTED — job will "
-                + "execute but produce a stub result.] Requires AccessSkill permission "
-                + "for the target skill.",
+                "Retrieve the instruction text of a registered skill. Returns the "
+                + "full SkillText so the agent can learn how to use the associated "
+                + "resource. Requires AccessSkill permission for the target skill.",
                 resourceOnly),
         ];
     }
@@ -1092,6 +1108,10 @@ public sealed partial class ChatService(
                     "command": {
                         "type": "string",
                         "description": "The raw command string to pass to the interpreter."
+                    },
+                    "workingDirectory": {
+                        "type": "string",
+                        "description": "Absolute path where the shell process should be spawned. Overrides the SystemUser's default working directory when set."
                     }
                 },
                 "required": ["resourceId", "shellType", "command"]
@@ -1120,6 +1140,114 @@ public sealed partial class ChatService(
                     }
                 },
                 "required": ["targetId", "transcriptionModelId"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildCreateSubAgentSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the new sub-agent."
+                    },
+                    "modelId": {
+                        "type": "string",
+                        "description": "The GUID of the model the sub-agent should use."
+                    },
+                    "systemPrompt": {
+                        "type": "string",
+                        "description": "Optional system prompt for the sub-agent."
+                    }
+                },
+                "required": ["name", "modelId"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildCreateContainerSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Sandbox name (English letters and digits only)."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute parent directory where the sandbox folder will be created."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional description for the container."
+                    }
+                },
+                "required": ["name", "path"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildManageAgentSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "The GUID of the agent to manage."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "New name for the agent."
+                    },
+                    "systemPrompt": {
+                        "type": "string",
+                        "description": "New system prompt for the agent."
+                    },
+                    "modelId": {
+                        "type": "string",
+                        "description": "GUID of the new model to assign."
+                    }
+                },
+                "required": ["targetId"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditTaskSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "The GUID of the scheduled task to edit."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "New name for the task."
+                    },
+                    "repeatIntervalMinutes": {
+                        "type": "integer",
+                        "description": "New repeat interval in minutes. 0 to remove."
+                    },
+                    "maxRetries": {
+                        "type": "integer",
+                        "description": "New maximum retry count."
+                    }
+                },
+                "required": ["targetId"]
             }
             """);
         return doc.RootElement.Clone();
@@ -1156,7 +1284,8 @@ public sealed partial class ChatService(
         DangerousShellType? DangerousShellType = null,
         SafeShellType? SafeShellType = null,
         Guid? TranscriptionModelId = null,
-        string? Language = null);
+        string? Language = null,
+        string? WorkingDirectory = null);
 
     private sealed class ToolCallPayload
     {
@@ -1170,6 +1299,14 @@ public sealed partial class ChatService(
         public string? TargetId { get; set; }
         public string? Query { get; set; }
         public string? Url { get; set; }
+        public string? WorkingDirectory { get; set; }
+        public string? Name { get; set; }
+        public string? ModelId { get; set; }
+        public string? SystemPrompt { get; set; }
+        public string? Path { get; set; }
+        public string? Description { get; set; }
+        public int? RepeatIntervalMinutes { get; set; }
+        public int? MaxRetries { get; set; }
     }
 
     private readonly record struct ToolLoopResult(

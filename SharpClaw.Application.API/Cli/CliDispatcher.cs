@@ -866,7 +866,7 @@ public static class CliDispatcher
                 "job listen <jobId>                         Stream live transcription segments",
                 "",
                 "Action types (global): CreateSubAgent, CreateContainer,",
-                "  RegisterInfoStore, EditAnyTask",
+                "  RegisterInfoStore",
                 "Action types (resource): UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell,",
                 "  AccessLocalInfoStore,",
                 "  AccessExternalInfoStore, AccessWebsite, QuerySearchEngine,",

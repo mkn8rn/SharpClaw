@@ -9,7 +9,6 @@ public enum AgentActionType
     CreateSubAgent,
     CreateContainer,
     RegisterInfoStore,
-    EditAnyTask,
 
     // ── Per-resource grants ───────────────────────────────────────
     UnsafeExecuteAsDangerousShell,
