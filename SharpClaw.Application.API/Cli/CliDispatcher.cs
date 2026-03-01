@@ -340,6 +340,9 @@ public static class CliDispatcher
         {
             PrintUsage(
                 "model add <name> <providerId> [--cap <capabilities>]",
+                "  <name> must be the exact model ID from the provider API",
+                "    (e.g. gpt-4o, claude-sonnet-4-20250514, gemini-2.5-flash).",
+                "  Tip: use 'provider sync-models <id>' to auto-import models.",
                 "  Capabilities (comma-separated): Chat, Transcription,",
                 "    ImageGeneration, Embedding, TextToSpeech",
                 "model get <id>",
@@ -361,7 +364,10 @@ public static class CliDispatcher
                         CliIdMap.Resolve(args[3]),
                         ParseCapabilities(args, 4)),
                     svc),
-            "add" => UsageResult("model add <name> <providerId> [--cap Chat,Transcription]"),
+            "add" => UsageResult(
+                "model add <name> <providerId> [--cap Chat,Transcription]",
+                "  <name> must be the exact provider model ID (e.g. gpt-4o).",
+                "  Tip: use 'provider sync-models <id>' to auto-import models."),
 
             "get" when args.Length >= 3
                 => await ModelHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
@@ -1783,7 +1789,9 @@ public static class CliDispatcher
               provider set-key <id> <apiKey>   login <id>   sync-models <id>   refresh-caps <id>
 
             Model:     model <sub> [args]       (add, get, list, update, delete)
+              Prefer 'provider sync-models <id>' to auto-import models.
               model add <name> <providerId> [--cap Chat,Transcription,...]
+                <name> must be the exact provider model ID (e.g. gpt-4o).
 
             Agent:     agent <sub> [args]       (add, get, list, update, delete)
               agent add <name> <modelId> [system prompt]

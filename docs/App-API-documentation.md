@@ -253,7 +253,19 @@ List all providers.
 
 ### POST /providers/{id}/sync-models
 
-Syncs model list from the provider's API.
+Fetches the model catalogue from the provider's API and creates local
+`Model` records for each one.  **This is the recommended way to add
+models** — it guarantees the model names match the exact identifiers
+the provider expects (e.g. `gpt-4o`, `claude-sonnet-4-20250514`).
+
+After syncing, capabilities are automatically refreshed by name
+heuristics.
+
+**CLI:**
+
+```
+provider sync-models <providerId>
+```
 
 **Response `200`:** Synced model list.
 
@@ -291,6 +303,11 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 
 ## Models
 
+> **Recommended:** Use `POST /providers/{id}/sync-models` (CLI: `provider
+> sync-models <id>`) to auto-import models from the provider.  Manual
+> creation is only needed for models the provider's list endpoint does
+> not return.
+
 ### POST /models
 
 **Request:**
@@ -302,6 +319,12 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
   "capabilities": "Chat"
 }
 ```
+
+> ⚠️ **`name` must be the exact model identifier recognised by the
+> provider's API** (e.g. `gpt-4o`, `claude-sonnet-4-20250514`,
+> `gemini-2.5-flash`).  This value is sent directly in API requests;
+> an incorrect name will cause a **404** error when chatting.
+> Run `provider sync-models <id>` to see valid identifiers.
 
 `capabilities` is a flags enum (comma-separated): `Chat`, `Transcription`,
 `ImageGeneration`, `Embedding`, `TextToSpeech`. Defaults to `Chat`.
