@@ -57,3 +57,15 @@ Direct HTTP GET to a localhost URL. Returns status, headers, body. No browser. O
 
 12. access_local_info_store, access_external_info_store, access_website, query_search_engine, access_container [STUB]
 [TOOL_CALL:<id>] {"targetId":"<resource-guid>"}
+
+13. Capture display
+[TOOL_CALL:<id>] {"targetId":"<displaydevice-guid>"}
+Captures a screenshot of a system display/monitor. Returns a base64-encoded PNG image (vision models only — if the model lacks vision, you will receive only a text description). Requires CaptureDisplay permission for the target display device resource.
+
+14. Click desktop
+[TOOL_CALL:<id>] {"targetId":"<displaydevice-guid>","x":500,"y":300,"button":"left","clickType":"single"}
+Simulates a mouse click at display-relative coordinates. button: left (default), right, middle. clickType: single (default), double. Returns a follow-up screenshot. Requires DisplayDevice permission.
+
+15. Type on desktop
+[TOOL_CALL:<id>] {"targetId":"<displaydevice-guid>","text":"hello world","x":500,"y":300}
+Types text via keyboard input. x/y are optional — if provided, clicks there first to focus an input field. Returns a follow-up screenshot. Requires DisplayDevice permission.

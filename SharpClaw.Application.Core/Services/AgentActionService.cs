@@ -154,6 +154,14 @@ public sealed class AgentActionService(SharpClawDbContext db)
             p => p.AudioDeviceAccesses, a => a.AudioDeviceId, a => a.Clearance,
             "audio device access", onApproved, ct);
 
+    public Task<AgentActionResult> AccessDisplayDeviceAsync(
+        Guid agentId, Guid displayDeviceId, ActionCaller caller,
+        Func<Task>? onApproved = null, CancellationToken ct = default)
+        => EvaluateResourceAccessAsync(
+            agentId, displayDeviceId, caller,
+            p => p.DisplayDeviceAccesses, a => a.DisplayDeviceId, a => a.Clearance,
+            "display device access", onApproved, ct);
+
     // ═══════════════════════════════════════════════════════════════
     // Core evaluation engine
     // ═══════════════════════════════════════════════════════════════
@@ -360,6 +368,7 @@ public sealed class AgentActionService(SharpClawDbContext db)
             .Include(p => p.SearchEngineAccesses)
             .Include(p => p.ContainerAccesses)
             .Include(p => p.AudioDeviceAccesses)
+            .Include(p => p.DisplayDeviceAccesses)
             .Include(p => p.AgentPermissions)
             .Include(p => p.TaskPermissions)
             .Include(p => p.SkillPermissions)

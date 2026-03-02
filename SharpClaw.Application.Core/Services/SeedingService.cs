@@ -41,6 +41,7 @@ public sealed class SeedingService(
         await SeedAdminUserAsync(db, adminRole, ct);
         await SeedWellKnownProvidersAsync(db, ct);
         await SeedDefaultAudioDeviceAsync(db, ct);
+        await SeedDefaultDisplayDeviceAsync(db, ct);
         await ReconcileStaleTranscriptionJobsAsync(db, ct);
     }
 
@@ -96,6 +97,7 @@ public sealed class SeedingService(
         SearchEngineAccesses        = [new() { SearchEngineId            = WellKnownIds.AllResources }],
         ContainerAccesses           = [new() { ContainerId               = WellKnownIds.AllResources }],
         AudioDeviceAccesses         = [new() { AudioDeviceId             = WellKnownIds.AllResources }],
+        DisplayDeviceAccesses       = [new() { DisplayDeviceId           = WellKnownIds.AllResources }],
         AgentPermissions            = [new() { AgentId                   = WellKnownIds.AllResources }],
         TaskPermissions             = [new() { ScheduledTaskId           = WellKnownIds.AllResources }],
         SkillPermissions            = [new() { SkillId                   = WellKnownIds.AllResources }],
@@ -176,6 +178,26 @@ public sealed class SeedingService(
             Name = "Default",
             DeviceIdentifier = "default",
             Description = "System default audio input device"
+        });
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task SeedDefaultDisplayDeviceAsync(SharpClawDbContext db, CancellationToken ct)
+    {
+        var exists = await db.DisplayDevices
+            .AnyAsync(d => d.DeviceIdentifier == "display-0", ct);
+        if (exists)
+            return;
+
+        logger.LogInformation("Seeding default display device.");
+
+        db.DisplayDevices.Add(new DisplayDeviceDB
+        {
+            Name = "Primary Display",
+            DeviceIdentifier = "display-0",
+            DisplayIndex = 0,
+            Description = "System primary display"
         });
 
         await db.SaveChangesAsync(ct);

@@ -120,6 +120,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
         drs.LocalInfoStoreResourceId = r.LocalInfoStoreResourceId;
         drs.ExternalInfoStoreResourceId = r.ExternalInfoStoreResourceId;
         drs.AudioDeviceResourceId = r.AudioDeviceResourceId;
+        drs.DisplayDeviceResourceId = r.DisplayDeviceResourceId;
         drs.AgentResourceId = r.AgentResourceId;
         drs.TaskResourceId = r.TaskResourceId;
         drs.SkillResourceId = r.SkillResourceId;
@@ -136,13 +137,14 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             drs.LocalInfoStoreResourceId,
             drs.ExternalInfoStoreResourceId,
             drs.AudioDeviceResourceId,
+            drs.DisplayDeviceResourceId,
             drs.AgentResourceId,
             drs.TaskResourceId,
             drs.SkillResourceId,
             drs.TranscriptionModelId);
 
     private static DefaultResourcesResponse EmptyResponse(Guid id) =>
-        new(id, null, null, null, null, null, null, null, null, null, null, null, null);
+        new(id, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
     /// <summary>
     /// Merges channel and context default resource sets.  Channel values
@@ -166,6 +168,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             ch.LocalInfoStoreResourceId ?? ctx.LocalInfoStoreResourceId,
             ch.ExternalInfoStoreResourceId ?? ctx.ExternalInfoStoreResourceId,
             ch.AudioDeviceResourceId ?? ctx.AudioDeviceResourceId,
+            ch.DisplayDeviceResourceId ?? ctx.DisplayDeviceResourceId,
             ch.AgentResourceId ?? ctx.AgentResourceId,
             ch.TaskResourceId ?? ctx.TaskResourceId,
             ch.SkillResourceId ?? ctx.SkillResourceId,

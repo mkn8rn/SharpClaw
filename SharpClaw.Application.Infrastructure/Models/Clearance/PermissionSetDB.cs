@@ -46,6 +46,7 @@ public class PermissionSetDB : BaseEntity
     public ICollection<SearchEngineAccessDB> SearchEngineAccesses { get; set; } = [];
     public ICollection<ContainerAccessDB> ContainerAccesses { get; set; } = [];
     public ICollection<AudioDeviceAccessDB> AudioDeviceAccesses { get; set; } = [];
+    public ICollection<DisplayDeviceAccessDB> DisplayDeviceAccesses { get; set; } = [];
     public ICollection<AgentManagementAccessDB> AgentPermissions { get; set; } = [];
     public ICollection<TaskManageAccessDB> TaskPermissions { get; set; } = [];
     public ICollection<SkillManageAccessDB> SkillPermissions { get; set; } = [];
@@ -77,6 +78,9 @@ public class PermissionSetDB : BaseEntity
 
     public Guid? DefaultAudioDeviceAccessId { get; set; }
     public AudioDeviceAccessDB? DefaultAudioDeviceAccess { get; set; }
+
+    public Guid? DefaultDisplayDeviceAccessId { get; set; }
+    public DisplayDeviceAccessDB? DefaultDisplayDeviceAccess { get; set; }
 
     public Guid? DefaultAgentPermissionId { get; set; }
     public AgentManagementAccessDB? DefaultAgentPermission { get; set; }

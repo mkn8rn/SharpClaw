@@ -49,6 +49,8 @@ public class SharpClawDbContext(
     public DbSet<ContainerAccessDB> ContainerAccesses => Set<ContainerAccessDB>();
     public DbSet<AudioDeviceDB> AudioDevices => Set<AudioDeviceDB>();
     public DbSet<AudioDeviceAccessDB> AudioDeviceAccesses => Set<AudioDeviceAccessDB>();
+    public DbSet<DisplayDeviceDB> DisplayDevices => Set<DisplayDeviceDB>();
+    public DbSet<DisplayDeviceAccessDB> DisplayDeviceAccesses => Set<DisplayDeviceAccessDB>();
     public DbSet<TranscriptionSegmentDB> TranscriptionSegments => Set<TranscriptionSegmentDB>();
     public DbSet<AgentManagementAccessDB> AgentPermissions => Set<AgentManagementAccessDB>();
     public DbSet<TaskManageAccessDB> TaskPermissions => Set<TaskManageAccessDB>();
@@ -230,6 +232,11 @@ public class SharpClawDbContext(
                 .HasForeignKey(a => a.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            e.HasMany(p => p.DisplayDeviceAccesses)
+                .WithOne(a => a.PermissionSet)
+                .HasForeignKey(a => a.PermissionSetId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             e.HasMany(p => p.AgentPermissions)
                 .WithOne(a => a.PermissionSet)
                 .HasForeignKey(a => a.PermissionSetId)
@@ -294,6 +301,11 @@ public class SharpClawDbContext(
             e.HasOne(p => p.DefaultAudioDeviceAccess)
                 .WithMany()
                 .HasForeignKey(p => p.DefaultAudioDeviceAccessId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(p => p.DefaultDisplayDeviceAccess)
+                .WithMany()
+                .HasForeignKey(p => p.DefaultDisplayDeviceAccessId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             e.HasOne(p => p.DefaultAgentPermission)
@@ -472,6 +484,26 @@ public class SharpClawDbContext(
             e.Property(a => a.Clearance).HasConversion<string>();
         });
 
+        // ── Display devices ──────────────────────────────────────
+        modelBuilder.Entity<DisplayDeviceDB>(e =>
+        {
+            e.HasIndex(d => d.Name).IsUnique();
+            e.HasOne(d => d.Skill)
+                .WithMany()
+                .HasForeignKey(d => d.SkillId)
+                .OnDelete(DeleteBehavior.SetNull);
+            e.HasMany(d => d.Accesses)
+                .WithOne(a => a.DisplayDevice)
+                .HasForeignKey(a => a.DisplayDeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DisplayDeviceAccessDB>(e =>
+        {
+            e.HasIndex(a => new { a.PermissionSetId, a.DisplayDeviceId }).IsUnique();
+            e.Property(a => a.Clearance).HasConversion<string>();
+        });
+
         // ── Agent & Task permissions ──────────────────────────────
         modelBuilder.Entity<AgentManagementAccessDB>(e =>
         {
@@ -613,6 +645,7 @@ public class SharpClawDbContext(
         SearchEngineAccessDB        e => e.SearchEngineId            == WellKnownIds.AllResources,
         ContainerAccessDB           e => e.ContainerId               == WellKnownIds.AllResources,
         AudioDeviceAccessDB         e => e.AudioDeviceId             == WellKnownIds.AllResources,
+        DisplayDeviceAccessDB       e => e.DisplayDeviceId           == WellKnownIds.AllResources,
         AgentManagementAccessDB           e => e.AgentId                   == WellKnownIds.AllResources,
         TaskManageAccessDB            e => e.ScheduledTaskId           == WellKnownIds.AllResources,
         SkillManageAccessDB           e => e.SkillId                   == WellKnownIds.AllResources,
