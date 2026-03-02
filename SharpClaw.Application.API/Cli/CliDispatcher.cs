@@ -607,7 +607,7 @@ public static class CliDispatcher
     ///   <item><c>defaults &lt;id&gt; clear &lt;key&gt;</c> — clear one field.</item>
     /// </list>
     /// Keys: safeshell, dangshell, container, website, search, localinfo,
-    /// externalinfo, audiodevice, agent, task, skill, transcriptionmodel.
+    /// externalinfo, audiodevice, agent, task, skill, transcriptionmodel, editor.
     /// </summary>
     private static async Task<IResult> HandleDefaults(
         string scope, Guid entityId, string[] extra, IServiceProvider sp)
@@ -642,7 +642,7 @@ public static class CliDispatcher
 
             var req = MergeDefaultResourceKey(current, key, value);
             if (req is null)
-                return UsageResult($"Unknown key '{extra[1]}'. Valid keys: safeshell, dangshell, container, website, search, localinfo, externalinfo, audiodevice, displaydevice, agent, task, skill, transcriptionmodel");
+                return UsageResult($"Unknown key '{extra[1]}'. Valid keys: safeshell, dangshell, container, website, search, localinfo, externalinfo, audiodevice, displaydevice, agent, task, skill, transcriptionmodel, editor");
 
             var result = scope == "channel"
                 ? await svc.SetForChannelAsync(entityId, req)
@@ -690,19 +690,20 @@ public static class CliDispatcher
         var d = current;
         return key switch
         {
-            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "localinfo" or "localinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "externalinfo" or "externalinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, value, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "audiodevice" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId),
-            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId),
-            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId),
-            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value),
+            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "localinfo" or "localinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "externalinfo" or "externalinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, value, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "audiodevice" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
+            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
             _ => null,
         };
     }
@@ -1607,8 +1608,9 @@ public static class CliDispatcher
             "container" => await HandleResourceContainerCommand(args, sp),
             "audiodevice" => await HandleResourceAudioDeviceCommand(args, sp),
             "displaydevice" or "display" or "dd" => await HandleResourceDisplayDeviceCommand(args, sp),
+            "editorsession" or "editor" or "es" => await HandleResourceEditorSessionCommand(args, sp),
             _ => UsageResult($"Unknown resource type: {type}. " +
-                "Available: container, audiodevice, displaydevice")
+                "Available: container, audiodevice, displaydevice, editorsession")
         };
     }
 
@@ -1775,6 +1777,40 @@ public static class CliDispatcher
             "sync" => await ResourceHandlers.SyncDisplayDevices(svc),
 
             _ => UsageResult($"Unknown command: resource displaydevice {sub}")
+        };
+    }
+
+    private static async Task<IResult?> HandleResourceEditorSessionCommand(
+        string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "resource editorsession list                      List all editor sessions",
+                "resource editorsession get <id>                  Show an editor session",
+                "resource editorsession delete <id>               Delete an editor session",
+                "",
+                "Editor sessions are auto-created when an IDE extension connects.",
+                "Use 'channel defaults <id> set editor <sessionId>' to assign one.");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<EditorSessionService>();
+
+        return sub switch
+        {
+            "get" when args.Length >= 4
+                => await ResourceHandlers.GetEditorSession(CliIdMap.Resolve(args[3]), svc),
+            "get" => UsageResult("resource editorsession get <id>"),
+
+            "list" => await ResourceHandlers.ListEditorSessions(svc),
+
+            "delete" when args.Length >= 4
+                => await ResourceHandlers.DeleteEditorSession(CliIdMap.Resolve(args[3]), svc),
+            "delete" => UsageResult("resource editorsession delete <id>"),
+
+            _ => UsageResult($"Unknown command: resource editorsession {sub}")
         };
     }
 

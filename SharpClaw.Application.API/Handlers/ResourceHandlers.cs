@@ -3,6 +3,7 @@ using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
+using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.DTOs.Transcription;
 
 namespace SharpClaw.Application.API.Handlers;
@@ -122,4 +123,28 @@ public static class ResourceHandlers
     [MapPost("/displaydevices/sync")]
     public static async Task<IResult> SyncDisplayDevices(DisplayDeviceService svc)
         => Results.Ok(await svc.SyncAsync());
+
+    // ── Editor Sessions ───────────────────────────────────────────
+
+    [MapPost("/editorsessions")]
+    public static async Task<IResult> CreateEditorSession(
+        CreateEditorSessionRequest request, EditorSessionService svc)
+        => Results.Ok(await svc.CreateAsync(request));
+
+    [MapGet("/editorsessions")]
+    public static async Task<IResult> ListEditorSessions(EditorSessionService svc)
+        => Results.Ok(await svc.ListAsync());
+
+    [MapGet("/editorsessions/{id}")]
+    public static async Task<IResult> GetEditorSession(Guid id, EditorSessionService svc)
+        => await svc.GetByIdAsync(id) is { } r ? Results.Ok(r) : Results.NotFound();
+
+    [MapPut("/editorsessions/{id}")]
+    public static async Task<IResult> UpdateEditorSession(
+        Guid id, UpdateEditorSessionRequest request, EditorSessionService svc)
+        => await svc.UpdateAsync(id, request) is { } r ? Results.Ok(r) : Results.NotFound();
+
+    [MapDelete("/editorsessions/{id}")]
+    public static async Task<IResult> DeleteEditorSession(Guid id, EditorSessionService svc)
+        => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
 }

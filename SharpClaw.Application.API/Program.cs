@@ -114,6 +114,8 @@ try
     builder.Services.AddScoped<ContainerService>();
     builder.Services.AddScoped<DisplayDeviceService>();
     builder.Services.AddScoped<DefaultResourceSetService>();
+    builder.Services.AddScoped<EditorSessionService>();
+    builder.Services.AddSingleton<EditorBridgeService>();
 
     // Background tasks
     builder.Services.AddHostedService<ScheduledTaskService>();
@@ -144,6 +146,7 @@ try
     app.UseMiddleware<JwtSessionMiddleware>();
     app.UseWebSockets();
     app.MapHandlers();
+    app.MapEditorEndpoints();
     app.MapTranscriptionStreaming();
 
     app.Lifetime.ApplicationStopping.Register(apiKeyProvider.Cleanup);

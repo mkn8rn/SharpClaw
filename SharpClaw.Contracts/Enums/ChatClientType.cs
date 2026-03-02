@@ -11,5 +11,7 @@ public enum ChatClientType
     Telegram,
     Discord,
     WhatsApp,
+    VisualStudio,
+    VisualStudioCode,
     Other
 }

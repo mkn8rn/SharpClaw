@@ -43,6 +43,9 @@ public class DefaultResourceSetDB : BaseEntity
     /// <summary>Default DisplayDevice for CaptureDisplay.</summary>
     public Guid? DisplayDeviceResourceId { get; set; }
 
+    /// <summary>Default EditorSession for editor actions.</summary>
+    public Guid? EditorSessionResourceId { get; set; }
+
     /// <summary>Default Agent for ManageAgent.</summary>
     public Guid? AgentResourceId { get; set; }
 

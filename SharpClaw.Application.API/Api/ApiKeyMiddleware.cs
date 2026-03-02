@@ -9,6 +9,14 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, ApiKeyProvider keyPro
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // Skip auth for the editor WebSocket bridge — extensions
+        // authenticate via the registration handshake, not API key.
+        if (context.Request.Path.StartsWithSegments("/editor"))
+        {
+            await next(context);
+            return;
+        }
+
         if (!context.Request.Headers.TryGetValue(HeaderName, out var providedKey) ||
             !CryptographicOperations.FixedTimeEquals(
                 System.Text.Encoding.UTF8.GetBytes(providedKey.ToString()),

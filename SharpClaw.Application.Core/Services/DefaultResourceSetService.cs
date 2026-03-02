@@ -125,6 +125,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
         drs.TaskResourceId = r.TaskResourceId;
         drs.SkillResourceId = r.SkillResourceId;
         drs.TranscriptionModelId = r.TranscriptionModelId;
+        drs.EditorSessionResourceId = r.EditorSessionResourceId;
     }
 
     private static DefaultResourcesResponse ToResponse(DefaultResourceSetDB drs) =>
@@ -141,10 +142,11 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             drs.AgentResourceId,
             drs.TaskResourceId,
             drs.SkillResourceId,
-            drs.TranscriptionModelId);
+            drs.TranscriptionModelId,
+            drs.EditorSessionResourceId);
 
     private static DefaultResourcesResponse EmptyResponse(Guid id) =>
-        new(id, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        new(id, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
     /// <summary>
     /// Merges channel and context default resource sets.  Channel values
@@ -172,6 +174,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             ch.AgentResourceId ?? ctx.AgentResourceId,
             ch.TaskResourceId ?? ctx.TaskResourceId,
             ch.SkillResourceId ?? ctx.SkillResourceId,
-            ch.TranscriptionModelId ?? ctx.TranscriptionModelId);
+            ch.TranscriptionModelId ?? ctx.TranscriptionModelId,
+            ch.EditorSessionResourceId ?? ctx.EditorSessionResourceId);
     }
 }

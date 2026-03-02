@@ -18,7 +18,8 @@ public sealed record SetDefaultResourcesRequest(
     Guid? AgentResourceId = null,
     Guid? TaskResourceId = null,
     Guid? SkillResourceId = null,
-    Guid? TranscriptionModelId = null);
+    Guid? TranscriptionModelId = null,
+    Guid? EditorSessionResourceId = null);
 
 public sealed record DefaultResourcesResponse(
     Guid Id,
@@ -34,4 +35,5 @@ public sealed record DefaultResourcesResponse(
     Guid? AgentResourceId,
     Guid? TaskResourceId,
     Guid? SkillResourceId,
-    Guid? TranscriptionModelId);
+    Guid? TranscriptionModelId,
+    Guid? EditorSessionResourceId);

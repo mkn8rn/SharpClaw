@@ -34,5 +34,17 @@ public enum AgentActionType
 
     // ── Desktop interaction (per-resource: display device) ────────
     ClickDesktop,
-    TypeOnDesktop
+    TypeOnDesktop,
+
+    // ── Editor actions (per-resource: editor session) ─────────────
+    EditorReadFile,
+    EditorGetOpenFiles,
+    EditorGetSelection,
+    EditorGetDiagnostics,
+    EditorApplyEdit,
+    EditorCreateFile,
+    EditorDeleteFile,
+    EditorShowDiff,
+    EditorRunBuild,
+    EditorRunTerminal
 }

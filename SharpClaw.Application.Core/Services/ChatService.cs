@@ -9,6 +9,7 @@ using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
@@ -69,7 +70,7 @@ public sealed partial class ChatService(
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, useNativeTools);
 
         // Build chat header for the user message (if enabled)
-        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, ct);
+        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, request.EditorContext, ct);
         var messageForModel = chatHeader is not null
             ? chatHeader + request.Message
             : request.Message;
@@ -171,7 +172,8 @@ public sealed partial class ChatService(
     /// (either at channel level or inherited from the context).
     /// </summary>
     private async Task<string?> BuildChatHeaderAsync(
-        ChannelDB channel, ChatClientType clientType, CancellationToken ct)
+        ChannelDB channel, ChatClientType clientType,
+        EditorContext? editorContext, CancellationToken ct)
     {
         // Channel-level flag takes precedence; fall back to context.
         var disabled = channel.DisableChatHeader
@@ -206,6 +208,8 @@ public sealed partial class ChatService(
                 .Include(p => p.LocalInfoStorePermissions)
                 .Include(p => p.ExternalInfoStorePermissions)
                 .Include(p => p.AudioDeviceAccesses)
+                .Include(p => p.DisplayDeviceAccesses)
+                .Include(p => p.EditorSessionAccesses)
                 .Include(p => p.AgentPermissions)
                 .Include(p => p.TaskPermissions)
                 .Include(p => p.SkillPermissions)
@@ -234,6 +238,7 @@ public sealed partial class ChatService(
             if (ps.ExternalInfoStorePermissions.Count > 0) grants.Add("ExternalInfoStore");
             if (ps.AudioDeviceAccesses.Count > 0) grants.Add("AudioDevice");
             if (ps.DisplayDeviceAccesses.Count > 0) grants.Add("DisplayDevice");
+            if (ps.EditorSessionAccesses.Count > 0) grants.Add("EditorSession");
             if (ps.AgentPermissions.Count > 0) grants.Add("ManageAgent");
             if (ps.TaskPermissions.Count > 0) grants.Add("EditTask");
             if (ps.SkillPermissions.Count > 0) grants.Add("AccessSkill");
@@ -247,6 +252,19 @@ public sealed partial class ChatService(
 
         if (!string.IsNullOrWhiteSpace(user.Bio))
             sb.Append(" | bio: ").Append(user.Bio);
+
+        if (editorContext is not null)
+        {
+            sb.Append(" | editor: ").Append(editorContext.EditorType);
+            if (editorContext.EditorVersion is not null)
+                sb.Append(' ').Append(editorContext.EditorVersion);
+            if (editorContext.WorkspacePath is not null)
+                sb.Append(" workspace=").Append(editorContext.WorkspacePath);
+            if (editorContext.ActiveFilePath is not null)
+                sb.Append(" file=").Append(editorContext.ActiveFilePath);
+            if (editorContext.SelectedText is { Length: > 0 and <= 200 })
+                sb.Append(" selection=\"").Append(editorContext.SelectedText).Append('"');
+        }
 
         sb.AppendLine("]");
         return sb.ToString();
@@ -304,7 +322,7 @@ public sealed partial class ChatService(
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, nativeToolCalling: true);
 
         // Build chat header for the user message (if enabled)
-        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, ct);
+        var chatHeader = await BuildChatHeaderAsync(channel, request.ClientType, request.EditorContext, ct);
         if (chatHeader is not null)
             history[^1] = new ChatCompletionMessage("user", chatHeader + request.Message);
 
@@ -766,6 +784,16 @@ public sealed partial class ChatService(
         ["capture_display"]                = AgentActionType.CaptureDisplay,
         ["click_desktop"]                  = AgentActionType.ClickDesktop,
         ["type_on_desktop"]                = AgentActionType.TypeOnDesktop,
+        ["editor_read_file"]               = AgentActionType.EditorReadFile,
+        ["editor_get_open_files"]          = AgentActionType.EditorGetOpenFiles,
+        ["editor_get_selection"]            = AgentActionType.EditorGetSelection,
+        ["editor_get_diagnostics"]         = AgentActionType.EditorGetDiagnostics,
+        ["editor_apply_edit"]              = AgentActionType.EditorApplyEdit,
+        ["editor_create_file"]             = AgentActionType.EditorCreateFile,
+        ["editor_delete_file"]             = AgentActionType.EditorDeleteFile,
+        ["editor_show_diff"]               = AgentActionType.EditorShowDiff,
+        ["editor_run_build"]               = AgentActionType.EditorRunBuild,
+        ["editor_run_terminal"]            = AgentActionType.EditorRunTerminal,
     };
 
     // ═══════════════════════════════════════════════════════════════
@@ -1001,6 +1029,13 @@ public sealed partial class ChatService(
         var localhostCliSchema = BuildLocalhostCliSchema();
         var clickDesktopSchema = BuildClickDesktopSchema();
         var typeOnDesktopSchema = BuildTypeOnDesktopSchema();
+        var editorReadFileSchema = BuildEditorReadFileSchema();
+        var editorFileOptionalSchema = BuildEditorFileOptionalSchema();
+        var editorFileRequiredSchema = BuildEditorFileRequiredSchema();
+        var editorApplyEditSchema = BuildEditorApplyEditSchema();
+        var editorCreateFileSchema = BuildEditorCreateFileSchema();
+        var editorShowDiffSchema = BuildEditorShowDiffSchema();
+        var editorRunTerminalSchema = BuildEditorRunTerminalSchema();
 
         return
         [
@@ -1117,6 +1152,52 @@ public sealed partial class ChatService(
                 + "so you can verify the result. Requires DisplayDevice permission "
                 + "for the target display.",
                 typeOnDesktopSchema),
+
+            // ── Editor actions ────────────────────────────────────
+            new("editor_read_file",
+                "Read a file's contents from the connected IDE. Provide the file path "
+                + "relative to the workspace root. Optionally specify startLine/endLine "
+                + "to read a range. Requires EditorSession permission.",
+                editorReadFileSchema),
+            new("editor_get_open_files",
+                "List all currently open files/tabs in the connected IDE. "
+                + "Requires EditorSession permission.",
+                resourceOnly),
+            new("editor_get_selection",
+                "Get the active file path, cursor position, and currently "
+                + "selected text in the connected IDE. Requires EditorSession permission.",
+                resourceOnly),
+            new("editor_get_diagnostics",
+                "Get compilation errors and warnings from the connected IDE. "
+                + "Optionally specify a filePath to scope to one file. "
+                + "Requires EditorSession permission.",
+                editorFileOptionalSchema),
+            new("editor_apply_edit",
+                "Apply a text edit in the connected IDE. Specify the file path, "
+                + "line range (startLine/endLine), and the newText to replace that range. "
+                + "Requires EditorSession permission.",
+                editorApplyEditSchema),
+            new("editor_create_file",
+                "Create a new file in the connected IDE's workspace. Provide "
+                + "the file path and content. Requires EditorSession permission.",
+                editorCreateFileSchema),
+            new("editor_delete_file",
+                "Delete a file from the connected IDE's workspace. "
+                + "Requires EditorSession permission.",
+                editorFileRequiredSchema),
+            new("editor_show_diff",
+                "Show a diff/proposed changes view in the connected IDE. Provide "
+                + "the file path and the proposed new content. The user can accept "
+                + "or reject. Requires EditorSession permission.",
+                editorShowDiffSchema),
+            new("editor_run_build",
+                "Trigger a build in the connected IDE and return the build output "
+                + "including any errors. Requires EditorSession permission.",
+                resourceOnly),
+            new("editor_run_terminal",
+                "Execute a command in the connected IDE's integrated terminal. "
+                + "Returns the command output. Requires EditorSession permission.",
+                editorRunTerminalSchema),
         ];
     }
 
@@ -1470,6 +1551,122 @@ public sealed partial class ChatService(
                     }
                 },
                 "required": ["targetId", "text"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    // ── Editor action schemas ─────────────────────────────────────
+
+    private static JsonElement BuildEditorReadFileSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
+                    "startLine": { "type": "integer", "description": "Optional start line (1-based)." },
+                    "endLine": { "type": "integer", "description": "Optional end line (1-based, inclusive)." }
+                },
+                "required": ["targetId", "filePath"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorFileOptionalSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "Optional file path to scope results." }
+                },
+                "required": ["targetId"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorFileRequiredSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "File path relative to workspace root." }
+                },
+                "required": ["targetId", "filePath"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorApplyEditSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
+                    "startLine": { "type": "integer", "description": "Start line of the range to replace (1-based)." },
+                    "endLine": { "type": "integer", "description": "End line of the range to replace (1-based, inclusive)." },
+                    "newText": { "type": "string", "description": "The replacement text for the specified range." }
+                },
+                "required": ["targetId", "filePath", "startLine", "endLine", "newText"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorCreateFileSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
+                    "content": { "type": "string", "description": "Initial file content." }
+                },
+                "required": ["targetId", "filePath"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorShowDiffSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
+                    "proposedContent": { "type": "string", "description": "The proposed new file content." },
+                    "diffTitle": { "type": "string", "description": "Optional title for the diff view." }
+                },
+                "required": ["targetId", "filePath", "proposedContent"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildEditorRunTerminalSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": { "type": "string", "description": "EditorSession GUID." },
+                    "command": { "type": "string", "description": "The command to execute." },
+                    "workingDirectory": { "type": "string", "description": "Optional working directory." }
+                },
+                "required": ["targetId", "command"]
             }
             """);
         return doc.RootElement.Clone();

@@ -98,6 +98,7 @@ public sealed class SeedingService(
         ContainerAccesses           = [new() { ContainerId               = WellKnownIds.AllResources }],
         AudioDeviceAccesses         = [new() { AudioDeviceId             = WellKnownIds.AllResources }],
         DisplayDeviceAccesses       = [new() { DisplayDeviceId           = WellKnownIds.AllResources }],
+        EditorSessionAccesses       = [new() { EditorSessionId           = WellKnownIds.AllResources }],
         AgentPermissions            = [new() { AgentId                   = WellKnownIds.AllResources }],
         TaskPermissions             = [new() { ScheduledTaskId           = WellKnownIds.AllResources }],
         SkillPermissions            = [new() { SkillId                   = WellKnownIds.AllResources }],

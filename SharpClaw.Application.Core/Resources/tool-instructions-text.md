@@ -69,3 +69,43 @@ Simulates a mouse click at display-relative coordinates. button: left (default),
 15. Type on desktop
 [TOOL_CALL:<id>] {"targetId":"<displaydevice-guid>","text":"hello world","x":500,"y":300}
 Types text via keyboard input. x/y are optional — if provided, clicks there first to focus an input field. Returns a follow-up screenshot. Requires DisplayDevice permission.
+
+16. Editor: read file
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/Program.cs","startLine":1,"endLine":50}
+Read file contents from the connected IDE. startLine/endLine are optional. Requires EditorSession permission.
+
+17. Editor: get open files
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>"}
+List all currently open files/tabs in the connected IDE.
+
+18. Editor: get selection
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>"}
+Get the active file path, cursor position, and selected text.
+
+19. Editor: get diagnostics
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/Program.cs"}
+Get compilation errors and warnings. filePath is optional — omit to get all.
+
+20. Editor: apply edit
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/Program.cs","startLine":10,"endLine":15,"newText":"// replaced"}
+Replace a line range with new text in the connected IDE.
+
+21. Editor: create file
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/NewFile.cs","content":"namespace Foo;"}
+Create a new file in the IDE workspace.
+
+22. Editor: delete file
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/OldFile.cs"}
+Delete a file from the IDE workspace.
+
+23. Editor: show diff
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","filePath":"src/Program.cs","proposedContent":"...","diffTitle":"Refactor"}
+Show a diff/proposed changes view. The user can accept or reject.
+
+24. Editor: run build
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>"}
+Trigger a build and return the output including errors.
+
+25. Editor: run terminal
+[TOOL_CALL:<id>] {"targetId":"<editorsession-guid>","command":"dotnet test","workingDirectory":"src"}
+Execute a command in the IDE's integrated terminal.
