@@ -137,6 +137,11 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     private static object ConvertToOaiMessage(ToolAwareMessage msg) => msg switch
     {
         { Role: "system" } => new OaiMessage { Role = "system", Content = msg.Content! },
+        { Role: "user", HasImage: true } => new OaiMessage
+        {
+            Role = "user",
+            Content = BuildMultipartContent(msg.Content!, msg.ImageBase64!, msg.ImageMediaType ?? "image/png")
+        },
         { Role: "user" } => new OaiMessage { Role = "user", Content = msg.Content! },
         { Role: "assistant", ToolCalls: { Count: > 0 } calls } => new OaiAssistantToolCallMessage
         {
@@ -148,6 +153,11 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             }).ToList()
         },
         { Role: "assistant" } => new OaiMessage { Role = "assistant", Content = msg.Content },
+        { Role: "tool", HasImage: true } => new OaiToolResultMessage
+        {
+            ToolCallId = msg.ToolCallId!,
+            Content = BuildMultipartContent(msg.Content ?? "", msg.ImageBase64!, msg.ImageMediaType ?? "image/png")
+        },
         { Role: "tool" } => new OaiToolResultMessage
         {
             ToolCallId = msg.ToolCallId!,
@@ -155,6 +165,22 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         },
         _ => throw new ArgumentException($"Unknown message role: {msg.Role}")
     };
+
+    private static List<object> BuildMultipartContent(string text, string imageBase64, string mediaType)
+    {
+        var parts = new List<object>
+        {
+            new OaiTextContentPart { Text = text },
+            new OaiImageContentPart
+            {
+                ImageUrl = new OaiImageUrl
+                {
+                    Url = $"data:{mediaType};base64,{imageBase64}"
+                }
+            }
+        };
+        return parts;
+    }
 
     public virtual async IAsyncEnumerable<ChatStreamChunk> StreamChatCompletionWithToolsAsync(
         HttpClient httpClient,
@@ -346,7 +372,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     private sealed class OaiMessage
     {
         [JsonPropertyName("role")] public required string Role { get; init; }
-        [JsonPropertyName("content")] public string? Content { get; init; }
+        [JsonPropertyName("content")] public object? Content { get; init; }
     }
 
     private sealed class OaiAssistantToolCallMessage
@@ -360,7 +386,26 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     {
         [JsonPropertyName("role")] public string Role => "tool";
         [JsonPropertyName("tool_call_id")] public required string ToolCallId { get; init; }
-        [JsonPropertyName("content")] public required string Content { get; init; }
+        [JsonPropertyName("content")] public required object Content { get; init; }
+    }
+
+    // Multipart content blocks (for vision / image_url payloads)
+
+    private sealed class OaiTextContentPart
+    {
+        [JsonPropertyName("type")] public string Type => "text";
+        [JsonPropertyName("text")] public required string Text { get; init; }
+    }
+
+    private sealed class OaiImageContentPart
+    {
+        [JsonPropertyName("type")] public string Type => "image_url";
+        [JsonPropertyName("image_url")] public required OaiImageUrl ImageUrl { get; init; }
+    }
+
+    private sealed class OaiImageUrl
+    {
+        [JsonPropertyName("url")] public required string Url { get; init; }
     }
 
     private sealed class OaiToolCallPayload

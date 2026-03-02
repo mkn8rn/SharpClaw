@@ -27,7 +27,16 @@ builder.Services.AddControllers()
         o.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((doc, _, _) =>
+    {
+        doc.Info.Title = "SharpClaw Public API";
+        doc.Info.Version = "v1";
+        doc.Info.Description = "Public REST proxy for the SharpClaw Application API.";
+        return Task.CompletedTask;
+    });
+});
 
 var app = builder.Build();
 
@@ -35,6 +44,10 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "SharpClaw Public API v1");
+    });
 }
 
 app.UseHttpsRedirection();

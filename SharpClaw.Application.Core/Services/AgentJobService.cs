@@ -1027,7 +1027,7 @@ IConfiguration configuration)
     /// <summary>
     /// Launches a headless browser (configured via <c>Browser:Executable</c>
     /// and <c>Browser:Arguments</c> in the SharpClaw .env — defaults to
-    /// Google Chrome <c>--incognito</c>) against a <b>localhost</b> URL
+    /// auto-detected Chrome/Edge on Windows) against a <b>localhost</b> URL
     /// and returns either a screenshot path or the page HTML.
     /// </summary>
     private async Task<string?> ExecuteAccessLocalhostInBrowserAsync(
@@ -1039,20 +1039,25 @@ IConfiguration configuration)
         var url = ValidateLocalhostUrl(payload.Url);
         var mode = (payload.Mode ?? "html").ToLowerInvariant();
 
-        var executable = configuration["Browser:Executable"] ?? "chrome";
+        var executable = configuration["Browser:Executable"] ?? ResolveChromiumExecutable();
         var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
 
-        // Build headless Chrome arguments.
+        // Build headless Chrome/Edge arguments.
         // --dump-dom returns the serialised DOM as text.
         // --screenshot returns a PNG screenshot to a temp file.
+        // --ignore-certificate-errors allows self-signed localhost HTTPS.
+        // --virtual-time-budget gives the page simulated time (ms) for JS
+        //   execution and async fetches before the DOM/screenshot is captured.
+        //   Without this, SPA pages (e.g. Swagger UI) render empty because
+        //   --dump-dom snapshots before JS has finished loading content.
         var tempFile = mode == "screenshot"
             ? Path.Combine(Path.GetTempPath(), $"sc_{job.Id:N}.png")
             : null;
 
         var headlessArgs = mode switch
         {
-            "screenshot" => $"--headless --disable-gpu --no-sandbox {extraArgs} --screenshot=\"{tempFile}\" \"{url}\"",
-            _ => $"--headless --disable-gpu --no-sandbox {extraArgs} --dump-dom \"{url}\"",
+            "screenshot" => $"--headless --disable-gpu --no-sandbox --ignore-certificate-errors --virtual-time-budget=10000 {extraArgs} --screenshot=\"{tempFile}\" \"{url}\"",
+            _ => $"--headless --disable-gpu --no-sandbox --ignore-certificate-errors --virtual-time-budget=10000 {extraArgs} --dump-dom \"{url}\"",
         };
 
         AddLog(job, $"Browser ({mode}): {executable} → {url}");
@@ -1074,7 +1079,20 @@ IConfiguration configuration)
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
-        await process.WaitForExitAsync(ct);
+        // 30-second timeout to prevent hanging on unresponsive pages.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw new InvalidOperationException(
+                $"Browser timed out after 30 seconds for URL: {url}");
+        }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
@@ -1087,10 +1105,46 @@ IConfiguration configuration)
         {
             var bytes = await File.ReadAllBytesAsync(tempFile, ct);
             File.Delete(tempFile);
-            return $"Screenshot captured ({bytes.Length} bytes, base64):\n{Convert.ToBase64String(bytes)}";
+            // Structured marker: ChatService splits on [SCREENSHOT_BASE64] to
+            // extract the raw base64 data and send it as a vision content block.
+            return $"Screenshot captured ({bytes.Length} bytes) of {url}\n[SCREENSHOT_BASE64]{Convert.ToBase64String(bytes)}";
         }
 
         return string.IsNullOrWhiteSpace(stdout) ? "(empty page)" : stdout;
+    }
+
+    /// <summary>
+    /// Probes well-known installation paths for Chromium-based browsers
+    /// on Windows (Chrome, Edge) and returns the first existing path.
+    /// Falls back to <c>"chrome"</c> on non-Windows or if nothing is found.
+    /// </summary>
+    private static string ResolveChromiumExecutable()
+    {
+        if (!OperatingSystem.IsWindows())
+            return "google-chrome";
+
+        ReadOnlySpan<string> candidates =
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Google", "Chrome", "Application", "chrome.exe"),
+            // Microsoft Edge is always present on Windows 10/11.
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                "Microsoft", "Edge", "Application", "msedge.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Microsoft", "Edge", "Application", "msedge.exe"),
+        ];
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+                return path;
+        }
+
+        return "chrome";
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1112,7 +1166,13 @@ IConfiguration configuration)
         AddLog(job, $"HTTP GET → {url}");
         await db.SaveChangesAsync(ct);
 
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        using var handler = new HttpClientHandler
+        {
+            // Localhost URLs may use self-signed development certificates.
+            ServerCertificateCustomValidationCallback =
+                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        };
+        using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
         var response = await httpClient.GetAsync(url, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 

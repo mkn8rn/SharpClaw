@@ -74,6 +74,20 @@ public sealed record ToolAwareMessage
     /// </summary>
     public string? ToolCallId { get; init; }
 
+    /// <summary>
+    /// Optional base64-encoded image data attached to this message.
+    /// When present, providers should send the image as a multipart
+    /// content block (e.g. OpenAI <c>image_url</c>, Anthropic <c>image</c>).
+    /// </summary>
+    public string? ImageBase64 { get; init; }
+
+    /// <summary>
+    /// MIME type of <see cref="ImageBase64"/> (e.g. <c>"image/png"</c>).
+    /// </summary>
+    public string? ImageMediaType { get; init; }
+
+    public bool HasImage => ImageBase64 is not null;
+
     public static ToolAwareMessage System(string content) =>
         new() { Role = "system", Content = content };
 
@@ -89,4 +103,15 @@ public sealed record ToolAwareMessage
 
     public static ToolAwareMessage ToolResult(string toolCallId, string content) =>
         new() { Role = "tool", Content = content, ToolCallId = toolCallId };
+
+    public static ToolAwareMessage ToolResultWithImage(
+        string toolCallId, string content, string imageBase64, string mediaType = "image/png") =>
+        new()
+        {
+            Role = "tool",
+            Content = content,
+            ToolCallId = toolCallId,
+            ImageBase64 = imageBase64,
+            ImageMediaType = mediaType
+        };
 }

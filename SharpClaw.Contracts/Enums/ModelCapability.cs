@@ -12,5 +12,6 @@ public enum ModelCapability
     Transcription = 2,
     ImageGeneration = 4,
     Embedding = 8,
-    TextToSpeech = 16
+    TextToSpeech = 16,
+    Vision = 32
 }

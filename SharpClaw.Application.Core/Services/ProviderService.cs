@@ -245,7 +245,52 @@ public sealed class ProviderService(
         if (name.Contains("audio") || name.Contains("realtime"))
             return ModelCapability.Chat | ModelCapability.Transcription | ModelCapability.TextToSpeech;
 
+        // ── Vision-capable chat models ────────────────────────────
+        // Most modern large models support vision (image input) by default.
+        // Explicitly mark well-known families; others get Chat only.
+        var hasVision = IsVisionCapable(name);
+
         // ── Everything else is a chat model ───────────────────────
-        return ModelCapability.Chat;
+        return hasVision
+            ? ModelCapability.Chat | ModelCapability.Vision
+            : ModelCapability.Chat;
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the model name matches a
+    /// well-known vision-capable family. Conservative: only names
+    /// that are documented to accept image inputs.
+    /// </summary>
+    private static bool IsVisionCapable(string name)
+    {
+        // OpenAI: gpt-4o*, gpt-4-turbo*, gpt-4-vision*, o1*, o3*, o4*
+        if (name.StartsWith("gpt-4o") || name.StartsWith("gpt-4-turbo")
+            || name.StartsWith("gpt-4-vision")
+            || name.StartsWith("o1") || name.StartsWith("o3") || name.StartsWith("o4"))
+            return true;
+
+        // Anthropic: claude-3*, claude-4*
+        if (name.StartsWith("claude-3") || name.StartsWith("claude-4"))
+            return true;
+
+        // Google: gemini-1.5*, gemini-2*, gemini-pro-vision
+        if (name.StartsWith("gemini-1.5") || name.StartsWith("gemini-2")
+            || name.StartsWith("gemini-pro-vision"))
+            return true;
+
+        // Mistral: pixtral*
+        if (name.StartsWith("pixtral"))
+            return true;
+
+        // Meta: llama-3.2-*vision*, llama-4*
+        if ((name.StartsWith("llama-3.2") && name.Contains("vision"))
+            || name.StartsWith("llama-4"))
+            return true;
+
+        // xAI: grok-2-vision*, grok-3*
+        if (name.StartsWith("grok-2-vision") || name.StartsWith("grok-3"))
+            return true;
+
+        return false;
     }
 }

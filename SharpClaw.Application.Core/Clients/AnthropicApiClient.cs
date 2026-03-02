@@ -177,6 +177,25 @@ public sealed class AnthropicApiClient : IProviderApiClient
                     i++;
                     break; // handled via the separate System field
 
+                case "user" when msg.HasImage:
+                {
+                    var blocks = new List<object>
+                    {
+                        new AntTextBlock { Text = msg.Content! },
+                        new AntImageBlock
+                        {
+                            Source = new AntImageSource
+                            {
+                                MediaType = msg.ImageMediaType ?? "image/png",
+                                Data = msg.ImageBase64!
+                            }
+                        }
+                    };
+                    result.Add(new AntBlockMessage { Role = "user", Content = blocks });
+                    i++;
+                    break;
+                }
+
                 case "user":
                     result.Add(new AntStringMessage { Role = "user", Content = msg.Content! });
                     i++;
@@ -211,11 +230,35 @@ public sealed class AnthropicApiClient : IProviderApiClient
                     var toolResults = new List<object>();
                     while (i < messages.Count && messages[i].Role == "tool")
                     {
-                        toolResults.Add(new AntToolResultBlock
+                        var toolMsg = messages[i];
+                        if (toolMsg.HasImage)
                         {
-                            ToolUseId = messages[i].ToolCallId!,
-                            Content = messages[i].Content ?? ""
-                        });
+                            // Multipart tool result: text + image
+                            toolResults.Add(new AntToolResultBlock
+                            {
+                                ToolUseId = toolMsg.ToolCallId!,
+                                Content = new List<object>
+                                {
+                                    new AntTextBlock { Text = toolMsg.Content ?? "" },
+                                    new AntImageBlock
+                                    {
+                                        Source = new AntImageSource
+                                        {
+                                            MediaType = toolMsg.ImageMediaType ?? "image/png",
+                                            Data = toolMsg.ImageBase64!
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        else
+                        {
+                            toolResults.Add(new AntToolResultBlock
+                            {
+                                ToolUseId = toolMsg.ToolCallId!,
+                                Content = toolMsg.Content ?? ""
+                            });
+                        }
                         i++;
                     }
                     result.Add(new AntBlockMessage { Role = "user", Content = toolResults });
@@ -281,7 +324,20 @@ public sealed class AnthropicApiClient : IProviderApiClient
     {
         [JsonPropertyName("type")] public string Type => "tool_result";
         [JsonPropertyName("tool_use_id")] public required string ToolUseId { get; init; }
-        [JsonPropertyName("content")] public required string Content { get; init; }
+        [JsonPropertyName("content")] public required object Content { get; init; }
+    }
+
+    private sealed class AntImageBlock
+    {
+        [JsonPropertyName("type")] public string Type => "image";
+        [JsonPropertyName("source")] public required AntImageSource Source { get; init; }
+    }
+
+    private sealed class AntImageSource
+    {
+        [JsonPropertyName("type")] public string Type => "base64";
+        [JsonPropertyName("media_type")] public required string MediaType { get; init; }
+        [JsonPropertyName("data")] public required string Data { get; init; }
     }
 
     // Response DTOs

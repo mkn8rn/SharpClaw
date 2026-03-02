@@ -46,7 +46,7 @@ Returns the skill instruction text. Requires AccessSkill permission.
 
 9. Access localhost in browser
 [TOOL_CALL:<id>] {"url":"http://localhost:5000/path","mode":"html|screenshot"}
-Opens a headless browser against a localhost URL. mode defaults to 'html' (DOM content); 'screenshot' returns base64 PNG. Only localhost/127.0.0.1/[::1] allowed. Requires AccessLocalhostInBrowser permission.
+Opens a headless browser against a localhost URL. mode defaults to 'html' (DOM content); 'screenshot' returns a PNG image that you can see directly (vision models only — if the model lacks vision, use 'html' instead). Only localhost/127.0.0.1/[::1] allowed. Requires AccessLocalhostInBrowser permission.
 
 10. Access localhost CLI
 [TOOL_CALL:<id>] {"url":"http://localhost:5000/path"}

@@ -79,13 +79,15 @@ public sealed partial class ChatService(
 
         using var httpClient = httpClientFactory.CreateClient();
 
+        var modelCapabilities = model.Capabilities;
+
         var loopResult = useNativeTools
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, channelId, approvalCallback, ct)
+                history, agent.Id, channelId, modelCapabilities, approvalCallback, ct)
             : await RunTextToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, channelId, approvalCallback, ct);
+                history, agent.Id, channelId, modelCapabilities, approvalCallback, ct);
 
         // Persist both messages
         var userMessage = new ChatMessageDB
@@ -307,6 +309,8 @@ public sealed partial class ChatService(
 
         using var httpClient = httpClientFactory.CreateClient();
 
+        var supportsVision = model.Capabilities.HasFlag(ModelCapability.Vision);
+
         // Convert history to tool-aware messages
         var messages = new List<ToolAwareMessage>(history.Count);
         foreach (var msg in history)
@@ -399,12 +403,7 @@ public sealed partial class ChatService(
 
                 jobResults.Add(jobResponse);
 
-                var resultContent =
-                    $"status={jobResponse.Status}" +
-                    (jobResponse.ResultData is not null ? $" result={jobResponse.ResultData}" : "") +
-                    (jobResponse.ErrorLog is not null ? $" error={jobResponse.ErrorLog}" : "");
-
-                messages.Add(ToolAwareMessage.ToolResult(tc.Id, resultContent));
+                messages.Add(BuildToolResultMessage(tc.Id, jobResponse, supportsVision));
             }
         }
 
@@ -517,6 +516,7 @@ public sealed partial class ChatService(
         IReadOnlyList<ChatCompletionMessage> dbHistory,
         Guid agentId,
         Guid channelId,
+        ModelCapability modelCapabilities,
         Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct)
     {
@@ -524,6 +524,7 @@ public sealed partial class ChatService(
         foreach (var msg in dbHistory)
             messages.Add(new ToolAwareMessage { Role = msg.Role, Content = msg.Content });
 
+        var supportsVision = modelCapabilities.HasFlag(ModelCapability.Vision);
         var jobResults = new List<AgentJobResponse>();
         var rounds = 0;
 
@@ -576,12 +577,7 @@ public sealed partial class ChatService(
 
                 jobResults.Add(jobResponse);
 
-                var resultContent =
-                    $"status={jobResponse.Status}" +
-                    (jobResponse.ResultData is not null ? $" result={jobResponse.ResultData}" : "") +
-                    (jobResponse.ErrorLog is not null ? $" error={jobResponse.ErrorLog}" : "");
-
-                messages.Add(ToolAwareMessage.ToolResult(tc.Id, resultContent));
+                messages.Add(BuildToolResultMessage(tc.Id, jobResponse, supportsVision));
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
                     anyUnresolvableApproval = true;
@@ -610,9 +606,11 @@ public sealed partial class ChatService(
         List<ChatCompletionMessage> history,
         Guid agentId,
         Guid channelId,
+        ModelCapability modelCapabilities,
         Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct)
     {
+        var supportsVision = modelCapabilities.HasFlag(ModelCapability.Vision);
         var jobResults = new List<AgentJobResponse>();
         string assistantContent;
         var rounds = 0;
@@ -659,9 +657,14 @@ public sealed partial class ChatService(
 
                 jobResults.Add(jobResponse);
 
+                // For the text-based loop, screenshots are stripped from the
+                // result text because the simple ChatCompletionMessage doesn't
+                // support multipart content in the same way.
+                var (textResult, _) = ExtractScreenshotData(jobResponse);
+
                 toolResultBuilder.AppendLine(
                     $"[TOOL_RESULT:{call.CallId}] status={jobResponse.Status}" +
-                    (jobResponse.ResultData is not null ? $" result={jobResponse.ResultData}" : "") +
+                    (textResult is not null ? $" result={textResult}" : "") +
                     (jobResponse.ErrorLog is not null ? $" error={jobResponse.ErrorLog}" : ""));
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
@@ -760,6 +763,66 @@ public sealed partial class ChatService(
         ["transcribe_from_audio_stream"]   = AgentActionType.TranscribeFromAudioStream,
         ["transcribe_from_audio_file"]     = AgentActionType.TranscribeFromAudioFile,
     };
+
+    // ═══════════════════════════════════════════════════════════════
+    // Screenshot extraction & vision-aware tool results
+    // ═══════════════════════════════════════════════════════════════
+
+    private const string ScreenshotMarker = "[SCREENSHOT_BASE64]";
+
+    /// <summary>
+    /// If the job's <see cref="AgentJobResponse.ResultData"/> contains a
+    /// <c>[SCREENSHOT_BASE64]</c> marker, splits it into the descriptive
+    /// text and the raw base64 data. Otherwise returns the original
+    /// <see cref="AgentJobResponse.ResultData"/> with no image.
+    /// </summary>
+    private static (string? TextResult, string? ImageBase64) ExtractScreenshotData(AgentJobResponse job)
+    {
+        if (job.ResultData is null)
+            return (null, null);
+
+        var markerIndex = job.ResultData.IndexOf(ScreenshotMarker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+            return (job.ResultData, null);
+
+        var textPart = job.ResultData[..markerIndex].TrimEnd();
+        var base64Part = job.ResultData[(markerIndex + ScreenshotMarker.Length)..];
+        return (textPart, base64Part);
+    }
+
+    /// <summary>
+    /// Builds a <see cref="ToolAwareMessage"/> for a tool result. When the
+    /// result contains screenshot data and the model supports vision, the
+    /// image is attached as a multipart content block. Otherwise, only the
+    /// text portion is included (the base64 blob is omitted for non-vision
+    /// models to avoid wasting context).
+    /// </summary>
+    private static ToolAwareMessage BuildToolResultMessage(
+        string toolCallId, AgentJobResponse job, bool supportsVision)
+    {
+        var (textResult, imageBase64) = ExtractScreenshotData(job);
+
+        var resultContent =
+            $"status={job.Status}" +
+            (textResult is not null ? $" result={textResult}" : "") +
+            (job.ErrorLog is not null ? $" error={job.ErrorLog}" : "");
+
+        if (imageBase64 is not null && supportsVision)
+        {
+            return ToolAwareMessage.ToolResultWithImage(
+                toolCallId, resultContent, imageBase64, "image/png");
+        }
+
+        // Non-vision model: append a note that the screenshot was captured
+        // but cannot be displayed, so the model knows it succeeded.
+        if (imageBase64 is not null)
+        {
+            resultContent += " (screenshot captured but model does not support vision; " +
+                             "use 'html' mode instead for DOM content)";
+        }
+
+        return ToolAwareMessage.ToolResult(toolCallId, resultContent);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Tool-call parsing (text-based fallback)
@@ -979,7 +1042,8 @@ public sealed partial class ChatService(
             new("access_localhost_in_browser",
                 "Access a localhost URL through a headless browser (Chrome by "
                 + "default). Set mode to 'html' (default) for the DOM content or "
-                + "'screenshot' for a base64 PNG. Only localhost/127.0.0.1 URLs "
+                + "'screenshot' for a PNG image (vision models only — if the model "
+                + "lacks vision, use 'html' instead). Only localhost/127.0.0.1 URLs "
                 + "are allowed. Requires AccessLocalhostInBrowser permission.",
                 localhostBrowserSchema),
             new("access_localhost_cli",
