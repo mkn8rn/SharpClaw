@@ -112,6 +112,7 @@ try
     builder.Services.AddSingleton<LiveTranscriptionOrchestrator>();
     builder.Services.AddScoped<TranscriptionService>();
     builder.Services.AddScoped<ContainerService>();
+    builder.Services.AddScoped<DisplayDeviceService>();
     builder.Services.AddScoped<DefaultResourceSetService>();
 
     // Background tasks

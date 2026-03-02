@@ -27,5 +27,12 @@ public enum AgentActionType
     // ── Transcription actions (per-resource: audio device) ────────
     TranscribeFromAudioDevice,
     TranscribeFromAudioStream,
-    TranscribeFromAudioFile
+    TranscribeFromAudioFile,
+
+    // ── Display capture (per-resource: display device) ────────────
+    CaptureDisplay,
+
+    // ── Desktop interaction (per-resource: display device) ────────
+    ClickDesktop,
+    TypeOnDesktop
 }

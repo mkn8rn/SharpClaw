@@ -522,6 +522,16 @@ IConfiguration configuration)
             AgentActionType.AccessLocalhostCli
                 => await ExecuteAccessLocalhostCliAsync(job, ct),
 
+            // Display capture
+            AgentActionType.CaptureDisplay
+                => await ExecuteCaptureDisplayAsync(job, ct),
+
+            // Desktop interaction
+            AgentActionType.ClickDesktop
+                => await ExecuteClickDesktopAsync(job, ct),
+            AgentActionType.TypeOnDesktop
+                => await ExecuteTypeOnDesktopAsync(job, ct),
+
             _ => $"Action '{job.ActionType}' executed successfully " +
                  $"(resource: {job.ResourceId?.ToString() ?? "n/a"})."
         };
@@ -1226,6 +1236,355 @@ IConfiguration configuration)
     };
 
     // ═══════════════════════════════════════════════════════════════
+    // CAPTURE DISPLAY
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Captures a screenshot of a display device. On Windows, uses
+    /// <c>Graphics.CopyFromScreen</c> via the GDI+ interop built into
+    /// .NET.  The result is a base64-encoded PNG with the same
+    /// <c>[SCREENSHOT_BASE64]</c> marker that
+    /// <see cref="ChatService"/> splits on for vision models.
+    /// </summary>
+    private async Task<string?> ExecuteCaptureDisplayAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException("CaptureDisplay requires a ResourceId (DisplayDevice).");
+
+        var device = await db.DisplayDevices.FirstOrDefaultAsync(
+            d => d.Id == job.ResourceId, ct)
+            ?? throw new InvalidOperationException(
+                $"Display device {job.ResourceId} not found.");
+
+        AddLog(job, $"Capturing display: {device.Name} (index {device.DisplayIndex})");
+        await db.SaveChangesAsync(ct);
+
+        byte[] pngBytes;
+
+        if (OperatingSystem.IsWindows())
+        {
+            pngBytes = CaptureWindowsDisplay(device.DisplayIndex);
+        }
+        else
+        {
+            throw new PlatformNotSupportedException(
+                "Display capture is currently only supported on Windows.");
+        }
+
+        return $"Screenshot captured ({pngBytes.Length} bytes) of display '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(pngBytes)}";
+    }
+
+    /// <summary>
+    /// Captures a single monitor on Windows using GDI+ via
+    /// <c>System.Drawing</c> interop (available on .NET 10 Windows).
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static byte[] CaptureWindowsDisplay(int displayIndex)
+    {
+        // Screen bounds via the virtual-screen approach; when a specific
+        // display is requested we shell out to a tiny PowerShell snippet
+        // that uses System.Windows.Forms.Screen because .NET 10 doesn't
+        // ship System.Windows.Forms by default in non-WinForms apps.
+        // Alternatively, we use the simple P/Invoke approach.
+        var bounds = GetDisplayBounds(displayIndex);
+
+        using var bitmap = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
+        using (var g = System.Drawing.Graphics.FromImage(bitmap))
+        {
+            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
+        }
+
+        using var ms = new System.IO.MemoryStream();
+        bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+        return ms.ToArray();
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static System.Drawing.Rectangle GetDisplayBounds(int displayIndex)
+    {
+        var monitors = new List<MONITORINFO>();
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMonitor, _, _, _) =>
+        {
+            var info = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
+            if (GetMonitorInfo(hMonitor, ref info))
+                monitors.Add(info);
+            return true;
+        }, IntPtr.Zero);
+
+        if (displayIndex >= 0 && displayIndex < monitors.Count)
+        {
+            var r = monitors[displayIndex].rcMonitor;
+            return new System.Drawing.Rectangle(r.left, r.top, r.right - r.left, r.bottom - r.top);
+        }
+
+        // Fallback: virtual screen (all monitors combined).
+        var vsX = GetSystemMetrics(76); // SM_XVIRTUALSCREEN
+        var vsY = GetSystemMetrics(77); // SM_YVIRTUALSCREEN
+        var vsW = GetSystemMetrics(78); // SM_CXVIRTUALSCREEN
+        var vsH = GetSystemMetrics(79); // SM_CYVIRTUALSCREEN
+        return new System.Drawing.Rectangle(vsX, vsY, vsW, vsH);
+    }
+
+    // ── Win32 P/Invoke for monitor enumeration ────────────────────
+
+    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, IntPtr lprcMonitor, IntPtr dwData);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static extern int GetSystemMetrics(int nIndex);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DESKTOP INTERACTION — ClickDesktop / TypeOnDesktop
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class ClickDesktopPayload
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public string? Button { get; set; }
+        public string? ClickType { get; set; }
+    }
+
+    private sealed class TypeOnDesktopPayload
+    {
+        public string? Text { get; set; }
+        public int? X { get; set; }
+        public int? Y { get; set; }
+    }
+
+    /// <summary>
+    /// Simulates a mouse click at the given display-relative coordinates.
+    /// Coordinates are translated from the display device's bounds to
+    /// the virtual screen space required by <c>SendInput</c>.
+    /// </summary>
+    private async Task<string?> ExecuteClickDesktopAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException(
+                "Desktop click is currently only supported on Windows.");
+
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "ClickDesktop requires a ResourceId (DisplayDevice).");
+
+        var device = await db.DisplayDevices.FirstOrDefaultAsync(
+            d => d.Id == job.ResourceId, ct)
+            ?? throw new InvalidOperationException(
+                $"Display device {job.ResourceId} not found.");
+
+        var payload = DeserializePayload<ClickDesktopPayload>(job, "ClickDesktop");
+        var button = (payload.Button ?? "left").ToLowerInvariant();
+        var clickType = (payload.ClickType ?? "single").ToLowerInvariant();
+
+        // Translate display-relative → absolute virtual screen coords
+        var bounds = GetDisplayBounds(device.DisplayIndex);
+        var absX = bounds.X + payload.X;
+        var absY = bounds.Y + payload.Y;
+
+        AddLog(job, $"Click {button} {clickType} at ({payload.X},{payload.Y}) on '{device.Name}' → abs ({absX},{absY})");
+        await db.SaveChangesAsync(ct);
+
+        PerformClick(absX, absY, button, clickType);
+
+        // Capture a follow-up screenshot so the model can see the result
+        var pngBytes = CaptureWindowsDisplay(device.DisplayIndex);
+        return $"Clicked {button} ({clickType}) at ({payload.X},{payload.Y}) on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(pngBytes)}";
+    }
+
+    /// <summary>
+    /// Types text using <c>SendInput</c> keyboard events. Optionally
+    /// clicks at a position first (e.g. to focus an input field).
+    /// </summary>
+    private async Task<string?> ExecuteTypeOnDesktopAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException(
+                "Desktop typing is currently only supported on Windows.");
+
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "TypeOnDesktop requires a ResourceId (DisplayDevice).");
+
+        var device = await db.DisplayDevices.FirstOrDefaultAsync(
+            d => d.Id == job.ResourceId, ct)
+            ?? throw new InvalidOperationException(
+                $"Display device {job.ResourceId} not found.");
+
+        var payload = DeserializePayload<TypeOnDesktopPayload>(job, "TypeOnDesktop");
+
+        if (string.IsNullOrEmpty(payload.Text))
+            throw new InvalidOperationException("TypeOnDesktop requires a 'text' field.");
+
+        // If coordinates given, click to focus first
+        if (payload.X.HasValue && payload.Y.HasValue)
+        {
+            var bounds = GetDisplayBounds(device.DisplayIndex);
+            var absX = bounds.X + payload.X.Value;
+            var absY = bounds.Y + payload.Y.Value;
+
+            AddLog(job, $"Click to focus at ({payload.X},{payload.Y}) on '{device.Name}' → abs ({absX},{absY})");
+            PerformClick(absX, absY, "left", "single");
+            await Task.Delay(100, ct); // Brief pause for focus
+        }
+
+        AddLog(job, $"Typing {payload.Text.Length} characters on '{device.Name}'");
+        await db.SaveChangesAsync(ct);
+
+        PerformType(payload.Text);
+
+        // Brief pause for UI to settle, then screenshot
+        await Task.Delay(200, ct);
+        var pngBytes = CaptureWindowsDisplay(device.DisplayIndex);
+        return $"Typed {payload.Text.Length} characters on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(pngBytes)}";
+    }
+
+    // ── Win32 SendInput helpers ───────────────────────────────────
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void PerformClick(int absX, int absY, string button, string clickType)
+    {
+        // Move cursor
+        SetCursorPos(absX, absY);
+
+        // Determine flags
+        uint downFlag, upFlag;
+        switch (button)
+        {
+            case "right":
+                downFlag = MOUSEEVENTF_RIGHTDOWN;
+                upFlag = MOUSEEVENTF_RIGHTUP;
+                break;
+            case "middle":
+                downFlag = MOUSEEVENTF_MIDDLEDOWN;
+                upFlag = MOUSEEVENTF_MIDDLEUP;
+                break;
+            default: // left
+                downFlag = MOUSEEVENTF_LEFTDOWN;
+                upFlag = MOUSEEVENTF_LEFTUP;
+                break;
+        }
+
+        var clicks = clickType == "double" ? 2 : 1;
+        for (var i = 0; i < clicks; i++)
+        {
+            var inputs = new INPUT[2];
+            inputs[0] = CreateMouseInput(downFlag);
+            inputs[1] = CreateMouseInput(upFlag);
+            SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void PerformType(string text)
+    {
+        // Use KEYEVENTF_UNICODE so we don't need to map individual
+        // keycodes — SendInput accepts raw UTF-16 characters.
+        var inputs = new INPUT[text.Length * 2];
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            inputs[i * 2] = CreateKeyboardInput(c, KEYEVENTF_UNICODE);
+            inputs[i * 2 + 1] = CreateKeyboardInput(c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+        }
+
+        SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+    }
+
+    private static INPUT CreateMouseInput(uint flags) => new()
+    {
+        type = INPUT_MOUSE,
+        u = new InputUnion { mi = new MOUSEINPUT { dwFlags = flags } }
+    };
+
+    private static INPUT CreateKeyboardInput(char c, uint flags) => new()
+    {
+        type = INPUT_KEYBOARD,
+        u = new InputUnion { ki = new KEYBDINPUT { wScan = c, dwFlags = flags } }
+    };
+
+    // ── Win32 SendInput P/Invoke types ────────────────────────────
+
+    private const uint INPUT_MOUSE = 0;
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static extern bool SetCursorPos(int X, int Y);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx, dy;
+        public uint mouseData, dwFlags, time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk, wScan;
+        public uint dwFlags, time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL, wParamH;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [System.Runtime.InteropServices.FieldOffset(0)] public MOUSEINPUT mi;
+        [System.Runtime.InteropServices.FieldOffset(0)] public KEYBDINPUT ki;
+        [System.Runtime.InteropServices.FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion u;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Permission dispatch
     // ═══════════════════════════════════════════════════════════════
 
@@ -1271,6 +1630,12 @@ IConfiguration configuration)
                 => actions.AccessAudioDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
                 => actions.AccessAudioDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.CaptureDisplay when resourceId.HasValue
+                => actions.AccessDisplayDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.ClickDesktop when resourceId.HasValue
+                => actions.AccessDisplayDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.TypeOnDesktop when resourceId.HasValue
+                => actions.AccessDisplayDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
             _ when IsPerResourceAction(actionType) && !resourceId.HasValue
                 => Task.FromResult(AgentActionResult.Denied($"ResourceId is required for {actionType}.")),
             _ => Task.FromResult(AgentActionResult.Denied($"Unknown action type: {actionType}."))
@@ -1290,7 +1655,10 @@ IConfiguration configuration)
             or AgentActionType.AccessSkill
             or AgentActionType.TranscribeFromAudioDevice
             or AgentActionType.TranscribeFromAudioStream
-            or AgentActionType.TranscribeFromAudioFile;
+            or AgentActionType.TranscribeFromAudioFile
+            or AgentActionType.CaptureDisplay
+            or AgentActionType.ClickDesktop
+            or AgentActionType.TypeOnDesktop;
 
     // ═══════════════════════════════════════════════════════════════
     // Default resource resolution
@@ -1355,6 +1723,7 @@ IConfiguration configuration)
             .Include(p => p.DefaultSearchEngineAccess)
             .Include(p => p.DefaultContainerAccess)
             .Include(p => p.DefaultAudioDeviceAccess)
+            .Include(p => p.DefaultDisplayDeviceAccess)
             .Include(p => p.DefaultAgentPermission)
             .Include(p => p.DefaultTaskPermission)
             .Include(p => p.DefaultSkillPermission)
@@ -1410,6 +1779,9 @@ IConfiguration configuration)
         AgentActionType.TranscribeFromAudioDevice or
         AgentActionType.TranscribeFromAudioStream or
         AgentActionType.TranscribeFromAudioFile => drs.AudioDeviceResourceId,
+        AgentActionType.CaptureDisplay or
+        AgentActionType.ClickDesktop or
+        AgentActionType.TypeOnDesktop => drs.DisplayDeviceResourceId,
         _ => null,
     };
 
@@ -1444,6 +1816,10 @@ IConfiguration configuration)
         AgentActionType.TranscribeFromAudioStream or
         AgentActionType.TranscribeFromAudioFile
             => permissionSet.DefaultAudioDeviceAccess?.AudioDeviceId,
+        AgentActionType.CaptureDisplay or
+        AgentActionType.ClickDesktop or
+        AgentActionType.TypeOnDesktop
+            => permissionSet.DefaultDisplayDeviceAccess?.DisplayDeviceId,
         _ => null,
     };
 
@@ -1597,6 +1973,12 @@ IConfiguration configuration)
         AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
             => ps.AudioDeviceAccesses.Any(a =>
                 a.AudioDeviceId == resourceId || a.AudioDeviceId == WellKnownIds.AllResources),
+
+        AgentActionType.CaptureDisplay or
+        AgentActionType.ClickDesktop or
+        AgentActionType.TypeOnDesktop when resourceId.HasValue
+            => ps.DisplayDeviceAccesses.Any(a =>
+                a.DisplayDeviceId == resourceId || a.DisplayDeviceId == WellKnownIds.AllResources),
 
         _ => false,
     };

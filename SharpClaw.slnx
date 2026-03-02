@@ -5,7 +5,7 @@
     <Project Path="SharpClaw.Application.Infrastructure/SharpClaw.Application.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/NativeClient/">
-    <Project Path="SharpClaw/SharpClaw.csproj">
+    <Project Path="SharpClaw.Uno/SharpClaw.Uno.csproj">
       <Deploy />
     </Project>
   </Folder>

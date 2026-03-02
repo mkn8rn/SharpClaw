@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Containers;
+using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.Transcription;
 
 namespace SharpClaw.Application.API.Handlers;
@@ -85,4 +86,40 @@ public static class ResourceHandlers
     [MapPost("/audiodevices/sync")]
     public static async Task<IResult> SyncAudioDevices(TranscriptionService svc)
         => Results.Ok(await svc.SyncDevicesAsync());
+
+    // ═══════════════════════════════════════════════════════════════
+    // Display Devices
+    // ═══════════════════════════════════════════════════════════════
+
+    [MapPost("/displaydevices")]
+    public static async Task<IResult> CreateDisplayDevice(
+        CreateDisplayDeviceRequest request, DisplayDeviceService svc)
+        => Results.Ok(await svc.CreateAsync(request));
+
+    [MapGet("/displaydevices")]
+    public static async Task<IResult> ListDisplayDevices(DisplayDeviceService svc)
+        => Results.Ok(await svc.ListAsync());
+
+    [MapGet("/displaydevices/{id:guid}")]
+    public static async Task<IResult> GetDisplayDevice(Guid id, DisplayDeviceService svc)
+    {
+        var device = await svc.GetByIdAsync(id);
+        return device is not null ? Results.Ok(device) : Results.NotFound();
+    }
+
+    [MapPut("/displaydevices/{id:guid}")]
+    public static async Task<IResult> UpdateDisplayDevice(
+        Guid id, UpdateDisplayDeviceRequest request, DisplayDeviceService svc)
+    {
+        var device = await svc.UpdateAsync(id, request);
+        return device is not null ? Results.Ok(device) : Results.NotFound();
+    }
+
+    [MapDelete("/displaydevices/{id:guid}")]
+    public static async Task<IResult> DeleteDisplayDevice(Guid id, DisplayDeviceService svc)
+        => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
+
+    [MapPost("/displaydevices/sync")]
+    public static async Task<IResult> SyncDisplayDevices(DisplayDeviceService svc)
+        => Results.Ok(await svc.SyncAsync());
 }

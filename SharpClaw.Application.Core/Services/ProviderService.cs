@@ -263,9 +263,9 @@ public sealed class ProviderService(
     /// </summary>
     private static bool IsVisionCapable(string name)
     {
-        // OpenAI: gpt-4o*, gpt-4-turbo*, gpt-4-vision*, o1*, o3*, o4*
+        // OpenAI: gpt-4o*, gpt-4-turbo*, gpt-4-vision*, gpt-5*, o1*, o3*, o4*
         if (name.StartsWith("gpt-4o") || name.StartsWith("gpt-4-turbo")
-            || name.StartsWith("gpt-4-vision")
+            || name.StartsWith("gpt-4-vision") || name.StartsWith("gpt-5")
             || name.StartsWith("o1") || name.StartsWith("o3") || name.StartsWith("o4"))
             return true;
 

@@ -233,6 +233,7 @@ public sealed partial class ChatService(
             if (ps.LocalInfoStorePermissions.Count > 0) grants.Add("LocalInfoStore");
             if (ps.ExternalInfoStorePermissions.Count > 0) grants.Add("ExternalInfoStore");
             if (ps.AudioDeviceAccesses.Count > 0) grants.Add("AudioDevice");
+            if (ps.DisplayDeviceAccesses.Count > 0) grants.Add("DisplayDevice");
             if (ps.AgentPermissions.Count > 0) grants.Add("ManageAgent");
             if (ps.TaskPermissions.Count > 0) grants.Add("EditTask");
             if (ps.SkillPermissions.Count > 0) grants.Add("AccessSkill");
@@ -762,6 +763,9 @@ public sealed partial class ChatService(
         ["transcribe_from_audio_device"]   = AgentActionType.TranscribeFromAudioDevice,
         ["transcribe_from_audio_stream"]   = AgentActionType.TranscribeFromAudioStream,
         ["transcribe_from_audio_file"]     = AgentActionType.TranscribeFromAudioFile,
+        ["capture_display"]                = AgentActionType.CaptureDisplay,
+        ["click_desktop"]                  = AgentActionType.ClickDesktop,
+        ["type_on_desktop"]                = AgentActionType.TypeOnDesktop,
     };
 
     // ═══════════════════════════════════════════════════════════════
@@ -817,8 +821,7 @@ public sealed partial class ChatService(
         // but cannot be displayed, so the model knows it succeeded.
         if (imageBase64 is not null)
         {
-            resultContent += " (screenshot captured but model does not support vision; " +
-                             "use 'html' mode instead for DOM content)";
+            resultContent += " (screenshot captured successfully)";
         }
 
         return ToolAwareMessage.ToolResult(toolCallId, resultContent);
@@ -996,6 +999,8 @@ public sealed partial class ChatService(
         var editTaskSchema = BuildEditTaskSchema();
         var localhostBrowserSchema = BuildLocalhostBrowserSchema();
         var localhostCliSchema = BuildLocalhostCliSchema();
+        var clickDesktopSchema = BuildClickDesktopSchema();
+        var typeOnDesktopSchema = BuildTypeOnDesktopSchema();
 
         return
         [
@@ -1094,6 +1099,24 @@ public sealed partial class ChatService(
                 + "full SkillText so the agent can learn how to use the associated "
                 + "resource. Requires AccessSkill permission for the target skill.",
                 resourceOnly),
+            new("capture_display",
+                "Capture a screenshot of a system display/monitor. Returns a base64-encoded "
+                + "PNG image (vision models only — if the model lacks vision, you will "
+                + "receive only a text description). Requires CaptureDisplay permission "
+                + "for the target display device resource.",
+                resourceOnly),
+            new("click_desktop",
+                "Simulate a mouse click at specific coordinates on a display. "
+                + "Coordinates are relative to the display's top-left corner. "
+                + "Returns a follow-up screenshot so you can verify the result. "
+                + "Requires DisplayDevice permission for the target display.",
+                clickDesktopSchema),
+            new("type_on_desktop",
+                "Type text using keyboard input. Optionally click at coordinates "
+                + "first to focus an input field. Returns a follow-up screenshot "
+                + "so you can verify the result. Requires DisplayDevice permission "
+                + "for the target display.",
+                typeOnDesktopSchema),
         ];
     }
 
@@ -1383,6 +1406,70 @@ public sealed partial class ChatService(
                     }
                 },
                 "required": ["url"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildClickDesktopSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "The GUID of the display device to click on."
+                    },
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate relative to the display's top-left corner."
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate relative to the display's top-left corner."
+                    },
+                    "button": {
+                        "type": "string",
+                        "enum": ["left", "right", "middle"],
+                        "description": "Mouse button. Defaults to 'left'."
+                    },
+                    "clickType": {
+                        "type": "string",
+                        "enum": ["single", "double"],
+                        "description": "Click type. Defaults to 'single'."
+                    }
+                },
+                "required": ["targetId", "x", "y"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildTypeOnDesktopSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "The GUID of the display device to type on."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The text to type. Each character is sent as a keyboard event."
+                    },
+                    "x": {
+                        "type": "integer",
+                        "description": "Optional X coordinate to click before typing (to focus an input field)."
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Optional Y coordinate to click before typing (to focus an input field)."
+                    }
+                },
+                "required": ["targetId", "text"]
             }
             """);
         return doc.RootElement.Clone();

@@ -40,6 +40,9 @@ public class DefaultResourceSetDB : BaseEntity
     /// <summary>Default AudioDevice for transcription jobs.</summary>
     public Guid? AudioDeviceResourceId { get; set; }
 
+    /// <summary>Default DisplayDevice for CaptureDisplay.</summary>
+    public Guid? DisplayDeviceResourceId { get; set; }
+
     /// <summary>Default Agent for ManageAgent.</summary>
     public Guid? AgentResourceId { get; set; }
 
