@@ -73,7 +73,17 @@ public class OpenAiTranscriptionApiClient : ITranscriptionApiClient
                 }
             }
 
-            response.EnsureSuccessStatusCode();
+            // Any non-success status besides 429 is non-retryable.
+            // Read the body so the exception includes the API error message.
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                throw new HttpRequestException(
+                    $"Transcription API error ({(int)response.StatusCode} {response.StatusCode}): {errorBody}",
+                    inner: null,
+                    response.StatusCode);
+            }
+
             break;
         }
 

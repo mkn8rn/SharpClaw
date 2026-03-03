@@ -488,7 +488,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "context new <agentId> [name]               Create a context",
+                "context add <agentId> [name]               Create a context",
                 "context list [agentId]                     List contexts",
                 "context get <id>                           Show context details",
                 "context update <id> <name>                 Rename a context",
@@ -507,13 +507,13 @@ public static class CliDispatcher
 
         return sub switch
         {
-            "new" when args.Length >= 3
+            "add" when args.Length >= 3
                 => await ChannelContextHandlers.Create(
                     new CreateContextRequest(
                         CliIdMap.Resolve(args[2]),
                         args.Length >= 4 ? string.Join(' ', args[3..]) : null),
                     svc),
-            "new" => UsageResult("context new <agentId> [name]"),
+            "add" => UsageResult("context add <agentId> [name]"),
 
             "list"
                 => await ChannelContextHandlers.List(svc,
@@ -761,7 +761,7 @@ public static class CliDispatcher
             if (latest is null)
             {
                 Console.Error.WriteLine("Error: No channel selected and no channels exist.");
-                Console.Error.WriteLine("Create one first: channel new <agentId> [title]");
+                Console.Error.WriteLine("Create one first: channel add <agentId> [title]");
                 return Results.Ok();
             }
 
@@ -845,8 +845,8 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "channel new [agentId] [--context <ctxId>] [title]",
-                "  Either agentId or --context is required.",
+                "channel add [--agent <id>] [--context <id>] [title]",
+                "  Either --agent or --context is required.",
                 "channel list [agentId]                     List channels",
                 "channel select <id>                        Select active channel",
                 "channel get <id>                           Show channel details",
@@ -867,9 +867,9 @@ public static class CliDispatcher
 
         return sub switch
         {
-            "new" when args.Length >= 3
-                => await HandleChannelNew(args, svc),
-            "new" => UsageResult("channel new [agentId] [--context <ctxId>] [title]"),
+            "add" when args.Length >= 3
+                => await HandleChannelAdd(args, svc),
+            "add" => UsageResult("channel add [--agent <id>] [--context <id>] [title]"),
 
             "list" => await HandleChannelList(args, svc),
 
@@ -911,43 +911,31 @@ public static class CliDispatcher
         };
     }
 
-    private static async Task<IResult> HandleChannelNew(string[] args, ChannelService svc)
+    private static async Task<IResult> HandleChannelAdd(string[] args, ChannelService svc)
     {
         Guid? agentId = null;
         Guid? contextId = null;
         var titleParts = new List<string>();
 
-        // Parse args: [agentId] [--context <ctxId>] [title...]
-        // The first positional arg is an agent ID unless it looks like a flag.
-        var nextArg = 2;
-        if (args.Length > nextArg && !args[nextArg].StartsWith("--"))
+        for (var i = 2; i < args.Length; i++)
         {
-            try
+            switch (args[i])
             {
-                agentId = CliIdMap.Resolve(args[nextArg]);
-                nextArg++;
-            }
-            catch
-            {
-                // Not a resolvable ID — treat as title.
-            }
-        }
-
-        for (var i = nextArg; i < args.Length; i++)
-        {
-            if (args[i] is "--context" or "-c" && i + 1 < args.Length)
-            {
-                contextId = CliIdMap.Resolve(args[++i]);
-            }
-            else
-            {
-                titleParts.Add(args[i]);
+                case "--context" or "-c" when i + 1 < args.Length:
+                    contextId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--agent" or "-a" when i + 1 < args.Length:
+                    agentId = CliIdMap.Resolve(args[++i]);
+                    break;
+                default:
+                    titleParts.Add(args[i]);
+                    break;
             }
         }
 
         if (agentId is null && contextId is null)
         {
-            Console.Error.WriteLine("Either an agent ID or --context is required.");
+            Console.Error.WriteLine("Either --agent or --context is required.");
             return Results.Ok();
         }
 
@@ -1229,8 +1217,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "job submit <actionType> [resourceId] [--conv <id>] [--agent <id>] [--model <id>] [--lang <code>]",
-                "  Uses current channel by default, or specify --conv to override.",
+                "job submit <channelId> <actionType> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
                 "  --agent overrides the channel's default agent.",
                 "job list [channelId]                       List jobs (current channel if omitted)",
                 "job status <jobId>",
@@ -1250,7 +1237,7 @@ public static class CliDispatcher
                 "",
                 "Transcription: submit with TranscribeFromAudioDevice and audio device",
                 "  as resourceId.",
-                "  Optional flags: --model <id>, --conv <id>, --lang <code>");
+                "  Optional flags: --model <id>, --lang <code>");
             return Results.Ok();
         }
 
@@ -1259,17 +1246,16 @@ public static class CliDispatcher
 
         return sub switch
         {
-            // job submit <actionType> [resourceId] [flags...]
-            "submit" when args.Length >= 3 && Enum.TryParse<AgentActionType>(args[2], true, out var at)
-                => await HandleJobSubmit(args, at, 3, svc),
+            // job submit <channelId> <actionType> [resourceId] [flags...]
+            "submit" when args.Length >= 4 && Enum.TryParse<AgentActionType>(args[3], true, out var at)
+                => await HandleJobSubmit(args, CliIdMap.Resolve(args[2]), at, 4, svc),
 
             "submit" when args.Length < 3
                 => UsageResult(
-                    "job submit <actionType> [resourceId] [--conv <id>] [--agent <id>] [--model <id>] [--lang <code>]",
-                    "  Uses current channel by default, or specify --conv to override.",
+                    "job submit <channelId> <actionType> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
                     "  --agent overrides the channel's default agent."),
             "submit"
-                => UsageResult($"Unknown action type. Valid types: {string.Join(", ", Enum.GetNames<AgentActionType>())}"),
+                => UsageResult($"Unknown or missing action type. Valid types: {string.Join(", ", Enum.GetNames<AgentActionType>())}"),
 
             "list" when args.Length >= 3
                 => await AgentJobHandlers.List(CliIdMap.Resolve(args[2]), svc),
@@ -1305,7 +1291,7 @@ public static class CliDispatcher
     }
 
     private static async Task<IResult> HandleJobSubmit(
-        string[] args, AgentActionType actionType, int nextArg, AgentJobService svc)
+        string[] args, Guid channelId, AgentActionType actionType, int nextArg, AgentJobService svc)
     {
         // Resource ID is the next positional arg, unless it looks like a flag
         Guid? resourceId = args.Length > nextArg && !args[nextArg].StartsWith("--")
@@ -1314,7 +1300,6 @@ public static class CliDispatcher
         var flagStart = resourceId is not null ? nextArg + 1 : nextArg;
 
         Guid? modelId = null;
-        Guid? convId = null;
         Guid? agentId = null;
         string? language = null;
 
@@ -1325,9 +1310,6 @@ public static class CliDispatcher
                 case "--model" or "-m" when i + 1 < args.Length:
                     modelId = CliIdMap.Resolve(args[++i]);
                     break;
-                case "--conv" or "-c" when i + 1 < args.Length:
-                    convId = CliIdMap.Resolve(args[++i]);
-                    break;
                 case "--agent" or "-a" when i + 1 < args.Length:
                     agentId = CliIdMap.Resolve(args[++i]);
                     break;
@@ -1337,12 +1319,8 @@ public static class CliDispatcher
             }
         }
 
-        var channelId = convId ?? _currentChannelId;
-        if (!channelId.HasValue)
-            return UsageResult("No channel specified. Use --conv <id> or select a channel with 'channel select'.");
-
         return await AgentJobHandlers.Submit(
-            channelId.Value,
+            channelId,
             new SubmitAgentJobRequest(
                 actionType,
                 resourceId,
@@ -1367,6 +1345,21 @@ public static class CliDispatcher
                      and not AgentActionType.TranscribeFromAudioFile)
             {
                 Console.Error.WriteLine("Only transcription jobs support live listening.");
+            }
+            else if (job.Status is AgentJobStatus.Failed or AgentJobStatus.Cancelled or AgentJobStatus.Denied)
+            {
+                Console.Error.WriteLine($"Job is {job.Status}.");
+                if (!string.IsNullOrWhiteSpace(job.ErrorLog))
+                {
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine("Error:");
+                    Console.Error.WriteLine(job.ErrorLog);
+                }
+                else if (job.Logs is { Count: > 0 })
+                {
+                    var lastLog = job.Logs[^1];
+                    Console.Error.WriteLine($"  Last log: {lastLog.Message}");
+                }
             }
             else if (job.Status is not AgentJobStatus.Executing)
             {
@@ -1895,13 +1888,13 @@ public static class CliDispatcher
               role list                          role permissions <id>
               role permissions <id> set [--create-sub-agents] [--safe-shell all:Independent] ...
 
-            Context:   context|ctx <sub> [args] (new, get, list, update, delete)
-              context new <agentId> [name]
+            Context:   context|ctx <sub> [args] (add, get, list, update, delete)
+              context add <agentId> [name]
               context agents <id> [add|remove <agentId>]
               context defaults <id> [set <key> <resId> | clear <key>]
 
-            Channel:   channel|chan <sub> [args] (new, get, list, select, delete)
-              channel new [agentId] [--context <id>] [title]
+            Channel:   channel|chan <sub> [args] (add, get, list, select, delete)
+              channel add [--agent <id>] [--context <id>] [title]
               channel attach|detach <id> [contextId]
               channel agents <id> [add|remove <agentId>]
               channel defaults <id> [set <key> <resId> | clear <key>]
@@ -1919,7 +1912,7 @@ public static class CliDispatcher
             Bio:       bio get | set <text> | clear
 
             Job:       job <sub> [args]
-              job submit <actionType> [resourceId] [--conv <id>] [--agent <id>]
+              job submit <channelId> <actionType> [resourceId] [--agent <id>]
                   [--model <id>] [--lang <code>]
               job list [channelId]   status <id>   approve <id>   cancel <id>
               job stop <id>          listen <id>   (transcription jobs)

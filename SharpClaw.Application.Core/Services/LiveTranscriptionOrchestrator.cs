@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -140,6 +141,23 @@ public sealed class LiveTranscriptionOrchestrator(
                         }
 
                         streamStartTime += result.Duration;
+                    }
+                    catch (HttpRequestException ex) when (
+                        !ct.IsCancellationRequested &&
+                        ex.StatusCode.HasValue &&
+                        (int)ex.StatusCode.Value >= 400 &&
+                        (int)ex.StatusCode.Value < 500)
+                    {
+                        // 4xx errors are non-retryable — abort immediately.
+                        logger.LogError(ex,
+                            "Transcription chunk {Index} got non-retryable HTTP {StatusCode} for job {JobId}",
+                            chunkIndex, (int)ex.StatusCode.Value, jobId);
+
+                        await AddJobLogAsync(jobId,
+                            $"Fatal: {ex.Message}", "Error");
+
+                        throw new InvalidOperationException(
+                            $"Non-retryable API error: {ex.Message}", ex);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {

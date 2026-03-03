@@ -242,8 +242,11 @@ public sealed class ProviderService(
             return ModelCapability.Chat | ModelCapability.TextToSpeech;
 
         // ── Chat models with audio/realtime capabilities ──────────
+        // These models handle audio through the chat completions API,
+        // NOT the /v1/audio/transcriptions endpoint. They must NOT
+        // get the Transcription flag.
         if (name.Contains("audio") || name.Contains("realtime"))
-            return ModelCapability.Chat | ModelCapability.Transcription | ModelCapability.TextToSpeech;
+            return ModelCapability.Chat | ModelCapability.TextToSpeech;
 
         // ── Vision-capable chat models ────────────────────────────
         // Most modern large models support vision (image input) by default.

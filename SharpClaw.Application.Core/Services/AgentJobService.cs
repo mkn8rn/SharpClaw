@@ -442,7 +442,9 @@ IConfiguration configuration)
         ModelDB model;
         if (job.TranscriptionModelId is { } explicitModelId)
         {
-            model = await db.Models.FirstOrDefaultAsync(m => m.Id == explicitModelId, ct)
+            model = await db.Models
+                .Include(m => m.Provider)
+                .FirstOrDefaultAsync(m => m.Id == explicitModelId, ct)
                 ?? throw new InvalidOperationException($"Model {explicitModelId} not found.");
 
             if (!model.Capabilities.HasFlag(ModelCapability.Transcription))
@@ -451,11 +453,19 @@ IConfiguration configuration)
         }
         else
         {
-            model = await db.Models
-                .FirstOrDefaultAsync(m => (m.Capabilities & ModelCapability.Transcription) != 0, ct)
-                ?? throw new InvalidOperationException(
-                    "No model with Transcription capability found. " +
-                    "Register a model with 'model add <name> <providerId> --cap Transcription'.");
+            // No explicit transcription model — use the agent's own model.
+            var agent = await db.Agents
+                .Include(a => a.Model).ThenInclude(m => m.Provider)
+                .FirstOrDefaultAsync(a => a.Id == job.AgentId, ct)
+                ?? throw new InvalidOperationException($"Agent {job.AgentId} not found.");
+
+            model = agent.Model;
+
+            if (!model.Capabilities.HasFlag(ModelCapability.Transcription))
+                throw new InvalidOperationException(
+                    $"Agent '{agent.Name}' uses model '{model.Name}' which does not have " +
+                    $"the Transcription capability. Either assign a transcription model to the " +
+                    $"agent or specify one explicitly with '--model <id>'.");
         }
 
         job.TranscriptionModelId = model.Id;

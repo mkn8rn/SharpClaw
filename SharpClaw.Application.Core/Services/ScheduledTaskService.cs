@@ -17,18 +17,25 @@ public sealed class ScheduledTaskService(
     {
         logger.LogInformation("ScheduledTaskService started.");
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await ProcessDueTasksAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogError(ex, "Error in task processing loop.");
-            }
+                try
+                {
+                    await ProcessDueTasksAsync(stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogError(ex, "Error in task processing loop.");
+                }
 
-            await Task.Delay(PollInterval, stoppingToken);
+                await Task.Delay(PollInterval, stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal host shutdown — nothing to do.
         }
     }
 
