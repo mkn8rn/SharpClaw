@@ -233,6 +233,11 @@ public sealed class ProviderService(
         if (name.Contains("moderation"))
             return ModelCapability.None;
 
+        // ── Legacy base / completions-only models ─────────────────
+        if (name.StartsWith("babbage") || name.StartsWith("davinci")
+            || name.EndsWith("-instruct"))
+            return ModelCapability.None;
+
         // ── Chat models with transcription suffix ─────────────────
         if (name.Contains("transcribe"))
             return ModelCapability.Chat | ModelCapability.Transcription;
@@ -248,15 +253,64 @@ public sealed class ProviderService(
         if (name.Contains("audio") || name.Contains("realtime"))
             return ModelCapability.Chat | ModelCapability.TextToSpeech;
 
-        // ── Vision-capable chat models ────────────────────────────
-        // Most modern large models support vision (image input) by default.
-        // Explicitly mark well-known families; others get Chat only.
-        var hasVision = IsVisionCapable(name);
+        // ── Positive chat-family matching ─────────────────────────
+        // Only models from known chat-compatible families get Chat.
+        // Unknown models get None to avoid sending them to the wrong
+        // endpoint (e.g. completions-only base models).
+        if (!IsChatCapable(name))
+            return ModelCapability.None;
 
-        // ── Everything else is a chat model ───────────────────────
+        var hasVision = IsVisionCapable(name);
         return hasVision
             ? ModelCapability.Chat | ModelCapability.Vision
             : ModelCapability.Chat;
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the model name matches a
+    /// known family that supports the chat completions API.
+    /// Conservative: models that don't match any pattern are assumed
+    /// NOT chat-capable (use <c>model add --cap Chat</c> to override).
+    /// </summary>
+    private static bool IsChatCapable(string name)
+    {
+        // OpenAI: gpt-3.5-turbo*, gpt-4*, gpt-5*, chatgpt-*, o1*, o3*, o4*
+        // gpt-5+ use the Responses API, not /chat/completions — but they ARE chat-capable.
+        if (name.StartsWith("gpt-3.5-turbo") || name.StartsWith("gpt-4")
+            || name.StartsWith("gpt-5")
+            || name.StartsWith("chatgpt-")
+            || name.StartsWith("o1") || name.StartsWith("o3") || name.StartsWith("o4"))
+            return true;
+
+        // Anthropic: claude-*
+        if (name.StartsWith("claude-"))
+            return true;
+
+        // Google: gemini-*
+        if (name.StartsWith("gemini-"))
+            return true;
+
+        // Mistral: mistral*, mixtral*, pixtral*, codestral*, ministral*
+        if (name.StartsWith("mistral") || name.StartsWith("mixtral")
+            || name.StartsWith("pixtral") || name.StartsWith("codestral")
+            || name.StartsWith("ministral"))
+            return true;
+
+        // Meta: llama-*, meta-llama*
+        if (name.StartsWith("llama-") || name.StartsWith("meta-llama"))
+            return true;
+
+        // xAI: grok-*
+        if (name.StartsWith("grok-"))
+            return true;
+
+        // Other common chat model families
+        if (name.StartsWith("deepseek") || name.StartsWith("qwen")
+            || name.StartsWith("phi-") || name.StartsWith("command")
+            || name.StartsWith("yi-") || name.StartsWith("jamba"))
+            return true;
+
+        return false;
     }
 
     /// <summary>
