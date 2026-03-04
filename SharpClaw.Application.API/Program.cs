@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Mk8.Shell.Models;
@@ -145,6 +146,13 @@ try
     app.UseMiddleware<ApiKeyMiddleware>();
     app.UseMiddleware<JwtSessionMiddleware>();
     app.UseWebSockets();
+
+    // Liveness check — no auth required.
+    app.MapGet("/echo", () => Results.Ok(new { status = "ok" }));
+
+    // API key validation — requires valid X-Api-Key header.
+    app.MapGet("/ping", () => Results.Ok(new { status = "authenticated" }));
+
     app.MapHandlers();
     app.MapEditorEndpoints();
     app.MapTranscriptionStreaming();

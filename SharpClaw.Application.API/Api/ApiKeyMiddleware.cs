@@ -6,12 +6,10 @@ namespace SharpClaw.Application.API.Api;
 public sealed class ApiKeyMiddleware(RequestDelegate next, ApiKeyProvider keyProvider)
 {
     private const string HeaderName = "X-Api-Key";
-
     public async Task InvokeAsync(HttpContext context)
     {
-        // Skip auth for the editor WebSocket bridge — extensions
-        // authenticate via the registration handshake, not API key.
-        if (context.Request.Path.StartsWithSegments("/editor"))
+        // /echo is an unauthenticated liveness check.
+        if (context.Request.Path.Equals("/echo", StringComparison.OrdinalIgnoreCase))
         {
             await next(context);
             return;
