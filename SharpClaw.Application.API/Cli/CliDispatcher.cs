@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -798,43 +799,51 @@ public static class CliDispatcher
             return input?.Trim().Equals("y", StringComparison.OrdinalIgnoreCase) == true;
         }
 
-        await foreach (var evt in chatService.SendMessageStreamAsync(
-            _currentChannelId.Value, request, CliApprovalCallback))
+        try
         {
-            switch (evt.Type)
+            await foreach (var evt in chatService.SendMessageStreamAsync(
+                _currentChannelId.Value, request, CliApprovalCallback))
             {
-                case ChatStreamEventType.TextDelta:
-                    Console.Write(evt.Delta);
-                    wroteText = true;
-                    break;
+                switch (evt.Type)
+                {
+                    case ChatStreamEventType.TextDelta:
+                        Console.Write(evt.Delta);
+                        wroteText = true;
+                        break;
 
-                case ChatStreamEventType.ToolCallStart:
-                    if (wroteText) { Console.WriteLine(); wroteText = false; }
-                    Console.WriteLine($"  [tool] #{CliIdMap.GetOrAssign(evt.Job!.Id)} {evt.Job.ActionType} → {evt.Job.Status}");
-                    break;
+                    case ChatStreamEventType.ToolCallStart:
+                        if (wroteText) { Console.WriteLine(); wroteText = false; }
+                        Console.WriteLine($"  [tool] #{CliIdMap.GetOrAssign(evt.Job!.Id)} {evt.Job.ActionType} → {evt.Job.Status}");
+                        break;
 
-                case ChatStreamEventType.ToolCallResult:
-                    Console.WriteLine($"  [result] #{CliIdMap.GetOrAssign(evt.Result!.Id)} → {evt.Result.Status}");
-                    break;
+                    case ChatStreamEventType.ToolCallResult:
+                        Console.WriteLine($"  [result] #{CliIdMap.GetOrAssign(evt.Result!.Id)} → {evt.Result.Status}");
+                        break;
 
-                case ChatStreamEventType.ApprovalRequired:
-                    if (wroteText) { Console.WriteLine(); wroteText = false; }
-                    Console.Write($"  [approval] Job #{CliIdMap.GetOrAssign(evt.PendingJob!.Id)} ({evt.PendingJob.ActionType}) requires approval. ");
-                    break;
+                    case ChatStreamEventType.ApprovalRequired:
+                        if (wroteText) { Console.WriteLine(); wroteText = false; }
+                        Console.Write($"  [approval] Job #{CliIdMap.GetOrAssign(evt.PendingJob!.Id)} ({evt.PendingJob.ActionType}) requires approval. ");
+                        break;
 
-                case ChatStreamEventType.ApprovalResult:
-                    Console.WriteLine($"  [approval] → {evt.ApprovalOutcome!.Status}");
-                    break;
+                    case ChatStreamEventType.ApprovalResult:
+                        Console.WriteLine($"  [approval] → {evt.ApprovalOutcome!.Status}");
+                        break;
 
-                case ChatStreamEventType.Error:
-                    if (wroteText) { Console.WriteLine(); wroteText = false; }
-                    Console.Error.WriteLine($"  [error] {evt.Error}");
-                    break;
+                    case ChatStreamEventType.Error:
+                        if (wroteText) { Console.WriteLine(); wroteText = false; }
+                        Console.Error.WriteLine($"  [error] {evt.Error}");
+                        break;
 
-                case ChatStreamEventType.Done:
-                    if (wroteText) Console.WriteLine();
-                    break;
+                    case ChatStreamEventType.Done:
+                        if (wroteText) Console.WriteLine();
+                        break;
+                }
             }
+        }
+        catch (HttpRequestException ex)
+        {
+            if (wroteText) { Console.WriteLine(); wroteText = false; }
+            Console.Error.WriteLine($"Error: {ex.Message}");
         }
 
         return Results.Ok();
@@ -1375,10 +1384,32 @@ public static class CliDispatcher
 
         using var cts = new CancellationTokenSource();
 
-        Console.CancelKeyPress += OnCancelKey;
+        // Suppress Ctrl+C from reaching the host's shutdown handler.
+        // Detect it as a regular key press instead.
+        var prevCtrlC = Console.TreatControlCAsInput;
+        Console.TreatControlCAsInput = true;
 
         Console.WriteLine("Listening for transcription segments... (Ctrl+C to stop)");
         Console.WriteLine();
+
+        // Poll for Ctrl+C key press on a background thread.
+        var keyTask = Task.Run(() =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    if (key is { Modifiers: ConsoleModifiers.Control, Key: ConsoleKey.C })
+                    {
+                        cts.Cancel();
+                        return;
+                    }
+                }
+
+                Thread.Sleep(50);
+            }
+        });
 
         try
         {
@@ -1400,16 +1431,12 @@ public static class CliDispatcher
         }
         finally
         {
-            Console.CancelKeyPress -= OnCancelKey;
+            await cts.CancelAsync();
+            await keyTask;
+            Console.TreatControlCAsInput = prevCtrlC;
         }
 
         return Results.Ok();
-
-        void OnCancelKey(object? sender, ConsoleCancelEventArgs e)
-        {
-            e.Cancel = true;
-            cts.Cancel();
-        }
     }
 
     private static void PrintUsage(params string[] lines)

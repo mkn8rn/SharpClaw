@@ -47,6 +47,26 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ChatCompletionMessage> messages,
         CancellationToken ct = default)
     {
+        // Responses API path
+        if (UseResponsesApi(model))
+        {
+            var sb = new System.Text.StringBuilder();
+            await foreach (var chunk in StreamResponsesApiAsync(
+                httpClient, apiKey, model, systemPrompt,
+                messages.Select(m => new ToolAwareMessage { Role = m.Role, Content = m.Content }).ToList(),
+                [], ct))
+            {
+                if (chunk.IsFinished)
+                    return chunk.Finished!.Content
+                        ?? throw new InvalidOperationException("No response content from provider.");
+                if (chunk.Delta is not null)
+                    sb.Append(chunk.Delta);
+            }
+            return sb.Length > 0
+                ? sb.ToString()
+                : throw new InvalidOperationException("No response content from provider.");
+        }
+
         var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
 
         var payloadMessages = new List<CompletionMessagePayload>();
@@ -81,6 +101,19 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ChatToolDefinition> tools,
         CancellationToken ct = default)
     {
+        // Responses API path
+        if (UseResponsesApi(model))
+        {
+            ChatCompletionResult? final = null;
+            await foreach (var chunk in StreamResponsesApiAsync(
+                httpClient, apiKey, model, systemPrompt, messages, tools, ct))
+            {
+                if (chunk.IsFinished)
+                    final = chunk.Finished;
+            }
+            return final ?? throw new InvalidOperationException("No response from provider.");
+        }
+
         var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
 
         var payloadMessages = new List<object>();
@@ -191,6 +224,17 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ChatToolDefinition> tools,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Responses API path — delegate entirely
+        if (UseResponsesApi(model))
+        {
+            await foreach (var chunk in StreamResponsesApiAsync(
+                httpClient, apiKey, model, systemPrompt, messages, tools, ct))
+            {
+                yield return chunk;
+            }
+            yield break;
+        }
+
         var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
 
         var payloadMessages = new List<object>();
@@ -313,6 +357,27 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     /// Allows subclasses to add provider-specific headers to outgoing API requests.
     /// </summary>
     protected virtual void ConfigureRequest(HttpRequestMessage request) { }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the given model should use the
+    /// Responses API (<c>/v1/responses</c>) instead of Chat Completions.
+    /// Override in provider subclasses that support it. Default: <see langword="false"/>.
+    /// </summary>
+    protected virtual bool UseResponsesApi(string model) => false;
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the given model must use the
+    /// legacy Chat Completions API (<c>/v1/chat/completions</c>).
+    /// Used by subclasses that default to the Responses API to carve
+    /// out legacy model families.
+    /// </summary>
+    protected static bool RequiresLegacyChatCompletions(string model)
+    {
+        var name = model.ToLowerInvariant();
+        return name.StartsWith("gpt-3.5")
+            || name.StartsWith("gpt-4")
+            || name.StartsWith("chatgpt-4o");
+    }
 
     // ── Models listing ────────────────────────────────────────────
 
@@ -493,5 +558,255 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     {
         [JsonPropertyName("name")] public string? Name { get; set; }
         [JsonPropertyName("arguments")] public string? Arguments { get; set; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Responses API  (/v1/responses)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Converts the conversation history + tools into an OpenAI Responses API
+    /// streaming request and yields <see cref="ChatStreamChunk"/> instances
+    /// using the same contract as the Chat Completions streaming path.
+    /// </summary>
+    private async IAsyncEnumerable<ChatStreamChunk> StreamResponsesApiAsync(
+        HttpClient httpClient,
+        string apiKey,
+        string model,
+        string? systemPrompt,
+        IReadOnlyList<ToolAwareMessage> messages,
+        IReadOnlyList<ChatToolDefinition> tools,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
+
+        // Build input array
+        var input = new List<object>();
+        if (systemPrompt is not null)
+            input.Add(new RespInputMessage { Role = "system", Content = systemPrompt });
+
+        foreach (var msg in messages)
+        {
+            switch (msg)
+            {
+                case { Role: "user", HasImage: true }:
+                    input.Add(new RespInputMessage
+                    {
+                        Role = "user",
+                        Content = BuildMultipartContent(msg.Content!, msg.ImageBase64!, msg.ImageMediaType ?? "image/png")
+                    });
+                    break;
+                case { Role: "user" }:
+                    input.Add(new RespInputMessage { Role = "user", Content = msg.Content! });
+                    break;
+                case { Role: "assistant", ToolCalls: { Count: > 0 } calls }:
+                    // Assistant message text (if any)
+                    if (!string.IsNullOrEmpty(msg.Content))
+                        input.Add(new RespInputMessage { Role = "assistant", Content = msg.Content });
+                    // Each tool call as a function_call output item
+                    foreach (var tc in calls)
+                        input.Add(new RespFunctionCallItem
+                        {
+                            CallId = tc.Id,
+                            Name = tc.Name,
+                            Arguments = tc.ArgumentsJson
+                        });
+                    break;
+                case { Role: "assistant" }:
+                    input.Add(new RespInputMessage { Role = "assistant", Content = msg.Content });
+                    break;
+                case { Role: "tool" }:
+                    input.Add(new RespFunctionCallOutputItem
+                    {
+                        CallId = msg.ToolCallId!,
+                        Output = msg.Content ?? ""
+                    });
+                    break;
+            }
+        }
+
+        // Build tools array
+        var respTools = tools.Select(t => new RespToolDefinition
+        {
+            Name = t.Name,
+            Description = t.Description,
+            Parameters = t.ParametersSchema
+        }).ToList();
+
+        var payload = new RespStreamRequest
+        {
+            Model = model,
+            Input = input,
+            Tools = respTools.Count > 0 ? respTools : null,
+            Stream = true
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/responses");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resolvedKey);
+        ConfigureRequest(request);
+        request.Content = JsonContent.Create(payload, options: OaiToolJsonOptions);
+
+        using var response = await httpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, ct);
+        await response.EnsureSuccessOrThrowAsync(ct);
+
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        var contentBuilder = new System.Text.StringBuilder();
+        // Accumulate tool calls by call_id
+        var toolCallAccumulator = new Dictionary<string, (string Name, System.Text.StringBuilder Args)>();
+        var toolCallOrder = new List<string>();
+
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (line is null) break;
+            if (!line.StartsWith("data: ", StringComparison.Ordinal)) continue;
+
+            var data = line["data: ".Length..];
+            if (data == "[DONE]") break;
+
+            RespStreamEvent? evt;
+            try
+            {
+                evt = JsonSerializer.Deserialize<RespStreamEvent>(data);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (evt is null) continue;
+
+            switch (evt.Type)
+            {
+                case "response.output_text.delta":
+                    if (evt.Delta is { Length: > 0 })
+                    {
+                        contentBuilder.Append(evt.Delta);
+                        yield return ChatStreamChunk.Text(evt.Delta);
+                    }
+                    break;
+
+                case "response.function_call_arguments.delta":
+                    if (evt.CallId is not null && evt.Delta is not null)
+                    {
+                        if (!toolCallAccumulator.TryGetValue(evt.CallId, out var acc))
+                        {
+                            acc = (evt.Name ?? "", new System.Text.StringBuilder());
+                            toolCallAccumulator[evt.CallId] = acc;
+                            toolCallOrder.Add(evt.CallId);
+                        }
+                        acc.Args.Append(evt.Delta);
+                        toolCallAccumulator[evt.CallId] = acc;
+                    }
+                    break;
+
+                case "response.function_call_arguments.done":
+                    if (evt.CallId is not null && !toolCallAccumulator.ContainsKey(evt.CallId))
+                    {
+                        toolCallAccumulator[evt.CallId] = (evt.Name ?? "", new System.Text.StringBuilder(evt.Arguments ?? "{}"));
+                        toolCallOrder.Add(evt.CallId);
+                    }
+                    break;
+
+                case "response.output_item.added":
+                    // Capture tool call name when the item first appears
+                    if (evt.Item is { Type: "function_call" } item
+                        && item.CallId is not null && item.Name is not null)
+                    {
+                        if (!toolCallAccumulator.ContainsKey(item.CallId))
+                        {
+                            toolCallAccumulator[item.CallId] = (item.Name, new System.Text.StringBuilder());
+                            toolCallOrder.Add(item.CallId);
+                        }
+                        else
+                        {
+                            var existing = toolCallAccumulator[item.CallId];
+                            toolCallAccumulator[item.CallId] = (item.Name, existing.Args);
+                        }
+                    }
+                    break;
+
+                case "response.completed":
+                    break;
+            }
+        }
+
+        // Emit final chunk
+        var toolCalls = toolCallOrder
+            .Where(id => toolCallAccumulator.ContainsKey(id))
+            .Select(id =>
+            {
+                var (name, args) = toolCallAccumulator[id];
+                return new ChatToolCall(id, name, args.Length > 0 ? args.ToString() : "{}");
+            })
+            .ToList();
+
+        yield return ChatStreamChunk.Final(new ChatCompletionResult
+        {
+            Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
+            ToolCalls = toolCalls
+        });
+    }
+
+    // ── Responses API DTOs ────────────────────────────────────────
+
+    private sealed class RespInputMessage
+    {
+        [JsonPropertyName("role")] public required string Role { get; init; }
+        [JsonPropertyName("content")] public object? Content { get; init; }
+    }
+
+    private sealed class RespFunctionCallItem
+    {
+        [JsonPropertyName("type")] public string Type => "function_call";
+        [JsonPropertyName("call_id")] public required string CallId { get; init; }
+        [JsonPropertyName("name")] public required string Name { get; init; }
+        [JsonPropertyName("arguments")] public required string Arguments { get; init; }
+    }
+
+    private sealed class RespFunctionCallOutputItem
+    {
+        [JsonPropertyName("type")] public string Type => "function_call_output";
+        [JsonPropertyName("call_id")] public required string CallId { get; init; }
+        [JsonPropertyName("output")] public required string Output { get; init; }
+    }
+
+    private sealed class RespToolDefinition
+    {
+        [JsonPropertyName("type")] public string Type => "function";
+        [JsonPropertyName("name")] public required string Name { get; init; }
+        [JsonPropertyName("description")] public required string Description { get; init; }
+        [JsonPropertyName("parameters")] public required JsonElement Parameters { get; init; }
+    }
+
+    private sealed class RespStreamRequest
+    {
+        [JsonPropertyName("model")] public required string Model { get; init; }
+        [JsonPropertyName("input")] public required List<object> Input { get; init; }
+        [JsonPropertyName("tools")] public List<RespToolDefinition>? Tools { get; init; }
+        [JsonPropertyName("stream")] public bool Stream { get; init; }
+    }
+
+    // Streaming event — covers the subset of fields we care about.
+    private sealed class RespStreamEvent
+    {
+        [JsonPropertyName("type")] public string? Type { get; set; }
+        [JsonPropertyName("delta")] public string? Delta { get; set; }
+        // Function call fields
+        [JsonPropertyName("call_id")] public string? CallId { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("arguments")] public string? Arguments { get; set; }
+        // output_item.added carries an item object
+        [JsonPropertyName("item")] public RespOutputItem? Item { get; set; }
+    }
+
+    private sealed class RespOutputItem
+    {
+        [JsonPropertyName("type")] public string? Type { get; set; }
+        [JsonPropertyName("call_id")] public string? CallId { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
     }
 }
