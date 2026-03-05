@@ -155,18 +155,34 @@ public sealed class ChannelService(SharpClawDbContext db)
 
     /// <summary>
     /// Returns the channel with the most recent chat message across all
-    /// agents.  Used by the CLI when no channel is explicitly selected.
+    /// agents.  Falls back to the most recently created channel when no
+    /// messages exist.  Used by the CLI when no channel is explicitly
+    /// selected.
     /// </summary>
     public async Task<ChannelResponse?> GetLatestActiveAsync(CancellationToken ct = default)
     {
-        var channel = await db.Channels
-            .Include(c => c.Agent)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents)
-            .Include(c => c.AllowedAgents)
-            .Include(c => c.ChatMessages)
-            .OrderByDescending(c => c.ChatMessages.Max(m => (DateTimeOffset?)m.CreatedAt) ?? c.CreatedAt)
+        // Find the channel that received the most recent message.
+        var latestChannelId = await db.ChatMessages
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => (Guid?)m.ChannelId)
             .FirstOrDefaultAsync(ct);
+
+        ChannelDB? channel;
+        if (latestChannelId is not null)
+        {
+            channel = await LoadChannelAsync(latestChannelId.Value, ct);
+        }
+        else
+        {
+            // No messages in any channel — fall back to most recently created.
+            channel = await db.Channels
+                .Include(c => c.Agent)
+                .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent)
+                .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents)
+                .Include(c => c.AllowedAgents)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
 
         if (channel is null) return null;
         return ToResponse(channel, channel.Agent, channel.AgentContext);

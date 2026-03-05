@@ -13,6 +13,13 @@ public static class RoleHandlers
     public static async Task<IResult> List(RoleService svc)
         => Results.Ok(await svc.ListAsync());
 
+    [MapGet("/{id:guid}")]
+    public static async Task<IResult> GetById(Guid id, RoleService svc)
+    {
+        var result = await svc.GetByIdAsync(id);
+        return result is not null ? Results.Ok(result) : Results.NotFound();
+    }
+
     [MapGet("/{id:guid}/permissions")]
     public static async Task<IResult> GetPermissions(Guid id, RoleService svc)
     {

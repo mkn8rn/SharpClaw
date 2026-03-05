@@ -23,7 +23,8 @@ public sealed partial class ChatService(
     EncryptionOptions encryptionOptions,
     ProviderApiClientFactory clientFactory,
     IHttpClientFactory httpClientFactory,
-    AgentJobService jobService)
+    AgentJobService jobService,
+    LocalModelService localModelService)
 {
     private const int MaxHistoryMessages = 50;
     private const int MaxHistoryCharacters = 100_000;
@@ -53,8 +54,16 @@ public sealed partial class ChatService(
         var model = agent.Model;
         var provider = model.Provider;
 
-        if (string.IsNullOrEmpty(provider.EncryptedApiKey))
+        var isLocal = provider.ProviderType == ProviderType.Local;
+        if (!isLocal && string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
+
+        // Auto-load local model if not already loaded
+        if (isLocal)
+            await localModelService.EnsureReadyForChatAsync(model.Id, ct);
+
+        try
+        {
 
         // Build history: only when a thread is specified; otherwise a single one-shot.
         List<ChatCompletionMessage> history;
@@ -69,8 +78,10 @@ public sealed partial class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey, encryptionOptions.Key);
+        var apiKey = isLocal ? "local" : ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey!, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
+        if (client is LocalInferenceApiClient lic)
+            lic.CurrentModelId = model.Id;
         var useNativeTools = client.SupportsNativeToolCalling;
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, useNativeTools);
 
@@ -120,6 +131,13 @@ public sealed partial class ChatService(
             new ChatMessageResponse(userMessage.Role, userMessage.Content, userMessage.CreatedAt),
             new ChatMessageResponse(assistantMessage.Role, assistantMessage.Content, assistantMessage.CreatedAt),
             loopResult.JobResults.Count > 0 ? loopResult.JobResults : null);
+
+        } // try
+        finally
+        {
+            if (isLocal)
+                localModelService.ReleaseAfterChat(model.Id);
+        }
     }
 
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
@@ -520,8 +538,16 @@ public sealed partial class ChatService(
         var model = agent.Model;
         var provider = model.Provider;
 
-        if (string.IsNullOrEmpty(provider.EncryptedApiKey))
+        var isLocal = provider.ProviderType == ProviderType.Local;
+        if (!isLocal && string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
+
+        // Auto-load local model if not already loaded
+        if (isLocal)
+            await localModelService.EnsureReadyForChatAsync(model.Id, ct);
+
+        try
+        {
 
         // Build history: only when a thread is specified; otherwise a single one-shot.
         List<ChatCompletionMessage> history;
@@ -536,8 +562,10 @@ public sealed partial class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey, encryptionOptions.Key);
+        var apiKey = isLocal ? "local" : ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey!, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
+        if (client is LocalInferenceApiClient streamLic)
+            streamLic.CurrentModelId = model.Id;
         var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, nativeToolCalling: true);
 
         // Build chat header for the user message (if enabled)
@@ -672,6 +700,13 @@ public sealed partial class ChatService(
             new ChatMessageResponse(userMessage.Role, userMessage.Content, userMessage.CreatedAt),
             new ChatMessageResponse(assistantMessage.Role, assistantMessage.Content, assistantMessage.CreatedAt),
             jobResults.Count > 0 ? jobResults : null));
+
+        } // try
+        finally
+        {
+            if (isLocal)
+                localModelService.ReleaseAfterChat(model.Id);
+        }
     }
 
     /// <summary>

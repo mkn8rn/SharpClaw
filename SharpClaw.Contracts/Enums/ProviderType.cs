@@ -14,5 +14,6 @@ public enum ProviderType
     Cerebras,
     Mistral,
     GitHubCopilot,
-    Custom
+    Custom,
+    Local
 }

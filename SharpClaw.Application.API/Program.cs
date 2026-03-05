@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using LLama.Native;
 using Mk8.Shell.Models;
 using Serilog;
 using SharpClaw.Application.API.Api;
@@ -10,6 +11,7 @@ using SharpClaw.Application.API.Cli;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Core.Clients;
+using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Persistence;
@@ -115,6 +117,37 @@ try
     builder.Services.AddScoped<DefaultResourceSetService>();
     builder.Services.AddScoped<EditorSessionService>();
     builder.Services.AddSingleton<EditorBridgeService>();
+
+    // Local inference (in-process via LLamaSharp)
+    // Configure native library: prefer CUDA > Vulkan > CPU; suppress verbose logs.
+    NativeLibraryConfig.All
+        .WithCuda(true)
+        .WithVulkan(true)
+        .WithAutoFallback(true)
+        .WithLogCallback((level, message) =>
+        {
+            // Only surface warnings/errors through debug output; suppress the
+            // hundreds of info lines (tensor loads, layer assignments, etc.)
+            // that llama.cpp dumps to stderr during model loading.
+            if (level >= LLamaLogLevel.Warning)
+                System.Diagnostics.Debug.WriteLine($"[llama.cpp] {message?.TrimEnd()}", "SharpClaw.CLI");
+        });
+
+    var processManager = new LocalInferenceProcessManager();
+    if (int.TryParse(builder.Configuration["Local:GpuLayerCount"], out var gpuLayers))
+        processManager.DefaultGpuLayerCount = gpuLayers;
+    if (uint.TryParse(builder.Configuration["Local:ContextSize"], out var ctxSize))
+        processManager.DefaultContextSize = ctxSize;
+    if (int.TryParse(builder.Configuration["Local:IdleCooldownMinutes"], out var cooldownMin))
+        processManager.IdleCooldown = TimeSpan.FromMinutes(cooldownMin);
+    if (bool.TryParse(builder.Configuration["Local:KeepLoaded"], out var keepLoaded))
+        processManager.KeepLoaded = keepLoaded;
+    builder.Services.AddSingleton(processManager);
+    builder.Services.AddSingleton(sp => new LocalInferenceApiClient(sp.GetRequiredService<LocalInferenceProcessManager>()));
+    builder.Services.AddSingleton<IProviderApiClient>(sp => sp.GetRequiredService<LocalInferenceApiClient>());
+    builder.Services.AddSingleton<HuggingFaceUrlResolver>();
+    builder.Services.AddSingleton<ModelDownloadManager>();
+    builder.Services.AddScoped<LocalModelService>();
 
     // Background tasks
     builder.Services.AddHostedService<ScheduledTaskService>();

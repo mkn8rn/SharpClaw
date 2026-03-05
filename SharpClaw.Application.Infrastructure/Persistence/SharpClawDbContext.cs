@@ -63,6 +63,7 @@ public class SharpClawDbContext(
     public DbSet<AgentJobDB> AgentJobs => Set<AgentJobDB>();
     public DbSet<AgentJobLogEntryDB> AgentJobLogEntries => Set<AgentJobLogEntryDB>();
     public DbSet<DefaultResourceSetDB> DefaultResourceSets => Set<DefaultResourceSetDB>();
+    public DbSet<LocalModelFileDB> LocalModelFiles => Set<LocalModelFileDB>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -115,6 +116,16 @@ public class SharpClawDbContext(
                 .WithOne(a => a.Model)
                 .HasForeignKey(a => a.ModelId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LocalModelFileDB>(e =>
+        {
+            e.HasIndex(f => f.ModelId).IsUnique();
+            e.Property(f => f.Status).HasConversion<string>();
+            e.HasOne(f => f.Model)
+                .WithMany()
+                .HasForeignKey(f => f.ModelId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ── Agents & Chat ─────────────────────────────────────────
@@ -656,8 +667,10 @@ public class SharpClawDbContext(
 
             if (entry.State == EntityState.Added)
             {
-                entry.Entity.CreatedAt = now;
-                entry.Entity.UpdatedAt = now;
+                if (entry.Entity.CreatedAt == default)
+                    entry.Entity.CreatedAt = now;
+                if (entry.Entity.UpdatedAt == default)
+                    entry.Entity.UpdatedAt = now;
 
                 if (entry.Entity.Id == Guid.Empty)
                     entry.Entity.Id = Guid.NewGuid();

@@ -19,6 +19,7 @@ using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.DTOs.DefaultResources;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
+using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
@@ -354,7 +355,16 @@ public static class CliDispatcher
                 "model get <id>",
                 "model list",
                 "model update <id> <name> [--cap <capabilities>]",
-                "model delete <id>");
+                "model delete <id>",
+                "",
+                "Local models:",
+                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>]",
+                "model download list <url>",
+                "model load <id> [--gpu-layers <n>] [--ctx <size>]  Pin model (keep loaded)",
+                "model unload <id>                                  Unpin model",
+                "model local list",
+                "  Models auto-load on chat and auto-unload when idle.",
+                "  Use load/unload to keep frequently-used models resident.");
             return Results.Ok();
         }
 
@@ -394,8 +404,110 @@ public static class CliDispatcher
                 => await ModelHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
             "delete" => UsageResult("model delete <id>"),
 
+            // ── Local model commands ──────────────────────────────
+            "download" => await HandleModelDownload(args, sp),
+            "load" when args.Length >= 3 => await HandleModelLoad(args, sp),
+            "load" => UsageResult("model load <id> [--gpu-layers <n>] [--ctx <size>]",
+                "  Pins the model so it stays loaded between requests."),
+            "unload" when args.Length >= 3 => await HandleModelUnload(args, sp),
+            "unload" => UsageResult("model unload <id>",
+                "  Unpins the model. Stops immediately if no active requests."),
+            "local" when args.Length >= 3 && args[2].ToLowerInvariant() == "list"
+                => await HandleLocalModelList(sp),
+            "local" => UsageResult("model local list"),
+
             _ => UsageResult($"Unknown sub-command: model {sub}. Try 'help' for usage.")
         };
+    }
+
+    // ── Local model CLI handlers ─────────────────────────────────
+
+    private static async Task<IResult> HandleModelDownload(string[] args, IServiceProvider sp)
+    {
+        // model download list <url>
+        if (args.Length >= 4 && args[2].ToLowerInvariant() == "list")
+        {
+            var localSvc = sp.GetRequiredService<LocalModelService>();
+            var files = await localSvc.ListAvailableFilesAsync(args[3]);
+            return Results.Ok(files);
+        }
+
+        // model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>]
+        if (args.Length < 3)
+            return UsageResult(
+                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>]",
+                "model download list <url>");
+
+        var url = args[2];
+        string? name = null;
+        string? quant = null;
+        int? gpuLayers = null;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--name" when i + 1 < args.Length:
+                    name = args[++i]; break;
+                case "--quant" when i + 1 < args.Length:
+                    quant = args[++i]; break;
+                case "--gpu-layers" when i + 1 < args.Length && int.TryParse(args[i + 1], out var gl):
+                    gpuLayers = gl; i++; break;
+            }
+        }
+
+        var svc = sp.GetRequiredService<LocalModelService>();
+        var progress = new Progress<double>(p =>
+        {
+            var pct = (int)(p * 100);
+            Console.Write($"\rDownloading... {pct}%");
+        });
+
+        var result = await svc.DownloadAndRegisterAsync(
+            new DownloadModelRequest(url, name, quant, gpuLayers),
+            progress);
+
+        Console.WriteLine();
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> HandleModelLoad(string[] args, IServiceProvider sp)
+    {
+        var modelId = CliIdMap.Resolve(args[2]);
+        int? gpuLayers = null;
+        uint? contextSize = null;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--gpu-layers" when i + 1 < args.Length && int.TryParse(args[i + 1], out var gl):
+                    gpuLayers = gl; i++; break;
+                case "--ctx" when i + 1 < args.Length && uint.TryParse(args[i + 1], out var cs):
+                    contextSize = cs; i++; break;
+            }
+        }
+
+        var svc = sp.GetRequiredService<LocalModelService>();
+        Console.Write("Pinning model (loading into memory)...");
+        await svc.LoadModelAsync(
+            modelId, new LoadModelRequest(gpuLayers, contextSize));
+        Console.WriteLine(" ready. Model will stay loaded until 'model unload'.");
+        return Results.Ok(new { modelId, pinned = true });
+    }
+
+    private static async Task<IResult> HandleModelUnload(string[] args, IServiceProvider sp)
+    {
+        var modelId = CliIdMap.Resolve(args[2]);
+        var svc = sp.GetRequiredService<LocalModelService>();
+        await svc.UnloadModelAsync(modelId);
+        return Results.Ok(new { modelId, status = "unpinned" });
+    }
+
+    private static async Task<IResult> HandleLocalModelList(IServiceProvider sp)
+    {
+        var svc = sp.GetRequiredService<LocalModelService>();
+        return Results.Ok(await svc.ListLocalModelsAsync());
     }
 
     private static ModelCapability ParseCapabilities(string[] args, int startIndex)
@@ -437,10 +549,7 @@ public static class CliDispatcher
         return sub switch
         {
             "add" when args.Length >= 4
-                => await AgentHandlers.Create(
-                    new CreateAgentRequest(args[2], CliIdMap.Resolve(args[3]),
-                        args.Length >= 5 ? string.Join(' ', args[4..]) : null),
-                    svc),
+                => await HandleAgentAdd(args, sp, svc),
             "add" => UsageResult("agent add <name> <modelId> [system prompt]"),
 
             "get" when args.Length >= 3
@@ -486,6 +595,30 @@ public static class CliDispatcher
             Console.Error.WriteLine(ex.Message);
             return Results.Unauthorized();
         }
+    }
+
+    /// <summary>
+    /// Handles <c>agent add</c>. If the supplied model ID is actually a
+    /// local model file ID, auto-resolves it to the parent model ID so
+    /// users can pass either.
+    /// </summary>
+    private static async Task<IResult> HandleAgentAdd(
+        string[] args, IServiceProvider sp, AgentService svc)
+    {
+        var modelId = CliIdMap.Resolve(args[3]);
+
+        // Check if the ID is a local model file rather than a model
+        var db = sp.GetRequiredService<SharpClawDbContext>();
+        var localFile = await db.LocalModelFiles.FirstOrDefaultAsync(f => f.Id == modelId);
+        if (localFile is not null)
+        {
+            Console.WriteLine($"(Resolved local file #{CliIdMap.GetOrAssign(localFile.Id)} → model #{CliIdMap.GetOrAssign(localFile.ModelId)})");
+            modelId = localFile.ModelId;
+        }
+
+        var prompt = args.Length >= 5 ? string.Join(' ', args[4..]) : null;
+        return await AgentHandlers.Create(
+            new CreateAgentRequest(args[2], modelId, prompt), svc);
     }
 
     private static async Task<IResult?> HandleContextCommand(string[] args, IServiceProvider sp)
@@ -1246,6 +1379,7 @@ public static class CliDispatcher
         {
             PrintUsage(
                 "role list                                 List all roles",
+                "role get <roleId>                         Show a role",
                 "role permissions <roleId>                 Show role permissions",
                 "role permissions <roleId> set [flags...]  Set role permissions",
                 "",
@@ -1280,6 +1414,10 @@ public static class CliDispatcher
         return sub switch
         {
             "list" => await HandleRoleList(svc),
+
+            "get" when args.Length >= 3
+                => await RoleHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+            "get" => UsageResult("role get <roleId>"),
 
             "permissions" or "perms" when args.Length >= 3
                 => await HandleRolePermissions(args, svc),
@@ -2116,6 +2254,14 @@ public static class CliDispatcher
               Prefer 'provider sync-models <id>' to auto-import models.
               model add <name> <providerId> [--cap Chat,Transcription,...]
                 <name> must be the exact provider model ID (e.g. gpt-4o).
+              Local models:
+              model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>]
+              model download list <url>          List available GGUF files at a URL
+              model load <id> [--gpu-layers <n>] [--ctx <size>]    Pin (keep loaded)
+              model unload <id>                                    Unpin
+              model local list                   List downloaded local models
+              Models auto-load on chat and auto-unload when idle.
+              Use load/unload to keep frequently-used models resident.
 
             Agent:     agent <sub> [args]       (add, get, list, update, delete)
               agent add <name> <modelId> [system prompt]
