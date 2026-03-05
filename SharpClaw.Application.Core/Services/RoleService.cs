@@ -26,6 +26,15 @@ public sealed class RoleService(SharpClawDbContext db)
             .ToListAsync(ct);
     }
 
+    public async Task<RoleResponse?> GetByIdAsync(
+        Guid roleId, CancellationToken ct = default)
+    {
+        return await db.Roles
+            .Where(r => r.Id == roleId)
+            .Select(r => new RoleResponse(r.Id, r.Name, r.PermissionSetId))
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task<RolePermissionsResponse?> GetPermissionsAsync(
         Guid roleId, CancellationToken ct = default)
     {

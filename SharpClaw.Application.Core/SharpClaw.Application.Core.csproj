@@ -11,6 +11,10 @@
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="NAudio" />
+    <PackageReference Include="LLamaSharp" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" />
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" />
+    <PackageReference Include="LLamaSharp.Backend.Vulkan" />
     <PackageReference Include="System.Drawing.Common" />
   </ItemGroup>
 
