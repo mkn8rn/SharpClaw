@@ -213,7 +213,7 @@ public sealed class ProviderService(
         var name = modelName.ToLowerInvariant();
 
         // ── Pure transcription models ─────────────────────────────
-        if (name.StartsWith("whisper"))
+        if (name.StartsWith("whisper") || name.StartsWith("ggml-"))
             return ModelCapability.Transcription;
 
         // ── Pure embedding models ─────────────────────────────────

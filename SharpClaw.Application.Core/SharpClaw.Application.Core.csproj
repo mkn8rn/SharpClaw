@@ -16,6 +16,8 @@
     <PackageReference Include="LLamaSharp.Backend.Cuda12" />
     <PackageReference Include="LLamaSharp.Backend.Vulkan" />
     <PackageReference Include="System.Drawing.Common" />
+    <PackageReference Include="Whisper.net" />
+    <PackageReference Include="Whisper.net.Runtime" />
   </ItemGroup>
 
   <ItemGroup>

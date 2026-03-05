@@ -95,6 +95,8 @@ try
     // Transcription clients
     builder.Services.AddSingleton<ITranscriptionApiClient, OpenAiTranscriptionApiClient>();
     builder.Services.AddSingleton<ITranscriptionApiClient, GroqTranscriptionApiClient>();
+    builder.Services.AddSingleton<WhisperModelManager>();
+    builder.Services.AddSingleton<ITranscriptionApiClient, LocalTranscriptionClient>();
     builder.Services.AddSingleton<TranscriptionApiClientFactory>();
 
     // Audio capture

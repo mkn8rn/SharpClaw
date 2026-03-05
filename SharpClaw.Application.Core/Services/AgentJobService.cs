@@ -468,6 +468,13 @@ IConfiguration configuration)
                     $"agent or specify one explicitly with '--model <id>'.");
         }
 
+        // Verify the provider has a transcription client implementation.
+        if (!orchestrator.SupportsProvider(model.Provider.ProviderType))
+            throw new InvalidOperationException(
+                $"Provider '{model.Provider.Name}' ({model.Provider.ProviderType}) does not " +
+                $"support transcription. Use a provider with a transcription implementation " +
+                $"(e.g. OpenAI Whisper, Groq, or a local Whisper GGML model).");
+
         job.TranscriptionModelId = model.Id;
 
         var device = await db.AudioDevices.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)

@@ -8,11 +8,23 @@ public sealed class ModelDownloadManager(IHttpClientFactory httpClientFactory)
 {
     private static readonly string ModelsDirectory =
         Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SharpClaw", "models");
+            Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+            "LocalModels");
 
     public string GetModelPath(string filename) =>
         Path.Combine(ModelsDirectory, filename);
+
+    public string GetModelPath(string subfolder, string filename) =>
+        Path.Combine(ModelsDirectory, subfolder, filename);
+
+    /// <summary>
+    /// Determines the source subfolder from a download URL.
+    /// HuggingFace URLs → "HuggingFace", otherwise "Direct".
+    /// </summary>
+    public static string ResolveSourceFolder(string url) =>
+        url.Contains("huggingface.co", StringComparison.OrdinalIgnoreCase)
+            ? "HuggingFace"
+            : "Direct";
 
     public async Task DownloadAsync(
         string url,

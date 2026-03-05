@@ -31,6 +31,14 @@ public sealed class LiveTranscriptionOrchestrator(
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _activeSessions = new();
 
     /// <summary>
+    /// Returns <see langword="true"/> when the given provider type has a
+    /// registered <see cref="Core.Clients.ITranscriptionApiClient"/>.
+    /// Call before <see cref="Start"/> to fail early with a clear error.
+    /// </summary>
+    public bool SupportsProvider(ProviderType providerType) =>
+        transcriptionClientFactory.Supports(providerType);
+
+    /// <summary>
     /// Starts live audio capture and transcription for a job.
     /// The caller must have already created the <see cref="TranscriptionJobDB"/>
     /// record in the database.
@@ -83,7 +91,7 @@ public sealed class LiveTranscriptionOrchestrator(
             jobId, deviceIdentifier ?? "default");
 
         // Resolve model + provider once
-        string apiKey;
+        string apiKey = "";
         string modelName;
         ProviderType providerType;
 
@@ -95,12 +103,36 @@ public sealed class LiveTranscriptionOrchestrator(
                 .FirstOrDefaultAsync(m => m.Id == modelId, ct)
                 ?? throw new InvalidOperationException($"Model {modelId} not found.");
 
-            if (string.IsNullOrEmpty(model.Provider.EncryptedApiKey))
-                throw new InvalidOperationException("Provider does not have an API key configured.");
-
-            apiKey = ApiKeyEncryptor.Decrypt(model.Provider.EncryptedApiKey, encryptionOptions.Key);
-            modelName = model.Name;
             providerType = model.Provider.ProviderType;
+
+            if (!transcriptionClientFactory.Supports(providerType))
+                throw new InvalidOperationException(
+                    $"Provider '{model.Provider.Name}' ({providerType}) does not support transcription.");
+
+            if (providerType == ProviderType.Local)
+            {
+                // Local Whisper model: resolve file path, no API key needed.
+                var localFile = await db.LocalModelFiles
+                    .FirstOrDefaultAsync(f => f.ModelId == modelId, ct)
+                    ?? throw new InvalidOperationException(
+                        $"No local model file found for model {modelId}.");
+
+                if (localFile.Status != LocalModelStatus.Ready)
+                    throw new InvalidOperationException(
+                        $"Local model file status is {localFile.Status}.");
+
+                // Pass the file path as the model identifier so the
+                // LocalTranscriptionClient can load the Whisper GGML weights.
+                modelName = localFile.FilePath;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(model.Provider.EncryptedApiKey))
+                    throw new InvalidOperationException("Provider does not have an API key configured.");
+
+                apiKey = ApiKeyEncryptor.Decrypt(model.Provider.EncryptedApiKey, encryptionOptions.Key);
+                modelName = model.Name;
+            }
         }
 
         var sttClient = transcriptionClientFactory.GetClient(providerType);

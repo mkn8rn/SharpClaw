@@ -34,7 +34,8 @@ public sealed class LocalModelService(
               ?? files[0]
             : files[0];
 
-        var destPath = downloadManager.GetModelPath(target.Filename);
+        var sourceFolder = ModelDownloadManager.ResolveSourceFolder(request.Url);
+        var destPath = downloadManager.GetModelPath(sourceFolder, target.Filename);
 
         await downloadManager.DownloadAsync(target.DownloadUrl, destPath, progress, ct);
 
