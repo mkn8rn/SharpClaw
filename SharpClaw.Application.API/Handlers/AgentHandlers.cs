@@ -34,6 +34,10 @@ public static class AgentHandlers
     public static async Task<IResult> Delete(Guid id, AgentService svc)
         => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
 
+    [MapPost("/sync-with-models")]
+    public static async Task<IResult> SyncWithModels(AgentService svc)
+        => Results.Ok(await svc.SyncWithModelsAsync());
+
     [MapPut("/{id:guid}/role")]
     public static async Task<IResult> AssignRole(
         Guid id, AssignAgentRoleRequest request, AgentService svc)

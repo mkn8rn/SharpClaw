@@ -175,6 +175,13 @@ public sealed partial class MainPage : Page
 
     private void AddChannelButton(ChannelDto ch, StackPanel? parent = null)
     {
+        var isSelected = ch.Id == _selectedChannelId;
+
+        var row = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // ── Main channel button ──
         var btn = new Button
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -185,7 +192,14 @@ public sealed partial class MainPage : Page
             Tag = ch.Id,
         };
 
-        var isSelected = ch.Id == _selectedChannelId;
+        var nameBlock = new TextBlock
+        {
+            Text = Truncate(ch.Title, 24),
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(ColorFrom(isSelected ? 0xE0E0E0 : 0x999999)),
+        };
+
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         panel.Children.Add(new TextBlock
         {
@@ -194,20 +208,178 @@ public sealed partial class MainPage : Page
             FontSize = 12,
             Foreground = new SolidColorBrush(ColorFrom(isSelected ? 0x00FF00 : 0x555555)),
         });
-        panel.Children.Add(new TextBlock
-        {
-            Text = Truncate(ch.Title, 28),
-            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            FontSize = 12,
-            Foreground = new SolidColorBrush(ColorFrom(isSelected ? 0xE0E0E0 : 0x999999)),
-        });
+        panel.Children.Add(nameBlock);
         btn.Content = panel;
 
         btn.PointerEntered += (_, _) => Cursor.SetCommand($"sharpclaw channel select {ch.Id} ");
         btn.PointerExited += (_, _) => UpdateCursor();
         btn.Click += async (_, _) => await SelectChannelAsync(ch.Id, ch.Title, ch.AgentName);
 
-        (parent ?? SidebarPanel).Children.Add(btn);
+        Grid.SetColumn(btn, 0);
+        row.Children.Add(btn);
+
+        // ── Action buttons (edit + delete) ──
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0,
+            Margin = new Thickness(0, 0, 4, 0),
+        };
+
+        var editBtn = new Button
+        {
+            Content = new TextBlock
+            {
+                Text = "✎",
+                FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+                FontSize = 11,
+                Foreground = new SolidColorBrush(ColorFrom(0x00FF00)),
+            },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4, 2, 4, 2),
+            MinWidth = 0,
+            MinHeight = 0,
+        };
+
+        var deleteBtn = new Button
+        {
+            Content = new TextBlock
+            {
+                Text = "✕",
+                FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+                FontSize = 11,
+                Foreground = new SolidColorBrush(ColorFrom(0xFF4444)),
+            },
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4, 2, 4, 2),
+            MinWidth = 0,
+            MinHeight = 0,
+        };
+
+        editBtn.Click += (_, _) => BeginChannelRename(ch, row, btn, actions);
+        deleteBtn.Click += async (_, _) => await DeleteChannelAsync(ch.Id);
+
+        actions.Children.Add(editBtn);
+        actions.Children.Add(deleteBtn);
+
+        Grid.SetColumn(actions, 1);
+        row.Children.Add(actions);
+
+        // Show/hide actions on hover
+        row.PointerEntered += (_, _) => actions.Opacity = 1;
+        row.PointerExited += (_, _) => actions.Opacity = 0;
+
+        (parent ?? SidebarPanel).Children.Add(row);
+    }
+
+    private void BeginChannelRename(ChannelDto ch, Grid row, Button btn, StackPanel actions)
+    {
+        btn.Visibility = Visibility.Collapsed;
+        actions.Opacity = 0;
+
+        var renameBox = new TextBox
+        {
+            Text = ch.Title,
+            FontFamily = new FontFamily("Consolas, Courier New, monospace"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(ColorFrom(0x00FF00)),
+            Background = new SolidColorBrush(ColorFrom(0x1A1A1A)),
+            BorderBrush = new SolidColorBrush(ColorFrom(0x333333)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(6, 4, 6, 4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            MinHeight = 0,
+        };
+
+        Grid.SetColumn(renameBox, 0);
+        Grid.SetColumnSpan(renameBox, 2);
+        row.Children.Add(renameBox);
+
+        renameBox.SelectAll();
+        renameBox.Focus(FocusState.Programmatic);
+
+        var committed = false;
+
+        async Task CommitRename()
+        {
+            if (committed) return;
+            committed = true;
+
+            var newTitle = renameBox.Text.Trim();
+            row.Children.Remove(renameBox);
+            btn.Visibility = Visibility.Visible;
+
+            if (string.IsNullOrEmpty(newTitle) || newTitle == ch.Title) return;
+
+            var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+            try
+            {
+                var body = JsonSerializer.Serialize(new { title = newTitle }, Json);
+                var content = new StringContent(body, Encoding.UTF8, "application/json");
+                var resp = await api.PutAsync($"/channels/{ch.Id}", content);
+                if (resp.IsSuccessStatusCode)
+                {
+                    // Update the visible label
+                    if (btn.Content is StackPanel sp && sp.Children.Count > 1
+                        && sp.Children[1] is TextBlock tb)
+                        tb.Text = Truncate(newTitle, 24);
+
+                    // Update header if this channel is selected
+                    if (_selectedChannelId == ch.Id)
+                        ChatTitleBlock.Text = $"# {newTitle}";
+                }
+            }
+            catch { /* swallow */ }
+        }
+
+        renameBox.KeyDown += async (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                e.Handled = true;
+                await CommitRename();
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape)
+            {
+                e.Handled = true;
+                committed = true;
+                row.Children.Remove(renameBox);
+                btn.Visibility = Visibility.Visible;
+            }
+        };
+
+        renameBox.LostFocus += async (_, _) => await CommitRename();
+    }
+
+    private async Task DeleteChannelAsync(Guid channelId)
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            var resp = await api.DeleteAsync($"/channels/{channelId}");
+            if (resp.IsSuccessStatusCode)
+            {
+                if (_selectedChannelId == channelId)
+                {
+                    _selectedChannelId = null;
+                    _selectedThreadId = null;
+                    _pendingNewThread = false;
+                    ChatTitleBlock.Text = "> Select or create a channel";
+                    ChatAgentBlock.Text = string.Empty;
+                    ThreadSelectorPanel.Visibility = Visibility.Collapsed;
+                    OneOffWarning.Visibility = Visibility.Collapsed;
+                    MessagesPanel.Children.Clear();
+                }
+
+                await LoadSidebarAsync();
+                UpdateCursor();
+            }
+        }
+        catch { /* swallow */ }
     }
 
     private async Task SelectChannelAsync(Guid id, string title, string? agentName)
@@ -337,13 +509,14 @@ public sealed partial class MainPage : Page
 
         ThreadSelector.Items.Add(new ComboBoxItem { Content = "One-off messages", Tag = null });
 
+        List<ThreadDto>? threads = null;
         var api = App.Services!.GetRequiredService<SharpClawApiClient>();
         try
         {
             var resp = await api.GetAsync($"/channels/{channelId}/threads");
             if (resp.IsSuccessStatusCode)
             {
-                var threads = JsonSerializer.Deserialize<List<ThreadDto>>(
+                threads = JsonSerializer.Deserialize<List<ThreadDto>>(
                     await resp.Content.ReadAsStringAsync(), Json);
                 if (threads is not null)
                 {
@@ -358,6 +531,13 @@ public sealed partial class MainPage : Page
             }
         }
         catch { /* API not reachable */ }
+
+        // If no thread is pre-selected, pick the most recently updated one
+        if (_selectedThreadId is null && threads is { Count: > 0 })
+        {
+            var mostRecent = threads.OrderByDescending(t => t.UpdatedAt).First();
+            _selectedThreadId = mostRecent.Id;
+        }
 
         var selectedIndex = 0;
         if (_selectedThreadId is { } tid)
@@ -868,11 +1048,14 @@ public sealed partial class MainPage : Page
 
     private void UpdateCursor(string? overrideMessage = null)
     {
-        var channelPart = _selectedChannelId is { } id ? id.ToString() : "new-channel";
         var msg = overrideMessage ?? MessageInput.Text ?? string.Empty;
-        var cmd = $"sharpclaw chat {channelPart}";
+        string cmd;
         if (_selectedThreadId is { } tid)
-            cmd += $" --thread {tid}";
+            cmd = $"sharpclaw chat {tid}";
+        else if (_selectedChannelId is { } cid)
+            cmd = $"sharpclaw chat {cid}";
+        else
+            cmd = "sharpclaw chat new-channel";
         if (msg.Length > 0)
             cmd += " " + Truncate(msg.Trim(), 40);
         Cursor.SetCommand(cmd + " ");

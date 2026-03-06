@@ -539,6 +539,7 @@ public static class CliDispatcher
                 "agent update <id> <name> [modelId] [system prompt]",
                 "agent role <id> <roleId>                  Assign a role (use 'role list')",
                 "agent role <id> none                      Remove role",
+                "agent sync-with-models                    Create default-<model> agents",
                 "agent delete <id>");
             return Results.Ok();
         }
@@ -573,6 +574,8 @@ public static class CliDispatcher
             "role" when args.Length >= 4
                 => await HandleAgentRoleAssign(CliIdMap.Resolve(args[2]), CliIdMap.Resolve(args[3]), svc),
             "role" => UsageResult("agent role <agentId> <roleId>  (use 'role list' to find IDs)"),
+
+            "sync-with-models" => await HandleAgentSyncWithModels(svc),
 
             "delete" when args.Length >= 3
                 => await AgentHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
@@ -619,6 +622,23 @@ public static class CliDispatcher
         var prompt = args.Length >= 5 ? string.Join(' ', args[4..]) : null;
         return await AgentHandlers.Create(
             new CreateAgentRequest(args[2], modelId, prompt), svc);
+    }
+
+    private static async Task<IResult> HandleAgentSyncWithModels(AgentService svc)
+    {
+        var created = await svc.SyncWithModelsAsync();
+        if (created.Count == 0)
+        {
+            Console.WriteLine("All chat-capable models already have a default agent.");
+        }
+        else
+        {
+            Console.WriteLine($"Created {created.Count} agent(s):");
+            foreach (var a in created)
+                Console.WriteLine($"  #{CliIdMap.GetOrAssign(a.Id)} {a.Name}  ({a.ProviderName}/{a.ModelName})");
+        }
+
+        return Results.Ok(created);
     }
 
     private static async Task<IResult?> HandleContextCommand(string[] args, IServiceProvider sp)
@@ -885,14 +905,16 @@ public static class CliDispatcher
         {
             PrintUsage(
                 "chat [--agent <id>] [--thread <id>] <message>",
+                "  chat <threadId> <message>               Send to a thread (infers channel)",
                 "  chat toggle                             Toggle chat mode on/off",
                 "  --agent overrides the channel's default agent.",
                 "  --thread sends the message in a thread (with history).",
-                "  Without --thread, no history is sent to the model.");
+                "  A thread ID can be used anywhere a channel ID is expected.");
             return Results.Ok();
         }
 
         var channelSvc = sp.GetRequiredService<ChannelService>();
+        var threadSvc = sp.GetRequiredService<ThreadService>();
 
         // Auto-select latest channel if none is selected
         if (_currentChannelId is null)
@@ -921,6 +943,48 @@ public static class CliDispatcher
                 threadId = CliIdMap.Resolve(args[++i]);
             else
                 messageParts.Add(args[i]);
+        }
+
+        // If the first positional arg looks like an ID (short or GUID) and no
+        // --thread was supplied, check whether it is a thread ID. If so, infer
+        // the channel from it and remove it from the message parts.
+        if (threadId == _currentThreadId && messageParts.Count >= 2)
+        {
+            var maybeId = messageParts[0];
+            var normalized = maybeId.StartsWith('#') ? maybeId[1..] : maybeId;
+            if (int.TryParse(normalized, out _) || Guid.TryParse(maybeId, out _))
+            {
+                try
+                {
+                    var resolved = CliIdMap.Resolve(maybeId);
+                    var asThread = await threadSvc.GetByIdAsync(resolved);
+                    if (asThread is not null)
+                    {
+                        threadId = asThread.Id;
+                        _currentChannelId = asThread.ChannelId;
+                        messageParts.RemoveAt(0);
+                    }
+                    else
+                    {
+                        // Could be a channel ID — try to select it
+                        var asChannel = await channelSvc.GetByIdAsync(resolved);
+                        if (asChannel is not null)
+                        {
+                            _currentChannelId = asChannel.Id;
+                            messageParts.RemoveAt(0);
+                        }
+                    }
+                }
+                catch { /* not a valid ID — leave it as message text */ }
+            }
+        }
+
+        // If --thread was given with a thread ID, resolve the channel from it
+        if (threadId is not null && threadId != _currentThreadId)
+        {
+            var threadInfo = await threadSvc.GetByIdAsync(threadId.Value);
+            if (threadInfo is not null)
+                _currentChannelId = threadInfo.ChannelId;
         }
 
         if (messageParts.Count == 0)
