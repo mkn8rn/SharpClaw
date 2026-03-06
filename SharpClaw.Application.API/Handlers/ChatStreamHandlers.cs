@@ -82,6 +82,18 @@ public static class ChatStreamHandlers
         {
             // Client disconnected — clean up any pending approvals
         }
+        catch (Exception ex)
+        {
+            try
+            {
+                var errorEvt = ChatStreamEvent.Err(ex.Message);
+                var json = JsonSerializer.Serialize(errorEvt, JsonOptions);
+                await context.Response.WriteAsync($"event: Error\ndata: {json}\n\n",
+                    context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+            }
+            catch { /* client may have disconnected */ }
+        }
     }
 
     /// <summary>

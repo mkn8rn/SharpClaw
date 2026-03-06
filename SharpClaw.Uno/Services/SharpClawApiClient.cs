@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SharpClaw.Services;
 
 /// <summary>
@@ -12,7 +14,7 @@ public sealed class SharpClawApiClient : IDisposable
 
     public SharpClawApiClient(string baseUrl)
     {
-        _http = new HttpClient
+        _http = new HttpClient(new DebugLoggingHandler(new HttpClientHandler()))
         {
             BaseAddress = new Uri(baseUrl),
             Timeout = TimeSpan.FromMinutes(10)
@@ -153,4 +155,78 @@ public sealed class SharpClawApiClient : IDisposable
     public void InvalidateApiKey() => _cachedApiKey = null;
 
     public void Dispose() => _http.Dispose();
+
+    /// <summary>
+    /// Logs full HTTP request/response details to <see cref="Debug.WriteLine(string, string)"/>
+    /// under the <c>SharpClaw.Uno</c> category so they appear in the
+    /// Visual Studio <b>Output › Debug</b> pane when attached.
+    /// </summary>
+    private sealed class DebugLoggingHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        private const string Category = "SharpClaw.Uno";
+
+        [Conditional("DEBUG")]
+        private static void Log(string message) => Debug.WriteLine(message, Category);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var id = Guid.NewGuid().ToString("N")[..8];
+
+            Log($"[{id}] >>> {request.Method} {request.RequestUri}");
+
+            if (request.Content is not null)
+            {
+                var contentType = request.Content.Headers.ContentType?.MediaType ?? "";
+                if (IsTextContent(contentType))
+                {
+                    var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                    Log($"[{id}] >>> Body:\n{body}");
+                }
+                else
+                {
+                    Log($"[{id}] >>> Body: <binary {contentType}, {request.Content.Headers.ContentLength} bytes>");
+                }
+            }
+
+            var sw = Stopwatch.StartNew();
+            HttpResponseMessage response;
+            try
+            {
+                response = await base.SendAsync(request, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                Log($"[{id}] !!! FAILED after {sw.ElapsedMilliseconds}ms: {ex.GetType().Name}: {ex.Message}");
+                throw;
+            }
+            sw.Stop();
+
+            Log($"[{id}] <<< {(int)response.StatusCode} {response.ReasonPhrase} ({sw.ElapsedMilliseconds}ms)");
+
+            if (response.Content is not null)
+            {
+                var responseContentType = response.Content.Headers.ContentType?.MediaType ?? "";
+                if (IsTextContent(responseContentType)
+                    && responseContentType is not "text/event-stream")
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    Log($"[{id}] <<< Body:\n{responseBody}");
+                }
+                else
+                {
+                    Log($"[{id}] <<< Body: <{responseContentType}, {response.Content.Headers.ContentLength} bytes>");
+                }
+            }
+
+            return response;
+        }
+
+        private static bool IsTextContent(string mediaType) =>
+            mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Contains("json", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Contains("xml", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Contains("form-urlencoded", StringComparison.OrdinalIgnoreCase);
+    }
 }

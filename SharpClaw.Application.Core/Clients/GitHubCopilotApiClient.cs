@@ -58,6 +58,13 @@ public sealed class GitHubCopilotApiClient : OpenAiCompatibleApiClient, IDeviceC
         request.Headers.Add("Editor-Version", "vscode/1.99.0");
     }
 
+    /// <summary>
+    /// Prefer the Responses API for all models except legacy GPT-3.5/GPT-4
+    /// families that predate it.
+    /// </summary>
+    protected override bool UseResponsesApi(string model)
+        => !RequiresLegacyChatCompletions(model);
+
     public async Task<DeviceCodeSession> StartDeviceCodeFlowAsync(HttpClient httpClient, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, DeviceCodeUrl)

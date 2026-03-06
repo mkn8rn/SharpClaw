@@ -7,7 +7,7 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class AgentService(SharpClawDbContext db)
+public sealed class AgentService(SharpClawDbContext db, SessionService session)
 {
     public async Task<AgentResponse> CreateAsync(CreateAgentRequest request, CancellationToken ct = default)
     {
@@ -90,7 +90,7 @@ public sealed class AgentService(SharpClawDbContext db)
     /// the current role.
     /// </summary>
     public async Task<AgentResponse?> AssignRoleAsync(
-        Guid agentId, Guid roleId, Guid? callerUserId, CancellationToken ct = default)
+        Guid agentId, Guid roleId, CancellationToken ct = default)
     {
         var agent = await db.Agents
             .Include(a => a.Model).ThenInclude(m => m.Provider)
@@ -109,8 +109,8 @@ public sealed class AgentService(SharpClawDbContext db)
                 ?? throw new ArgumentException($"Role {roleId} not found.");
 
             // Caller must hold this role to grant it
-            if (callerUserId is null)
-                throw new UnauthorizedAccessException("A logged-in user is required to assign roles.");
+            var callerUserId = session.UserId
+                ?? throw new UnauthorizedAccessException("A logged-in user is required to assign roles.");
 
             var caller = await db.Users.FirstOrDefaultAsync(u => u.Id == callerUserId, ct);
             if (caller?.RoleId != role.Id)

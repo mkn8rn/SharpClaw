@@ -34,14 +34,22 @@ public sealed partial class MainPage : Page
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (App.Services is null) return;
-        await LoadSidebarAsync();
+        var channels = await LoadSidebarAsync();
         await LoadAgentsAsync(null, null);
+
+        // Auto-select the most recently created channel
+        if (_selectedChannelId is null && channels.Count > 0)
+        {
+            var mostRecent = channels.OrderByDescending(ch => ch.CreatedAt).First();
+            await SelectChannelAsync(mostRecent.Id, mostRecent.Title, mostRecent.AgentName);
+        }
+
         UpdateCursor();
     }
 
     // ── Sidebar ──────────────────────────────────────────────────
 
-    private async Task LoadSidebarAsync()
+    private async Task<List<ChannelDto>> LoadSidebarAsync()
     {
         var api = App.Services!.GetRequiredService<SharpClawApiClient>();
 
@@ -96,6 +104,8 @@ public sealed partial class MainPage : Page
             foreach (var ch in ungrouped)
                 AddChannelButton(ch);
         }
+
+        return channels;
     }
 
     private void AddContextGroup(ContextDto ctx, List<ChannelDto> channels, bool expanded)
@@ -401,12 +411,13 @@ public sealed partial class MainPage : Page
             if (chResp.IsSuccessStatusCode)
             {
                 using var doc = JsonDocument.Parse(await chResp.Content.ReadAsStringAsync());
-                if (doc.RootElement.TryGetProperty("agentId", out var aProp) && aProp.ValueKind != JsonValueKind.Null)
-                    channelAgentId = aProp.GetGuid();
-                if (doc.RootElement.TryGetProperty("allowedAgentIds", out var aaProp) && aaProp.ValueKind == JsonValueKind.Array)
+                if (doc.RootElement.TryGetProperty("agent", out var aProp) && aProp.ValueKind == JsonValueKind.Object
+                    && aProp.TryGetProperty("id", out var agentIdProp) && agentIdProp.ValueKind == JsonValueKind.String)
+                    channelAgentId = agentIdProp.GetGuid();
+                if (doc.RootElement.TryGetProperty("allowedAgents", out var aaProp) && aaProp.ValueKind == JsonValueKind.Array)
                     allowedAgentIds = aaProp.EnumerateArray()
-                        .Where(e => e.ValueKind == JsonValueKind.String)
-                        .Select(e => e.GetGuid()).ToList();
+                        .Where(e => e.ValueKind == JsonValueKind.Object && e.TryGetProperty("id", out _))
+                        .Select(e => e.GetProperty("id").GetGuid()).ToList();
             }
         }
         catch { /* swallow */ }
@@ -754,7 +765,9 @@ public sealed partial class MainPage : Page
                 using var chDoc = JsonDocument.Parse(await chResp.Content.ReadAsStringAsync());
                 var chId = chDoc.RootElement.GetProperty("id").GetGuid();
                 var chTitle = chDoc.RootElement.GetProperty("title").GetString() ?? title;
-                var agentName = chDoc.RootElement.TryGetProperty("agentName", out var anProp)
+                var agentName = chDoc.RootElement.TryGetProperty("agent", out var agentProp)
+                    && agentProp.ValueKind == JsonValueKind.Object
+                    && agentProp.TryGetProperty("name", out var anProp)
                     ? anProp.GetString() : null;
 
                 var thBody = JsonSerializer.Serialize(new { name = "Default" }, Json);

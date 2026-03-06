@@ -590,7 +590,7 @@ public static class CliDispatcher
     {
         try
         {
-            var result = await svc.AssignRoleAsync(agentId, roleId, _currentUserId);
+            var result = await svc.AssignRoleAsync(agentId, roleId);
             return result is not null ? Results.Ok(result) : Results.NotFound();
         }
         catch (UnauthorizedAccessException ex)
