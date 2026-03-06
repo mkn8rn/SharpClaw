@@ -125,7 +125,7 @@ public partial class App : Application
 #if DEBUG
         MainWindow.UseStudio();
 #endif
-        MainWindow.SetWindowIcon();
+        SetWindowIconFromFile(MainWindow);
 
         Host = await builder.NavigateAsync<Shell>
             (initialNavigate: async (services, navigator) =>
@@ -172,5 +172,27 @@ public partial class App : Application
                 ]
             )
         );
+    }
+
+    private static void SetWindowIconFromFile(Window window)
+    {
+        try
+        {
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "Environment", "icon.ico");
+            if (File.Exists(icoPath))
+            {
+                var appWindow = window.AppWindow;
+                appWindow.SetIcon(icoPath);
+            }
+            else
+            {
+                // Fall back to Resizetizer-generated icon
+                window.SetWindowIcon();
+            }
+        }
+        catch
+        {
+            window.SetWindowIcon();
+        }
     }
 }

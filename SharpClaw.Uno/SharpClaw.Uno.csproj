@@ -103,4 +103,8 @@
     <Content Include="Environment\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <UnoIcon Include="Environment\icon.png" ForegroundScale="1.0" Color="Transparent" />
+  </ItemGroup>
+
 </Project>

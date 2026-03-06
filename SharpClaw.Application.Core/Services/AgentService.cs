@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.Agents;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -121,6 +122,45 @@ public sealed class AgentService(SharpClawDbContext db)
 
         await db.SaveChangesAsync(ct);
         return ToResponse(agent, agent.Model);
+    }
+
+    /// <summary>
+    /// Creates a <c>default-{modelName}</c> agent for every chat-capable model
+    /// that does not already have one.  Returns the list of newly created agents.
+    /// </summary>
+    public async Task<IReadOnlyList<AgentResponse>> SyncWithModelsAsync(CancellationToken ct = default)
+    {
+        var models = await db.Models
+            .Include(m => m.Provider)
+            .Where(m => (m.Capabilities & ModelCapability.Chat) != 0)
+            .ToListAsync(ct);
+
+        var existingNames = await db.Agents
+            .Select(a => a.Name)
+            .ToListAsync(ct);
+
+        var nameSet = new HashSet<string>(existingNames, StringComparer.OrdinalIgnoreCase);
+        var created = new List<AgentResponse>();
+
+        foreach (var model in models)
+        {
+            var agentName = $"default-{model.Name}";
+            if (nameSet.Contains(agentName)) continue;
+
+            var agent = new AgentDB
+            {
+                Name = agentName,
+                ModelId = model.Id,
+            };
+
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync(ct);
+
+            nameSet.Add(agentName);
+            created.Add(ToResponse(agent, model));
+        }
+
+        return created;
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
