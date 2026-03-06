@@ -19,13 +19,16 @@ public sealed class BackendProcessManager : IDisposable
 {
     private Process? _process;
     private readonly string _executablePath;
-    private readonly string _apiUrl;
+    private string _apiUrl;
 
     /// <summary>
     /// <c>true</c> when we confirmed the API is reachable but was not
     /// started by this manager (i.e. an external/dev-time instance).
     /// </summary>
     public bool IsExternal { get; private set; }
+
+    /// <summary>Current API base URL.</summary>
+    public string ApiUrl => _apiUrl;
 
     public BackendProcessManager(string apiUrl)
     {
@@ -38,6 +41,13 @@ public sealed class BackendProcessManager : IDisposable
 
         _executablePath = Path.Combine(baseDir, "backend", exeName);
     }
+
+    /// <summary>
+    /// Changes the target API URL. Only meaningful before the next
+    /// <see cref="EnsureStartedAsync"/> call (does not restart a
+    /// running bundled process).
+    /// </summary>
+    public void UpdateApiUrl(string apiUrl) => _apiUrl = apiUrl;
 
     /// <summary>
     /// Returns <c>true</c> if the bundled backend executable exists on disk.

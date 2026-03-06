@@ -14,26 +14,24 @@ public sealed class BootModel
 {
     private readonly BackendProcessManager _backend;
     private readonly SharpClawApiClient _api;
-    private readonly INavigator _navigator;
-    private readonly IServiceProvider _services;
 
     public BootModel(
         BackendProcessManager backend,
-        SharpClawApiClient api,
-        INavigator navigator,
-        IServiceProvider services)
+        SharpClawApiClient api)
     {
         _backend = backend;
         _api = api;
-        _navigator = navigator;
-        _services = services;
     }
 
     public event EventHandler<BootState>? StateChanged;
+    public event EventHandler? NavigateRequested;
 
     public BootState CurrentState { get; private set; } = Connecting;
 
     public bool IsAwaitingInput { get; private set; }
+
+    /// <summary>Current API base URL (for display / editing).</summary>
+    public string ApiUrl => _backend.ApiUrl;
 
     private static readonly Windows.UI.Color Gray = Windows.UI.Color.FromArgb(255, 128, 128, 128);
     private static readonly Windows.UI.Color LightGray = Windows.UI.Color.FromArgb(255, 204, 204, 204);
@@ -43,8 +41,15 @@ public sealed class BootModel
     private static readonly BootState Connecting =
         new(">", Gray, "Connecting to SharpClaw...", LightGray, true, false);
 
-    public async Task ConnectAsync()
+    public async Task ConnectAsync(string? customUrl = null)
     {
+        if (!string.IsNullOrWhiteSpace(customUrl))
+        {
+            var url = customUrl.Trim();
+            _backend.UpdateApiUrl(url);
+            _api.UpdateBaseUrl(url);
+        }
+
         IsAwaitingInput = false;
         SetState(Connecting);
 
@@ -59,16 +64,12 @@ public sealed class BootModel
             }
 
             SetState(new("✓", Green, "Connection established.", Green, false, false));
-            await Task.Delay(500);
-
-            // Skip Uno's built-in auth — navigate directly to Login.
-            // The login page authenticates against the real API.
-            await _navigator.NavigateRouteAsync(this, "Login", qualifier: Qualifiers.ClearBackStack);
+            NavigateRequested?.Invoke(this, EventArgs.Empty);
         }
-        catch (Exception ex)
+        catch
         {
             IsAwaitingInput = true;
-            SetState(new("✗", Red, $"Connection failed: {ex.Message}", Red, false, true));
+            SetState(new("✗", Red, "Unable to reach the SharpClaw service.", Red, false, true));
         }
     }
 
