@@ -534,8 +534,7 @@ Assign a role to an agent.
 
 ```json
 {
-  "roleId": "guid",
-  "callerUserId": "guid"
+  "roleId": "guid"
 }
 ```
 

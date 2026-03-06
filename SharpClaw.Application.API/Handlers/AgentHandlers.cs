@@ -44,7 +44,7 @@ public static class AgentHandlers
     {
         try
         {
-            var agent = await svc.AssignRoleAsync(id, request.RoleId, request.CallerUserId);
+            var agent = await svc.AssignRoleAsync(id, request.RoleId);
             return agent is not null ? Results.Ok(agent) : Results.NotFound();
         }
         catch (UnauthorizedAccessException ex)

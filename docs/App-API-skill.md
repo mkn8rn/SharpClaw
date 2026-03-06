@@ -67,7 +67,7 @@ GET    /agents
 GET    /agents/{id}
 PUT    /agents/{id}                { name?, modelId?, systemPrompt? }
 DELETE /agents/{id}
-PUT    /agents/{id}/role           { roleId, callerUserId }
+PUT    /agents/{id}/role           { roleId }
 
 AgentResponse includes: id, name, systemPrompt, modelId, modelName, providerName, roleId, roleName.
 
