@@ -2,7 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.FileProviders.Physical;
 
-namespace SharpClaw.Infrastructure.Configuration;
+namespace SharpClaw.Configuration;
 
 /// <summary>
 /// Loads environment configuration from <c>Environment/.env</c> (always)
@@ -11,31 +11,39 @@ namespace SharpClaw.Infrastructure.Configuration;
 /// </summary>
 public static class LocalEnvironment
 {
+    public const string DefaultApiUrl = "http://127.0.0.1:48923";
+
     private const string DefaultEnvContent =
         """
         {
-          // SharpClaw Environment Configuration
+          // SharpClaw Client Environment Configuration
           // Values here are loaded for all environments.
 
-          "Admin": { "Username": "admin", "Password": "123456" }
+          // -- API Server -----------------------------------------------
+          // Base URL for the SharpClaw API service.
+          "Api": { "Url": "http://127.0.0.1:48923" }
         }
         """;
+
+    /// <summary>
+    /// Reads <c>Api:Url</c> from the environment files, falling back to
+    /// <see cref="DefaultApiUrl"/> when not configured.
+    /// </summary>
+    public static string LoadApiUrl(bool isDevelopment = false)
+    {
+        var config = BuildConfiguration(isDevelopment);
+        return config["Api:Url"] ?? DefaultApiUrl;
+    }
 
     public static IConfigurationBuilder AddLocalEnvironment(
         this IConfigurationBuilder builder, bool isDevelopment = false)
     {
-        var envDir = Path.Combine(
-            Path.GetDirectoryName(typeof(LocalEnvironment).Assembly.Location)!,
-            "Environment");
-
+        var envDir = GetEnvironmentDirectory();
         EnsureEnvironmentFile(envDir);
 
         if (!Directory.Exists(envDir))
             return builder;
 
-        // PhysicalFileProvider defaults to ExclusionFilters.Sensitive which
-        // excludes dot-prefixed files (.env, .dev.env). Use None so the
-        // configuration system can see them.
         var fileProvider = new PhysicalFileProvider(envDir, ExclusionFilters.None);
 
         builder.AddJsonFile(fileProvider, ".env", optional: true, reloadOnChange: false);
@@ -45,6 +53,18 @@ public static class LocalEnvironment
 
         return builder;
     }
+
+    private static IConfiguration BuildConfiguration(bool isDevelopment)
+    {
+        var builder = new ConfigurationBuilder();
+        builder.AddLocalEnvironment(isDevelopment);
+        return builder.Build();
+    }
+
+    private static string GetEnvironmentDirectory() =>
+        Path.Combine(
+            Path.GetDirectoryName(typeof(LocalEnvironment).Assembly.Location)!,
+            "Environment");
 
     private static void EnsureEnvironmentFile(string envDir)
     {

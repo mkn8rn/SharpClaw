@@ -1,3 +1,4 @@
+using SharpClaw.Configuration;
 using SharpClaw.Services;
 using SharpClaw.Uno;
 using Uno.Resizetizer;
@@ -15,7 +16,7 @@ public partial class App : Application
         this.InitializeComponent();
     }
 
-    protected Window? MainWindow { get; private set; }
+    internal Window? MainWindow { get; private set; }
     internal IHost? Host { get; private set; }
 
     internal static IServiceProvider? Services { get; private set; }
@@ -110,7 +111,8 @@ public partial class App : Application
                 )
                 .ConfigureServices((context, services) =>
                 {
-                    const string apiUrl = "http://127.0.0.1:48923";
+                    var isDev = context.HostingEnvironment.IsDevelopment();
+                    var apiUrl = LocalEnvironment.LoadApiUrl(isDev);
 
                     var backendManager = new BackendProcessManager(apiUrl);
                     services.AddSingleton(backendManager);
@@ -154,6 +156,7 @@ public partial class App : Application
             new ViewMap<BootPage>(),
             new ViewMap<LoginPage>(),
             new ViewMap<MainPage>(),
+            new ViewMap<DashboardPage>(),
             new DataViewMap<SecondPage, SecondModel, Entity>()
         );
 
@@ -164,6 +167,7 @@ public partial class App : Application
                     new ("Boot", View: views.FindByView<BootPage>()),
                     new ("Login", View: views.FindByView<LoginPage>()),
                     new ("Main", View: views.FindByView<MainPage>(), IsDefault:true),
+                    new ("Dashboard", View: views.FindByView<DashboardPage>()),
                     new ("Second", View: views.FindByViewModel<SecondModel>()),
                 ]
             )

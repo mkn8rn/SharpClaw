@@ -18,6 +18,15 @@ public sealed class SharpClawApiClient : IDisposable
     /// <summary>Base URL of the localhost API (e.g. http://127.0.0.1:48923).</summary>
     public string BaseUrl => _http.BaseAddress!.ToString();
 
+    /// <summary>
+    /// Changes the target API base URL and clears the cached API key.
+    /// </summary>
+    public void UpdateBaseUrl(string baseUrl)
+    {
+        _http.BaseAddress = new Uri(baseUrl);
+        _cachedApiKey = null;
+    }
+
     public async Task<HttpResponseMessage> GetAsync(
         string path, CancellationToken ct = default)
     {
@@ -32,6 +41,14 @@ public sealed class SharpClawApiClient : IDisposable
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
         AttachApiKey(request);
         return await _http.SendAsync(request, ct);
+    }
+
+    public async Task<HttpResponseMessage> PostStreamAsync(
+        string path, HttpContent? content, CancellationToken ct = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
+        AttachApiKey(request);
+        return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
     }
 
     public async Task<HttpResponseMessage> PutAsync(

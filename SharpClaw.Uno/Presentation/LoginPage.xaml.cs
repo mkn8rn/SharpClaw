@@ -10,8 +10,6 @@ public sealed partial class LoginPage : Page
 {
     private bool _isRegisterMode;
     private bool _isBusy;
-    private bool _cursorVisible = true;
-    private readonly DispatcherTimer _cursorBlinkTimer;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,37 +19,28 @@ public sealed partial class LoginPage : Page
     public LoginPage()
     {
         this.InitializeComponent();
+        Loaded += OnLoaded;
+    }
 
-        _cursorBlinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
-        _cursorBlinkTimer.Tick += (_, _) =>
-        {
-            _cursorVisible = !_cursorVisible;
-            CursorBlock.Text = _cursorVisible ? "_" : " ";
-        };
-        _cursorBlinkTimer.Start();
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        UpdateCursor();
     }
 
     private SharpClawApiClient Api => App.Services!.GetRequiredService<SharpClawApiClient>();
 
-    private void OnCredentialChanged(object sender, RoutedEventArgs e)
+    private void OnCredentialChanged(object sender, RoutedEventArgs e) => UpdateCursor();
+
+    private void UpdateCursor()
     {
         var user = UsernameBox.Text?.Trim() ?? string.Empty;
         var pass = PasswordBox.Password ?? string.Empty;
 
-        var cmd = _isRegisterMode ? "sharpclaw auth register" : "sharpclaw auth login";
-
-        if (user.Length > 0 || pass.Length > 0)
-        {
-            var maskedPass = pass.Length > 0 ? new string('*', pass.Length) : string.Empty;
-            var parts = new List<string>(3) { cmd };
-            if (user.Length > 0) parts.Add(user);
-            if (maskedPass.Length > 0) parts.Add(maskedPass);
-            CursorCommandBlock.Text = string.Join(' ', parts) + " ";
-        }
-        else
-        {
-            CursorCommandBlock.Text = string.Empty;
-        }
+        var verb = _isRegisterMode ? "sharpclaw register" : "sharpclaw login";
+        var parts = new List<string>(3) { verb };
+        if (user.Length > 0) parts.Add(user);
+        if (pass.Length > 0) parts.Add(new string('*', pass.Length));
+        Cursor.SetCommand(string.Join(' ', parts) + " ");
     }
 
     private async void OnSubmitClick(object sender, RoutedEventArgs e)
@@ -109,7 +98,7 @@ public sealed partial class LoginPage : Page
                     await Task.Delay(400);
 
                     var navigator = App.Services!.GetRequiredService<INavigator>();
-                    await navigator.NavigateViewModelAsync<MainModel>(this, qualifier: Qualifiers.ClearBackStack);
+                    await navigator.NavigateRouteAsync(this, "Main", qualifier: Qualifiers.ClearBackStack);
                     return;
                 }
             }
@@ -186,7 +175,7 @@ public sealed partial class LoginPage : Page
         }
 
         StatusBlock.Visibility = Visibility.Collapsed;
-        CursorCommandBlock.Text = string.Empty;
+        UpdateCursor();
     }
 
     private static readonly Windows.UI.Color ColorGray = Windows.UI.Color.FromArgb(255, 128, 128, 128);
