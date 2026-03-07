@@ -31,49 +31,49 @@ public sealed class AgentActionService(SharpClawDbContext db)
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateSubAgents,
+            agentId, caller, p => p.CanCreateSubAgents, p => p.CreateSubAgentsClearance,
             "create sub-agents", onApproved, ct);
 
     public Task<AgentActionResult> CreateContainerAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateContainers,
+            agentId, caller, p => p.CanCreateContainers, p => p.CreateContainersClearance,
             "create containers", onApproved, ct);
 
     public Task<AgentActionResult> RegisterInfoStoreAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanRegisterInfoStores,
+            agentId, caller, p => p.CanRegisterInfoStores, p => p.RegisterInfoStoresClearance,
             "register information stores", onApproved, ct);
 
     public Task<AgentActionResult> AccessLocalhostInBrowserAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostInBrowser,
+            agentId, caller, p => p.CanAccessLocalhostInBrowser, p => p.AccessLocalhostInBrowserClearance,
             "access localhost in browser", onApproved, ct);
 
     public Task<AgentActionResult> AccessLocalhostCliAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostCli,
+            agentId, caller, p => p.CanAccessLocalhostCli, p => p.AccessLocalhostCliClearance,
             "access localhost via CLI", onApproved, ct);
 
     public Task<AgentActionResult> ClickDesktopAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanClickDesktop,
+            agentId, caller, p => p.CanClickDesktop, p => p.ClickDesktopClearance,
             "click desktop", onApproved, ct);
 
     public Task<AgentActionResult> TypeOnDesktopAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanTypeOnDesktop,
+            agentId, caller, p => p.CanTypeOnDesktop, p => p.TypeOnDesktopClearance,
             "type on desktop", onApproved, ct);
 
     // ═══════════════════════════════════════════════════════════════
@@ -190,13 +190,15 @@ public sealed class AgentActionService(SharpClawDbContext db)
 
     /// <summary>
     /// Evaluate a boolean (global-flag) permission.
-    /// Global flags have no per-permission clearance — the group
+    /// Each flag has its own clearance level; when it is
+    /// <see cref="PermissionClearance.Unset"/> the group
     /// <see cref="PermissionSetDB.DefaultClearance"/> is used.
     /// </summary>
     private async Task<AgentActionResult> EvaluateGlobalFlagAsync(
         Guid agentId,
         ActionCaller caller,
         Func<PermissionSetDB, bool> hasFlag,
+        Func<PermissionSetDB, PermissionClearance> getFlagClearance,
         string flagDescription,
         Func<Task>? onApproved,
         CancellationToken ct)
@@ -208,7 +210,7 @@ public sealed class AgentActionService(SharpClawDbContext db)
         if (!hasFlag(agentPerms))
             return AgentActionResult.Denied($"Agent does not have permission to {flagDescription}.");
 
-        var effective = ResolveClearance(PermissionClearance.Unset, agentPerms.DefaultClearance);
+        var effective = ResolveClearance(getFlagClearance(agentPerms), agentPerms.DefaultClearance);
 
         var result = await EvaluateCallerClearanceAsync(
             agentPerms, effective, caller,

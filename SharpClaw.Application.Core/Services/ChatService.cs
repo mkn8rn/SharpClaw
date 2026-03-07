@@ -108,12 +108,20 @@ public sealed partial class ChatService(
                 history, agent.Id, channelId, modelCapabilities, approvalCallback, ct);
 
         // Persist both messages
+        var senderUserId = jobService.GetSessionUserId();
+        var senderUsername = senderUserId.HasValue
+            ? (await db.Users.Where(u => u.Id == senderUserId.Value).Select(u => u.Username).FirstOrDefaultAsync(ct))
+            : null;
+
         var userMessage = new ChatMessageDB
         {
             Role = "user",
             Content = request.Message,
             ChannelId = channelId,
-            ThreadId = threadId
+            ThreadId = threadId,
+            SenderUserId = senderUserId,
+            SenderUsername = senderUsername,
+            ClientType = request.ClientType
         };
 
         var assistantMessage = new ChatMessageDB
@@ -121,7 +129,10 @@ public sealed partial class ChatService(
             Role = "assistant",
             Content = loopResult.AssistantContent,
             ChannelId = channelId,
-            ThreadId = threadId
+            ThreadId = threadId,
+            SenderAgentId = agent.Id,
+            SenderAgentName = agent.Name,
+            ClientType = request.ClientType
         };
 
         db.ChatMessages.Add(userMessage);
@@ -129,8 +140,8 @@ public sealed partial class ChatService(
         await db.SaveChangesAsync(ct);
 
         return new ChatResponse(
-            new ChatMessageResponse(userMessage.Role, userMessage.Content, userMessage.CreatedAt),
-            new ChatMessageResponse(assistantMessage.Role, assistantMessage.Content, assistantMessage.CreatedAt),
+            ToMessageResponse(userMessage),
+            ToMessageResponse(assistantMessage),
             loopResult.JobResults.Count > 0 ? loopResult.JobResults : null);
 
         } // try
@@ -152,9 +163,19 @@ public sealed partial class ChatService(
             .OrderByDescending(m => m.CreatedAt)
             .Take(limit)
             .OrderBy(m => m.CreatedAt)
-            .Select(m => new ChatMessageResponse(m.Role, m.Content, m.CreatedAt))
+            .Select(m => new ChatMessageResponse(
+                m.Role, m.Content, m.CreatedAt,
+                m.SenderUserId, m.SenderUsername,
+                m.SenderAgentId, m.SenderAgentName,
+                m.ClientType != null ? m.ClientType.ToString() : null))
             .ToListAsync(ct);
     }
+
+    private static ChatMessageResponse ToMessageResponse(ChatMessageDB m) =>
+        new(m.Role, m.Content, m.CreatedAt,
+            m.SenderUserId, m.SenderUsername,
+            m.SenderAgentId, m.SenderAgentName,
+            m.ClientType?.ToString());
 
     // ═══════════════════════════════════════════════════════════════
     // Agent resolution
@@ -684,12 +705,20 @@ public sealed partial class ChatService(
         // Persist both messages
         var assistantContent = fullContent.ToString();
 
+        var senderUserId = jobService.GetSessionUserId();
+        var senderUsername = senderUserId.HasValue
+            ? (await db.Users.Where(u => u.Id == senderUserId.Value).Select(u => u.Username).FirstOrDefaultAsync(ct))
+            : null;
+
         var userMessage = new ChatMessageDB
         {
             Role = "user",
             Content = request.Message,
             ChannelId = channelId,
-            ThreadId = threadId
+            ThreadId = threadId,
+            SenderUserId = senderUserId,
+            SenderUsername = senderUsername,
+            ClientType = request.ClientType
         };
 
         var assistantMessage = new ChatMessageDB
@@ -697,7 +726,10 @@ public sealed partial class ChatService(
             Role = "assistant",
             Content = assistantContent,
             ChannelId = channelId,
-            ThreadId = threadId
+            ThreadId = threadId,
+            SenderAgentId = agent.Id,
+            SenderAgentName = agent.Name,
+            ClientType = request.ClientType
         };
 
         db.ChatMessages.Add(userMessage);
@@ -705,8 +737,8 @@ public sealed partial class ChatService(
         await db.SaveChangesAsync(ct);
 
         yield return ChatStreamEvent.Complete(new ChatResponse(
-            new ChatMessageResponse(userMessage.Role, userMessage.Content, userMessage.CreatedAt),
-            new ChatMessageResponse(assistantMessage.Role, assistantMessage.Content, assistantMessage.CreatedAt),
+            ToMessageResponse(userMessage),
+            ToMessageResponse(assistantMessage),
             jobResults.Count > 0 ? jobResults : null));
 
         } // try

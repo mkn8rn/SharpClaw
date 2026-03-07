@@ -64,8 +64,8 @@
       <StackPanel Grid.Row="3" Margin="16,0,16,12" Spacing="6">
         <Border Height="1" Background="#1A1A1A" Margin="0,0,0,4" />
         <Button Background="Transparent" BorderThickness="0" Padding="0"
-                Click="OnDashboardClick">
-          <TextBlock Text="› Dashboard"
+                Click="OnSettingsClick">
+          <TextBlock Text="› Settings"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -126,10 +126,32 @@
                    Style="{StaticResource TerminalText}"
                    FontSize="14"
                    Foreground="#808080" />
-        <TextBlock x:Name="ChatAgentBlock"
-                   Style="{StaticResource TerminalText}"
-                   FontSize="11"
-                   Foreground="#999999" />
+        <StackPanel x:Name="ChannelTabBar"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    Visibility="Collapsed"
+                    Margin="0,4,0,0">
+          <Button x:Name="TabChatButton"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  Padding="0,2,0,2"
+                  Click="OnTabChatClick">
+            <TextBlock Text="[chat]"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="11"
+                       Foreground="#00FF00" />
+          </Button>
+          <Button x:Name="TabSettingsButton"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  Padding="0,2,0,2"
+                  Click="OnTabSettingsClick">
+            <TextBlock Text="[settings]"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="11"
+                       Foreground="#666666" />
+          </Button>
+        </StackPanel>
         <StackPanel x:Name="AgentSelectorPanel"
                     Orientation="Horizontal"
                     Spacing="8"
@@ -258,6 +280,12 @@
         </Grid>
         <local:TerminalCursor x:Name="Cursor" Grid.Row="1" Margin="0,8,0,0" />
       </Grid>
+
+      <!-- Channel settings view -->
+      <ScrollViewer x:Name="SettingsScroller" Grid.Row="1" Grid.RowSpan="2"
+                    Visibility="Collapsed" Margin="20,8,20,16">
+        <StackPanel x:Name="SettingsPanel" Spacing="16" Padding="0,0,0,20" />
+      </ScrollViewer>
 
       <!-- Job view (replaces chat when a job is selected) -->
       <Grid x:Name="JobViewPanel" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed">
