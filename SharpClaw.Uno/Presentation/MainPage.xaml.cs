@@ -24,11 +24,16 @@ public sealed partial class MainPage : Page
     private Guid? _selectedAgentId;
     private Guid? _selectedJobId;
     private bool _pendingNewThread;
+    private bool _settingsMode;
     private bool _suppressThreadSelection;
     private bool _suppressJobSelection;
     private readonly Dictionary<Guid, bool> _expandedContexts = [];
     private List<AgentDto> _allAgents = [];
     private List<JobDto> _channelJobs = [];
+    private List<RoleDto> _allRoles = [];
+    private string _currentUsername = "user";
+    private Guid _currentUserId;
+    private Guid? _currentUserRoleId;
     private static readonly int _clientType = DetectClientType();
 
     // ── Cached UI resources (avoids per-rebuild native allocations) ──
@@ -72,6 +77,9 @@ public sealed partial class MainPage : Page
     private readonly HashSet<Guid> _sidebarContextChannelIds = [];
     private readonly List<string> _jobTimestampParts = new(3);
 
+    // ── Resource lookup cache (populated per settings load) ──
+    private readonly Dictionary<string, List<ResourceItemDto>> _resourceLookupCache = new(13);
+
     private static SolidColorBrush Brush(int rgb)
     {
         if (!_brushCache.TryGetValue(rgb, out var brush))
@@ -81,6 +89,14 @@ public sealed partial class MainPage : Page
         }
         return brush;
     }
+
+    private static string DetectedClientTypeName => _clientType switch
+    {
+        0 => "CLI", 1 => "API", 2 => "Telegram", 3 => "Discord",
+        4 => "WhatsApp", 5 => "VisualStudio", 6 => "VisualStudioCode",
+        7 => "UnoWindows", 8 => "UnoAndroid", 9 => "UnoMacOS",
+        10 => "UnoLinux", 11 => "UnoBrowser", _ => "Other",
+    };
 
     /// <summary>
     /// Returns the <c>ChatClientType</c> enum integer value matching the
@@ -113,6 +129,8 @@ public sealed partial class MainPage : Page
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (App.Services is null) return;
+        await LoadUserInfoAsync();
+        await LoadRolesAsync();
         var channels = await LoadSidebarAsync();
         await LoadAgentsAsync(null, null);
 
@@ -124,6 +142,45 @@ public sealed partial class MainPage : Page
         }
 
         UpdateCursor();
+    }
+
+    // ── User & Roles ────────────────────────────────────────────
+
+    private async Task LoadUserInfoAsync()
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            using var resp = await api.GetAsync("/auth/me");
+            if (resp.IsSuccessStatusCode)
+            {
+                using var stream = await resp.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(stream);
+                _currentUsername = doc.RootElement.GetProperty("username").GetString() ?? "user";
+                if (doc.RootElement.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String)
+                    _currentUserId = idProp.GetGuid();
+                if (doc.RootElement.TryGetProperty("roleId", out var rp) && rp.ValueKind == JsonValueKind.String)
+                    _currentUserRoleId = rp.GetGuid();
+                else
+                    _currentUserRoleId = null;
+            }
+        }
+        catch { /* API not reachable */ }
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            using var resp = await api.GetAsync("/roles");
+            if (resp.IsSuccessStatusCode)
+            {
+                using var stream = await resp.Content.ReadAsStreamAsync();
+                _allRoles = await JsonSerializer.DeserializeAsync<List<RoleDto>>(stream, Json) ?? [];
+            }
+        }
+        catch { _allRoles = []; }
     }
 
     // ── Sidebar ──────────────────────────────────────────────────
@@ -463,7 +520,9 @@ public sealed partial class MainPage : Page
                     _selectedJobId = null;
                     _pendingNewThread = false;
                     ChatTitleBlock.Text = "> Select or create a channel";
-                    ChatAgentBlock.Text = string.Empty;
+                    ChannelTabBar.Visibility = Visibility.Collapsed;
+                    _settingsMode = false;
+                    SettingsScroller.Visibility = Visibility.Collapsed;
                     ThreadSelectorPanel.Visibility = Visibility.Collapsed;
                     JobSelectorPanel.Visibility = Visibility.Collapsed;
                     OneOffWarning.Visibility = Visibility.Collapsed;
@@ -520,7 +579,12 @@ public sealed partial class MainPage : Page
         _selectedJobId = null;
         _pendingNewThread = false;
         ChatTitleBlock.Text = $"# {title}";
-        ChatAgentBlock.Text = agentName is not null ? $"agent: {agentName}" : string.Empty;
+        ChannelTabBar.Visibility = Visibility.Visible;
+        if (_settingsMode)
+        {
+            _settingsMode = false;
+            UpdateTabHighlight();
+        }
         UpdateCursor();
 
         // Fetch full channel details for allowed agents
@@ -636,10 +700,6 @@ public sealed partial class MainPage : Page
             _selectedAgentId = agentId;
         else
             _selectedAgentId = null;
-
-        // Update the agent subtitle
-        var agent = _allAgents.FirstOrDefault(a => a.Id == _selectedAgentId);
-        ChatAgentBlock.Text = agent is not null ? $"agent: {agent.Name}" : string.Empty;
 
         UpdateCursor();
     }
@@ -1052,6 +1112,8 @@ public sealed partial class MainPage : Page
     private void ShowChatView()
     {
         JobViewPanel.Visibility = Visibility.Collapsed;
+        SettingsScroller.Visibility = Visibility.Collapsed;
+        AgentSelectorPanel.Visibility = Visibility.Visible;
         MessagesScroller.Visibility = Visibility.Visible;
         ChatInputArea.Visibility = Visibility.Visible;
     }
@@ -1306,8 +1368,20 @@ public sealed partial class MainPage : Page
 
             if (messages is null) return;
 
+            var fallbackAgentName = _allAgents.FirstOrDefault(a => a.Id == _selectedAgentId)?.Name;
             foreach (var msg in messages)
-                AppendMessage(msg.Role, msg.Content, msg.Timestamp);
+            {
+                var isUser = msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase);
+                var senderName = isUser
+                    ? msg.SenderUsername
+                    : (msg.SenderAgentName ?? fallbackAgentName);
+                var agentId = isUser ? null : (msg.SenderAgentId ?? _selectedAgentId);
+                AppendMessage(msg.Role, msg.Content, msg.Timestamp,
+                    senderName: senderName,
+                    agentId: agentId,
+                    senderUserId: msg.SenderUserId,
+                    clientType: msg.ClientType);
+            }
         }
         catch { /* swallow */ }
 
@@ -1365,16 +1439,26 @@ public sealed partial class MainPage : Page
         return entry;
     }
 
-    private void AppendMessage(string role, string content, DateTimeOffset? timestamp)
+    private void AppendMessage(string role, string content, DateTimeOffset? timestamp,
+        string? senderName = null, Guid? agentId = null,
+        Guid? senderUserId = null, string? clientType = null)
     {
         var isUser = role.Equals("user", StringComparison.OrdinalIgnoreCase);
+        var isSystem = role.Equals("system", StringComparison.OrdinalIgnoreCase);
+        var isCurrentUser = isUser && senderUserId.HasValue && senderUserId.Value == _currentUserId;
         var row = AcquireChatBubble();
 
-        row.Root.Background = Brush(isUser ? 0x1A2A1A : 0x1A1A1A);
-        row.Root.HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        row.Root.Background = Brush(isSystem ? 0x111111 : isUser ? (isCurrentUser ? 0x1A2A1A : 0x1A1A2A) : 0x1A1A1A);
+        row.Root.HorizontalAlignment = isSystem ? HorizontalAlignment.Center
+            : isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
 
-        row.Role.Text = isUser ? "you" : "assistant";
-        row.Role.Foreground = Brush(isUser ? 0x00FF00 : 0x00AAFF);
+        var label = isUser
+            ? (isCurrentUser ? "you" : (senderName ?? "user"))
+            : isSystem ? "system" : (senderName ?? "assistant");
+        if (isUser && clientType is not null)
+            label += $" - ({clientType})";
+        row.Role.Text = label;
+        row.Role.Foreground = Brush(isSystem ? 0x777777 : isUser ? (isCurrentUser ? 0x00FF00 : 0x4488FF) : 0x00AAFF);
 
         if (timestamp.HasValue)
         {
@@ -1387,7 +1471,10 @@ public sealed partial class MainPage : Page
         }
 
         row.Content.Text = content;
-        row.Content.Foreground = Brush(0xCCCCCC);
+        row.Content.Foreground = Brush(isSystem ? 0x999999 : 0xCCCCCC);
+
+        // No context flyout for system messages
+        row.Root.ContextFlyout = isSystem ? null : BuildRoleMenuFlyout(isUser, agentId);
 
         MessagesPanel.Children.Add(row.Root);
     }
@@ -1444,10 +1531,6 @@ public sealed partial class MainPage : Page
                 using var chDoc = await JsonDocument.ParseAsync(chCreateStream);
                 var chId = chDoc.RootElement.GetProperty("id").GetGuid();
                 var chTitle = chDoc.RootElement.GetProperty("title").GetString() ?? title;
-                var agentName = chDoc.RootElement.TryGetProperty("agent", out var agentProp)
-                    && agentProp.ValueKind == JsonValueKind.Object
-                    && agentProp.TryGetProperty("name", out var anProp)
-                    ? anProp.GetString() : null;
 
                 var thBody = JsonSerializer.Serialize(new { name = "Default" }, Json);
                 var thContent = new StringContent(thBody, Encoding.UTF8, "application/json");
@@ -1461,7 +1544,7 @@ public sealed partial class MainPage : Page
 
                 _selectedChannelId = chId;
                 ChatTitleBlock.Text = $"# {chTitle}";
-                ChatAgentBlock.Text = agentName is not null ? $"agent: {agentName}" : string.Empty;
+                ChannelTabBar.Visibility = Visibility.Visible;
                 await LoadSidebarAsync();
                 await LoadAgentsAsync(_selectedAgentId, null);
                 await LoadThreadsAsync(chId);
@@ -1522,7 +1605,11 @@ public sealed partial class MainPage : Page
 
         var channelId = _selectedChannelId!.Value;
 
-        AppendMessage("user", text, DateTimeOffset.Now);
+        var agentName = _allAgents.FirstOrDefault(a => a.Id == _selectedAgentId)?.Name;
+        AppendMessage("user", text, DateTimeOffset.Now,
+            senderName: _currentUsername,
+            senderUserId: _currentUserId,
+            clientType: DetectedClientTypeName);
         ScrollToBottom();
 
         UpdateCursor(text);
@@ -1530,12 +1617,13 @@ public sealed partial class MainPage : Page
         var streamBubble = AcquireChatBubble();
         streamBubble.Root.Background = Brush(0x1A1A1A);
         streamBubble.Root.HorizontalAlignment = HorizontalAlignment.Left;
-        streamBubble.Role.Text = "assistant";
+        streamBubble.Role.Text = agentName ?? "assistant";
         streamBubble.Role.Foreground = Brush(0x00AAFF);
         streamBubble.Time.Text = DateTimeOffset.Now.LocalDateTime.ToString("HH:mm");
         streamBubble.Time.Visibility = Visibility.Visible;
         streamBubble.Content.Text = "▍";
         streamBubble.Content.Foreground = Brush(0xCCCCCC);
+        streamBubble.Root.ContextFlyout = BuildRoleMenuFlyout(isUser: false, _selectedAgentId);
         MessagesPanel.Children.Add(streamBubble.Root);
         var assistantContent = streamBubble.Content;
         ScrollToBottom();
@@ -1737,6 +1825,674 @@ public sealed partial class MainPage : Page
         }
     }
 
+    // ── Channel Settings ─────────────────────────────────────────
+
+    private static readonly (string ApiName, string DisplayName)[] _resourceAccessTypes =
+    [
+        ("dangerousShellAccesses", "Dangerous Shell"),
+        ("safeShellAccesses", "Safe Shell"),
+        ("containerAccesses", "Containers"),
+        ("websiteAccesses", "Websites"),
+        ("searchEngineAccesses", "Search Engines"),
+        ("localInfoStoreAccesses", "Local Info Stores"),
+        ("externalInfoStoreAccesses", "External Info Stores"),
+        ("audioDeviceAccesses", "Audio Devices"),
+        ("displayDeviceAccesses", "Display Devices"),
+        ("editorSessionAccesses", "Editor Sessions"),
+        ("agentAccesses", "Agent Management"),
+        ("taskAccesses", "Task Management"),
+        ("skillAccesses", "Skill Management"),
+    ];
+
+    private static readonly string[] _globalFlagNames =
+        ["canCreateSubAgents", "canCreateContainers", "canRegisterInfoStores",
+         "canAccessLocalhostInBrowser", "canAccessLocalhostCli",
+         "canClickDesktop", "canTypeOnDesktop"];
+
+    private static readonly Dictionary<string, string> _globalFlagTooltips = new()
+    {
+        ["canCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
+        ["canCreateContainers"] = "Allow the agent to create sandboxed execution containers",
+        ["canRegisterInfoStores"] = "Allow the agent to register local or external information stores",
+        ["canAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
+        ["canAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
+        ["canClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
+        ["canTypeOnDesktop"] = "Allow the agent to simulate keyboard input on the desktop",
+    };
+
+    private static readonly Dictionary<string, string> _resourceAccessTooltips = new()
+    {
+        ["dangerousShellAccesses"] = "Unrestricted shell commands \u2014 use with extreme caution",
+        ["safeShellAccesses"] = "Shell commands restricted to the mk8.shell allowlist",
+        ["containerAccesses"] = "Access to sandboxed execution containers",
+        ["websiteAccesses"] = "Access to registered website resources",
+        ["searchEngineAccesses"] = "Access to registered search engine resources",
+        ["localInfoStoreAccesses"] = "Access to local information store files",
+        ["externalInfoStoreAccesses"] = "Access to external information store endpoints",
+        ["audioDeviceAccesses"] = "Access to audio capture devices for transcription",
+        ["displayDeviceAccesses"] = "Access to display devices for screen capture",
+        ["editorSessionAccesses"] = "Access to IDE editor sessions via the editor bridge",
+        ["agentAccesses"] = "Manage other agents (create, update, delete)",
+        ["taskAccesses"] = "Manage scheduled tasks and jobs",
+        ["skillAccesses"] = "Access registered skills and their definitions",
+    };
+
+    private static readonly Guid AllResourcesId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
+
+    // Settings UI element references (populated during BuildPermissionsUI)
+    private readonly Dictionary<string, CheckBox> _settingsGlobalFlags = new(7);
+    private readonly Dictionary<string, StackPanel> _settingsResourcePanels = new(13);
+
+    private void OnTabChatClick(object sender, RoutedEventArgs e)
+    {
+        if (!_settingsMode) return;
+        _settingsMode = false;
+        UpdateTabHighlight();
+        SettingsScroller.Visibility = Visibility.Collapsed;
+        AgentSelectorPanel.Visibility = Visibility.Visible;
+        if (_selectedChannelId is not null)
+        {
+            ThreadSelectorPanel.Visibility = Visibility.Visible;
+            JobSelectorPanel.Visibility = Visibility.Visible;
+        }
+        OneOffWarning.Visibility = _selectedThreadId is null && !_pendingNewThread && _selectedChannelId is not null
+            ? Visibility.Visible : Visibility.Collapsed;
+        if (_selectedJobId is not null)
+            _ = ShowJobViewAsync(_selectedJobId.Value);
+        else
+            ShowChatView();
+    }
+
+    private async void OnTabSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (_settingsMode || _selectedChannelId is null) return;
+        _settingsMode = true;
+        UpdateTabHighlight();
+        MessagesScroller.Visibility = Visibility.Collapsed;
+        ChatInputArea.Visibility = Visibility.Collapsed;
+        JobViewPanel.Visibility = Visibility.Collapsed;
+        AgentSelectorPanel.Visibility = Visibility.Collapsed;
+        ThreadSelectorPanel.Visibility = Visibility.Collapsed;
+        JobSelectorPanel.Visibility = Visibility.Collapsed;
+        OneOffWarning.Visibility = Visibility.Collapsed;
+        SettingsScroller.Visibility = Visibility.Visible;
+        await LoadChannelSettingsAsync(_selectedChannelId.Value);
+    }
+
+    private void UpdateTabHighlight()
+    {
+        if (TabChatButton.Content is TextBlock c) c.Foreground = Brush(_settingsMode ? 0x666666 : 0x00FF00);
+        if (TabSettingsButton.Content is TextBlock s) s.Foreground = Brush(_settingsMode ? 0x00FF00 : 0x666666);
+    }
+
+    private async Task LoadChannelSettingsAsync(Guid channelId)
+    {
+        SettingsPanel.Children.Clear();
+        _settingsGlobalFlags.Clear();
+        _settingsResourcePanels.Clear();
+
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+
+        bool disableChatHeader = false;
+        List<(Guid Id, string Name, string ProviderModel)> allowedAgents = [];
+        Guid? channelPermSetId = null;
+
+        try
+        {
+            using var chResp = await api.GetAsync($"/channels/{channelId}");
+            if (!chResp.IsSuccessStatusCode)
+            {
+                AddSettingsLabel("✗ Failed to load channel settings", 0xFF4444);
+                return;
+            }
+
+            using var chStream = await chResp.Content.ReadAsStreamAsync();
+            using var chDoc = await JsonDocument.ParseAsync(chStream);
+            var root = chDoc.RootElement;
+
+            disableChatHeader = root.TryGetProperty("disableChatHeader", out var dch) && dch.GetBoolean();
+            if (root.TryGetProperty("permissionSetId", out var psi) && psi.ValueKind == JsonValueKind.String)
+                channelPermSetId = psi.GetGuid();
+
+            if (root.TryGetProperty("allowedAgents", out var aaProp) && aaProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var a in aaProp.EnumerateArray())
+                {
+                    if (a.TryGetProperty("id", out var idP) && idP.ValueKind == JsonValueKind.String)
+                    {
+                        var id = idP.GetGuid();
+                        var name = a.TryGetProperty("name", out var np) ? np.GetString() ?? "?" : "?";
+                        var model = a.TryGetProperty("modelName", out var mp) ? mp.GetString() ?? "" : "";
+                        var provider = a.TryGetProperty("providerName", out var pp) ? pp.GetString() ?? "" : "";
+                        allowedAgents.Add((id, name, $"{provider}/{model}"));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            AddSettingsLabel("✗ Failed to load settings", 0xFF4444);
+            return;
+        }
+
+        Guid? permRoleId = null;
+        PermSettingsData? permData = null;
+
+        if (channelPermSetId is not null)
+        {
+            permRoleId = _allRoles.FirstOrDefault(r => r.PermissionSetId == channelPermSetId)?.Id;
+            if (permRoleId is not null)
+            {
+                try
+                {
+                    using var permResp = await api.GetAsync($"/roles/{permRoleId}/permissions");
+                    if (permResp.IsSuccessStatusCode)
+                    {
+                        using var pStream = await permResp.Content.ReadAsStreamAsync();
+                        using var pDoc = await JsonDocument.ParseAsync(pStream);
+                        permData = ParsePermissions(pDoc.RootElement);
+                    }
+                }
+                catch { /* swallow */ }
+            }
+        }
+
+        // Fetch resource lookups for all access types in parallel
+        _resourceLookupCache.Clear();
+        try
+        {
+            var lookupTasks = _resourceAccessTypes.Select(async t =>
+            {
+                try
+                {
+                    using var resp = await api.GetAsync($"/resources/lookup/{t.ApiName}");
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        using var s = await resp.Content.ReadAsStreamAsync();
+                        var items = await JsonSerializer.DeserializeAsync<List<ResourceItemDto>>(s, Json);
+                        return (t.ApiName, Items: items ?? []);
+                    }
+                }
+                catch { /* swallow */ }
+                return (t.ApiName, Items: new List<ResourceItemDto>());
+            });
+            foreach (var (apiName, items) in await Task.WhenAll(lookupTasks))
+                _resourceLookupCache[apiName] = items;
+        }
+        catch { /* swallow — settings still work without lookups */ }
+
+        BuildSettingsPanel(channelId, disableChatHeader, allowedAgents, permRoleId, permData);
+    }
+
+    private static PermSettingsData ParsePermissions(JsonElement root)
+    {
+        var data = new PermSettingsData();
+
+        foreach (var flag in _globalFlagNames)
+            data.GlobalFlags[flag] = root.TryGetProperty(flag, out var fp) && fp.GetBoolean();
+
+        foreach (var (apiName, _) in _resourceAccessTypes)
+        {
+            var grants = new List<Guid>();
+            if (root.TryGetProperty(apiName, out var ap) && ap.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var g in ap.EnumerateArray())
+                {
+                    if (g.TryGetProperty("resourceId", out var rid) && rid.ValueKind == JsonValueKind.String)
+                        grants.Add(rid.GetGuid());
+                }
+            }
+            data.ResourceAccesses[apiName] = grants;
+        }
+        return data;
+    }
+
+    private void BuildSettingsPanel(
+        Guid channelId,
+        bool disableChatHeader,
+        List<(Guid Id, string Name, string ProviderModel)> allowedAgents,
+        Guid? permRoleId,
+        PermSettingsData? permData)
+    {
+        SettingsPanel.Children.Clear();
+
+        // ── General ──
+        AddSettingsSection("General", "Basic channel configuration");
+
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headerRow.Children.Add(new TextBlock
+        {
+            Text = "disable chat header:",
+            FontFamily = _monoFont, FontSize = 11,
+            Foreground = Brush(0xCCCCCC),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var toggle = new ToggleSwitch { IsOn = disableChatHeader, OnContent = "yes", OffContent = "no" };
+        ToolTipService.SetToolTip(toggle, "Suppress the metadata header (time, user, role, bio) prepended to each message sent to the model");
+        toggle.Toggled += async (_, _) =>
+        {
+            var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+            try
+            {
+                var body = JsonSerializer.Serialize(new { disableChatHeader = toggle.IsOn }, Json);
+                await api.PutAsync($"/channels/{channelId}",
+                    new StringContent(body, Encoding.UTF8, "application/json"));
+            }
+            catch { /* swallow */ }
+        };
+        headerRow.Children.Add(toggle);
+        SettingsPanel.Children.Add(headerRow);
+
+        // ── Allowed Agents ──
+        AddSettingsSection("Allowed Agents", "Additional agents permitted to respond in this channel besides the default");
+
+        var agentsList = new StackPanel { Spacing = 4 };
+        foreach (var agent in allowedAgents)
+        {
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var lbl = new TextBlock
+            {
+                Text = $"• {agent.Name}  ({agent.ProviderModel})",
+                FontFamily = _monoFont, FontSize = 12,
+                Foreground = Brush(0xE0E0E0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(lbl, 0);
+            row.Children.Add(lbl);
+
+            var rmBtn = new Button
+            {
+                Content = new TextBlock { Text = "✕", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0xFF4444) },
+                Background = _brushTransparent, BorderThickness = new Thickness(0),
+                Padding = new Thickness(4, 2, 4, 2), MinWidth = 0, MinHeight = 0,
+                Tag = agent.Id,
+            };
+            rmBtn.Click += async (s, _) =>
+            {
+                if (s is Button { Tag: Guid aid })
+                {
+                    var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+                    try { await api.DeleteAsync($"/channels/{channelId}/agents/{aid}"); }
+                    catch { /* swallow */ }
+                    await ReloadSettingsAndAgentsAsync(channelId);
+                }
+            };
+            Grid.SetColumn(rmBtn, 1);
+            row.Children.Add(rmBtn);
+            agentsList.Children.Add(row);
+        }
+
+        if (allowedAgents.Count == 0)
+            agentsList.Children.Add(new TextBlock
+            {
+                Text = "(no additional agents)",
+                FontFamily = _monoFont, FontSize = 11,
+                Foreground = Brush(0x777777),
+                FontStyle = Windows.UI.Text.FontStyle.Italic,
+            });
+        SettingsPanel.Children.Add(agentsList);
+
+        var currentIds = new HashSet<Guid>(allowedAgents.Select(a => a.Id));
+        var availableAgents = _allAgents.Where(a => !currentIds.Contains(a.Id)).ToList();
+        var agentDisplayMap = new Dictionary<string, Guid>(availableAgents.Count);
+        foreach (var a in availableAgents)
+            agentDisplayMap[$"{a.Name}  ({a.ProviderName}/{a.ModelName})"] = a.Id;
+
+        var agentSearch = new AutoSuggestBox
+        {
+            PlaceholderText = "Search agents to add\u2026",
+            FontFamily = _monoFont, FontSize = 11,
+            MinWidth = 300,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        ToolTipService.SetToolTip(agentSearch, "Type to filter, then click a suggestion to add the agent");
+
+        agentSearch.TextChanged += (sender, args) =>
+        {
+            if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+            var q = sender.Text.Trim();
+            sender.ItemsSource = string.IsNullOrEmpty(q)
+                ? agentDisplayMap.Keys.ToList()
+                : agentDisplayMap.Keys
+                    .Where(k => k.Contains(q, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+        };
+
+        agentSearch.QuerySubmitted += async (sender, args) =>
+        {
+            var chosen = args.ChosenSuggestion?.ToString();
+            if (chosen is null || !agentDisplayMap.TryGetValue(chosen, out var aid)) return;
+            sender.Text = string.Empty;
+            var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+            try
+            {
+                var body = JsonSerializer.Serialize(new { agentId = aid }, Json);
+                await api.PostAsync($"/channels/{channelId}/agents",
+                    new StringContent(body, Encoding.UTF8, "application/json"));
+            }
+            catch { /* swallow */ }
+            await ReloadSettingsAndAgentsAsync(channelId);
+        };
+
+        SettingsPanel.Children.Add(agentSearch);
+
+        // ── Channel Permissions ──
+        AddSettingsSection("Channel Permissions", "Pre-authorization overrides that let the agent act without requiring user approval");
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "⚠ These are pre-approvals. The agent still needs the permission on its own role "
+                 + "to perform an action — pre-approval only means you won't be asked to manually "
+                 + "approve it each time.",
+            FontFamily = _monoFont, FontSize = 10,
+            Foreground = Brush(0xFFAA00),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 6),
+            MaxWidth = 520,
+        });
+
+        BuildPermissionsUI(permRoleId, permData ?? new PermSettingsData(), channelId);
+    }
+
+    private void BuildPermissionsUI(Guid? roleId, PermSettingsData permData, Guid channelId)
+    {
+        // Global flags
+        AddSettingsSubSection("Global Flags");
+        var flagsPanel = new StackPanel { Spacing = 4 };
+        _settingsGlobalFlags.Clear();
+        foreach (var flag in _globalFlagNames)
+        {
+            var cb = new CheckBox
+            {
+                IsChecked = permData.GlobalFlags.GetValueOrDefault(flag),
+                MinWidth = 0, MinHeight = 0,
+                Padding = new Thickness(4, 0, 0, 0),
+                Content = new TextBlock
+                {
+                    Text = FormatFlagName(flag),
+                    FontFamily = _monoFont, FontSize = 11,
+                    Foreground = Brush(0xE0E0E0),
+                },
+            };
+            if (_globalFlagTooltips.TryGetValue(flag, out var flagTip))
+                ToolTipService.SetToolTip(cb, flagTip);
+            _settingsGlobalFlags[flag] = cb;
+            flagsPanel.Children.Add(cb);
+        }
+        SettingsPanel.Children.Add(flagsPanel);
+
+        // Resource accesses
+        AddSettingsSubSection("Resource Accesses");
+        _settingsResourcePanels.Clear();
+        var resContainer = new StackPanel { Spacing = 10 };
+        foreach (var (apiName, displayName) in _resourceAccessTypes)
+        {
+            var grants = permData.ResourceAccesses.GetValueOrDefault(apiName, []);
+            var section = new StackPanel { Spacing = 2 };
+            var resHeader = new TextBlock
+            {
+                Text = displayName,
+                FontFamily = _monoFont, FontSize = 12,
+                Foreground = Brush(0x00CCFF),
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            };
+            if (_resourceAccessTooltips.TryGetValue(apiName, out var resTip))
+                ToolTipService.SetToolTip(resHeader, resTip);
+            section.Children.Add(resHeader);
+
+            var gPanel = new StackPanel { Spacing = 2, Margin = new Thickness(12, 0, 0, 0) };
+            _settingsResourcePanels[apiName] = gPanel;
+
+            foreach (var resId in grants)
+                AddGrantRow(gPanel, resId, "Independent", apiName);
+
+            section.Children.Add(gPanel);
+
+            // ── Action buttons row: + wildcard and + add resource ──
+            var actionsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+            var addWc = new Button
+            {
+                Content = new TextBlock { Text = "+ wildcard", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0x00FF00) },
+                Background = _brushTransparent, BorderThickness = new Thickness(0),
+                Padding = new Thickness(12, 2, 4, 2), MinWidth = 0, MinHeight = 0,
+                Tag = apiName,
+            };
+            addWc.Click += (s, _) =>
+            {
+                if (s is Button { Tag: string type } && _settingsResourcePanels.TryGetValue(type, out var panel))
+                {
+                    AddGrantRow(panel, AllResourcesId, "Independent", type);
+                }
+            };
+            actionsRow.Children.Add(addWc);
+
+            // Resource picker (only shown when the lookup returned items)
+            if (_resourceLookupCache.TryGetValue(apiName, out var lookupItems) && lookupItems.Count > 0)
+            {
+                var capturedApiName = apiName;
+                var capturedItems = lookupItems;
+                var resDisplayMap = new Dictionary<string, Guid>(capturedItems.Count);
+                foreach (var r in capturedItems)
+                    resDisplayMap.TryAdd($"{r.Name}  ({r.Id.ToString()[..8]}…)", r.Id);
+
+                var resSearch = new AutoSuggestBox
+                {
+                    PlaceholderText = "+ add resource…",
+                    FontFamily = _monoFont, FontSize = 10,
+                    MinWidth = 200,
+                };
+                ToolTipService.SetToolTip(resSearch, "Search for a specific resource to grant access to");
+
+                resSearch.TextChanged += (sender, args) =>
+                {
+                    if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+                    var q = sender.Text.Trim();
+                    sender.ItemsSource = string.IsNullOrEmpty(q)
+                        ? resDisplayMap.Keys.ToList()
+                        : resDisplayMap.Keys
+                            .Where(k => k.Contains(q, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                };
+
+                resSearch.QuerySubmitted += (sender, args) =>
+                {
+                    var chosen = args.ChosenSuggestion?.ToString();
+                    if (chosen is null || !resDisplayMap.TryGetValue(chosen, out var resId)) return;
+                    sender.Text = string.Empty;
+                    if (_settingsResourcePanels.TryGetValue(capturedApiName, out var panel))
+                        AddGrantRow(panel, resId, "Independent", capturedApiName);
+                };
+
+                actionsRow.Children.Add(resSearch);
+            }
+
+            section.Children.Add(actionsRow);
+            resContainer.Children.Add(section);
+        }
+        SettingsPanel.Children.Add(resContainer);
+
+        // Save button
+        var saveBtn = new Button
+        {
+            Content = new TextBlock { Text = "Save Permissions", FontFamily = _monoFont, FontSize = 12, Foreground = Brush(0x00FF00) },
+            Background = Brush(0x1A2A1A),
+            BorderBrush = Brush(0x00FF00), BorderThickness = new Thickness(1),
+            Padding = new Thickness(16, 8), Margin = new Thickness(0, 8, 0, 0),
+        };
+        saveBtn.Click += async (_, _) => await SavePermissionsAsync(roleId, channelId);
+        SettingsPanel.Children.Add(saveBtn);
+    }
+
+    private void AddGrantRow(StackPanel grantsPanel, Guid resourceId, string clearance, string? apiName = null)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        string idText;
+        if (resourceId == AllResourcesId)
+            idText = "* (all)";
+        else if (apiName is not null
+            && _resourceLookupCache.TryGetValue(apiName, out var lookupItems)
+            && lookupItems.FirstOrDefault(r => r.Id == resourceId) is { } match)
+            idText = $"{match.Name}  ({resourceId.ToString()[..8]}…)";
+        else
+            idText = resourceId.ToString()[..8] + "…";
+
+        var idBlock = new TextBlock
+        {
+            Text = idText,
+            FontFamily = _monoFont, FontSize = 11,
+            Foreground = Brush(0xE0E0E0),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 80, Tag = resourceId,
+        };
+        if (resourceId != AllResourcesId)
+            ToolTipService.SetToolTip(idBlock, resourceId.ToString());
+        row.Children.Add(idBlock);
+
+        var rmBtn = new Button
+        {
+            Content = new TextBlock { Text = "✕", FontFamily = _monoFont, FontSize = 9, Foreground = Brush(0xFF4444) },
+            Background = _brushTransparent, BorderThickness = new Thickness(0),
+            Padding = new Thickness(2), MinWidth = 0, MinHeight = 0,
+        };
+        rmBtn.Click += (_, _) => grantsPanel.Children.Remove(row);
+        row.Children.Add(rmBtn);
+        grantsPanel.Children.Add(row);
+    }
+
+    private async Task SavePermissionsAsync(Guid? roleId, Guid channelId)
+    {
+        var request = new Dictionary<string, object?>();
+
+        foreach (var (flag, cb) in _settingsGlobalFlags)
+            request[flag] = cb.IsChecked == true;
+
+        foreach (var (apiName, panel) in _settingsResourcePanels)
+        {
+            var grants = new List<object>();
+            foreach (var child in panel.Children)
+            {
+                if (child is StackPanel row && row.Children.Count >= 1
+                    && row.Children[0] is TextBlock { Tag: Guid resId })
+                {
+                    grants.Add(new { resourceId = resId, clearance = "Independent" });
+                }
+            }
+            request[apiName] = grants;
+        }
+
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            // Channel has no permission set yet — create a dedicated role to host one
+            if (roleId is null)
+            {
+                var createBody = JsonSerializer.Serialize(
+                    new { name = $"channel-{channelId.ToString()[..8]}" }, Json);
+                var createResp = await api.PostAsync("/roles",
+                    new StringContent(createBody, Encoding.UTF8, "application/json"));
+                if (!createResp.IsSuccessStatusCode)
+                {
+                    using var errStream = await createResp.Content.ReadAsStreamAsync();
+                    var errMsg = await TryExtractErrorAsync(errStream)
+                        ?? $"{(int)createResp.StatusCode} {createResp.ReasonPhrase}";
+                    AddSettingsLabel($"✗ Failed to create permission set: {errMsg}", 0xFF4444);
+                    return;
+                }
+
+                using var createStream = await createResp.Content.ReadAsStreamAsync();
+                using var createDoc = await JsonDocument.ParseAsync(createStream);
+                roleId = createDoc.RootElement.GetProperty("id").GetGuid();
+                var permSetId = createDoc.RootElement.GetProperty("permissionSetId").GetGuid();
+
+                // Link the new permission set to this channel
+                var assignBody = JsonSerializer.Serialize(new { permissionSetId = permSetId }, Json);
+                var assignResp = await api.PutAsync($"/channels/{channelId}",
+                    new StringContent(assignBody, Encoding.UTF8, "application/json"));
+                if (!assignResp.IsSuccessStatusCode)
+                {
+                    using var errStream = await assignResp.Content.ReadAsStreamAsync();
+                    var errMsg = await TryExtractErrorAsync(errStream)
+                        ?? $"{(int)assignResp.StatusCode} {assignResp.ReasonPhrase}";
+                    AddSettingsLabel($"✗ Failed to assign permission set: {errMsg}", 0xFF4444);
+                    return;
+                }
+
+                await LoadRolesAsync();
+            }
+
+            var body = JsonSerializer.Serialize(request, Json);
+            var resp = await api.PutAsync($"/roles/{roleId}/permissions",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            if (resp.IsSuccessStatusCode)
+            {
+                await LoadChannelSettingsAsync(channelId);
+            }
+            else
+            {
+                using var errStream = await resp.Content.ReadAsStreamAsync();
+                var errMsg = await TryExtractErrorAsync(errStream) ?? $"{(int)resp.StatusCode} {resp.ReasonPhrase}";
+                AddSettingsLabel($"✗ Save failed: {errMsg}", 0xFF4444);
+            }
+        }
+        catch (Exception ex) { AddSettingsLabel($"✗ Save failed: {ex.Message}", 0xFF4444); }
+    }
+
+    private async Task ReloadSettingsAndAgentsAsync(Guid channelId)
+    {
+        await LoadAgentsAsync(_selectedAgentId, null);
+        await LoadChannelSettingsAsync(channelId);
+    }
+
+    private void AddSettingsSection(string text, string? tooltip = null)
+    {
+        var block = new TextBlock
+        {
+            Text = $"── {text} ──",
+            FontFamily = _monoFont, FontSize = 12,
+            Foreground = Brush(0x00FF00),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        };
+        if (tooltip is not null)
+            ToolTipService.SetToolTip(block, tooltip);
+        SettingsPanel.Children.Add(block);
+    }
+
+    private void AddSettingsSubSection(string text) =>
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontFamily = _monoFont, FontSize = 11,
+            Foreground = Brush(0xBBBBBB),
+            Margin = new Thickness(0, 4, 0, 0),
+        });
+
+    private void AddSettingsLabel(string text, int color) =>
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontFamily = _monoFont, FontSize = 11,
+            Foreground = Brush(color),
+        });
+
+    private static string FormatFlagName(string camelCase)
+    {
+        var s = camelCase.AsSpan();
+        if (s.StartsWith("can")) s = s[3..];
+        var sb = new StringBuilder(s.Length + 4);
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (i > 0 && char.IsUpper(s[i]))
+                sb.Append(' ');
+            sb.Append(i == 0 ? char.ToUpper(s[i]) : s[i]);
+        }
+        return sb.ToString();
+    }
+
     // ── Navigation ───────────────────────────────────────────────
 
     private async void OnNewChannelClick(object sender, RoutedEventArgs e)
@@ -1747,7 +2503,9 @@ public sealed partial class MainPage : Page
         _selectedJobId = null;
         _pendingNewThread = false;
         ChatTitleBlock.Text = "> Select or create a channel";
-        ChatAgentBlock.Text = string.Empty;
+        ChannelTabBar.Visibility = Visibility.Collapsed;
+        _settingsMode = false;
+        SettingsScroller.Visibility = Visibility.Collapsed;
         ThreadSelectorPanel.Visibility = Visibility.Collapsed;
         JobSelectorPanel.Visibility = Visibility.Collapsed;
         OneOffWarning.Visibility = Visibility.Collapsed;
@@ -1766,11 +2524,11 @@ public sealed partial class MainPage : Page
     private void OnNewChannelPointerExited(object sender, PointerRoutedEventArgs e)
         => UpdateCursor();
 
-    private void OnDashboardClick(object sender, RoutedEventArgs e)
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
     {
         if (App.Services is not { } services) return;
         var navigator = services.GetRequiredService<INavigator>();
-        _ = navigator.NavigateRouteAsync(this, "Dashboard");
+        _ = navigator.NavigateRouteAsync(this, "Settings");
     }
 
     private void OnLogoutClick(object sender, RoutedEventArgs e)
@@ -1790,6 +2548,151 @@ public sealed partial class MainPage : Page
 
     private async void OnCreatorBlogClick(object sender, RoutedEventArgs e)
         => await Windows.System.Launcher.LaunchUriAsync(new Uri("https://blog.mkn8rn.com"));
+
+    // ── Role assignment (right-click context menu) ─────────────
+
+    private MenuFlyout? BuildRoleMenuFlyout(bool isUser, Guid? agentId)
+    {
+        if (_allRoles.Count == 0 && !isUser) return null;
+
+        var flyout = new MenuFlyout();
+        var sub = new MenuFlyoutSubItem
+        {
+            Text = isUser ? "Assign Role" : "Assign Role to Agent",
+        };
+
+        // "Remove role" option
+        var removeItem = new MenuFlyoutItem
+        {
+            Text = "(none — remove role)",
+            FontFamily = _monoFont,
+            FontSize = 11,
+        };
+        removeItem.Click += async (_, _) =>
+        {
+            if (isUser)
+                await AssignRoleToSelfAsync(Guid.Empty);
+            else if (agentId.HasValue)
+                await AssignRoleToAgentAsync(agentId.Value, Guid.Empty);
+        };
+        sub.Items.Add(removeItem);
+
+        if (_allRoles.Count > 0)
+        {
+            sub.Items.Add(new MenuFlyoutSeparator());
+            foreach (var role in _allRoles)
+            {
+                var roleId = role.Id;
+                var roleName = role.Name;
+
+                // Mark current role with a bullet
+                var isCurrent = isUser
+                    ? _currentUserRoleId == roleId
+                    : _allAgents.FirstOrDefault(a => a.Id == agentId)?.RoleId == roleId;
+                var prefix = isCurrent ? "● " : "";
+
+                var item = new MenuFlyoutItem
+                {
+                    Text = $"{prefix}{roleName}",
+                    FontFamily = _monoFont,
+                    FontSize = 11,
+                };
+                item.Click += async (_, _) =>
+                {
+                    if (isUser)
+                        await AssignRoleToSelfAsync(roleId);
+                    else if (agentId.HasValue)
+                        await AssignRoleToAgentAsync(agentId.Value, roleId);
+                };
+                sub.Items.Add(item);
+            }
+        }
+
+        flyout.Items.Add(sub);
+        return flyout;
+    }
+
+    private async Task AssignRoleToAgentAsync(Guid agentId, Guid roleId)
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            var body = JsonSerializer.Serialize(new { roleId }, Json);
+            var content = new StringContent(body, Encoding.UTF8, "application/json");
+            var resp = await api.PutAsync($"/agents/{agentId}/role", content);
+            if (resp.IsSuccessStatusCode)
+            {
+                // Refresh the cached agent list so future menus reflect the change
+                await LoadAgentsAsync(_selectedAgentId, null);
+                await LoadRolesAsync();
+                var agent = _allAgents.FirstOrDefault(a => a.Id == agentId);
+                var label = roleId == Guid.Empty
+                    ? $"✓ Removed role from {agent?.Name ?? "agent"}"
+                    : $"✓ Assigned role '{agent?.RoleName}' to {agent?.Name ?? "agent"}";
+                AppendMessage("system", label, DateTimeOffset.Now, senderName: "system");
+                ScrollToBottom();
+            }
+            else
+            {
+                using var errStream = await resp.Content.ReadAsStreamAsync();
+                var errMsg = await TryExtractErrorAsync(errStream) ?? $"{(int)resp.StatusCode} {resp.ReasonPhrase}";
+                AppendMessage("system", $"✗ Role assignment failed: {errMsg}", DateTimeOffset.Now, senderName: "system");
+                ScrollToBottom();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendMessage("system", $"✗ Role assignment failed: {ex.Message}", DateTimeOffset.Now, senderName: "system");
+            ScrollToBottom();
+        }
+    }
+
+    private async Task AssignRoleToSelfAsync(Guid roleId)
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+        try
+        {
+            var body = JsonSerializer.Serialize(new { roleId }, Json);
+            var content = new StringContent(body, Encoding.UTF8, "application/json");
+            var resp = await api.PutAsync("/auth/me/role", content);
+            if (resp.IsSuccessStatusCode)
+            {
+                // Refresh cached user info
+                await LoadUserInfoAsync();
+                await LoadRolesAsync();
+                var roleName = _allRoles.FirstOrDefault(r => r.Id == roleId)?.Name;
+                var label = roleId == Guid.Empty
+                    ? $"✓ Removed your role"
+                    : $"✓ Assigned role '{roleName}' to yourself";
+                AppendMessage("system", label, DateTimeOffset.Now, senderName: "system");
+                ScrollToBottom();
+            }
+            else
+            {
+                using var errStream = await resp.Content.ReadAsStreamAsync();
+                var errMsg = await TryExtractErrorAsync(errStream) ?? $"{(int)resp.StatusCode} {resp.ReasonPhrase}";
+                AppendMessage("system", $"✗ Role assignment failed: {errMsg}", DateTimeOffset.Now, senderName: "system");
+                ScrollToBottom();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendMessage("system", $"✗ Role assignment failed: {ex.Message}", DateTimeOffset.Now, senderName: "system");
+            ScrollToBottom();
+        }
+    }
+
+    private static async Task<string?> TryExtractErrorAsync(Stream stream)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(stream);
+            if (doc.RootElement.TryGetProperty("error", out var ep) && ep.ValueKind == JsonValueKind.String)
+                return ep.GetString();
+        }
+        catch { /* not JSON */ }
+        return null;
+    }
 
     // ── Helpers ──────────────────────────────────────────────────
 
@@ -1822,15 +2725,30 @@ public sealed partial class MainPage : Page
     private sealed partial record ContextDto(Guid Id, string Name, Guid AgentId, string AgentName, DateTimeOffset CreatedAt);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record ChannelDto(Guid Id, string Title, Guid? AgentId, string? AgentName, Guid? ContextId, DateTimeOffset CreatedAt);
-    private sealed record ChatMessageDto(string Role, string Content, DateTimeOffset Timestamp);
+    private sealed record ChatMessageDto(
+        string Role, string Content, DateTimeOffset Timestamp,
+        Guid? SenderUserId = null, string? SenderUsername = null,
+        Guid? SenderAgentId = null, string? SenderAgentName = null,
+        string? ClientType = null);
     private sealed record ChatResponseDto(ChatMessageDto UserMessage, ChatMessageDto AssistantMessage);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record ThreadDto(Guid Id, string Name, Guid ChannelId, int? MaxMessages, int? MaxCharacters, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record AgentDto(Guid Id, string Name, string? SystemPrompt, Guid ModelId, string ModelName, string ProviderName, Guid? RoleId = null, string? RoleName = null);
     [ImplicitKeys(IsEnabled = false)]
+    private sealed partial record RoleDto(Guid Id, string Name, Guid? PermissionSetId = null);
+    [ImplicitKeys(IsEnabled = false)]
     private sealed partial record JobDto(Guid Id, Guid ChannelId, string ActionType, string Status, DateTimeOffset CreatedAt);
     private sealed record JobLogDto(string Message, string Level, DateTimeOffset Timestamp);
+    [ImplicitKeys(IsEnabled = false)]
+    private sealed partial record ResourceItemDto(Guid Id, string Name);
+
+    private sealed class PermSettingsData
+    {
+        public readonly Dictionary<string, bool> GlobalFlags = [];
+        public readonly Dictionary<string, List<Guid>> ResourceAccesses = [];
+    }
+
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record JobDetailDto(
         Guid Id, Guid ChannelId, Guid AgentId, string ActionType, Guid? ResourceId,

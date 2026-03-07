@@ -10,6 +10,12 @@ public class UserDB : BaseEntity
     public required byte[] PasswordSalt { get; set; }
 
     /// <summary>
+    /// Marks the user as an administrator who can list users and
+    /// assign roles to other users.
+    /// </summary>
+    public bool IsUserAdmin { get; set; }
+
+    /// <summary>
     /// Free-form user bio included in chat headers so agents know
     /// who they are talking to.
     /// </summary>

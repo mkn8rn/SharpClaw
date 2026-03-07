@@ -695,13 +695,49 @@ public sealed partial class FirstSetupPage : Page
     private void PopulateClearanceSelector()
     {
         ClearanceSelector.Items.Clear();
-        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Independent (auto-approved)", Tag = "Independent" });
-        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "ApprovedBySameLevelUser", Tag = "ApprovedBySameLevelUser" });
-        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "ApprovedByWhitelistedUser", Tag = "ApprovedByWhitelistedUser" });
-        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "ApprovedByPermittedAgent", Tag = "ApprovedByPermittedAgent" });
-        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "ApprovedByWhitelistedAgent", Tag = "ApprovedByWhitelistedAgent" });
+        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Can act without approval", Tag = "Independent" });
+        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Only with approval from a user that can grant the permission", Tag = "ApprovedBySameLevelUser" });
+        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Only with approval from a user", Tag = "ApprovedByWhitelistedUser" });
+        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Only with approval from an agent that has clearance to act", Tag = "ApprovedByPermittedAgent" });
+        ClearanceSelector.Items.Add(new ComboBoxItem { Content = "Only with approval from a managing agent", Tag = "ApprovedByWhitelistedAgent" });
         ClearanceSelector.SelectedIndex = 0; // Default to Independent for first-time setup
+
+        // Populate per-flag and per-resource clearance selectors
+        PopulateClearanceCombo(ClrLocalhostBrowser);
+        PopulateClearanceCombo(ClrLocalhostCli);
+        PopulateClearanceCombo(ClrClickDesktop);
+        PopulateClearanceCombo(ClrTypeOnDesktop);
+        PopulateClearanceCombo(ClrCreateSubAgents);
+        PopulateClearanceCombo(ClrCreateContainers);
+        PopulateClearanceCombo(ClrRegisterInfoStores);
+        PopulateClearanceCombo(ClrSafeShell);
+        PopulateClearanceCombo(ClrDangerousShell);
+        PopulateClearanceCombo(ClrContainerAccess);
+        PopulateClearanceCombo(ClrWebsiteAccess);
+        PopulateClearanceCombo(ClrSearchEngineAccess);
+        PopulateClearanceCombo(ClrLocalInfoStore);
+        PopulateClearanceCombo(ClrExternalInfoStore);
+        PopulateClearanceCombo(ClrAudioDevice);
+        PopulateClearanceCombo(ClrDisplayDevice);
+        PopulateClearanceCombo(ClrEditorSession);
+        PopulateClearanceCombo(ClrAgentManagement);
+        PopulateClearanceCombo(ClrTaskManagement);
+        PopulateClearanceCombo(ClrSkillManagement);
     }
+
+    private static void PopulateClearanceCombo(ComboBox box)
+    {
+        box.Items.Clear();
+        box.Items.Add(new ComboBoxItem { Content = "Can act without approval", Tag = "Independent" });
+        box.Items.Add(new ComboBoxItem { Content = "Only with approval from a user that can grant the permission", Tag = "ApprovedBySameLevelUser" });
+        box.Items.Add(new ComboBoxItem { Content = "Only with approval from a user", Tag = "ApprovedByWhitelistedUser" });
+        box.Items.Add(new ComboBoxItem { Content = "Only with approval from an agent that has clearance to act", Tag = "ApprovedByPermittedAgent" });
+        box.Items.Add(new ComboBoxItem { Content = "Only with approval from a managing agent", Tag = "ApprovedByWhitelistedAgent" });
+        box.SelectedIndex = 0;
+    }
+
+    private static string GetClearanceTag(ComboBox box)
+        => box.SelectedItem is ComboBoxItem { Tag: string cl } ? cl : "Independent";
 
     private async Task CreateRoleAndAssignAsync(Guid agentId)
     {
@@ -736,35 +772,54 @@ public sealed partial class FirstSetupPage : Page
 
         // AllResources wildcard for per-resource grants
         var allResources = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-        var wildcardGrant = new[] { new { resourceId = allResources, clearance } };
 
         var permBody = JsonSerializer.Serialize(new
         {
             defaultClearance = clearance,
 
-            // Global flags
+            // Global flags with per-flag clearance
             canCreateSubAgents = ChkCreateSubAgents.IsChecked == true,
+            createSubAgentsClearance = GetClearanceTag(ClrCreateSubAgents),
             canCreateContainers = ChkCreateContainers.IsChecked == true,
+            createContainersClearance = GetClearanceTag(ClrCreateContainers),
             canRegisterInfoStores = ChkRegisterInfoStores.IsChecked == true,
+            registerInfoStoresClearance = GetClearanceTag(ClrRegisterInfoStores),
             canAccessLocalhostInBrowser = ChkLocalhostBrowser.IsChecked == true,
+            accessLocalhostInBrowserClearance = GetClearanceTag(ClrLocalhostBrowser),
             canAccessLocalhostCli = ChkLocalhostCli.IsChecked == true,
+            accessLocalhostCliClearance = GetClearanceTag(ClrLocalhostCli),
             canClickDesktop = ChkClickDesktop.IsChecked == true,
+            clickDesktopClearance = GetClearanceTag(ClrClickDesktop),
             canTypeOnDesktop = ChkTypeOnDesktop.IsChecked == true,
+            typeOnDesktopClearance = GetClearanceTag(ClrTypeOnDesktop),
 
-            // Per-resource grants (wildcard)
-            safeShellAccesses = ChkSafeShell.IsChecked == true ? wildcardGrant : null,
-            dangerousShellAccesses = ChkDangerousShell.IsChecked == true ? wildcardGrant : null,
-            containerAccesses = ChkContainerAccess.IsChecked == true ? wildcardGrant : null,
-            websiteAccesses = ChkWebsiteAccess.IsChecked == true ? wildcardGrant : null,
-            searchEngineAccesses = ChkSearchEngineAccess.IsChecked == true ? wildcardGrant : null,
-            localInfoStoreAccesses = ChkLocalInfoStore.IsChecked == true ? wildcardGrant : null,
-            externalInfoStoreAccesses = ChkExternalInfoStore.IsChecked == true ? wildcardGrant : null,
-            audioDeviceAccesses = ChkAudioDevice.IsChecked == true ? wildcardGrant : null,
-            displayDeviceAccesses = ChkDisplayDevice.IsChecked == true ? wildcardGrant : null,
-            editorSessionAccesses = ChkEditorSession.IsChecked == true ? wildcardGrant : null,
-            agentAccesses = ChkAgentManagement.IsChecked == true ? wildcardGrant : null,
-            taskAccesses = ChkTaskManagement.IsChecked == true ? wildcardGrant : null,
-            skillAccesses = ChkSkillManagement.IsChecked == true ? wildcardGrant : null,
+            // Per-resource grants (wildcard) with per-resource clearance
+            safeShellAccesses = ChkSafeShell.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrSafeShell) } } : null,
+            dangerousShellAccesses = ChkDangerousShell.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrDangerousShell) } } : null,
+            containerAccesses = ChkContainerAccess.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrContainerAccess) } } : null,
+            websiteAccesses = ChkWebsiteAccess.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrWebsiteAccess) } } : null,
+            searchEngineAccesses = ChkSearchEngineAccess.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrSearchEngineAccess) } } : null,
+            localInfoStoreAccesses = ChkLocalInfoStore.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrLocalInfoStore) } } : null,
+            externalInfoStoreAccesses = ChkExternalInfoStore.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrExternalInfoStore) } } : null,
+            audioDeviceAccesses = ChkAudioDevice.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrAudioDevice) } } : null,
+            displayDeviceAccesses = ChkDisplayDevice.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrDisplayDevice) } } : null,
+            editorSessionAccesses = ChkEditorSession.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrEditorSession) } } : null,
+            agentAccesses = ChkAgentManagement.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrAgentManagement) } } : null,
+            taskAccesses = ChkTaskManagement.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrTaskManagement) } } : null,
+            skillAccesses = ChkSkillManagement.IsChecked == true
+                ? new[] { new { resourceId = allResources, clearance = GetClearanceTag(ClrSkillManagement) } } : null,
         }, Json);
 
         var permResp = await Api.PutAsync($"/roles/{roleId}/permissions",

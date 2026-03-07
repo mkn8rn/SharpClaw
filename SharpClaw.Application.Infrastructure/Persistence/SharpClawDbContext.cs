@@ -205,6 +205,12 @@ public class SharpClawDbContext(
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ── Chat Messages ─────────────────────────────────────────
+        modelBuilder.Entity<ChatMessageDB>(e =>
+        {
+            e.Property(m => m.ClientType).HasConversion<string>();
+        });
+
         // ── Scheduled Tasks ───────────────────────────────────────
         modelBuilder.Entity<ScheduledJobDB>(e =>
         {

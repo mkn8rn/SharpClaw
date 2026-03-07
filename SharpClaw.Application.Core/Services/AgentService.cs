@@ -3,6 +3,7 @@ using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Agents;
+using SharpClaw.Contracts.DTOs.Auth;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
@@ -375,6 +376,54 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
         db.Agents.Remove(agent);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    /// <summary>
+    /// Assigns or removes a role on the calling user. The same permission
+    /// validation applies: you can only assign a role whose permissions are
+    /// covered by your current role.
+    /// Pass <see cref="Guid.Empty"/> as <paramref name="roleId"/> to remove.
+    /// </summary>
+    public async Task<MeResponse?> AssignUserRoleAsync(
+        Guid roleId, CancellationToken ct = default)
+    {
+        var userId = session.UserId
+            ?? throw new UnauthorizedAccessException("A logged-in user is required.");
+
+        var user = await db.Users
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return null;
+
+        if (roleId == Guid.Empty)
+        {
+            user.RoleId = null;
+            user.Role = null;
+        }
+        else
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct)
+                ?? throw new ArgumentException($"Role {roleId} not found.");
+
+            if (user.RoleId != role.Id)
+            {
+                var targetPs = role.PermissionSetId.HasValue
+                    ? await LoadFullPermissionSetAsync(role.PermissionSetId.Value, ct)
+                    : null;
+
+                var callerPs = user.Role?.PermissionSetId is { } cpId
+                    ? await LoadFullPermissionSetAsync(cpId, ct)
+                    : null;
+
+                ValidateCallerCoversTargetRole(callerPs, targetPs, role.Name);
+            }
+
+            user.RoleId = role.Id;
+            user.Role = role;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return new MeResponse(user.Id, user.Username, user.Bio, user.RoleId, user.Role?.Name);
     }
 
     private static AgentResponse ToResponse(AgentDB agent, ModelDB model) =>

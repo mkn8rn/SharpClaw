@@ -22,6 +22,7 @@ using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -211,6 +212,7 @@ public static class CliDispatcher
             "chat" => await HandleChatCommand(args, sp),
             "job" => await HandleJobCommand(args, sp),
             "role" => await HandleRoleCommand(args, sp),
+            "user" => await HandleUserCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
             "help" or "--help" or "-h" => PrintHelp(),
@@ -2271,6 +2273,88 @@ public static class CliDispatcher
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // User administration
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleUserCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "user list                                 List all users (admin only)",
+                "user role <userId> <roleId|none>           Assign a role to a user (admin only)");
+            return Results.Ok();
+        }
+
+        var sub = args[1].ToLowerInvariant();
+        var auth = sp.GetRequiredService<AuthService>();
+        var session = sp.GetRequiredService<SessionService>();
+
+        return sub switch
+        {
+            "list" => await HandleUserList(auth, session),
+
+            "role" when args.Length >= 4
+                => await HandleUserRole(args, auth, session),
+            "role" => UsageResult("user role <userId> <roleId|none>"),
+
+            _ => UsageResult($"Unknown sub-command: user {sub}. Try 'help' for usage.")
+        };
+    }
+
+    private static async Task<IResult> HandleUserList(AuthService auth, SessionService session)
+    {
+        if (session.UserId is not { } userId)
+            return Results.Unauthorized();
+
+        try
+        {
+            var users = await auth.ListUsersAsync(userId);
+            PrintJsonWithShortIds(users);
+            return Results.Ok();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return Results.Ok();
+        }
+    }
+
+    private static async Task<IResult> HandleUserRole(
+        string[] args, AuthService auth, SessionService session)
+    {
+        if (session.UserId is not { } callerId)
+            return Results.Unauthorized();
+
+        var targetUserId = CliIdMap.Resolve(args[2]);
+        var roleId = args[3].Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? Guid.Empty
+            : CliIdMap.Resolve(args[3]);
+
+        try
+        {
+            var result = await auth.SetUserRoleAsync(targetUserId, roleId, callerId);
+            if (result is null)
+            {
+                Console.Error.WriteLine("User not found.");
+                return Results.Ok();
+            }
+            PrintJsonWithShortIds(result);
+            return Results.Ok();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return Results.Ok();
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return Results.Ok();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Bio
     // ═══════════════════════════════════════════════════════════════
 
@@ -2394,6 +2478,10 @@ public static class CliDispatcher
               Defaults: 50 messages, 100k chars. Set 0 to reset to default.
 
             Bio:       bio get | set <text> | clear
+
+            User:      user <sub> [args]        (admin only)
+              user list                          List all registered users
+              user role <userId> <roleId|none>   Assign or remove a user's role
 
             Job:       job <sub> [args]
               job submit <channelId> <actionType> [resourceId] [--agent <id>]
