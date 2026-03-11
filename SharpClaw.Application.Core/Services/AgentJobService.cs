@@ -434,6 +434,35 @@ IConfiguration configuration)
     }
 
     /// <summary>
+    /// Updates the text of a provisional segment without finalizing it.
+    /// Used to merge sentence-completion fragments into their parent
+    /// provisional instead of emitting a standalone segment.
+    /// </summary>
+    public async Task<bool> UpdateProvisionalTextAsync(
+        Guid jobId, Guid segmentId, string text,
+        CancellationToken ct = default)
+    {
+        var segment = await db.TranscriptionSegments
+            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId && s.IsProvisional, ct);
+        if (segment is null)
+            return false;
+
+        segment.Text = text;
+        segment.Timestamp = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        if (_channels.TryGetValue(jobId, out var channel))
+        {
+            var response = new TranscriptionSegmentResponse(
+                segment.Id, segment.Text, segment.StartTime, segment.EndTime,
+                segment.Confidence, segment.Timestamp, IsProvisional: true);
+            await channel.Writer.WriteAsync(response, ct);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Removes a provisional segment that was not confirmed by later
     /// inference ticks (likely a hallucination).  Deletes the DB record
     /// and pushes a zero-length "retracted" event so streaming consumers
