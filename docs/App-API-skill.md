@@ -207,6 +207,7 @@ AGENT JOBS
 ────────────────────────────────────────
 POST   /channels/{channelId}/jobs              (SubmitAgentJobRequest)
 GET    /channels/{channelId}/jobs
+GET    /channels/{channelId}/jobs/summaries    (lightweight: id, channelId, agentId, actionType, resourceId, status, createdAt, startedAt, completedAt — no resultData/errorLog/logs/segments)
 GET    /channels/{channelId}/jobs/{jobId}
 POST   /channels/{channelId}/jobs/{jobId}/approve   { approverAgentId? }
 POST   /channels/{channelId}/jobs/{jobId}/stop      (transcription: complete normally)
@@ -215,7 +216,9 @@ POST   /channels/{channelId}/jobs/{jobId}/cancel
 SubmitAgentJobRequest:
   actionType (required), resourceId?, agentId?, callerAgentId?,
   dangerousShellType?, safeShellType?, scriptJson?, workingDirectory?,
-  transcriptionModelId?, language?
+  transcriptionModelId?, language?, transcriptionMode?, windowSeconds?, stepSeconds?
+
+TranscriptionMode values: SlidingWindow (default, two-pass), Simple, StrictSlidingWindow.
 
 AgentJobStatus: Queued=0, Executing=1, AwaitingApproval=2, Completed=3, Failed=4, Denied=5, Cancelled=6.
 
@@ -227,7 +230,42 @@ When resourceId is omitted for a per-resource action, default resources are reso
 
 When transcriptionModelId is omitted for transcription actions, the default transcription model is resolved from the channel → context default resource set.
 
-language is a BCP-47 hint (e.g. "en", "de"). Omit for auto-detect. Supplying it improves accuracy on short chunks.
+language is a BCP-47 hint (e.g. "en", "de"). Omit for auto-detect. Supplying it improves accuracy on short chunks. When set, the orchestrator enforces it: prompt is seeded with a target-language phrase, and up to 4 retries with escalating reinforcement if Whisper returns the wrong language. Never drops audio — accepts after retries.
+
+transcriptionMode: SlidingWindow (default), Simple, or StrictSlidingWindow.
+  SlidingWindow: two-pass with multi-layer dedup. Audio flows: mic → ring buffer → silence gate → sliding window → STT API → dedup → emit.
+    Every step interval, a window of audio is extracted and sent to the API. The response is diffed against
+    the previous window's text to extract genuinely new content. New text is split into per-sentence segments
+    with proportionally distributed timestamps. Segments are emitted provisionally within ~2 s (isProvisional=true),
+    then finalized after the commit delay confirms them. A HashSet of all emitted texts prevents hallucination
+    replay (where the API regurgitates the entire transcript as new speech).
+  Simple: sequential non-overlapping chunks, segments emitted immediately. Lower latency, fewer API calls.
+  StrictSlidingWindow: single-pass. Segments only emitted after full commit delay + dedup. ~5–8 s latency.
+
+windowSeconds: seconds of audio per inference tick. Clamped [5, 15]. Default 10.
+stepSeconds: seconds between inference ticks (SlidingWindow/StrictSlidingWindow only). Clamped [1, window]. Default 2. Ignored in Simple mode.
+
+TranscriptionMode enum: SlidingWindow=0, Simple=1, StrictSlidingWindow=2.
+
+Two-pass segment lifecycle (SlidingWindow mode):
+  1. Provisional: emitted quickly with isProvisional=true after passing the dedup pipeline (~2 s). Text may shift.
+  2. Finalized: same id re-pushed with isProvisional=false, updated text/confidence after commit delay (2 s).
+  3. Retracted: stale provisional deleted, tombstone pushed (empty text, isProvisional=false).
+  StrictSlidingWindow and Simple always emit isProvisional=false.
+
+Dedup pipeline (non-timestamped API responses):
+  When the STT API returns the full window as a single text blob without timestamps:
+  1. Text diff: current response compared against previousWindowText. Containment check
+     (strict for <10 words, 10% fuzzy floor for longer) suppresses subsets. Suffix-prefix
+     overlap removes already-seen prefixes, returning only the genuinely new tail.
+  2. Context tracking: previousWindowText only upgrades to longer responses when no new text
+     is found (never downgrades to shorter subsets to prevent context loss and re-emission).
+  3. Sentence splitting: multi-sentence new text split at [.!?]+space+uppercase boundaries.
+     Each sentence gets its own segment with proportionally distributed timestamps.
+  4. Fragment merge: ≤2-word lowercase residuals merged into the latest provisional.
+  5. Emitted-text guard: HashSet of all emitted texts (trimmed, period-stripped,
+     case-insensitive) blocks duplicates at emission time, including hallucination replay.
+  6. Timestamp guard: segments with absEnd ≤ lastSeenEnd are skipped.
 
 Audio is automatically normalised to mono 16 kHz 16-bit PCM (Whisper-optimal).
 
@@ -380,12 +418,31 @@ Step 8 — Submit a transcription job with minimal params.
   That's it. No resourceId, no transcriptionModelId, no agentId needed.
   The job is auto-approved (Independent clearance) and begins capturing audio immediately.
 
-  Optional: pass language for better accuracy on short chunks:
+  Optional: pass language for strict enforcement — prompt is seeded in target language, up to 4 retries on mismatch:
 
     POST /channels/CHANNEL_ID/jobs
     {
       "actionType": "TranscribeFromAudioDevice",
       "language": "en"
+    }
+
+  Optional: use Simple mode for cheap, low-latency transcription:
+
+    POST /channels/CHANNEL_ID/jobs
+    {
+      "actionType": "TranscribeFromAudioDevice",
+      "language": "en",
+      "transcriptionMode": "Simple"
+    }
+
+  Optional: custom sliding window timing (12s window, 4s step):
+
+    POST /channels/CHANNEL_ID/jobs
+    {
+      "actionType": "TranscribeFromAudioDevice",
+      "transcriptionMode": "SlidingWindow",
+      "windowSeconds": 12,
+      "stepSeconds": 4
     }
 
 Step 9 — Stream live segments.

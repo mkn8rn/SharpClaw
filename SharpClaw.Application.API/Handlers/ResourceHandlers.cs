@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.API.Handlers;
 
@@ -147,4 +149,54 @@ public static class ResourceHandlers
     [MapDelete("/editorsessions/{id}")]
     public static async Task<IResult> DeleteEditorSession(Guid id, EditorSessionService svc)
         => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
+
+    // ═══════════════════════════════════════════════════════════════
+    // Universal resource lookup
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Returns lightweight <c>[{id, name}]</c> items for the resource type
+    /// that backs a given permission access category.  The <paramref name="type"/>
+    /// value matches the JSON property names used in the permissions API
+    /// (e.g. <c>audioDeviceAccesses</c>, <c>containerAccesses</c>).
+    /// </summary>
+    [MapGet("/lookup/{type}")]
+    public static async Task<IResult> LookupByAccessType(string type, SharpClawDbContext db)
+    {
+        IQueryable<ResourceItem>? query = type switch
+        {
+            "dangerousShellAccesses" => db.SystemUsers
+                .Select(e => new ResourceItem(e.Id, e.Username)),
+            "safeShellAccesses" or "containerAccesses" => db.Containers
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "websiteAccesses" => db.Websites
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "searchEngineAccesses" => db.SearchEngines
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "localInfoStoreAccesses" => db.LocalInformationStores
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "externalInfoStoreAccesses" => db.ExternalInformationStores
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "audioDeviceAccesses" => db.AudioDevices
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "displayDeviceAccesses" => db.DisplayDevices
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "editorSessionAccesses" => db.EditorSessions
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "agentAccesses" => db.Agents
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "taskAccesses" => db.ScheduledTasks
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "skillAccesses" => db.Skills
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            _ => null,
+        };
+
+        if (query is null)
+            return Results.BadRequest(new { error = $"Unknown resource type '{type}'." });
+
+        return Results.Ok(await query.OrderBy(r => r.Name).ToListAsync());
+    }
+
+    private sealed record ResourceItem(Guid Id, string Name);
 }

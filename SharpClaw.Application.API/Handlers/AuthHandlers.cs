@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
+using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Auth;
 
 namespace SharpClaw.Application.API.Handlers;
@@ -52,5 +53,23 @@ public static class AuthHandlers
     {
         await auth.InvalidateRefreshTokensAsync(request.UserIds);
         return Results.NoContent();
+    }
+
+    [MapPut("/me/role")]
+    public static async Task<IResult> AssignSelfRole(
+        AssignAgentRoleRequest request, AgentService agentSvc, SessionService session)
+    {
+        if (session.UserId is null)
+            return Results.Unauthorized();
+
+        try
+        {
+            var result = await agentSvc.AssignUserRoleAsync(request.RoleId);
+            return result is not null ? Results.Ok(result) : Results.NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
     }
 }

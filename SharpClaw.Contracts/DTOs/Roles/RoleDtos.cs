@@ -19,12 +19,19 @@ public sealed record SetRolePermissionsRequest(
 
     // Global flags
     bool CanCreateSubAgents = false,
+    PermissionClearance CreateSubAgentsClearance = PermissionClearance.Unset,
     bool CanCreateContainers = false,
+    PermissionClearance CreateContainersClearance = PermissionClearance.Unset,
     bool CanRegisterInfoStores = false,
+    PermissionClearance RegisterInfoStoresClearance = PermissionClearance.Unset,
     bool CanAccessLocalhostInBrowser = false,
+    PermissionClearance AccessLocalhostInBrowserClearance = PermissionClearance.Unset,
     bool CanAccessLocalhostCli = false,
+    PermissionClearance AccessLocalhostCliClearance = PermissionClearance.Unset,
     bool CanClickDesktop = false,
+    PermissionClearance ClickDesktopClearance = PermissionClearance.Unset,
     bool CanTypeOnDesktop = false,
+    PermissionClearance TypeOnDesktopClearance = PermissionClearance.Unset,
 
     // Per-resource grants
     IReadOnlyList<ResourceGrant>? DangerousShellAccesses = null,
@@ -63,12 +70,19 @@ public sealed record RolePermissionsResponse(
     PermissionClearance DefaultClearance,
 
     bool CanCreateSubAgents,
+    PermissionClearance CreateSubAgentsClearance,
     bool CanCreateContainers,
+    PermissionClearance CreateContainersClearance,
     bool CanRegisterInfoStores,
+    PermissionClearance RegisterInfoStoresClearance,
     bool CanAccessLocalhostInBrowser,
+    PermissionClearance AccessLocalhostInBrowserClearance,
     bool CanAccessLocalhostCli,
+    PermissionClearance AccessLocalhostCliClearance,
     bool CanClickDesktop,
+    PermissionClearance ClickDesktopClearance,
     bool CanTypeOnDesktop,
+    PermissionClearance TypeOnDesktopClearance,
 
     IReadOnlyList<ResourceGrant> DangerousShellAccesses,
     IReadOnlyList<ResourceGrant> SafeShellAccesses,
