@@ -144,6 +144,7 @@ public sealed class LiveTranscriptionOrchestrator(
         var consecutiveErrors = 0;
         const int maxConsecutiveErrors = 5;
         var previousWindowText = "";
+        var emittedTexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var promptBuffer = language is not null
             ? LanguageScriptValidator.GetPromptSeed(language)
             : "";
@@ -303,15 +304,83 @@ public sealed class LiveTranscriptionOrchestrator(
                             $"[tick {tickCount}] synthetic diff: prev={previousWindowText.Length} chars, " +
                             $"curr={currentText.Length} chars, new=\"{Truncate(newText, 80)}\"", "Trace");
 
-                        if (currentText.Length >= previousWindowText.Length)
-                            previousWindowText = currentText;
-
+                        // When the overlap check found nothing new, only
+                        // upgrade previousWindowText to a LONGER response —
+                        // downgrading to a shorter subset loses context and
+                        // lets already-emitted content slip through as "new"
+                        // in a later tick once the shorter prev no longer
+                        // contains it.  When there IS new text, always
+                        // update so the diff tracks the sliding window.
                         if (string.IsNullOrWhiteSpace(newText))
+                        {
+                            if (currentText.Length > previousWindowText.Length)
+                                previousWindowText = currentText;
                             continue;
+                        }
+                        previousWindowText = currentText;
 
-                        var newStart = Math.Max(0, result.Duration - effectiveStep);
-                        segments = [new TranscriptionChunkSegment(
-                            newText, newStart, result.Duration, null)];
+                        // Very short residuals starting with a lowercase letter
+                        // are almost certainly sentence-completion fragments from
+                        // API text truncation at the window boundary (e.g. prev
+                        // ended "the fifth", curr completed to "the fifth sentence.").
+                        // Merge into the most recent provisional rather than
+                        // emitting a standalone fragment segment.
+                        var newWords = newText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (newWords.Length <= 2 && newWords.Length > 0
+                            && char.IsLower(newWords[0][0])
+                            && isTwoPass && provisionals.Count > 0)
+                        {
+                            var last = provisionals[^1];
+                            var mergedText = last.Text + " " + newText;
+
+                            await AddJobLogAsync(jobId,
+                                $"[tick {tickCount}] MERGE fragment \"{Truncate(newText, 40)}\" " +
+                                $"into provisional: \"{Truncate(mergedText, 60)}\"", "Info");
+
+                            using (var mergeScope = scopeFactory.CreateScope())
+                            {
+                                var mergeSvc = mergeScope.ServiceProvider.GetRequiredService<AgentJobService>();
+                                await mergeSvc.UpdateProvisionalTextAsync(
+                                    jobId, last.SegmentId, mergedText, ct);
+                            }
+                            provisionals[^1] = last with { Text = mergedText };
+                            emittedTexts.Add(mergedText.Trim().TrimEnd('.'));
+                            continue;
+                        }
+
+                        // Split accumulated text into sentence-level segments
+                        // so output arrives incrementally rather than in bursts
+                        // when multiple sentences become "new" in a single tick.
+                        var sentences = SplitSentences(newText);
+                        var absSpanStart = Math.Max(lastSeenEnd, windowStartTime);
+                        var absSpanEnd = windowStartTime + result.Duration;
+                        var spanDuration = absSpanEnd - absSpanStart;
+
+                        if (sentences.Count > 1 && spanDuration > 0)
+                        {
+                            var totalChars = 0;
+                            foreach (var s in sentences) totalChars += s.Length;
+
+                            var segList = new List<TranscriptionChunkSegment>(sentences.Count);
+                            var runningAbs = absSpanStart;
+                            foreach (var sentence in sentences)
+                            {
+                                var frac = (double)sentence.Length / totalChars;
+                                var segDur = spanDuration * frac;
+                                var relStart = runningAbs - windowStartTime;
+                                var relEnd = relStart + segDur;
+                                segList.Add(new TranscriptionChunkSegment(
+                                    sentence, relStart, relEnd, null));
+                                runningAbs += segDur;
+                            }
+                            segments = segList;
+                        }
+                        else
+                        {
+                            var newStart = Math.Max(0, result.Duration - effectiveStep);
+                            segments = [new TranscriptionChunkSegment(
+                                newText, newStart, result.Duration, null)];
+                        }
                     }
 
                     using var scope = scopeFactory.CreateScope();
@@ -326,6 +395,15 @@ public sealed class LiveTranscriptionOrchestrator(
                         {
                             await AddJobLogAsync(jobId,
                                 $"[tick {tickCount}] SKIP (absEnd {absEnd:F2} <= lastSeenEnd {lastSeenEnd:F2}): " +
+                                $"\"{Truncate(seg.Text, 60)}\"", "Trace");
+                            continue;
+                        }
+
+                        var normalizedText = seg.Text.Trim().TrimEnd('.');
+                        if (!emittedTexts.Add(normalizedText))
+                        {
+                            await AddJobLogAsync(jobId,
+                                $"[tick {tickCount}] SKIP duplicate text: " +
                                 $"\"{Truncate(seg.Text, 60)}\"", "Trace");
                             continue;
                         }
@@ -481,17 +559,27 @@ public sealed class LiveTranscriptionOrchestrator(
 
         // Check if current is entirely contained within previous
         // (API returned a subset of previously seen text).
+        // Allow up to 10% word mismatches (floor) for Whisper
+        // hallucination tolerance; short sequences (< 10 words) require
+        // exact match so structurally similar but distinct sentences
+        // (e.g. "seventh" → "eighth") are not suppressed.
         if (currWords.Length <= prevWords.Length)
         {
+            var maxMismatches = (int)Math.Floor(currWords.Length * 0.1);
             for (var start = 0; start <= prevWords.Length - currWords.Length; start++)
             {
+                var mismatches = 0;
                 var contained = true;
                 for (var j = 0; j < currWords.Length; j++)
                 {
                     if (!WordEquals(prevWords[start + j], currWords[j]))
                     {
-                        contained = false;
-                        break;
+                        mismatches++;
+                        if (mismatches > maxMismatches)
+                        {
+                            contained = false;
+                            break;
+                        }
                     }
                 }
                 if (contained)
@@ -518,6 +606,26 @@ public sealed class LiveTranscriptionOrchestrator(
                     : string.Join(' ', currWords[k..]);
         }
         return current;
+    }
+
+    private static List<string> SplitSentences(string text)
+    {
+        var sentences = new List<string>();
+        var start = 0;
+        for (var i = 0; i < text.Length - 2; i++)
+        {
+            if (text[i] is '.' or '!' or '?'
+                && char.IsWhiteSpace(text[i + 1])
+                && char.IsUpper(text[i + 2]))
+            {
+                sentences.Add(text[start..(i + 1)].Trim());
+                start = i + 2;
+            }
+        }
+        var remaining = text[start..].Trim();
+        if (remaining.Length > 0)
+            sentences.Add(remaining);
+        return sentences;
     }
 
     private static bool WordEquals(string a, string b) =>
