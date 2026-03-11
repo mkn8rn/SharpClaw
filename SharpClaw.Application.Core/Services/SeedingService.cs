@@ -132,7 +132,8 @@ public sealed class SeedingService(
             Username = username,
             PasswordHash = hash,
             PasswordSalt = salt,
-            RoleId = adminRole.Id
+            RoleId = adminRole.Id,
+            IsUserAdmin = true
         };
 
         db.Users.Add(user);

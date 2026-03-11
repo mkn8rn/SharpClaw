@@ -5,4 +5,5 @@ public sealed record MeResponse(
     string Username,
     string? Bio,
     Guid? RoleId,
-    string? RoleName);
+    string? RoleName,
+    bool IsUserAdmin = false);

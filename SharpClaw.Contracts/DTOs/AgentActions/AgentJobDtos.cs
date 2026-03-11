@@ -17,7 +17,10 @@ string? ScriptJson = null,
 string? WorkingDirectory = null,
 // Transcription-specific
 Guid? TranscriptionModelId = null,
-string? Language = null);
+string? Language = null,
+TranscriptionMode? TranscriptionMode = null,
+int? WindowSeconds = null,
+int? StepSeconds = null);
 
 public sealed record ApproveAgentJobRequest(
     Guid? ApproverAgentId = null);
@@ -46,9 +49,28 @@ string? WorkingDirectory = null,
 // Transcription
 Guid? TranscriptionModelId = null,
 string? Language = null,
+TranscriptionMode? TranscriptionMode = null,
+int? WindowSeconds = null,
+int? StepSeconds = null,
 IReadOnlyList<TranscriptionSegmentResponse>? Segments = null);
 
 public sealed record AgentJobLogResponse(
     string Message,
     string Level,
     DateTimeOffset Timestamp);
+
+/// <summary>
+/// Lightweight summary returned by the list-summaries endpoint.
+/// Contains only the fields needed to populate a dropdown or list view —
+/// no <c>ResultData</c>, <c>ErrorLog</c>, <c>Logs</c>, or <c>Segments</c>.
+/// </summary>
+public sealed record AgentJobSummaryResponse(
+    Guid Id,
+    Guid ChannelId,
+    Guid AgentId,
+    AgentActionType ActionType,
+    Guid? ResourceId,
+    AgentJobStatus Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt);

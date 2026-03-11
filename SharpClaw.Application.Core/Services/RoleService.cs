@@ -130,12 +130,19 @@ public sealed class RoleService(SharpClawDbContext db)
         // Apply global flags.
         ps.DefaultClearance = request.DefaultClearance;
         ps.CanCreateSubAgents = request.CanCreateSubAgents;
+        ps.CreateSubAgentsClearance = request.CreateSubAgentsClearance;
         ps.CanCreateContainers = request.CanCreateContainers;
+        ps.CreateContainersClearance = request.CreateContainersClearance;
         ps.CanRegisterInfoStores = request.CanRegisterInfoStores;
+        ps.RegisterInfoStoresClearance = request.RegisterInfoStoresClearance;
         ps.CanAccessLocalhostInBrowser = request.CanAccessLocalhostInBrowser;
+        ps.AccessLocalhostInBrowserClearance = request.AccessLocalhostInBrowserClearance;
         ps.CanAccessLocalhostCli = request.CanAccessLocalhostCli;
+        ps.AccessLocalhostCliClearance = request.AccessLocalhostCliClearance;
         ps.CanClickDesktop = request.CanClickDesktop;
+        ps.ClickDesktopClearance = request.ClickDesktopClearance;
         ps.CanTypeOnDesktop = request.CanTypeOnDesktop;
+        ps.TypeOnDesktopClearance = request.TypeOnDesktopClearance;
 
         // Apply per-resource grants.
         AddGrants(ps.DangerousShellAccesses, request.DangerousShellAccesses,
@@ -368,12 +375,19 @@ public sealed class RoleService(SharpClawDbContext db)
             RoleName: role.Name,
             DefaultClearance: ps?.DefaultClearance ?? PermissionClearance.Unset,
             CanCreateSubAgents: ps?.CanCreateSubAgents ?? false,
+            CreateSubAgentsClearance: ps?.CreateSubAgentsClearance ?? PermissionClearance.Unset,
             CanCreateContainers: ps?.CanCreateContainers ?? false,
+            CreateContainersClearance: ps?.CreateContainersClearance ?? PermissionClearance.Unset,
             CanRegisterInfoStores: ps?.CanRegisterInfoStores ?? false,
+            RegisterInfoStoresClearance: ps?.RegisterInfoStoresClearance ?? PermissionClearance.Unset,
             CanAccessLocalhostInBrowser: ps?.CanAccessLocalhostInBrowser ?? false,
+            AccessLocalhostInBrowserClearance: ps?.AccessLocalhostInBrowserClearance ?? PermissionClearance.Unset,
             CanAccessLocalhostCli: ps?.CanAccessLocalhostCli ?? false,
+            AccessLocalhostCliClearance: ps?.AccessLocalhostCliClearance ?? PermissionClearance.Unset,
             CanClickDesktop: ps?.CanClickDesktop ?? false,
+            ClickDesktopClearance: ps?.ClickDesktopClearance ?? PermissionClearance.Unset,
             CanTypeOnDesktop: ps?.CanTypeOnDesktop ?? false,
+            TypeOnDesktopClearance: ps?.TypeOnDesktopClearance ?? PermissionClearance.Unset,
             DangerousShellAccesses: MapGrants(ps?.DangerousShellAccesses, a => a.SystemUserId, a => a.Clearance),
             SafeShellAccesses: MapGrants(ps?.SafeShellAccesses, a => a.ContainerId, a => a.Clearance),
             ContainerAccesses: MapGrants(ps?.ContainerAccesses, a => a.ContainerId, a => a.Clearance),

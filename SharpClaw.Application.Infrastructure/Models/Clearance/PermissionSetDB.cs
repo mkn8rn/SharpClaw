@@ -21,26 +21,33 @@ public class PermissionSetDB : BaseEntity
 
     // ── Global flags ──────────────────────────────────────────────
 
-    /// <summary>Create sub-agents (must have ≤ the creator's permissions).</summary>
+    /// <summary>Create sub-agents (must have = the creator's permissions).</summary>
     public bool CanCreateSubAgents { get; set; }
+    public PermissionClearance CreateSubAgentsClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Create new sandbox / VM / container environments.</summary>
     public bool CanCreateContainers { get; set; }
+    public PermissionClearance CreateContainersClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Register new local or external information stores.</summary>
     public bool CanRegisterInfoStores { get; set; }
+    public PermissionClearance RegisterInfoStoresClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Access localhost URLs through a browser (headless Chrome by default).</summary>
     public bool CanAccessLocalhostInBrowser { get; set; }
+    public PermissionClearance AccessLocalhostInBrowserClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Access localhost URLs via direct HTTP (no browser).</summary>
     public bool CanAccessLocalhostCli { get; set; }
+    public PermissionClearance AccessLocalhostCliClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Simulate mouse clicks on desktop displays.</summary>
     public bool CanClickDesktop { get; set; }
+    public PermissionClearance ClickDesktopClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Simulate keyboard input on desktop displays.</summary>
     public bool CanTypeOnDesktop { get; set; }
+    public PermissionClearance TypeOnDesktopClearance { get; set; } = PermissionClearance.Unset;
 
     // ── Per-resource grant collections ────────────────────────────
 
