@@ -2,21 +2,18 @@ SharpClaw: .NET Shell Agent
 Copyright (C) 2026 mkn8rn
 Contact: mkn8rn@hotmail.com
 
-This program is licensed under the PolyForm Noncommercial 
-License 1.0.0.
+Required Notice: Copyright (C) 2026 mkn8rn (https://github.com/mkn8rn/SharpClaw)
 
-You may use, copy, modify, and distribute this software only 
-for noncommercial purposes, as defined by the PolyForm 
-Noncommercial License 1.0.0.
+This program is licensed under the PolyForm Noncommercial License 1.0.0.
+You may use, copy, modify, and distribute this software only for noncommercial purposes,
+as defined by the PolyForm Noncommercial License 1.0.0.
 
-This program is distributed in the hope that it will be 
-useful, but WITHOUT ANY WARRANTY; without even the implied 
-warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
-PURPOSE.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
-You should have received a copy of the PolyForm 
-Noncommercial License 1.0.0 along with this program. 
-If not, see:
+You should have received a copy of the PolyForm Noncommercial License 1.0.0
+along with this program. If not, see:
 https://polyformproject.org/licenses/noncommercial/1.0.0
 
 =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
