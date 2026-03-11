@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.Auth;
+using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -146,6 +147,70 @@ public sealed class AuthService(
             user.Username,
             user.Bio,
             user.RoleId,
-            user.Role?.Name);
+            user.Role?.Name,
+            user.IsUserAdmin);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // User administration (requires IsUserAdmin)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Lists all registered users. Only user admins may call this.
+    /// </summary>
+    public async Task<IReadOnlyList<UserEntry>> ListUsersAsync(
+        Guid callerUserId, CancellationToken ct = default)
+    {
+        await EnsureUserAdminAsync(callerUserId, ct);
+
+        return await db.Users
+            .Include(u => u.Role)
+            .OrderBy(u => u.Username)
+            .Select(u => new UserEntry(
+                u.Id, u.Username, u.Bio,
+                u.RoleId, u.Role != null ? u.Role.Name : null,
+                u.IsUserAdmin))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Assigns (or removes) a role on another user. Only user admins may call this.
+    /// Pass <see cref="Guid.Empty"/> as <paramref name="roleId"/> to remove the role.
+    /// </summary>
+    public async Task<UserEntry?> SetUserRoleAsync(
+        Guid targetUserId, Guid roleId, Guid callerUserId, CancellationToken ct = default)
+    {
+        await EnsureUserAdminAsync(callerUserId, ct);
+
+        var user = await db.Users
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == targetUserId, ct);
+        if (user is null) return null;
+
+        if (roleId == Guid.Empty)
+        {
+            user.RoleId = null;
+            user.Role = null;
+        }
+        else
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct)
+                ?? throw new ArgumentException($"Role {roleId} not found.");
+            user.RoleId = role.Id;
+            user.Role = role;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        return new UserEntry(
+            user.Id, user.Username, user.Bio,
+            user.RoleId, user.Role?.Name, user.IsUserAdmin);
+    }
+
+    private async Task EnsureUserAdminAsync(Guid userId, CancellationToken ct)
+    {
+        var caller = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (caller is null || !caller.IsUserAdmin)
+            throw new UnauthorizedAccessException("Only user admins can perform this action.");
     }
 }

@@ -1,5 +1,6 @@
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts.Entities;
+using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Application.Infrastructure.Models.Messages;
 
@@ -18,4 +19,34 @@ public class ChatMessageDB : BaseEntity
     /// </summary>
     public Guid? ThreadId { get; set; }
     public ChatThreadDB? Thread { get; set; }
+
+    // ── Sender metadata ───────────────────────────────────────────
+
+    /// <summary>
+    /// The authenticated user who sent a <c>user</c>-role message, or
+    /// <see langword="null"/> for <c>assistant</c> messages.
+    /// </summary>
+    public Guid? SenderUserId { get; set; }
+
+    /// <summary>
+    /// Snapshot of the sender's username at the time the message was
+    /// created. Avoids a join to resolve display names in history.
+    /// </summary>
+    public string? SenderUsername { get; set; }
+
+    /// <summary>
+    /// The agent that generated an <c>assistant</c>-role message, or
+    /// <see langword="null"/> for <c>user</c> messages.
+    /// </summary>
+    public Guid? SenderAgentId { get; set; }
+
+    /// <summary>
+    /// Snapshot of the agent's name at the time the message was created.
+    /// </summary>
+    public string? SenderAgentName { get; set; }
+
+    /// <summary>
+    /// Which client interface originated this message.
+    /// </summary>
+    public ChatClientType? ClientType { get; set; }
 }

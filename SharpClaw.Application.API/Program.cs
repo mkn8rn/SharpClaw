@@ -107,6 +107,7 @@ try
 
     // Audio capture
     builder.Services.AddSingleton<IAudioCaptureProvider, WasapiAudioCaptureProvider>();
+    builder.Services.AddSingleton<SharedAudioCaptureManager>();
 
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ModelService>();
@@ -185,6 +186,7 @@ try
         return;
 
     // API mode
+    app.UseMiddleware<ExceptionHandlingMiddleware>();
     app.UseSerilogRequestLogging();
     app.UseCors();
     app.UseMiddleware<ApiKeyMiddleware>();
