@@ -14,6 +14,7 @@ using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Contexts;
 using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.Contracts.DTOs.Threads;
+using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.DTOs.Containers;
@@ -214,6 +215,7 @@ public static class CliDispatcher
             "role" => await HandleRoleCommand(args, sp),
             "user" => await HandleUserCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
+            "task" => await HandleTaskCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
             "help" or "--help" or "-h" => PrintHelp(),
             _ => null
@@ -2088,6 +2090,277 @@ public static class CliDispatcher
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Task definitions & instances
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleTaskCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "task create <sourceFilePath>             Create definition from .cs file",
+                "task list                                List all task definitions",
+                "task get <id>                            Show a task definition",
+                "task update <id> <sourceFilePath>        Update definition source",
+                "task activate <id>                       Activate a definition",
+                "task deactivate <id>                     Deactivate a definition",
+                "task delete <id>                         Delete a task definition",
+                "task start <taskId> [channelId] [--param key=value ...]",
+                "                                         Start a new instance",
+                "task instances <taskId>                  List instances of a definition",
+                "task instance <instanceId>               Show instance details",
+                "task outputs <instanceId> [--since <timestamp>]",
+                "                                         Get persisted output history",
+                "task cancel <instanceId>                 Cancel a running instance",
+                "task stop <instanceId>                   Stop a running instance",
+                "task listen <instanceId>                 Stream live task output");
+            return Results.Ok();
+        }
+
+        var sub = args[1].ToLowerInvariant();
+        var svc = sp.GetRequiredService<TaskService>();
+
+        return sub switch
+        {
+            "create" when args.Length >= 3 => await HandleTaskCreate(args[2], svc),
+            "create" => UsageResult("task create <sourceFilePath>"),
+
+            "list" => await TaskDefinitionHandlers.List(svc),
+
+            "get" when args.Length >= 3
+                => await TaskDefinitionHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+            "get" => UsageResult("task get <id>"),
+
+            "update" when args.Length >= 4
+                => await HandleTaskUpdate(CliIdMap.Resolve(args[2]), args[3], svc),
+            "update" => UsageResult("task update <id> <sourceFilePath>"),
+
+            "activate" when args.Length >= 3
+                => await TaskDefinitionHandlers.Update(
+                    CliIdMap.Resolve(args[2]),
+                    new UpdateTaskDefinitionRequest(IsActive: true), svc),
+            "activate" => UsageResult("task activate <id>"),
+
+            "deactivate" when args.Length >= 3
+                => await TaskDefinitionHandlers.Update(
+                    CliIdMap.Resolve(args[2]),
+                    new UpdateTaskDefinitionRequest(IsActive: false), svc),
+            "deactivate" => UsageResult("task deactivate <id>"),
+
+            "delete" when args.Length >= 3
+                => await TaskDefinitionHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
+            "delete" => UsageResult("task delete <id>"),
+
+            "start" when args.Length >= 3
+                => await HandleTaskStart(args, svc, sp),
+            "start" => UsageResult("task start <taskId> [channelId] [--param key=value ...]"),
+
+            "instances" when args.Length >= 3
+                => await TaskInstanceHandlers.List(CliIdMap.Resolve(args[2]), svc),
+            "instances" => UsageResult("task instances <taskId>"),
+
+            "instance" when args.Length >= 3
+                => await TaskInstanceHandlers.GetById(Guid.Empty, CliIdMap.Resolve(args[2]), svc),
+            "instance" => UsageResult("task instance <instanceId>"),
+
+            "outputs" when args.Length >= 3
+                => await HandleTaskOutputs(args, svc),
+            "outputs" => UsageResult("task outputs <instanceId> [--since <timestamp>]"),
+
+            "cancel" when args.Length >= 3
+                => await svc.CancelInstanceAsync(CliIdMap.Resolve(args[2]))
+                    ? Results.Ok("Instance cancelled.")
+                    : Results.NotFound(),
+            "cancel" => UsageResult("task cancel <instanceId>"),
+
+            "stop" when args.Length >= 3
+                => await HandleTaskStop(CliIdMap.Resolve(args[2]), sp),
+            "stop" => UsageResult("task stop <instanceId>"),
+
+            "listen" when args.Length >= 3
+                => await HandleTaskListen(CliIdMap.Resolve(args[2]), sp),
+            "listen" => UsageResult("task listen <instanceId>"),
+
+            _ => UsageResult($"Unknown sub-command: task {sub}. Try 'help' for usage.")
+        };
+    }
+
+    private static async Task<IResult> HandleTaskCreate(string sourceFilePath, TaskService svc)
+    {
+        if (!File.Exists(sourceFilePath))
+        {
+            Console.Error.WriteLine($"File not found: {sourceFilePath}");
+            return Results.Ok();
+        }
+
+        var sourceText = await File.ReadAllTextAsync(sourceFilePath);
+        return await TaskDefinitionHandlers.Create(
+            new CreateTaskDefinitionRequest(sourceText), svc);
+    }
+
+    private static async Task<IResult> HandleTaskUpdate(
+        Guid taskId, string sourceFilePath, TaskService svc)
+    {
+        if (!File.Exists(sourceFilePath))
+        {
+            Console.Error.WriteLine($"File not found: {sourceFilePath}");
+            return Results.Ok();
+        }
+
+        var sourceText = await File.ReadAllTextAsync(sourceFilePath);
+        return await TaskDefinitionHandlers.Update(
+            taskId, new UpdateTaskDefinitionRequest(SourceText: sourceText), svc);
+    }
+
+    private static async Task<IResult> HandleTaskStart(
+        string[] args, TaskService svc, IServiceProvider sp)
+    {
+        var taskId = CliIdMap.Resolve(args[2]);
+        Guid? channelId = args.Length > 3 && !args[3].StartsWith("--")
+            ? CliIdMap.Resolve(args[3])
+            : _currentChannelId;
+
+        var flagStart = channelId is not null && args.Length > 3 && !args[3].StartsWith("--")
+            ? 4 : 3;
+
+        Dictionary<string, string>? paramValues = null;
+        for (var i = flagStart; i < args.Length; i++)
+        {
+            if (args[i] is "--param" or "-p" && i + 1 < args.Length)
+            {
+                var kv = args[++i];
+                var eq = kv.IndexOf('=');
+                if (eq > 0)
+                {
+                    paramValues ??= [];
+                    paramValues[kv[..eq]] = kv[(eq + 1)..];
+                }
+            }
+        }
+
+        var session = sp.GetRequiredService<SessionService>();
+        var request = new StartTaskInstanceRequest(taskId, channelId, paramValues);
+        var result = await TaskInstanceHandlers.Start(
+            taskId, request, svc, session);
+
+        // Auto-start the orchestrator for the new instance.
+        if (result is IValueHttpResult { Value: TaskInstanceResponse resp })
+        {
+            var orchestrator = sp.GetRequiredService<TaskOrchestrator>();
+            _ = orchestrator.StartAsync(resp.Id);
+        }
+
+        return result;
+    }
+
+    private static async Task<IResult> HandleTaskStop(Guid instanceId, IServiceProvider sp)
+    {
+        var orchestrator = sp.GetRequiredService<TaskOrchestrator>();
+        await orchestrator.StopAsync(instanceId);
+        Console.WriteLine("Instance stopped.");
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> HandleTaskOutputs(string[] args, TaskService svc)
+    {
+        var instanceId = CliIdMap.Resolve(args[2]);
+        DateTimeOffset? since = null;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            if (args[i] is "--since" && i + 1 < args.Length)
+            {
+                if (DateTimeOffset.TryParse(args[++i], out var ts))
+                    since = ts;
+                else
+                {
+                    Console.Error.WriteLine($"Invalid timestamp: {args[i]}");
+                    return Results.Ok();
+                }
+            }
+        }
+
+        return await TaskInstanceHandlers.GetOutputs(Guid.Empty, instanceId, svc, since);
+    }
+
+    private static async Task<IResult> HandleTaskListen(Guid instanceId, IServiceProvider sp)
+    {
+        var orchestrator = sp.GetRequiredService<TaskOrchestrator>();
+        var reader = orchestrator.GetOutputReader(instanceId);
+        if (reader is null)
+        {
+            Console.Error.WriteLine("No active output stream for this instance.");
+            Console.Error.WriteLine("The instance may not be running or was started in a previous session.");
+            return Results.Ok();
+        }
+
+        using var cts = new CancellationTokenSource();
+
+        var prevCtrlC = Console.TreatControlCAsInput;
+        Console.TreatControlCAsInput = true;
+
+        Console.WriteLine("Listening for task output... (Ctrl+C to stop)");
+        Console.WriteLine();
+
+        var keyTask = Task.Run(() =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    if (key is { Modifiers: ConsoleModifiers.Control, Key: ConsoleKey.C })
+                    {
+                        cts.Cancel();
+                        return;
+                    }
+                }
+
+                Thread.Sleep(50);
+            }
+        });
+
+        try
+        {
+            await foreach (var evt in reader.ReadAllAsync(cts.Token))
+            {
+                switch (evt.Type)
+                {
+                    case TaskOutputEventType.Output:
+                        Console.WriteLine($"  [output] {evt.Data}");
+                        break;
+                    case TaskOutputEventType.Log:
+                        Console.WriteLine($"  [log] {evt.Data}");
+                        break;
+                    case TaskOutputEventType.StatusChange:
+                        Console.WriteLine($"  [status] {evt.Data}");
+                        break;
+                    case TaskOutputEventType.Done:
+                        Console.WriteLine();
+                        Console.WriteLine("Task stream ended.");
+                        break;
+                }
+
+                if (evt.Type == TaskOutputEventType.Done)
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Stopped listening.");
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            await keyTask;
+            Console.TreatControlCAsInput = prevCtrlC;
+        }
+
+        return Results.Ok();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Resource (unified: container, audiodevice, ...)
     // ═══════════════════════════════════════════════════════════════
 
@@ -2538,6 +2811,20 @@ public static class CliDispatcher
                   [--model <id>] [--lang <code>]
               job list [channelId]   status <id>   approve <id>   cancel <id>
               job stop <id>          listen <id>   (transcription jobs)
+
+            Task:      task <sub> [args]
+              task create <sourceFilePath>       Create definition from .cs file
+              task list                          List all task definitions
+              task get <id>                      Show definition details
+              task update <id> <sourceFilePath>  Update definition source
+              task activate <id>                 Activate / deactivate <id>
+              task delete <id>                   Delete a task definition
+              task start <taskId> [channelId] [--param key=value ...]
+              task instances <taskId>            List instances of a definition
+              task instance <instanceId>         Show instance details
+              task cancel <instanceId>           Cancel a running instance
+              task stop <instanceId>             Stop a running instance
+              task listen <instanceId>           Stream live task output
 
             Resource:  resource <type> <sub>    (add, get, list, update, delete, sync)
               Types: container, audiodevice

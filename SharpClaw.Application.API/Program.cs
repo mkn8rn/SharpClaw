@@ -126,6 +126,8 @@ try
     builder.Services.AddScoped<DefaultResourceSetService>();
     builder.Services.AddScoped<EditorSessionService>();
     builder.Services.AddSingleton<EditorBridgeService>();
+    builder.Services.AddScoped<TaskService>();
+    builder.Services.AddScoped<TaskOrchestrator>();
 
     // Local inference (in-process via LLamaSharp)
     // Configure native library: prefer CUDA > Vulkan > CPU; suppress verbose logs.
