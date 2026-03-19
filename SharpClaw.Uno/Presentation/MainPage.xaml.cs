@@ -30,6 +30,7 @@ public sealed partial class MainPage : Page
     private bool _suppressThreadSelection;
     private bool _suppressJobSelection;
     private readonly Dictionary<Guid, bool> _expandedContexts = [];
+    private readonly Dictionary<Guid, Guid> _channelAgentOverrides = [];
     private List<AgentDto> _allAgents = [];
     private List<JobDto> _channelJobs = [];
     private List<RoleDto> _allRoles = [];
@@ -648,7 +649,11 @@ public sealed partial class MainPage : Page
         }
         catch { /* swallow */ }
 
-        _selectedAgentId = channelAgentId;
+        // Restore a previously remembered agent override for this channel,
+        // falling back to the channel's default agent.
+        _selectedAgentId = _channelAgentOverrides.TryGetValue(id, out var overrideAgent)
+            ? overrideAgent
+            : channelAgentId;
         UpdateSidebarHighlight();
         await LoadAgentsAsync(channelAgentId, allowedAgentIds);
         await LoadThreadsAsync(id);
@@ -737,9 +742,17 @@ public sealed partial class MainPage : Page
     private void OnAgentSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (AgentSelector.SelectedItem is ComboBoxItem { Tag: Guid agentId })
+        {
             _selectedAgentId = agentId;
+            if (_selectedChannelId is { } chId)
+                _channelAgentOverrides[chId] = agentId;
+        }
         else
+        {
             _selectedAgentId = null;
+            if (_selectedChannelId is { } chId)
+                _channelAgentOverrides.Remove(chId);
+        }
 
         UpdateCursor();
     }
