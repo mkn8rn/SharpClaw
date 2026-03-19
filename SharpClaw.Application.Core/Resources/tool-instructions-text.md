@@ -41,6 +41,10 @@ No sandboxing. Optional workingDirectory overrides the SystemUser's default.
 13. Type on desktop: [TOOL_CALL:<id>] {"targetId":"<displaydevice-guid>","text":"hello world","x":500,"y":300}  (x/y optional — clicks to focus first)
 14. Stub tools: register_info_store [TOOL_CALL:<id>] {}, access_local_info_store/access_external_info_store/access_website/query_search_engine/access_container [TOOL_CALL:<id>] {"targetId":"<guid>"}
 
+15. Wait (no permissions required):
+[TOOL_CALL:wait] {"seconds":30}
+Pauses execution for 1–300 seconds. No tokens consumed while waiting. Use when waiting for builds, deployments, or other async processes.
+
 Editor tools (require EditorSession access — all take targetId as editor session GUID):
 read_file, get_open_files, get_selection, get_diagnostics, apply_edit, create_file, delete_file, show_diff, run_build, run_terminal.
 [TOOL_CALL:<id>] {"targetId":"<editorsession-guid>", ...}  — fields vary per action (filePath, startLine, endLine, newText, content, proposedContent, command, workingDirectory). Use the action name to infer required fields.

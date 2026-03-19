@@ -122,6 +122,7 @@ public sealed partial class SettingsPage : Page
         {
             AddTabSection("Admin");
             AddTabButton("Users", "sharpclaw user list");
+            AddTabButton("Danger Zone", "sharpclaw reset");
         }
     }
 
@@ -165,6 +166,7 @@ public sealed partial class SettingsPage : Page
             "Roles" => LoadRolesListAsync(),
             "Sound Input" => LoadSoundInputAsync(),
             "Users" => LoadUsersAsync(),
+            "Danger Zone" => LoadDangerZoneAsync(),
             _ => Task.CompletedTask,
         };
     }
@@ -1348,4 +1350,170 @@ public sealed partial class SettingsPage : Page
     private sealed record UserListEntry(Guid Id, string Username, string? Bio, Guid? RoleId, string? RoleName, bool IsUserAdmin);
 
     private const string SelectedAudioDeviceKey = "SelectedAudioDeviceId";
+
+    // ═══════════════════════════════════════════════════════════════
+    // DANGER ZONE
+    // ═══════════════════════════════════════════════════════════════
+
+    private Task LoadDangerZoneAsync()
+    {
+        ContentPanel.Children.Clear();
+        H("Danger Zone");
+        Lbl("Irreversible actions that destroy local data.", 0xFF4444);
+
+        ContentPanel.Children.Add(new Border
+        {
+            BorderBrush = B(0x331111), BorderThickness = new Thickness(1),
+            Background = B(0x1A0A0A), CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(16, 12),
+            Child = BuildResetSection(),
+        });
+
+        return Task.CompletedTask;
+    }
+
+    private StackPanel BuildResetSection()
+    {
+        var panel = new StackPanel { Spacing = 8 };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Reset All Data", FontFamily = Mono, FontSize = 13,
+            Foreground = B(0xFF4444), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Permanently deletes the entire local database, all saved settings, "
+                 + "encryption keys, API keys, chat history, and the first-setup marker. "
+                 + "The application will restart as if freshly installed.",
+            FontFamily = Mono, FontSize = 11, Foreground = B(0xBBBBBB),
+            TextWrapping = TextWrapping.Wrap, MaxWidth = 560,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "This action cannot be undone.",
+            FontFamily = Mono, FontSize = 11, Foreground = B(0xFF6666),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+
+        var confirmPanel = new StackPanel { Visibility = Visibility.Collapsed, Spacing = 8 };
+        confirmPanel.Children.Add(new TextBlock
+        {
+            Text = "Type RESET to confirm:", FontFamily = Mono, FontSize = 11,
+            Foreground = B(0xFF8888),
+        });
+        var confirmBox = MakeInput("RESET");
+        confirmBox.MaxWidth = 200;
+        confirmPanel.Children.Add(confirmBox);
+
+        var executeBtn = new Button
+        {
+            Content = new TextBlock { Text = "[ Confirm Reset ]", FontFamily = Mono, FontSize = 12, Foreground = B(0xFF4444) },
+            Background = B(0x2A1111), BorderBrush = B(0xFF4444), BorderThickness = new Thickness(1),
+            Padding = new Thickness(12, 6), IsEnabled = false,
+        };
+        confirmBox.TextChanged += (_, _) =>
+            executeBtn.IsEnabled = string.Equals(confirmBox.Text.Trim(), "RESET", StringComparison.Ordinal);
+        executeBtn.Click += async (_, _) => await ExecuteFullResetAsync();
+        confirmPanel.Children.Add(executeBtn);
+
+        var showBtn = new Button
+        {
+            Content = new TextBlock { Text = "[ Reset All Data ]", FontFamily = Mono, FontSize = 12, Foreground = B(0xFF4444) },
+            Background = B(0x2A1111), BorderBrush = B(0xFF4444), BorderThickness = new Thickness(1),
+            Padding = new Thickness(12, 6), Margin = new Thickness(0, 4, 0, 0),
+        };
+        showBtn.Click += (_, _) =>
+        {
+            showBtn.Visibility = Visibility.Collapsed;
+            confirmPanel.Visibility = Visibility.Visible;
+        };
+
+        panel.Children.Add(showBtn);
+        panel.Children.Add(confirmPanel);
+        return panel;
+    }
+
+    private async Task ExecuteFullResetAsync()
+    {
+        ContentPanel.Children.Clear();
+        H("Resetting…");
+        Lbl("Stopping backend and deleting all local data…", 0xFF8888);
+
+        await Task.Delay(200); // Let UI render
+
+        var errors = new List<string>();
+
+        // 1. Stop the backend process so files are not locked.
+        try
+        {
+            var backend = App.Services?.GetService<BackendProcessManager>();
+            backend?.Stop();
+        }
+        catch (Exception ex) { errors.Add($"Stop backend: {ex.Message}"); }
+
+        // Small delay to let the process release file handles.
+        await Task.Delay(500);
+
+        // 2. Delete %LOCALAPPDATA%/SharpClaw (api-key, encryption keys, setup marker).
+        try
+        {
+            var localAppData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SharpClaw");
+            if (Directory.Exists(localAppData))
+                Directory.Delete(localAppData, recursive: true);
+        }
+        catch (Exception ex) { errors.Add($"LocalAppData: {ex.Message}"); }
+
+        // 3. Delete the backend's Data directory (JSON persistence).
+        //    It lives next to the backend executable or, in dev mode, next
+        //    to the Infrastructure assembly.  We check both the bundled
+        //    location and the common dev-time location.
+        try
+        {
+            var baseDir = AppContext.BaseDirectory;
+            DeleteIfExists(Path.Combine(baseDir, "backend", "Data"));
+            DeleteIfExists(Path.Combine(baseDir, "Data"));
+        }
+        catch (Exception ex) { errors.Add($"Data dir: {ex.Message}"); }
+
+        // 4. Delete the backend's Environment directory (config files).
+        try
+        {
+            var baseDir = AppContext.BaseDirectory;
+            DeleteIfExists(Path.Combine(baseDir, "backend", "Environment"));
+        }
+        catch (Exception ex) { errors.Add($"Backend env: {ex.Message}"); }
+
+        // Show result
+        ContentPanel.Children.Clear();
+        if (errors.Count == 0)
+        {
+            H("Reset Complete");
+            Lbl("All local data has been deleted. The application will now restart.", 0x00FF00);
+        }
+        else
+        {
+            H("Reset Completed with Warnings");
+            foreach (var err in errors)
+                Lbl($"⚠ {err}", 0xFFCC00);
+            Lbl("Some files could not be deleted. They may be locked by another process.", 0xFF8888);
+        }
+
+        await Task.Delay(1500);
+
+        // Navigate back to boot page so the app restarts the connection flow.
+        if (App.Services is { } services)
+        {
+            var navigator = services.GetRequiredService<INavigator>();
+            await navigator.NavigateRouteAsync(this, "/");
+        }
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
+    }
 }

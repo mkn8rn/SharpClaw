@@ -26,6 +26,7 @@ Timestamps are ISO 8601 (`DateTimeOffset`).
 - [Chat (per-channel)](#chat-per-channel)
 - [Chat streaming (SSE)](#chat-streaming-sse)
 - [Agent Jobs](#agent-jobs)
+- [Inline tools](#inline-tools)
 - [Transcription streaming](#transcription-streaming)
 - [Resources](#resources)
 - [Roles](#roles)

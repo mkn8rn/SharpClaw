@@ -32,8 +32,10 @@
     <PackageVersion Include="NAudio" Version="2.2.1" />
     <PackageVersion Include="LLamaSharp" Version="0.26.0" />
     <PackageVersion Include="LLamaSharp.Backend.Cpu" Version="0.26.0" />
-    <PackageVersion Include="LLamaSharp.Backend.Cuda12" Version="0.26.0" />
-    <PackageVersion Include="LLamaSharp.Backend.Vulkan" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Cuda12.Windows" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Cuda12.Linux" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Vulkan.Windows" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Vulkan.Linux" Version="0.26.0" />
     <PackageVersion Include="Whisper.net" Version="1.9.0" />
     <PackageVersion Include="Whisper.net.Runtime" Version="1.9.0" />
     <PackageVersion Include="System.Diagnostics.EventLog" Version="10.0.4" />

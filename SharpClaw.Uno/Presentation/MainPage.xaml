@@ -77,6 +77,13 @@
                      FontSize="12"
                      Foreground="#808080" />
         </Button>
+        <Button Background="Transparent" BorderThickness="0" Padding="0"
+                Click="OnLegalNoticesClick">
+          <TextBlock Text="› Legal Notices"
+                     Style="{StaticResource TerminalText}"
+                     FontSize="12"
+                     Foreground="#808080" />
+        </Button>
         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,6,0,0">
           <Button Background="Transparent" BorderThickness="0" Padding="4"
                   Click="OnOfficialWebsiteClick"

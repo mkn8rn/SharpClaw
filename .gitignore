@@ -6,6 +6,9 @@
 .github/upgrades
 .github/copilot-instructions.md
 
+# Publish output
+publish/
+
 # Visual Studio 2022 detritus
 .vs/
 

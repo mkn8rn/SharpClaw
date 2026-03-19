@@ -4551,6 +4551,39 @@ public sealed partial class MainPage : Page
     private async void OnCreatorBlogClick(object sender, RoutedEventArgs e)
         => await Windows.System.Launcher.LaunchUriAsync(new Uri("https://blog.mkn8rn.com"));
 
+    private async void OnLegalNoticesClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var file = await Windows.Storage.StorageFile.GetFileFromApplicationUriAsync(
+                new Uri("ms-appx:///Assets/PRIVACY_POLICY.txt"));
+            var text = await Windows.Storage.FileIO.ReadTextAsync(file);
+
+            var scroll = new ScrollViewer
+            {
+                Content = new TextBlock
+                {
+                    Text = text,
+                    FontFamily = _monoFont,
+                    FontSize = 11,
+                    Foreground = Brush(0x00FF00),
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                MaxHeight = 480,
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = "Legal Notices",
+                Content = scroll,
+                CloseButtonText = "Close",
+                XamlRoot = this.XamlRoot,
+            };
+            await dialog.ShowAsync();
+        }
+        catch { /* asset missing – silently ignore */ }
+    }
+
     // ── Role assignment (right-click context menu) ─────────────
 
     private MenuFlyout? BuildRoleMenuFlyout(bool isUser, Guid? agentId)

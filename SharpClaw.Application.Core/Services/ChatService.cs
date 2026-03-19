@@ -856,6 +856,14 @@ public sealed partial class ChatService(
                     continue;
                 }
 
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, ct);
+                if (inlineHandled)
+                {
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    continue;
+                }
+
                 var parsed = ParseNativeToolCall(tc);
                 if (parsed is null)
                 {
@@ -1132,6 +1140,44 @@ public sealed partial class ChatService(
         }
 
         return (false, null);
+    }
+
+    /// <summary>
+    /// Try to handle a tool call as a permission-free inline tool (e.g. <c>wait</c>).
+    /// Returns <c>true</c> and sets <paramref name="result"/> if handled.
+    /// These tools never enter the job/permission pipeline.
+    /// </summary>
+    private static async Task<(bool Handled, string? Result)> TryHandleInlineToolAsync(
+        ChatToolCall toolCall, CancellationToken ct)
+    {
+        if (toolCall.Name != "wait")
+            return (false, null);
+
+        try
+        {
+            var seconds = 5; // default
+
+            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
+            {
+                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
+                if (doc.RootElement.TryGetProperty("seconds", out var secEl))
+                    seconds = secEl.GetInt32();
+            }
+
+            seconds = Math.Clamp(seconds, 1, 300);
+
+            await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+
+            return (true, $"Waited {seconds} second{(seconds == 1 ? "" : "s")}.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return (true, $"Error in wait tool: {ex.Message}");
+        }
     }
 
 
@@ -1421,6 +1467,14 @@ public sealed partial class ChatService(
                     continue;
                 }
 
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, ct);
+                if (inlineHandled)
+                {
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    continue;
+                }
+
                 var parsed = ParseNativeToolCall(tc);
                 if (parsed is null)
                 {
@@ -1517,12 +1571,21 @@ public sealed partial class ChatService(
             foreach (var call in toolCalls)
             {
                 // ── Task-specific tool interception (text-based) ──
-                var syntheticTc = new ChatToolCall(call.CallId, call.CallId, call.ScriptJson ?? "{}");
+                var syntheticTc = new ChatToolCall(call.CallId, call.CallId, call.RawJson ?? call.ScriptJson ?? "{}");
                 var (handled, taskResult) = await TryHandleTaskToolAsync(syntheticTc, taskContext, ct);
                 if (handled)
                 {
                     toolResultBuilder.AppendLine(
                         $"[TOOL_RESULT:{call.CallId}] status=Completed result={taskResult}");
+                    continue;
+                }
+
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(syntheticTc, ct);
+                if (inlineHandled)
+                {
+                    toolResultBuilder.AppendLine(
+                        $"[TOOL_RESULT:{call.CallId}] status=Completed result={inlineResult}");
                     continue;
                 }
 
@@ -1840,7 +1903,8 @@ public sealed partial class ChatService(
                             ? SafeShellType.Mk8Shell : null,
                         transcriptionModelId,
                         payload.Language,
-                        payload.WorkingDirectory));
+                        payload.WorkingDirectory,
+                        json));
                 }
             }
             catch (JsonException)
@@ -1920,9 +1984,19 @@ public sealed partial class ChatService(
         var editorCreateFileSchema = BuildEditorCreateFileSchema();
         var editorShowDiffSchema = BuildEditorShowDiffSchema();
         var editorRunTerminalSchema = BuildEditorRunTerminalSchema();
+        var waitSchema = BuildWaitSchema();
 
         return
         [
+            // ── Inline tools (no permissions) ─────────────────
+            new("wait",
+                "Pause execution for a specified number of seconds (1–300). "
+                + "No permissions required. Use this to wait for external processes, "
+                + "builds, deployments, or other async operations to complete without "
+                + "wasting tokens on polling. The tool call thread is blocked for the "
+                + "duration; no inference or token cost is incurred while waiting.",
+                waitSchema),
+
             // ── Shell execution ───────────────────────────────
             new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
             new("execute_dangerous_shell",
@@ -2084,6 +2158,23 @@ public sealed partial class ChatService(
                 + "Returns the command output. Requires EditorSession permission.",
                 editorRunTerminalSchema),
         ];
+    }
+
+    private static JsonElement BuildWaitSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "integer",
+                        "description": "Number of seconds to wait (1–300). Default 5."
+                    }
+                },
+                "required": ["seconds"]
+            }
+            """);
+        return doc.RootElement.Clone();
     }
 
     private static JsonElement BuildMk8ShellToolSchema()
@@ -2589,7 +2680,8 @@ public sealed partial class ChatService(
         SafeShellType? SafeShellType = null,
         Guid? TranscriptionModelId = null,
         string? Language = null,
-        string? WorkingDirectory = null);
+        string? WorkingDirectory = null,
+        string? RawJson = null);
 
     private sealed class ToolCallPayload
     {

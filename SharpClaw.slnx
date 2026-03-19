@@ -29,6 +29,7 @@
     <File Path="docs/App-API-skill.md" />
     <File Path="global.json" />
     <File Path="LICENSE" />
+    <File Path="publish-release.ps1" />
     <File Path="README.md" />
   </Folder>
   <Folder Name="/Tests/">

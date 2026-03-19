@@ -26,6 +26,7 @@ public sealed partial class FirstSetupPage : Page
     private TaskCompletionSource<bool>? _localModelTcs;
     private TaskCompletionSource<bool>? _roleTcs;
     private bool _localOnly;
+    private bool _switchToCloud;
     private List<ProviderDto>? _providers;
 
     public FirstSetupPage()
@@ -123,59 +124,71 @@ public sealed partial class FirstSetupPage : Page
             ReplaceLastStep("Provider created.", done: true);
         }
 
-        // ── Step 2: Logged-in providers (has API key) ──
-        AppendStep("Checking provider API keys...");
-        var loggedIn = (_providers ?? []).Where(p => p.HasApiKey && !p.IsLocal).ToList();
-        if (loggedIn.Count > 0)
+        // ── Steps 2–3: API keys & models (loop to allow switching back from local-only) ──
+        List<ModelDto>? models = null;
+        while (true)
         {
-            ReplaceLastStep($"{loggedIn.Count} provider(s) have API keys.", done: true);
-        }
-        else
-        {
-            var remote = (_providers ?? []).Where(p => !p.IsLocal).ToList();
-            if (remote.Count == 0)
+            _localOnly = false;
+            _switchToCloud = false;
+
+            // ── Step 2: Logged-in providers (has API key) ──
+            AppendStep("Checking provider API keys...");
+            var loggedIn = (_providers ?? []).Where(p => p.HasApiKey && !p.IsLocal).ToList();
+            if (loggedIn.Count > 0)
             {
-                ReplaceLastStep("No remote providers available. Continuing with local models only.", done: true);
-                _localOnly = true;
+                ReplaceLastStep($"{loggedIn.Count} provider(s) have API keys.", done: true);
             }
             else
             {
-                ReplaceLastStep("No provider has an API key set. Please provide one.");
-                PopulateApiKeyProviderSelector(remote);
-                ApiKeyInputPanel.Visibility = Visibility.Visible;
-                _apiKeyTcs = new TaskCompletionSource<bool>();
-                var keySet = await _apiKeyTcs.Task;
-                ApiKeyInputPanel.Visibility = Visibility.Collapsed;
-                if (!keySet)
+                var remote = (_providers ?? []).Where(p => !p.IsLocal).ToList();
+                if (remote.Count == 0)
                 {
+                    ReplaceLastStep("No remote providers available. Continuing with local models only.", done: true);
                     _localOnly = true;
-                    ReplaceLastStep("Continuing with local models only.", done: true);
                 }
                 else
                 {
-                    _providers = await FetchListAsync<ProviderDto>("/providers");
-                    ReplaceLastStep("API key configured.", done: true);
+                    ReplaceLastStep("No provider has an API key set. Please provide one.");
+                    PopulateApiKeyProviderSelector(remote);
+                    ApiKeyInputPanel.Visibility = Visibility.Visible;
+                    _apiKeyTcs = new TaskCompletionSource<bool>();
+                    var keySet = await _apiKeyTcs.Task;
+                    ApiKeyInputPanel.Visibility = Visibility.Collapsed;
+                    if (!keySet)
+                    {
+                        _localOnly = true;
+                        ReplaceLastStep("Continuing with local models only.", done: true);
+                    }
+                    else
+                    {
+                        _providers = await FetchListAsync<ProviderDto>("/providers");
+                        ReplaceLastStep("API key configured.", done: true);
+                    }
                 }
             }
-        }
 
-        // ── Step 3: Models ──
-        AppendStep("Checking models...");
-        var models = await FetchListAsync<ModelDto>("/models");
-        if (models is { Count: > 0 })
-        {
-            ReplaceLastStep($"Found {models.Count} model(s).", done: true);
-        }
-        else
-        {
+            // ── Step 3: Models ──
+            AppendStep("Checking models...");
+            models = await FetchListAsync<ModelDto>("/models");
+            if (models is { Count: > 0 })
+            {
+                ReplaceLastStep($"Found {models.Count} model(s).", done: true);
+                break;
+            }
+
             if (_localOnly)
             {
-                // Guide the user through downloading a local model from HuggingFace.
                 ReplaceLastStep("No models found. Download a local model to continue.");
                 LocalModelDownloadPanel.Visibility = Visibility.Visible;
                 _localModelTcs = new TaskCompletionSource<bool>();
                 var downloaded = await _localModelTcs.Task;
                 LocalModelDownloadPanel.Visibility = Visibility.Collapsed;
+
+                if (!downloaded && _switchToCloud)
+                {
+                    ReplaceLastStep("Switching to cloud provider setup...", done: true);
+                    continue;
+                }
 
                 if (!downloaded)
                 {
@@ -185,6 +198,7 @@ public sealed partial class FirstSetupPage : Page
 
                 models = await FetchListAsync<ModelDto>("/models");
                 ReplaceLastStep($"Downloaded and registered {models?.Count ?? 0} model(s).", done: true);
+                break;
             }
             else
             {
@@ -203,7 +217,6 @@ public sealed partial class FirstSetupPage : Page
                 if (!synced)
                 {
                     ReplaceLastStep("Model sync failed. Check your API key and try setup again.", error: true);
-                    // Wipe API keys on failed sync
                     foreach (var p in _providers!.Where(p => p.HasApiKey))
                     {
                         try { await Api.PostAsync($"/providers/{p.Id}/set-key", new StringContent(JsonSerializer.Serialize(new { apiKey = "" }, Json), Encoding.UTF8, "application/json")); }
@@ -214,6 +227,7 @@ public sealed partial class FirstSetupPage : Page
 
                 models = await FetchListAsync<ModelDto>("/models");
                 ReplaceLastStep($"Synced {models?.Count ?? 0} model(s).", done: true);
+                break;
             }
         }
 
@@ -504,6 +518,12 @@ public sealed partial class FirstSetupPage : Page
     private void OnLocalOnlyClick(object sender, RoutedEventArgs e)
     {
         _apiKeyTcs?.TrySetResult(false);
+    }
+
+    private void OnSwitchToCloudClick(object sender, RoutedEventArgs e)
+    {
+        _switchToCloud = true;
+        _localModelTcs?.TrySetResult(false);
     }
 
     private async void OnListFilesClick(object sender, RoutedEventArgs e)
