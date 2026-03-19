@@ -378,14 +378,15 @@ public sealed partial class ChatService(
                 var agentGrants = await CollectGrantsWithResourcesAsync(agentPs, ct);
                 if (agentGrants.Count > 0)
                     sb.Append(" (").Append(string.Join(", ", agentGrants)).Append(')');
+                else
+                    sb.Append(" (no grants)");
             }
         }
         else
         {
-            // Agent has no role — emit a minimal self-awareness line so the
-            // model knows it has no permissions and must rely on user-supplied
-            // resource IDs from the conversation.
-            sb.Append(" | agent-role: (none) clearance=Unset");
+            // Agent has no role — emit a clear notice so the model knows it
+            // cannot use any tools that require permissions.
+            sb.Append(" | agent-role: (none) clearance=Unset (no permissions)");
         }
 
         if (editorContext is not null)
@@ -476,11 +477,13 @@ public sealed partial class ChatService(
                 var agentGrants = await CollectGrantsWithResourcesAsync(agentPs, ct);
                 if (agentGrants.Count > 0)
                     sb.Append(" (").Append(string.Join(", ", agentGrants)).Append(')');
+                else
+                    sb.Append(" (no grants)");
             }
         }
         else
         {
-            sb.Append(" | agent-role: (none) clearance=Unset");
+            sb.Append(" | agent-role: (none) clearance=Unset (no permissions)");
         }
 
         sb.AppendLine("]");
