@@ -25,7 +25,9 @@ public sealed partial class FirstSetupPage : Page
     private TaskCompletionSource<Guid?>? _agentTcs;
     private TaskCompletionSource<bool>? _localModelTcs;
     private TaskCompletionSource<bool>? _roleTcs;
+    private TaskCompletionSource<bool>? _upgradePromptTcs;
     private bool _localOnly;
+    private bool _switchToCloud;
     private List<ProviderDto>? _providers;
 
     public FirstSetupPage()
@@ -36,6 +38,36 @@ public sealed partial class FirstSetupPage : Page
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        if (FirstSetupMarker.NeedsUpgradeRerun)
+        {
+            // Major version advanced since last setup — ask whether to redo
+            var oldVer = FirstSetupMarker.CompletedMajorVersion;
+            var newVer = FirstSetupMarker.CurrentMajorVersion;
+            var label = oldVer.HasValue
+                ? $"v{oldVer} → v{newVer}"
+                : $"v{newVer}";
+
+            UpgradeVersionLabel.Text = label;
+            UpgradePromptPanel.Visibility = Visibility.Visible;
+            SkipSetupPanel.Visibility = Visibility.Collapsed;
+
+            _upgradePromptTcs = new TaskCompletionSource<bool>();
+            var redo = await _upgradePromptTcs.Task;
+            UpgradePromptPanel.Visibility = Visibility.Collapsed;
+
+            if (!redo)
+            {
+                // User chose to skip — stamp current version and go to Main
+                FirstSetupMarker.MarkCompleted();
+                var navigator = App.Services!.GetRequiredService<INavigator>();
+                await navigator.NavigateRouteAsync(this, "Main", qualifier: Qualifiers.ClearBackStack);
+                return;
+            }
+
+            // User chose redo — fall through to normal setup
+            SkipSetupPanel.Visibility = Visibility.Visible;
+        }
+
         Cursor.SetCommand("sharpclaw setup ");
         await RunSetupAsync();
     }
@@ -45,22 +77,23 @@ public sealed partial class FirstSetupPage : Page
     private void AppendStep(string text, bool done = false, bool error = false)
     {
         var icon = done ? "✓" : error ? "✗" : "›";
-        var color = done ? 0x00FF00 : error ? 0xFF4444 : 0x808080;
+        var iconColor = done ? 0x00FF00 : error ? 0xFF6666 : 0xFFCC00;
+        var textColor = done ? 0xE0E0E0 : error ? 0xFF6666 : 0xE0E0E0;
 
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         panel.Children.Add(new TextBlock
         {
             Text = icon,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            FontSize = 13,
-            Foreground = new SolidColorBrush(ColorFrom(color)),
+            FontSize = 15,
+            Foreground = new SolidColorBrush(ColorFrom(iconColor)),
         });
         panel.Children.Add(new TextBlock
         {
             Text = text,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            FontSize = 13,
-            Foreground = new SolidColorBrush(ColorFrom(done ? 0xCCCCCC : error ? 0xFF4444 : 0x808080)),
+            FontSize = 15,
+            Foreground = new SolidColorBrush(ColorFrom(textColor)),
             TextWrapping = TextWrapping.Wrap,
         });
 
@@ -123,59 +156,71 @@ public sealed partial class FirstSetupPage : Page
             ReplaceLastStep("Provider created.", done: true);
         }
 
-        // ── Step 2: Logged-in providers (has API key) ──
-        AppendStep("Checking provider API keys...");
-        var loggedIn = (_providers ?? []).Where(p => p.HasApiKey && !p.IsLocal).ToList();
-        if (loggedIn.Count > 0)
+        // ── Steps 2–3: API keys & models (loop to allow switching back from local-only) ──
+        List<ModelDto>? models = null;
+        while (true)
         {
-            ReplaceLastStep($"{loggedIn.Count} provider(s) have API keys.", done: true);
-        }
-        else
-        {
-            var remote = (_providers ?? []).Where(p => !p.IsLocal).ToList();
-            if (remote.Count == 0)
+            _localOnly = false;
+            _switchToCloud = false;
+
+            // ── Step 2: Logged-in providers (has API key) ──
+            AppendStep("Checking provider API keys...");
+            var loggedIn = (_providers ?? []).Where(p => p.HasApiKey && !p.IsLocal).ToList();
+            if (loggedIn.Count > 0)
             {
-                ReplaceLastStep("No remote providers available. Continuing with local models only.", done: true);
-                _localOnly = true;
+                ReplaceLastStep($"{loggedIn.Count} provider(s) have API keys.", done: true);
             }
             else
             {
-                ReplaceLastStep("No provider has an API key set. Please provide one.");
-                PopulateApiKeyProviderSelector(remote);
-                ApiKeyInputPanel.Visibility = Visibility.Visible;
-                _apiKeyTcs = new TaskCompletionSource<bool>();
-                var keySet = await _apiKeyTcs.Task;
-                ApiKeyInputPanel.Visibility = Visibility.Collapsed;
-                if (!keySet)
+                var remote = (_providers ?? []).Where(p => !p.IsLocal).ToList();
+                if (remote.Count == 0)
                 {
+                    ReplaceLastStep("No remote providers available. Continuing with local models only.", done: true);
                     _localOnly = true;
-                    ReplaceLastStep("Continuing with local models only.", done: true);
                 }
                 else
                 {
-                    _providers = await FetchListAsync<ProviderDto>("/providers");
-                    ReplaceLastStep("API key configured.", done: true);
+                    ReplaceLastStep("No provider has an API key set. Please provide one.");
+                    PopulateApiKeyProviderSelector(remote);
+                    ApiKeyInputPanel.Visibility = Visibility.Visible;
+                    _apiKeyTcs = new TaskCompletionSource<bool>();
+                    var keySet = await _apiKeyTcs.Task;
+                    ApiKeyInputPanel.Visibility = Visibility.Collapsed;
+                    if (!keySet)
+                    {
+                        _localOnly = true;
+                        ReplaceLastStep("Continuing with local models only.", done: true);
+                    }
+                    else
+                    {
+                        _providers = await FetchListAsync<ProviderDto>("/providers");
+                        ReplaceLastStep("API key configured.", done: true);
+                    }
                 }
             }
-        }
 
-        // ── Step 3: Models ──
-        AppendStep("Checking models...");
-        var models = await FetchListAsync<ModelDto>("/models");
-        if (models is { Count: > 0 })
-        {
-            ReplaceLastStep($"Found {models.Count} model(s).", done: true);
-        }
-        else
-        {
+            // ── Step 3: Models ──
+            AppendStep("Checking models...");
+            models = await FetchListAsync<ModelDto>("/models");
+            if (models is { Count: > 0 })
+            {
+                ReplaceLastStep($"Found {models.Count} model(s).", done: true);
+                break;
+            }
+
             if (_localOnly)
             {
-                // Guide the user through downloading a local model from HuggingFace.
                 ReplaceLastStep("No models found. Download a local model to continue.");
                 LocalModelDownloadPanel.Visibility = Visibility.Visible;
                 _localModelTcs = new TaskCompletionSource<bool>();
                 var downloaded = await _localModelTcs.Task;
                 LocalModelDownloadPanel.Visibility = Visibility.Collapsed;
+
+                if (!downloaded && _switchToCloud)
+                {
+                    ReplaceLastStep("Switching to cloud provider setup...", done: true);
+                    continue;
+                }
 
                 if (!downloaded)
                 {
@@ -185,6 +230,7 @@ public sealed partial class FirstSetupPage : Page
 
                 models = await FetchListAsync<ModelDto>("/models");
                 ReplaceLastStep($"Downloaded and registered {models?.Count ?? 0} model(s).", done: true);
+                break;
             }
             else
             {
@@ -203,7 +249,6 @@ public sealed partial class FirstSetupPage : Page
                 if (!synced)
                 {
                     ReplaceLastStep("Model sync failed. Check your API key and try setup again.", error: true);
-                    // Wipe API keys on failed sync
                     foreach (var p in _providers!.Where(p => p.HasApiKey))
                     {
                         try { await Api.PostAsync($"/providers/{p.Id}/set-key", new StringContent(JsonSerializer.Serialize(new { apiKey = "" }, Json), Encoding.UTF8, "application/json")); }
@@ -214,6 +259,7 @@ public sealed partial class FirstSetupPage : Page
 
                 models = await FetchListAsync<ModelDto>("/models");
                 ReplaceLastStep($"Synced {models?.Count ?? 0} model(s).", done: true);
+                break;
             }
         }
 
@@ -506,6 +552,12 @@ public sealed partial class FirstSetupPage : Page
         _apiKeyTcs?.TrySetResult(false);
     }
 
+    private void OnSwitchToCloudClick(object sender, RoutedEventArgs e)
+    {
+        _switchToCloud = true;
+        _localModelTcs?.TrySetResult(false);
+    }
+
     private async void OnListFilesClick(object sender, RoutedEventArgs e)
     {
         var url = HfUrlBox.Text?.Trim();
@@ -678,6 +730,7 @@ public sealed partial class FirstSetupPage : Page
         _agentTcs?.TrySetResult(null);
         _localModelTcs?.TrySetResult(false);
         _roleTcs?.TrySetResult(false);
+        _upgradePromptTcs?.TrySetResult(false);
 
         AppendStep("Setup skipped. You can configure everything manually.", done: true);
         await Task.Delay(800);
@@ -911,6 +964,14 @@ public sealed partial class FirstSetupPage : Page
 
     private static Windows.UI.Color ColorFrom(int rgb)
         => Windows.UI.Color.FromArgb(255, (byte)((rgb >> 16) & 0xFF), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF));
+
+    // ── Upgrade-prompt callbacks ────────────────────────────────
+
+    private void OnUpgradeRedoClick(object sender, RoutedEventArgs e)
+        => _upgradePromptTcs?.TrySetResult(true);
+
+    private void OnUpgradeSkipClick(object sender, RoutedEventArgs e)
+        => _upgradePromptTcs?.TrySetResult(false);
 
     // ── DTOs ────────────────────────────────────────────────────
     // ProviderType may arrive as a string ("OpenAI") or an integer (0)

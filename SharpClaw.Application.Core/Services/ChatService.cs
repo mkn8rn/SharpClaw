@@ -141,17 +141,28 @@ public sealed partial class ChatService(
             ThreadId = threadId,
             SenderAgentId = agent.Id,
             SenderAgentName = agent.Name,
-            ClientType = request.ClientType
+            ClientType = request.ClientType,
+            PromptTokens = loopResult.TotalPromptTokens > 0 ? loopResult.TotalPromptTokens : null,
+            CompletionTokens = loopResult.TotalCompletionTokens > 0 ? loopResult.TotalCompletionTokens : null
         };
 
         db.ChatMessages.Add(userMessage);
         db.ChatMessages.Add(assistantMessage);
         await db.SaveChangesAsync(ct);
 
+        // Piggyback cost data on the response so callers don't need
+        // a separate round-trip to the /cost endpoints.
+        var channelCost = await GetChannelCostAsync(channelId, ct);
+        var threadCost = threadId is not null
+            ? await GetThreadCostAsync(channelId, threadId.Value, ct)
+            : null;
+
         return new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
-            loopResult.JobResults.Count > 0 ? loopResult.JobResults : null);
+            loopResult.JobResults.Count > 0 ? loopResult.JobResults : null,
+            channelCost,
+            threadCost);
 
         } // try
         finally
@@ -185,6 +196,82 @@ public sealed partial class ChatService(
             m.SenderUserId, m.SenderUsername,
             m.SenderAgentId, m.SenderAgentName,
             m.ClientType?.ToString());
+
+    // ═══════════════════════════════════════════════════════════════
+    // Token cost aggregation
+    // ═══════════════════════════════════════════════════════════════
+
+    public async Task<ChannelCostResponse> GetChannelCostAsync(
+        Guid channelId, CancellationToken ct = default)
+    {
+        var rows = await db.ChatMessages
+            .Where(m => m.ChannelId == channelId && m.PromptTokens != null)
+            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
+            .Select(g => new
+            {
+                g.Key.SenderAgentId,
+                g.Key.SenderAgentName,
+                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
+                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
+            })
+            .ToListAsync(ct);
+
+        var breakdown = rows
+            .Where(r => r.SenderAgentId.HasValue)
+            .Select(r => new AgentTokenBreakdown(
+                r.SenderAgentId!.Value,
+                r.SenderAgentName ?? "Unknown",
+                r.PromptTokens,
+                r.CompletionTokens,
+                r.PromptTokens + r.CompletionTokens))
+            .OrderByDescending(b => b.TotalTokens)
+            .ToList();
+
+        var totalPrompt = breakdown.Sum(b => b.PromptTokens);
+        var totalCompletion = breakdown.Sum(b => b.CompletionTokens);
+
+        return new ChannelCostResponse(
+            channelId, totalPrompt, totalCompletion,
+            totalPrompt + totalCompletion, breakdown);
+    }
+
+    public async Task<ThreadCostResponse?> GetThreadCostAsync(
+        Guid channelId, Guid threadId, CancellationToken ct = default)
+    {
+        var threadExists = await db.ChatThreads
+            .AnyAsync(t => t.Id == threadId && t.ChannelId == channelId, ct);
+        if (!threadExists) return null;
+
+        var rows = await db.ChatMessages
+            .Where(m => m.ThreadId == threadId && m.PromptTokens != null)
+            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
+            .Select(g => new
+            {
+                g.Key.SenderAgentId,
+                g.Key.SenderAgentName,
+                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
+                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
+            })
+            .ToListAsync(ct);
+
+        var breakdown = rows
+            .Where(r => r.SenderAgentId.HasValue)
+            .Select(r => new AgentTokenBreakdown(
+                r.SenderAgentId!.Value,
+                r.SenderAgentName ?? "Unknown",
+                r.PromptTokens,
+                r.CompletionTokens,
+                r.PromptTokens + r.CompletionTokens))
+            .OrderByDescending(b => b.TotalTokens)
+            .ToList();
+
+        var totalPrompt = breakdown.Sum(b => b.PromptTokens);
+        var totalCompletion = breakdown.Sum(b => b.CompletionTokens);
+
+        return new ThreadCostResponse(
+            threadId, channelId, totalPrompt, totalCompletion,
+            totalPrompt + totalCompletion, breakdown);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Agent resolution
@@ -378,14 +465,15 @@ public sealed partial class ChatService(
                 var agentGrants = await CollectGrantsWithResourcesAsync(agentPs, ct);
                 if (agentGrants.Count > 0)
                     sb.Append(" (").Append(string.Join(", ", agentGrants)).Append(')');
+                else
+                    sb.Append(" (no grants)");
             }
         }
         else
         {
-            // Agent has no role — emit a minimal self-awareness line so the
-            // model knows it has no permissions and must rely on user-supplied
-            // resource IDs from the conversation.
-            sb.Append(" | agent-role: (none) clearance=Unset");
+            // Agent has no role — emit a clear notice so the model knows it
+            // cannot use any tools that require permissions.
+            sb.Append(" | agent-role: (none) clearance=Unset (no permissions)");
         }
 
         if (editorContext is not null)
@@ -476,11 +564,13 @@ public sealed partial class ChatService(
                 var agentGrants = await CollectGrantsWithResourcesAsync(agentPs, ct);
                 if (agentGrants.Count > 0)
                     sb.Append(" (").Append(string.Join(", ", agentGrants)).Append(')');
+                else
+                    sb.Append(" (no grants)");
             }
         }
         else
         {
-            sb.Append(" | agent-role: (none) clearance=Unset");
+            sb.Append(" | agent-role: (none) clearance=Unset (no permissions)");
         }
 
         sb.AppendLine("]");
@@ -717,6 +807,8 @@ public sealed partial class ChatService(
         var jobResults = new List<AgentJobResponse>();
         var fullContent = new StringBuilder();
         var rounds = 0;
+        var totalPromptTokens = 0;
+        var totalCompletionTokens = 0;
 
         while (true)
         {
@@ -735,6 +827,12 @@ public sealed partial class ChatService(
 
             if (roundResult is null)
                 break;
+
+            if (roundResult.Usage is { } roundUsage)
+            {
+                totalPromptTokens += roundUsage.PromptTokens;
+                totalCompletionTokens += roundUsage.CompletionTokens;
+            }
 
             fullContent.Append(roundResult.Content ?? "");
 
@@ -755,6 +853,14 @@ public sealed partial class ChatService(
                 if (handled)
                 {
                     messages.Add(ToolAwareMessage.ToolResult(tc.Id, taskResult ?? ""));
+                    continue;
+                }
+
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, ct);
+                if (inlineHandled)
+                {
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
                     continue;
                 }
 
@@ -840,17 +946,26 @@ public sealed partial class ChatService(
             ThreadId = threadId,
             SenderAgentId = agent.Id,
             SenderAgentName = agent.Name,
-            ClientType = request.ClientType
+            ClientType = request.ClientType,
+            PromptTokens = totalPromptTokens > 0 ? totalPromptTokens : null,
+            CompletionTokens = totalCompletionTokens > 0 ? totalCompletionTokens : null
         };
 
         db.ChatMessages.Add(userMessage);
         db.ChatMessages.Add(assistantMessage);
         await db.SaveChangesAsync(ct);
 
+        var channelCost = await GetChannelCostAsync(channelId, ct);
+        var threadCost = threadId is not null
+            ? await GetThreadCostAsync(channelId, threadId.Value, ct)
+            : null;
+
         yield return ChatStreamEvent.Complete(new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
-            jobResults.Count > 0 ? jobResults : null));
+            jobResults.Count > 0 ? jobResults : null,
+            channelCost,
+            threadCost));
 
         } // try
         finally
@@ -1025,6 +1140,44 @@ public sealed partial class ChatService(
         }
 
         return (false, null);
+    }
+
+    /// <summary>
+    /// Try to handle a tool call as a permission-free inline tool (e.g. <c>wait</c>).
+    /// Returns <c>true</c> and sets <paramref name="result"/> if handled.
+    /// These tools never enter the job/permission pipeline.
+    /// </summary>
+    private static async Task<(bool Handled, string? Result)> TryHandleInlineToolAsync(
+        ChatToolCall toolCall, CancellationToken ct)
+    {
+        if (toolCall.Name != "wait")
+            return (false, null);
+
+        try
+        {
+            var seconds = 5; // default
+
+            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
+            {
+                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
+                if (doc.RootElement.TryGetProperty("seconds", out var secEl))
+                    seconds = secEl.GetInt32();
+            }
+
+            seconds = Math.Clamp(seconds, 1, 300);
+
+            await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+
+            return (true, $"Waited {seconds} second{(seconds == 1 ? "" : "s")}.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return (true, $"Error in wait tool: {ex.Message}");
+        }
     }
 
 
@@ -1282,14 +1435,22 @@ public sealed partial class ChatService(
         var jobResults = new List<AgentJobResponse>();
         var rounds = 0;
         var effectiveTools = GetEffectiveTools(taskContext);
+        var totalPromptTokens = 0;
+        var totalCompletionTokens = 0;
 
         while (true)
         {
             var result = await client.ChatCompletionWithToolsAsync(
                 httpClient, apiKey, modelName, systemPrompt, messages, effectiveTools, maxCompletionTokens, ct);
 
+            if (result.Usage is { } usage)
+            {
+                totalPromptTokens += usage.PromptTokens;
+                totalCompletionTokens += usage.CompletionTokens;
+            }
+
             if (!result.HasToolCalls || ++rounds > MaxToolCallRounds)
-                return new ToolLoopResult(result.Content ?? "", jobResults);
+                return new ToolLoopResult(result.Content ?? "", jobResults, totalPromptTokens, totalCompletionTokens);
 
             // Record assistant turn with tool calls
             messages.Add(ToolAwareMessage.AssistantWithToolCalls(result.ToolCalls, result.Content));
@@ -1303,6 +1464,14 @@ public sealed partial class ChatService(
                 if (handled)
                 {
                     messages.Add(ToolAwareMessage.ToolResult(tc.Id, taskResult ?? ""));
+                    continue;
+                }
+
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, ct);
+                if (inlineHandled)
+                {
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
                     continue;
                 }
 
@@ -1350,7 +1519,12 @@ public sealed partial class ChatService(
             {
                 var finalResult = await client.ChatCompletionWithToolsAsync(
                     httpClient, apiKey, modelName, systemPrompt, messages, effectiveTools, maxCompletionTokens, ct);
-                return new ToolLoopResult(finalResult.Content ?? "", jobResults);
+                if (finalResult.Usage is { } finalUsage)
+                {
+                    totalPromptTokens += finalUsage.PromptTokens;
+                    totalCompletionTokens += finalUsage.CompletionTokens;
+                }
+                return new ToolLoopResult(finalResult.Content ?? "", jobResults, totalPromptTokens, totalCompletionTokens);
             }
         }
     }
@@ -1397,12 +1571,21 @@ public sealed partial class ChatService(
             foreach (var call in toolCalls)
             {
                 // ── Task-specific tool interception (text-based) ──
-                var syntheticTc = new ChatToolCall(call.CallId, call.CallId, call.ScriptJson ?? "{}");
+                var syntheticTc = new ChatToolCall(call.CallId, call.CallId, call.RawJson ?? call.ScriptJson ?? "{}");
                 var (handled, taskResult) = await TryHandleTaskToolAsync(syntheticTc, taskContext, ct);
                 if (handled)
                 {
                     toolResultBuilder.AppendLine(
                         $"[TOOL_RESULT:{call.CallId}] status=Completed result={taskResult}");
+                    continue;
+                }
+
+                // ── Inline tool interception (no permissions) ────
+                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(syntheticTc, ct);
+                if (inlineHandled)
+                {
+                    toolResultBuilder.AppendLine(
+                        $"[TOOL_RESULT:{call.CallId}] status=Completed result={inlineResult}");
                     continue;
                 }
 
@@ -1720,7 +1903,8 @@ public sealed partial class ChatService(
                             ? SafeShellType.Mk8Shell : null,
                         transcriptionModelId,
                         payload.Language,
-                        payload.WorkingDirectory));
+                        payload.WorkingDirectory,
+                        json));
                 }
             }
             catch (JsonException)
@@ -1800,9 +1984,19 @@ public sealed partial class ChatService(
         var editorCreateFileSchema = BuildEditorCreateFileSchema();
         var editorShowDiffSchema = BuildEditorShowDiffSchema();
         var editorRunTerminalSchema = BuildEditorRunTerminalSchema();
+        var waitSchema = BuildWaitSchema();
 
         return
         [
+            // ── Inline tools (no permissions) ─────────────────
+            new("wait",
+                "Pause execution for a specified number of seconds (1–300). "
+                + "No permissions required. Use this to wait for external processes, "
+                + "builds, deployments, or other async operations to complete without "
+                + "wasting tokens on polling. The tool call thread is blocked for the "
+                + "duration; no inference or token cost is incurred while waiting.",
+                waitSchema),
+
             // ── Shell execution ───────────────────────────────
             new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
             new("execute_dangerous_shell",
@@ -1964,6 +2158,23 @@ public sealed partial class ChatService(
                 + "Returns the command output. Requires EditorSession permission.",
                 editorRunTerminalSchema),
         ];
+    }
+
+    private static JsonElement BuildWaitSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "integer",
+                        "description": "Number of seconds to wait (1–300). Default 5."
+                    }
+                },
+                "required": ["seconds"]
+            }
+            """);
+        return doc.RootElement.Clone();
     }
 
     private static JsonElement BuildMk8ShellToolSchema()
@@ -2469,7 +2680,8 @@ public sealed partial class ChatService(
         SafeShellType? SafeShellType = null,
         Guid? TranscriptionModelId = null,
         string? Language = null,
-        string? WorkingDirectory = null);
+        string? WorkingDirectory = null,
+        string? RawJson = null);
 
     private sealed class ToolCallPayload
     {
@@ -2495,5 +2707,7 @@ public sealed partial class ChatService(
 
     private readonly record struct ToolLoopResult(
         string AssistantContent,
-        List<AgentJobResponse> JobResults);
+        List<AgentJobResponse> JobResults,
+        int TotalPromptTokens = 0,
+        int TotalCompletionTokens = 0);
 }

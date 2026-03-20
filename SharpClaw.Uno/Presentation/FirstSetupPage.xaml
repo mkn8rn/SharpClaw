@@ -27,6 +27,42 @@
 
         <!-- Steps are appended dynamically from code-behind -->
 
+        <!-- Version-upgrade prompt (shown when major version advanced) -->
+        <StackPanel x:Name="UpgradePromptPanel"
+                    Visibility="Collapsed"
+                    Spacing="8"
+                    Margin="0,0,0,12">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="⟳"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="16" Foreground="#FFAA33" />
+            <TextBlock Style="{StaticResource TerminalText}"
+                       FontSize="14" Foreground="#E0E0E0"
+                       VerticalAlignment="Center">
+              <Run Text="New major version detected " />
+              <Run Text="(" /><Run x:Name="UpgradeVersionLabel" /><Run Text=")." />
+            </TextBlock>
+          </StackPanel>
+          <TextBlock Style="{StaticResource TerminalText}"
+                     FontSize="12" Foreground="#AA8844"
+                     TextWrapping="Wrap"
+                     Text="Setup was already completed for an older version. You can redo it to reconfigure providers, models, and agents, or skip to keep your current config." />
+          <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+            <Button Style="{StaticResource TerminalButton}"
+                    Click="OnUpgradeRedoClick">
+              <TextBlock Text="[ Redo Setup ]"
+                         Style="{StaticResource TerminalText}"
+                         FontSize="13" Foreground="#00FF00" />
+            </Button>
+            <Button Style="{StaticResource TerminalLink}"
+                    Click="OnUpgradeSkipClick">
+              <TextBlock Text="> Skip, keep current config"
+                         Style="{StaticResource TerminalText}"
+                         FontSize="13" Foreground="#808080" />
+            </Button>
+          </StackPanel>
+        </StackPanel>
+
         <!-- Provider input panel (hidden until needed) -->
         <StackPanel x:Name="ProviderInputPanel"
                     Visibility="Collapsed"
@@ -143,20 +179,23 @@
           </Button>
         </StackPanel>
 
-        <!-- Agent selector panel (hidden until needed) -->
-        <StackPanel x:Name="AgentSelectorPanel"
-                    Visibility="Collapsed"
-                    Spacing="6"
-                    Margin="16,8,0,8">
-
         <!-- Local model download panel (hidden until needed) -->
         <StackPanel x:Name="LocalModelDownloadPanel"
                     Visibility="Collapsed"
                     Spacing="6"
                     Margin="16,8,0,8">
-          <TextBlock Text="Enter a HuggingFace model URL:"
+          <TextBlock Style="{StaticResource TerminalText}"
+                     FontSize="12" Foreground="#CCCCCC"
+                     TextWrapping="Wrap"
+                     Text="You chose local models only. To chat you need at least one GGUF model." />
+          <TextBlock Style="{StaticResource TerminalText}"
+                     FontSize="11" Foreground="#808080"
+                     TextWrapping="Wrap"
+                     Text="Browse https://huggingface.co and find a GGUF model repository (e.g. TheBloke, bartowski, unsloth). Paste the repo URL below and pick a quantization." />
+          <TextBlock Text="HuggingFace repository URL:"
                      Style="{StaticResource TerminalText}"
-                     FontSize="12" Foreground="#CCCCCC" />
+                     FontSize="12" Foreground="#CCCCCC"
+                     Margin="0,4,0,0" />
           <TextBox x:Name="HfUrlBox"
                    Style="{StaticResource TerminalInput}"
                    FontSize="12"
@@ -197,9 +236,22 @@
                      FontSize="11" Foreground="#808080"
                      Visibility="Collapsed"
                      TextWrapping="Wrap" />
+
+          <Button x:Name="SwitchToCloudBtn"
+                  Style="{StaticResource TerminalLink}"
+                  Click="OnSwitchToCloudClick"
+                  Margin="0,8,0,0">
+            <TextBlock Text="> Go back and set up a cloud provider instead"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="12" Foreground="#808080" />
+          </Button>
         </StackPanel>
 
-        <!-- Agent selector panel (original, below local model panel) -->
+        <!-- Agent selector panel (hidden until needed) -->
+        <StackPanel x:Name="AgentSelectorPanel"
+                    Visibility="Collapsed"
+                    Spacing="6"
+                    Margin="16,8,0,8">
           <TextBlock Text="Select a default agent:"
                      Style="{StaticResource TerminalText}"
                      FontSize="12" Foreground="#CCCCCC" />
@@ -490,7 +542,8 @@
         </StackPanel>
 
         <!-- Skip setup -->
-        <StackPanel Orientation="Horizontal"
+        <StackPanel x:Name="SkipSetupPanel"
+                    Orientation="Horizontal"
                     Spacing="8"
                     Margin="0,16,0,0">
           <Button x:Name="SkipSetupBtn"
@@ -498,10 +551,10 @@
                   Click="OnSkipSetupClick">
             <TextBlock Text="> Skip setup entirely"
                        Style="{StaticResource TerminalText}"
-                       FontSize="11" Foreground="#FF8800" />
+                       FontSize="13" Foreground="#FFAA33" />
           </Button>
           <TextBlock Style="{StaticResource TerminalText}"
-                     FontSize="11" Foreground="#665500"
+                     FontSize="13" Foreground="#AA8844"
                      VerticalAlignment="Center"
                      Text="(you will need to configure providers, models, and channels manually)" />
         </StackPanel>

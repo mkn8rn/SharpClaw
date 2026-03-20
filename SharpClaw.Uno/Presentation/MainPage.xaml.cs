@@ -30,6 +30,7 @@ public sealed partial class MainPage : Page
     private bool _suppressThreadSelection;
     private bool _suppressJobSelection;
     private readonly Dictionary<Guid, bool> _expandedContexts = [];
+    private readonly Dictionary<Guid, Guid> _channelAgentOverrides = [];
     private List<AgentDto> _allAgents = [];
     private List<JobDto> _channelJobs = [];
     private List<RoleDto> _allRoles = [];
@@ -648,13 +649,18 @@ public sealed partial class MainPage : Page
         }
         catch { /* swallow */ }
 
-        _selectedAgentId = channelAgentId;
+        // Restore a previously remembered agent override for this channel,
+        // falling back to the channel's default agent.
+        _selectedAgentId = _channelAgentOverrides.TryGetValue(id, out var overrideAgent)
+            ? overrideAgent
+            : channelAgentId;
         UpdateSidebarHighlight();
         await LoadAgentsAsync(channelAgentId, allowedAgentIds);
         await LoadThreadsAsync(id);
         await LoadJobsAsync(id);
         ShowChatView();
         await LoadHistoryAsync(id);
+        await LoadCostAsync(id);
         UpdateMicState();
 
         DispatcherQueue.TryEnqueue(() => MessageInput.Focus(FocusState.Programmatic));
@@ -737,9 +743,17 @@ public sealed partial class MainPage : Page
     private void OnAgentSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (AgentSelector.SelectedItem is ComboBoxItem { Tag: Guid agentId })
+        {
             _selectedAgentId = agentId;
+            if (_selectedChannelId is { } chId)
+                _channelAgentOverrides[chId] = agentId;
+        }
         else
+        {
             _selectedAgentId = null;
+            if (_selectedChannelId is { } chId)
+                _channelAgentOverrides.Remove(chId);
+        }
 
         UpdateCursor();
     }
@@ -836,6 +850,7 @@ public sealed partial class MainPage : Page
         if (_selectedChannelId is { } channelId)
         {
             await LoadHistoryAsync(channelId);
+            await LoadCostAsync(channelId);
             UpdateCursor();
         }
     }
@@ -888,6 +903,136 @@ public sealed partial class MainPage : Page
 
         UpdateCursor();
         DispatcherQueue.TryEnqueue(() => MessageInput.Focus(FocusState.Programmatic));
+    }
+
+    // ── Cost bars ────────────────────────────────────────────────
+
+    private async Task LoadCostAsync(Guid channelId)
+    {
+        var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+
+        // Channel cost
+        ChannelCostDto? channelCost = null;
+        try
+        {
+            using var resp = await api.GetAsync($"/channels/{channelId}/chat/cost");
+            if (resp.IsSuccessStatusCode)
+            {
+                using var s = await resp.Content.ReadAsStreamAsync();
+                channelCost = await JsonSerializer.DeserializeAsync<ChannelCostDto>(s, Json);
+            }
+        }
+        catch { /* swallow */ }
+
+        if (channelCost is null || channelCost.TotalTokens == 0)
+        {
+            CostPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CostPanel.Visibility = Visibility.Visible;
+        ChannelCostLabel.Text = $"channel tokens: {channelCost.TotalTokens:N0}  (prompt {channelCost.TotalPromptTokens:N0} + completion {channelCost.TotalCompletionTokens:N0})";
+        RenderCostBreakdown(ChannelCostBreakdown, channelCost.AgentBreakdown, channelCost.TotalTokens);
+
+        // Thread cost
+        if (_selectedThreadId is { } threadId)
+        {
+            ThreadCostDto? threadCost = null;
+            try
+            {
+                using var resp = await api.GetAsync($"/channels/{channelId}/chat/threads/{threadId}/cost");
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var s = await resp.Content.ReadAsStreamAsync();
+                    threadCost = await JsonSerializer.DeserializeAsync<ThreadCostDto>(s, Json);
+                }
+            }
+            catch { /* swallow */ }
+
+            if (threadCost is not null && threadCost.TotalTokens > 0)
+            {
+                ThreadCostLabel.Visibility = Visibility.Visible;
+                ThreadCostBreakdown.Visibility = Visibility.Visible;
+                ThreadCostLabel.Text = $"thread tokens: {threadCost.TotalTokens:N0}  (prompt {threadCost.TotalPromptTokens:N0} + completion {threadCost.TotalCompletionTokens:N0})";
+                RenderCostBreakdown(ThreadCostBreakdown, threadCost.AgentBreakdown, threadCost.TotalTokens);
+            }
+            else
+            {
+                ThreadCostLabel.Visibility = Visibility.Collapsed;
+                ThreadCostBreakdown.Visibility = Visibility.Collapsed;
+            }
+        }
+        else
+        {
+            ThreadCostLabel.Visibility = Visibility.Collapsed;
+            ThreadCostBreakdown.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RenderCostBreakdown(StackPanel panel, IReadOnlyList<AgentTokenBreakdownDto>? agents, int total)
+    {
+        panel.Children.Clear();
+        if (agents is null || agents.Count == 0) return;
+
+        foreach (var agent in agents)
+        {
+            var pct = total > 0 ? (double)agent.TotalTokens / total : 0;
+            var barWidth = Math.Max(4, pct * 160);
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+
+            var bar = new Border
+            {
+                Width = barWidth,
+                Height = 8,
+                Background = Brush(0x00CC66),
+                CornerRadius = new CornerRadius(2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var label = new TextBlock
+            {
+                Text = $"{agent.AgentName}  {agent.TotalTokens:N0} ({pct:P0})",
+                FontFamily = _monoFont,
+                FontSize = 10,
+                Foreground = Brush(0x888888),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            row.Children.Add(bar);
+            row.Children.Add(label);
+            panel.Children.Add(row);
+        }
+    }
+
+    /// <summary>
+    /// Renders cost data piggybacked on a chat response (Done event or
+    /// non-streaming response body) without a separate API round-trip.
+    /// </summary>
+    private void RenderInlineCost(ChannelCostDto channelCost, ThreadCostDto? threadCost)
+    {
+        if (channelCost.TotalTokens == 0)
+        {
+            CostPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CostPanel.Visibility = Visibility.Visible;
+        ChannelCostLabel.Text = $"channel tokens: {channelCost.TotalTokens:N0}  (prompt {channelCost.TotalPromptTokens:N0} + completion {channelCost.TotalCompletionTokens:N0})";
+        RenderCostBreakdown(ChannelCostBreakdown, channelCost.AgentBreakdown, channelCost.TotalTokens);
+
+        if (threadCost is not null && threadCost.TotalTokens > 0)
+        {
+            ThreadCostLabel.Visibility = Visibility.Visible;
+            ThreadCostBreakdown.Visibility = Visibility.Visible;
+            ThreadCostLabel.Text = $"thread tokens: {threadCost.TotalTokens:N0}  (prompt {threadCost.TotalPromptTokens:N0} + completion {threadCost.TotalCompletionTokens:N0})";
+            RenderCostBreakdown(ThreadCostBreakdown, threadCost.AgentBreakdown, threadCost.TotalTokens);
+        }
+        else
+        {
+            ThreadCostLabel.Visibility = Visibility.Collapsed;
+            ThreadCostBreakdown.Visibility = Visibility.Collapsed;
+        }
     }
 
     // ── Jobs ─────────────────────────────────────────────────────
@@ -1063,6 +1208,10 @@ public sealed partial class MainPage : Page
             if (job.Logs is { Count: 0 } && job.Segments is null or { Count: 0 }
                 && string.IsNullOrWhiteSpace(job.ResultData) && string.IsNullOrWhiteSpace(job.ErrorLog))
                 AppendJobLog("info", "(no log entries yet)", null);
+
+            // Inline cost from piggybacked response data
+            if (job.ChannelCost is { } jobCost)
+                RenderInlineCost(jobCost, null);
 
             // Show appropriate controls based on status
             if (job.Status == "AwaitingApproval")
@@ -1635,7 +1784,12 @@ public sealed partial class MainPage : Page
                       && _selectedChannelId is not null;
         var isActive = _activeTranscriptionJobId is not null;
 
-        MicButton.Opacity = configured || isActive ? 1.0 : 0.4;
+        MicButton.IsEnabled = configured || isActive;
+        MicButton.Opacity = configured || isActive ? 1.0 : 0.5;
+        MicIcon.Foreground = new SolidColorBrush(
+            configured || isActive
+                ? Windows.UI.Color.FromArgb(255, 0, 255, 0)
+                : Windows.UI.Color.FromArgb(255, 100, 100, 100));
 
         if (isActive)
             ToolTipService.SetToolTip(MicButton, "Stop transcription");
@@ -2201,6 +2355,10 @@ public sealed partial class MainPage : Page
         var accumulated = _pooledStreamBuilder;
         var dispatcher = DispatcherQueue;
 
+        // Cost data extracted from the Done event (populated on background thread).
+        ChannelCostDto? doneCostChannel = null;
+        ThreadCostDto? doneCostThread = null;
+
         try
         {
             var body = JsonSerializer.Serialize(new { message = text, agentId = _selectedAgentId, clientType = _clientType }, Json);
@@ -2357,6 +2515,16 @@ public sealed partial class MainPage : Page
                         }
                         else if (evtSpan.SequenceEqual("Done"))
                         {
+                            // Extract cost data piggybacked on the Done event
+                            using var doc = JsonDocument.Parse(line.AsMemory(6));
+                            if (doc.RootElement.TryGetProperty("finalResponse", out var fr))
+                            {
+                                if (fr.TryGetProperty("channelCost", out var cc) && cc.ValueKind == JsonValueKind.Object)
+                                    doneCostChannel = JsonSerializer.Deserialize<ChannelCostDto>(cc.GetRawText(), Json);
+                                if (fr.TryGetProperty("threadCost", out var tc) && tc.ValueKind == JsonValueKind.Object)
+                                    doneCostThread = JsonSerializer.Deserialize<ThreadCostDto>(tc.GetRawText(), Json);
+                            }
+
                             var finalText = accumulated.Length > 0
                                 ? accumulated.ToString()
                                 : "(empty response)";
@@ -2384,6 +2552,9 @@ public sealed partial class MainPage : Page
         }
         finally
         {
+            // Render cost from the Done event instead of a separate round-trip.
+            if (doneCostChannel is not null)
+                RenderInlineCost(doneCostChannel, doneCostThread);
             ScrollToBottom();
             UpdateCursor();
             DispatcherQueue.TryEnqueue(() => MessageInput.Focus(FocusState.Programmatic));
@@ -2915,6 +3086,10 @@ public sealed partial class MainPage : Page
 
             if (!hasLogs && !hasOutput && !hasError)
                 AppendTaskLog("info", "(no log entries yet)", null);
+
+            // Inline cost from piggybacked response data
+            if (detail.ChannelCost is { } taskCost)
+                RenderInlineCost(taskCost, null);
 
             // Show appropriate controls based on status
             TaskStopButton.Visibility = Visibility.Collapsed;
@@ -4381,6 +4556,39 @@ public sealed partial class MainPage : Page
     private async void OnCreatorBlogClick(object sender, RoutedEventArgs e)
         => await Windows.System.Launcher.LaunchUriAsync(new Uri("https://blog.mkn8rn.com"));
 
+    private async void OnLegalNoticesClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var file = await Windows.Storage.StorageFile.GetFileFromApplicationUriAsync(
+                new Uri("ms-appx:///Assets/PRIVACY_POLICY.txt"));
+            var text = await Windows.Storage.FileIO.ReadTextAsync(file);
+
+            var scroll = new ScrollViewer
+            {
+                Content = new TextBlock
+                {
+                    Text = text,
+                    FontFamily = _monoFont,
+                    FontSize = 11,
+                    Foreground = Brush(0x00FF00),
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                MaxHeight = 480,
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = "Legal Notices",
+                Content = scroll,
+                CloseButtonText = "Close",
+                XamlRoot = this.XamlRoot,
+            };
+            await dialog.ShowAsync();
+        }
+        catch { /* asset missing – silently ignore */ }
+    }
+
     // ── Role assignment (right-click context menu) ─────────────
 
     private MenuFlyout? BuildRoleMenuFlyout(bool isUser, Guid? agentId)
@@ -4596,7 +4804,8 @@ public sealed partial class MainPage : Page
         string Status, string? ResultData, string? ErrorLog,
         IReadOnlyList<JobLogDto>? Logs,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
-        IReadOnlyList<TranscriptionSegmentDto>? Segments = null);
+        IReadOnlyList<TranscriptionSegmentDto>? Segments = null,
+        ChannelCostDto? ChannelCost = null);
 
     // ── Task DTOs ────────────────────────────────────────────────
     [ImplicitKeys(IsEnabled = false)]
@@ -4616,5 +4825,21 @@ public sealed partial class MainPage : Page
         Guid Id, Guid TaskDefinitionId, string TaskName, string Status,
         string? OutputSnapshotJson, string? ErrorMessage,
         IReadOnlyList<TaskLogDto>? Logs,
-        DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt);
+        DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
+        Guid? ChannelId = null, ChannelCostDto? ChannelCost = null);
+
+    // ── Cost DTOs ────────────────────────────────────────────────
+    private sealed record AgentTokenBreakdownDto(
+        Guid AgentId, string AgentName,
+        int PromptTokens, int CompletionTokens, int TotalTokens);
+
+    private sealed record ChannelCostDto(
+        Guid ChannelId,
+        int TotalPromptTokens, int TotalCompletionTokens, int TotalTokens,
+        IReadOnlyList<AgentTokenBreakdownDto> AgentBreakdown);
+
+    private sealed record ThreadCostDto(
+        Guid ThreadId, Guid ChannelId,
+        int TotalPromptTokens, int TotalCompletionTokens, int TotalTokens,
+        IReadOnlyList<AgentTokenBreakdownDto> AgentBreakdown);
 }
