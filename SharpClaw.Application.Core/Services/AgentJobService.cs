@@ -1516,15 +1516,119 @@ IConfiguration configuration)
             g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
         }
 
-        // Downscale to max 1280px on the longest side to reduce payload.
-        const int maxDimension = 1280;
-        var scale = Math.Min(1.0, (double)maxDimension / Math.Max(bounds.Width, bounds.Height));
+        return DownscaleAndEncodeJpeg(bitmap);
+    }
+
+    /// <summary>
+    /// Captures a display and draws a high-contrast crosshair annotation
+    /// at the given display-relative click coordinates so the agent can
+    /// see exactly where it clicked.  Two full-span ruler lines
+    /// (horizontal + vertical) intersect at the click point, with a
+    /// concentric circle marker at the centre.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static byte[] CaptureWindowsDisplayWithClickMarker(
+        int displayIndex, int clickX, int clickY)
+    {
+        var bounds = GetDisplayBounds(displayIndex);
+
+        using var bitmap = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
+        using (var g = System.Drawing.Graphics.FromImage(bitmap))
+        {
+            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
+        }
+
+        DrawClickMarker(bitmap, clickX, clickY);
+        return DownscaleAndEncodeJpeg(bitmap);
+    }
+
+    /// <summary>
+    /// Draws a high-contrast click indicator on the bitmap:
+    /// <list type="bullet">
+    ///   <item>Full-width horizontal ruler line through <paramref name="y"/>.</item>
+    ///   <item>Full-height vertical ruler line through <paramref name="x"/>.</item>
+    ///   <item>Concentric circle marker at (<paramref name="x"/>, <paramref name="y"/>).</item>
+    /// </list>
+    /// Each element has a dark outline underneath for contrast on any background.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void DrawClickMarker(System.Drawing.Bitmap bitmap, int x, int y)
+    {
+        // Clamp to bitmap bounds to avoid GDI+ errors on edge clicks.
+        x = Math.Clamp(x, 0, bitmap.Width - 1);
+        y = Math.Clamp(y, 0, bitmap.Height - 1);
+
+        using var g = System.Drawing.Graphics.FromImage(bitmap);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+        var w = bitmap.Width;
+        var h = bitmap.Height;
+
+        // ── Ruler lines: dark outline + bright red ────────────────
+        using var outlinePen = new System.Drawing.Pen(
+            System.Drawing.Color.FromArgb(180, 0, 0, 0), 3f);
+        using var rulerPen = new System.Drawing.Pen(
+            System.Drawing.Color.FromArgb(210, 255, 0, 0), 1.5f);
+
+        // Horizontal ruler
+        g.DrawLine(outlinePen, 0, y, w, y);
+        g.DrawLine(rulerPen, 0, y, w, y);
+
+        // Vertical ruler
+        g.DrawLine(outlinePen, x, 0, x, h);
+        g.DrawLine(rulerPen, x, 0, x, h);
+
+        // ── Centre marker: outer ring + filled inner + white dot ──
+        const int outerR = 20;
+        const int innerR = 8;
+
+        using var ringOutline = new System.Drawing.Pen(
+            System.Drawing.Color.FromArgb(200, 0, 0, 0), 3f);
+        using var ringBright = new System.Drawing.Pen(
+            System.Drawing.Color.FromArgb(230, 255, 0, 0), 2f);
+        using var fillBrush = new System.Drawing.SolidBrush(
+            System.Drawing.Color.FromArgb(160, 255, 50, 50));
+        using var dotBrush = new System.Drawing.SolidBrush(
+            System.Drawing.Color.White);
+
+        g.DrawEllipse(ringOutline,
+            x - outerR, y - outerR, outerR * 2, outerR * 2);
+        g.DrawEllipse(ringBright,
+            x - outerR, y - outerR, outerR * 2, outerR * 2);
+        g.FillEllipse(fillBrush,
+            x - innerR, y - innerR, innerR * 2, innerR * 2);
+        g.FillEllipse(dotBrush, x - 3, y - 3, 6, 6);
+    }
+
+    /// <summary>
+    /// Returns the scale factor applied when downscaling a display's
+    /// screenshot to <see cref="ScreenshotMaxDimension"/>.  Model-provided
+    /// coordinates (in screenshot space) should be divided by this factor
+    /// to convert back to display-relative coordinates.
+    /// </summary>
+    private static double GetScreenshotScaleFactor(System.Drawing.Rectangle displayBounds)
+    {
+        return Math.Min(1.0,
+            (double)ScreenshotMaxDimension / Math.Max(displayBounds.Width, displayBounds.Height));
+    }
+
+    private const int ScreenshotMaxDimension = 1280;
+
+    /// <summary>
+    /// Downscales a bitmap to a max dimension of <see cref="ScreenshotMaxDimension"/>px
+    /// and encodes it as JPEG (quality 80) to keep the base64 payload under API limits.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static byte[] DownscaleAndEncodeJpeg(System.Drawing.Bitmap bitmap)
+    {
+        var scale = Math.Min(1.0,
+            (double)ScreenshotMaxDimension / Math.Max(bitmap.Width, bitmap.Height));
 
         System.Drawing.Bitmap toEncode;
         if (scale < 1.0)
         {
-            var newW = (int)(bounds.Width * scale);
-            var newH = (int)(bounds.Height * scale);
+            var newW = (int)(bitmap.Width * scale);
+            var newH = (int)(bitmap.Height * scale);
             toEncode = new System.Drawing.Bitmap(bitmap, newW, newH);
         }
         else
@@ -1650,19 +1754,27 @@ IConfiguration configuration)
         var button = (payload.Button ?? "left").ToLowerInvariant();
         var clickType = (payload.ClickType ?? "single").ToLowerInvariant();
 
-        // Translate display-relative → absolute virtual screen coords
+        // Model coordinates are in screenshot (downscaled) space.
+        // Scale back to display-relative coordinates before clicking.
         var bounds = GetDisplayBounds(device.DisplayIndex);
-        var absX = bounds.X + payload.X;
-        var absY = bounds.Y + payload.Y;
+        var scale = GetScreenshotScaleFactor(bounds);
+        var displayX = (int)Math.Round(payload.X / scale);
+        var displayY = (int)Math.Round(payload.Y / scale);
 
-        AddLog(job, $"Click {button} {clickType} at ({payload.X},{payload.Y}) on '{device.Name}' → abs ({absX},{absY})");
+        // Translate display-relative → absolute virtual screen coords
+        var absX = bounds.X + displayX;
+        var absY = bounds.Y + displayY;
+
+        AddLog(job, $"Click {button} {clickType} at screenshot ({payload.X},{payload.Y}) → display ({displayX},{displayY}) on '{device.Name}' → abs ({absX},{absY})");
         await db.SaveChangesAsync(ct);
 
         PerformClick(absX, absY, button, clickType);
 
-        // Capture a follow-up screenshot so the model can see the result
-        var imageBytes = CaptureWindowsDisplay(device.DisplayIndex);
-        return $"Clicked {button} ({clickType}) at ({payload.X},{payload.Y}) on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(imageBytes)}";
+        // Capture a follow-up screenshot with a crosshair overlay so
+        // the agent can see exactly where it clicked.
+        var imageBytes = CaptureWindowsDisplayWithClickMarker(
+            device.DisplayIndex, displayX, displayY);
+        return $"Clicked {button} ({clickType}) at ({displayX},{displayY}) on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(imageBytes)}";
     }
 
     /// <summary>
@@ -1690,19 +1802,27 @@ IConfiguration configuration)
         if (string.IsNullOrEmpty(payload.Text))
             throw new InvalidOperationException("TypeOnDesktop requires a 'text' field.");
 
-        // If coordinates given, click to focus first
+        // If coordinates given, click to focus first.
+        // Model coordinates are in screenshot (downscaled) space — scale
+        // back to display-relative coordinates before clicking.
         if (payload.X.HasValue && payload.Y.HasValue)
         {
             var bounds = GetDisplayBounds(device.DisplayIndex);
-            var absX = bounds.X + payload.X.Value;
-            var absY = bounds.Y + payload.Y.Value;
+            var scale = GetScreenshotScaleFactor(bounds);
+            var displayX = (int)Math.Round(payload.X.Value / scale);
+            var displayY = (int)Math.Round(payload.Y.Value / scale);
+            var absX = bounds.X + displayX;
+            var absY = bounds.Y + displayY;
 
-            AddLog(job, $"Click to focus at ({payload.X},{payload.Y}) on '{device.Name}' → abs ({absX},{absY})");
+            AddLog(job, $"Click to focus at screenshot ({payload.X},{payload.Y}) → display ({displayX},{displayY}) on '{device.Name}' → abs ({absX},{absY})");
             PerformClick(absX, absY, "left", "single");
             await Task.Delay(100, ct); // Brief pause for focus
         }
 
-        AddLog(job, $"Typing {payload.Text.Length} characters on '{device.Name}'");
+        var preview = payload.Text.Length <= 200
+            ? payload.Text
+            : string.Concat(payload.Text.AsSpan(0, 200), "… (truncated)");
+        AddLog(job, $"Typing {payload.Text.Length} characters on '{device.Name}': {preview}");
         await db.SaveChangesAsync(ct);
 
         PerformType(payload.Text);
@@ -1754,15 +1874,44 @@ IConfiguration configuration)
     {
         // Use KEYEVENTF_UNICODE so we don't need to map individual
         // keycodes — SendInput accepts raw UTF-16 characters.
-        var inputs = new INPUT[text.Length * 2];
+        // Newlines (\r\n, \n, \r) are sent as VK_RETURN virtual-key
+        // events because control characters are ignored by UNICODE mode.
+        var inputs = new List<INPUT>(text.Length * 2);
         for (var i = 0; i < text.Length; i++)
         {
             var c = text[i];
-            inputs[i * 2] = CreateKeyboardInput(c, KEYEVENTF_UNICODE);
-            inputs[i * 2 + 1] = CreateKeyboardInput(c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+
+            if (c == '\r')
+            {
+                // Skip \r when followed by \n — the \n will send Enter
+                if (i + 1 < text.Length && text[i + 1] == '\n')
+                    continue;
+                // Standalone \r → Enter
+                inputs.Add(CreateVirtualKeyInput(VK_RETURN, 0));
+                inputs.Add(CreateVirtualKeyInput(VK_RETURN, KEYEVENTF_KEYUP));
+                continue;
+            }
+
+            if (c == '\n')
+            {
+                inputs.Add(CreateVirtualKeyInput(VK_RETURN, 0));
+                inputs.Add(CreateVirtualKeyInput(VK_RETURN, KEYEVENTF_KEYUP));
+                continue;
+            }
+
+            if (c == '\t')
+            {
+                inputs.Add(CreateVirtualKeyInput(VK_TAB, 0));
+                inputs.Add(CreateVirtualKeyInput(VK_TAB, KEYEVENTF_KEYUP));
+                continue;
+            }
+
+            inputs.Add(CreateKeyboardInput(c, KEYEVENTF_UNICODE));
+            inputs.Add(CreateKeyboardInput(c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
         }
 
-        SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        if (inputs.Count > 0)
+            SendInput((uint)inputs.Count, inputs.ToArray(), System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
     }
 
     private static INPUT CreateMouseInput(uint flags) => new()
@@ -1777,6 +1926,12 @@ IConfiguration configuration)
         u = new InputUnion { ki = new KEYBDINPUT { wScan = c, dwFlags = flags } }
     };
 
+    private static INPUT CreateVirtualKeyInput(ushort vk, uint flags) => new()
+    {
+        type = INPUT_KEYBOARD,
+        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, dwFlags = flags } }
+    };
+
     // ── Win32 SendInput P/Invoke types ────────────────────────────
 
     private const uint INPUT_MOUSE = 0;
@@ -1789,6 +1944,8 @@ IConfiguration configuration)
     private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const ushort VK_RETURN = 0x0D;
+    private const ushort VK_TAB = 0x09;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]

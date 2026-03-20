@@ -20,6 +20,8 @@ public sealed class BackendProcessManager : IDisposable
     private Process? _process;
     private readonly string _executablePath;
     private string _apiUrl;
+    private readonly List<string> _processOutput = [];
+    private readonly object _outputLock = new();
 
     /// <summary>
     /// <c>true</c> when we confirmed the API is reachable but was not
@@ -29,6 +31,18 @@ public sealed class BackendProcessManager : IDisposable
 
     /// <summary>Current API base URL.</summary>
     public string ApiUrl => _apiUrl;
+
+    /// <summary>
+    /// All stdout + stderr lines captured from the bundled process
+    /// (most recent last). Thread-safe snapshot.
+    /// </summary>
+    public IReadOnlyList<string> ProcessOutput
+    {
+        get { lock (_outputLock) return [.. _processOutput]; }
+    }
+
+    /// <summary>Exit code of the bundled process, or <c>null</c> if still running or never started.</summary>
+    public int? ExitCode => _process is { HasExited: true } p ? p.ExitCode : null;
 
     public BackendProcessManager(string apiUrl)
     {
@@ -120,6 +134,10 @@ public sealed class BackendProcessManager : IDisposable
                 $"SharpClaw API backend not found at '{_executablePath}'. " +
                 "Ensure the backend is published into the 'backend' subfolder.");
 
+        // Clear stale output from any previous run.
+        lock (_outputLock) _processOutput.Clear();
+        IsExternal = false;
+
         var psi = new ProcessStartInfo
         {
             FileName = _executablePath,
@@ -133,7 +151,31 @@ public sealed class BackendProcessManager : IDisposable
         // Pass the URL so the API binds to the expected port.
         psi.EnvironmentVariables["ASPNETCORE_URLS"] = _apiUrl;
 
+        // Redirect the data directory to a writable location.
+        // Inside MSIX, the install folder (C:\Program Files\WindowsApps\...) is
+        // read-only, so JSON persistence and logs must go to %LOCALAPPDATA%.
+        var dataDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SharpClaw", "Data");
+        psi.EnvironmentVariables["SHARPCLAW_DATA_DIR"] = dataDir;
+
         _process = Process.Start(psi);
+
+        // Consume stdout/stderr asynchronously to prevent pipe-buffer
+        // deadlock — ASP.NET Core writes startup logs that fill the OS
+        // buffer and block the process before Kestrel binds the port.
+        _process!.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                lock (_outputLock) _processOutput.Add(e.Data);
+        };
+        _process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is not null)
+                lock (_outputLock) _processOutput.Add($"[stderr] {e.Data}");
+        };
+        _process.BeginOutputReadLine();
+        _process.BeginErrorReadLine();
     }
 
     /// <summary>

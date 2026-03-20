@@ -7,7 +7,7 @@
   -->
   <ItemGroup>
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
-    <PackageVersion Include="FluentAssertions" Version="8.8.0" />
+    <PackageVersion Include="FluentAssertions" Version="8.9.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.3" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.3" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
@@ -17,23 +17,25 @@
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageVersion Include="Uno.UITest.Helpers" Version="1.1.0-dev.92" />
     <PackageVersion Include="Xamarin.UITest" Version="4.4.2" />
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.5" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.1.4" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.3" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.5" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.16.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.3" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.3" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.5" />
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
-    <PackageVersion Include="NAudio" Version="2.2.1" />
+    <PackageVersion Include="NAudio" Version="2.3.0" />
     <PackageVersion Include="LLamaSharp" Version="0.26.0" />
     <PackageVersion Include="LLamaSharp.Backend.Cpu" Version="0.26.0" />
-    <PackageVersion Include="LLamaSharp.Backend.Cuda12" Version="0.26.0" />
-    <PackageVersion Include="LLamaSharp.Backend.Vulkan" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Cuda12.Windows" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Cuda12.Linux" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Vulkan.Windows" Version="0.26.0" />
+    <PackageVersion Include="LLamaSharp.Backend.Vulkan.Linux" Version="0.26.0" />
     <PackageVersion Include="Whisper.net" Version="1.9.0" />
     <PackageVersion Include="Whisper.net.Runtime" Version="1.9.0" />
     <PackageVersion Include="System.Diagnostics.EventLog" Version="10.0.4" />
