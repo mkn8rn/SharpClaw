@@ -1784,7 +1784,12 @@ public sealed partial class MainPage : Page
                       && _selectedChannelId is not null;
         var isActive = _activeTranscriptionJobId is not null;
 
-        MicButton.Opacity = configured || isActive ? 1.0 : 0.4;
+        MicButton.IsEnabled = configured || isActive;
+        MicButton.Opacity = configured || isActive ? 1.0 : 0.5;
+        MicIcon.Foreground = new SolidColorBrush(
+            configured || isActive
+                ? Windows.UI.Color.FromArgb(255, 0, 255, 0)
+                : Windows.UI.Color.FromArgb(255, 100, 100, 100));
 
         if (isActive)
             ToolTipService.SetToolTip(MicButton, "Stop transcription");

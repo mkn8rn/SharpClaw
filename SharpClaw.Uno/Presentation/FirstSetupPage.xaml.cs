@@ -46,22 +46,25 @@ public sealed partial class FirstSetupPage : Page
     private void AppendStep(string text, bool done = false, bool error = false)
     {
         var icon = done ? "✓" : error ? "✗" : "›";
-        var color = done ? 0x00FF00 : error ? 0xFF4444 : 0x808080;
+        var iconColor = done ? 0x00FF00 : error ? 0xFF6666 : 0xFFCC00;
+        var textColor = done ? 0xE0E0E0 : error ? 0xFF6666 : 0xE0E0E0;
 
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         panel.Children.Add(new TextBlock
         {
             Text = icon,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            FontSize = 13,
-            Foreground = new SolidColorBrush(ColorFrom(color)),
+            FontSize = 15,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(ColorFrom(iconColor)),
         });
         panel.Children.Add(new TextBlock
         {
             Text = text,
             FontFamily = new FontFamily("Consolas, Courier New, monospace"),
-            FontSize = 13,
-            Foreground = new SolidColorBrush(ColorFrom(done ? 0xCCCCCC : error ? 0xFF4444 : 0x808080)),
+            FontSize = 15,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = new SolidColorBrush(ColorFrom(textColor)),
             TextWrapping = TextWrapping.Wrap,
         });
 

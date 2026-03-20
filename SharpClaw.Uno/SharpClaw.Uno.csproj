@@ -10,8 +10,8 @@
     <!-- App Identifier -->
     <ApplicationId>com.mkn8rn.SharpClaw</ApplicationId>
     <!-- Versions -->
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.0.2-alpha</ApplicationDisplayVersion>
+    <ApplicationVersion>2</ApplicationVersion>
     <!-- Package Publisher -->
     <ApplicationPublisher>marko</ApplicationPublisher>
     <!-- Package Description -->
@@ -122,6 +122,18 @@
   <ItemGroup>
     <Content Include="Environment\.env" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Environment\.dev.env" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    Backend content for MSIX packaging.
+    When publish-msix.ps1 pre-publishes the API backend to BackendStagingDir,
+    these items are included in the MSIX package payload as the backend\ subfolder.
+    The property is only set by the script; normal dev builds are unaffected.
+  -->
+  <ItemGroup Condition="'$(BackendStagingDir)' != '' AND Exists('$(BackendStagingDir)')">
+    <Content Include="$(BackendStagingDir)\**"
+             Link="backend\%(RecursiveDir)%(FileName)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

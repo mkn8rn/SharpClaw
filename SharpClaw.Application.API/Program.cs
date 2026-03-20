@@ -19,8 +19,13 @@ using SharpClaw.Infrastructure;
 using SharpClaw.Infrastructure.Configuration;
 using SharpClaw.Utils.Security;
 
+var dataDir = Environment.GetEnvironmentVariable("SHARPCLAW_DATA_DIR");
+var baseDir = !string.IsNullOrEmpty(dataDir)
+    ? dataDir
+    : Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!;
+
 var logsPath = Path.Combine(
-    Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+    !string.IsNullOrEmpty(dataDir) ? Path.GetDirectoryName(dataDir)! : baseDir,
     "Logs", "sharpclaw-.log");
 
 var consoleLevelSwitch = new Serilog.Core.LoggingLevelSwitch(Serilog.Events.LogEventLevel.Information);
@@ -48,7 +53,11 @@ try
     builder.Host.UseSerilog();
 
     // Infrastructure
-    builder.Services.AddInfrastructure(StorageMode.JsonFile);
+    builder.Services.AddInfrastructure(StorageMode.JsonFile, configureJsonFile: opts =>
+    {
+        if (!string.IsNullOrEmpty(dataDir))
+            opts.DataDirectory = dataDir;
+    });
 
     // CORS
     builder.Services.AddCors(options =>

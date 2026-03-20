@@ -1507,7 +1507,7 @@ public sealed partial class SettingsPage : Page
         if (App.Services is { } services)
         {
             var navigator = services.GetRequiredService<INavigator>();
-            await navigator.NavigateRouteAsync(this, "/");
+            await navigator.NavigateRouteAsync(this, "Boot", qualifier: Qualifiers.ClearBackStack);
         }
     }
 
