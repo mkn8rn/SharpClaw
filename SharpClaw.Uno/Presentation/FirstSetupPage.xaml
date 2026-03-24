@@ -288,23 +288,6 @@
                      FontSize="11" Foreground="#808080"
                      TextWrapping="Wrap" />
 
-          <TextBlock Text="default clearance level:"
-                     Style="{StaticResource TerminalText}"
-                     FontSize="12" Foreground="#CCCCCC"
-                     Margin="0,6,0,0" />
-          <TextBlock Text="Fallback used when a specific permission doesn't set its own clearance."
-                     Style="{StaticResource TerminalText}"
-                     FontSize="10" Foreground="#808080"
-                     TextWrapping="Wrap" />
-          <ComboBox x:Name="ClearanceSelector"
-                    FontFamily="Consolas, Courier New, monospace"
-                    FontSize="11"
-                    Background="#1A1A1A"
-                    Foreground="#CCCCCC"
-                    BorderBrush="#333333"
-                    BorderThickness="1"
-                    MinWidth="340" />
-
           <TextBlock Text="global permissions:"
                       Style="{StaticResource TerminalText}"
                       FontSize="12" Foreground="#CCCCCC"
@@ -316,7 +299,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkLocalhostBrowser" Content="Localhost Browser"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to open localhost URLs in a headless browser" />
             <ComboBox x:Name="ClrLocalhostBrowser"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -326,7 +310,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkLocalhostCli" Content="Localhost CLI"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to make direct HTTP requests to localhost" />
             <ComboBox x:Name="ClrLocalhostCli"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -336,7 +321,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkClickDesktop" Content="Click Desktop"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to simulate mouse clicks on the desktop" />
             <ComboBox x:Name="ClrClickDesktop"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -346,7 +332,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkTypeOnDesktop" Content="Type on Desktop"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to simulate keyboard input on the desktop" />
             <ComboBox x:Name="ClrTypeOnDesktop"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -356,7 +343,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkCreateSubAgents" Content="Create Sub-Agents"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to spawn child agents on its own" />
             <ComboBox x:Name="ClrCreateSubAgents"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -366,7 +354,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkCreateContainers" Content="Create Containers"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to create sandboxed execution containers" />
             <ComboBox x:Name="ClrCreateContainers"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -376,7 +365,8 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox x:Name="ChkRegisterInfoStores" Content="Register Info Stores"
                        FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
+                       Foreground="#CCCCCC" MinWidth="220"
+                       ToolTipService.ToolTip="Allow the agent to register local or external information stores" />
             <ComboBox x:Name="ClrRegisterInfoStores"
                       FontFamily="Consolas, Courier New, monospace" FontSize="10"
                       Background="#1A1A1A" Foreground="#CCCCCC"
@@ -384,144 +374,15 @@
                       MinWidth="180" />
           </StackPanel>
 
-          <TextBlock Text="per-resource permissions (wildcard):"
+          <TextBlock Text="per-resource permissions:"
                       Style="{StaticResource TerminalText}"
                       FontSize="12" Foreground="#CCCCCC"
                       Margin="0,6,0,0" />
-          <TextBlock Text="Grants access to all resources of each type. Each has its own clearance level."
+          <TextBlock Text="Grant access to resources with individual clearance levels. Use the wildcard to grant all resources of a type."
                       Style="{StaticResource TerminalText}"
                       FontSize="11" Foreground="#808080"
                       TextWrapping="Wrap" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkSafeShell" Content="Safe Shell (mk8.shell)"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrSafeShell"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkDangerousShell" Content="Dangerous Shell"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrDangerousShell"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkContainerAccess" Content="Container Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrContainerAccess"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkWebsiteAccess" Content="Website Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrWebsiteAccess"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkSearchEngineAccess" Content="Search Engine Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrSearchEngineAccess"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkLocalInfoStore" Content="Local Info Store Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrLocalInfoStore"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkExternalInfoStore" Content="External Info Store Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrExternalInfoStore"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkAudioDevice" Content="Audio Device Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrAudioDevice"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkDisplayDevice" Content="Display Device (Capture)"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrDisplayDevice"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkEditorSession" Content="Editor Session Access"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrEditorSession"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkAgentManagement" Content="Agent Management"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrAgentManagement"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkTaskManagement" Content="Task Management"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrTaskManagement"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox x:Name="ChkSkillManagement" Content="Skill Management"
-                       FontFamily="Consolas, Courier New, monospace" FontSize="12"
-                       Foreground="#CCCCCC" MinWidth="220" />
-            <ComboBox x:Name="ClrSkillManagement"
-                      FontFamily="Consolas, Courier New, monospace" FontSize="10"
-                      Background="#1A1A1A" Foreground="#CCCCCC"
-                      BorderBrush="#333333" BorderThickness="1"
-                      MinWidth="180" />
-          </StackPanel>
+          <StackPanel x:Name="ResourceGrantsContainer" Spacing="12" />
 
           <Button x:Name="RoleSubmitBtn"
                   Style="{StaticResource TerminalButton}"

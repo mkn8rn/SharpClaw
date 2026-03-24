@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml.Media;
+using SharpClaw.Helpers;
 using SharpClaw.Services;
 
 namespace SharpClaw.Presentation;
@@ -13,12 +14,9 @@ public sealed partial class LoginPage : Page
     private bool _needsFirstSetup;
     private bool _needsUpgradeSetup;
 
-    private static readonly Microsoft.UI.Xaml.Media.FontFamily Mono = new("Consolas, Courier New, monospace");
+    private static FontFamily Mono => TerminalUI.Mono;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+    private static JsonSerializerOptions JsonOptions => TerminalUI.Json;
 
     public LoginPage()
     {
@@ -200,7 +198,7 @@ public sealed partial class LoginPage : Page
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
-                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                Background = TerminalUI.Transparent,
                 BorderThickness = new Thickness(0),
                 Padding = new Thickness(8, 4),
             };
@@ -208,18 +206,18 @@ public sealed partial class LoginPage : Page
             sp.Children.Add(new TextBlock
             {
                 Text = hasValidRefresh ? "›" : "·", FontFamily = Mono, FontSize = 12,
-                Foreground = new SolidColorBrush(hasValidRefresh ? ColorGreen : ColorGray),
+                Foreground = TerminalUI.Brush(hasValidRefresh ? 0x32CD32 : 0x808080),
             });
             sp.Children.Add(new TextBlock
             {
                 Text = acct.Username, FontFamily = Mono, FontSize = 12,
-                Foreground = new SolidColorBrush(hasValidRefresh ? ColorGreen : ColorGray),
+                Foreground = TerminalUI.Brush(hasValidRefresh ? 0x32CD32 : 0x808080),
             });
             if (hasValidRefresh)
                 sp.Children.Add(new TextBlock
                 {
                     Text = "→ click to login", FontFamily = Mono, FontSize = 10,
-                    Foreground = new SolidColorBrush(ColorGray),
+                    Foreground = TerminalUI.Brush(0x808080),
                     VerticalAlignment = VerticalAlignment.Center,
                 });
 
@@ -238,20 +236,12 @@ public sealed partial class LoginPage : Page
             Grid.SetColumn(btn, 0);
             row.Children.Add(btn);
 
-            var removeBtn = new Button
-            {
-                Content = new TextBlock { Text = "✕", FontFamily = Mono, FontSize = 10,
-                    Foreground = new SolidColorBrush(ColorRed) },
-                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(6, 4), MinWidth = 0, MinHeight = 0,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            removeBtn.Click += (_, _) =>
+            var removeBtn = TerminalUI.RemoveButton(() =>
             {
                 store.RemoveAccount(captured.UserId);
                 PopulateSavedAccounts();
-            };
+            });
+            removeBtn.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(removeBtn, 1);
             row.Children.Add(removeBtn);
             SavedAccountsPanel.Children.Add(row);
@@ -387,15 +377,11 @@ public sealed partial class LoginPage : Page
         UpdateCursor();
     }
 
-    private static readonly Windows.UI.Color ColorGray = Windows.UI.Color.FromArgb(255, 128, 128, 128);
-    private static readonly Windows.UI.Color ColorGreen = Windows.UI.Color.FromArgb(255, 50, 205, 50);
-    private static readonly Windows.UI.Color ColorRed = Windows.UI.Color.FromArgb(255, 255, 68, 68);
-
     private void ShowStatus(string text, bool error, bool success = false)
     {
         StatusBlock.Text = text;
-        StatusBlock.Foreground = new SolidColorBrush(
-            error ? ColorRed : success ? ColorGreen : ColorGray);
+        StatusBlock.Foreground = TerminalUI.Brush(
+            error ? 0xFF4444 : success ? 0x32CD32 : 0x808080);
         StatusBlock.Visibility = Visibility.Visible;
     }
 

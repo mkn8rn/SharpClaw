@@ -2,6 +2,8 @@ Emit tool calls on their own line:
 [TOOL_CALL:<id>] { <JSON> }
 Results arrive as: [TOOL_RESULT:<id>] status=<Status> result=<output> error=<details>
 
+Multiple tool calls per response: you MAY emit multiple [TOOL_CALL:...] blocks in a single response. They are executed sequentially in the order you emit them. Use this to chain related actions (e.g. 3 clicks in a row, capture then click then type) without extra round-trips. Permission checks apply individually — if one is denied the others still execute. You can freely mix different tool types in one response.
+
 Status handling:
 - Completed: success. Use the result field.
 - Denied: the permission system blocked the action. The error field explains why (e.g. "Agent has no role or permissions assigned", "Agent does not have permission to ...", "Agent does not have DisplayDevice access"). Relay the denial reason clearly and suggest what permission or role change is needed. Do NOT retry denied calls — they will keep failing until permissions change. Do NOT include [TOOL_CALL:...] in final answers.

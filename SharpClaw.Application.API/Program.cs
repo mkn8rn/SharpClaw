@@ -105,6 +105,7 @@ try
     builder.Services.AddSingleton<IProviderApiClient, CerebrasApiClient>();
     builder.Services.AddSingleton<IProviderApiClient, MistralApiClient>();
     builder.Services.AddSingleton<IProviderApiClient, GitHubCopilotApiClient>();
+    builder.Services.AddSingleton<IProviderApiClient, MinimaxApiClient>();
     builder.Services.AddSingleton<ProviderApiClientFactory>();
 
     // Transcription clients

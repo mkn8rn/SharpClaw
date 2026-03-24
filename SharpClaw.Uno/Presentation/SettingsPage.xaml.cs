@@ -3,81 +3,23 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.UI.Xaml.Media;
+using SharpClaw.Helpers;
 using SharpClaw.Services;
 
 namespace SharpClaw.Presentation;
 
 public sealed partial class SettingsPage : Page
 {
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter() },
-    };
+    private static JsonSerializerOptions Json => TerminalUI.Json;
 
-    private static readonly FontFamily Mono = new("Consolas, Courier New, monospace");
-    private static readonly SolidColorBrush Trans = new(Microsoft.UI.Colors.Transparent);
-    private static readonly Dictionary<int, SolidColorBrush> BrushMap = [];
+    private static FontFamily Mono => TerminalUI.Mono;
+    private static SolidColorBrush Trans => TerminalUI.Transparent;
     private SharpClawApiClient Api => App.Services!.GetRequiredService<SharpClawApiClient>();
 
     private string _activeTab = "Providers";
 
-    // ── Clearance display labels ────────────────────────────────
-    private static readonly (string Tag, string Label)[] _clearanceOptions =
-    [
-        ("Independent",                "Can act without approval"),
-        ("ApprovedByWhitelistedAgent", "Only with approval from a managing agent"),
-        ("ApprovedByPermittedAgent",   "Only with approval from an agent that has clearance to act"),
-        ("ApprovedByWhitelistedUser",  "Only with approval from a user"),
-        ("ApprovedBySameLevelUser",    "Only with approval from a user that can grant the permission"),
-    ];
-
-    private static readonly string[] _globalFlagNames =
-        ["canCreateSubAgents", "canCreateContainers", "canRegisterInfoStores",
-         "canAccessLocalhostInBrowser", "canAccessLocalhostCli",
-         "canClickDesktop", "canTypeOnDesktop"];
-
-    private static readonly string[] _globalFlagClearanceNames =
-        ["createSubAgentsClearance", "createContainersClearance", "registerInfoStoresClearance",
-         "accessLocalhostInBrowserClearance", "accessLocalhostCliClearance",
-         "clickDesktopClearance", "typeOnDesktopClearance"];
-
-    private static readonly Dictionary<string, string> _globalFlagTooltips = new()
-    {
-        ["canCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
-        ["canCreateContainers"] = "Allow the agent to create sandboxed execution containers",
-        ["canRegisterInfoStores"] = "Allow the agent to register local or external information stores",
-        ["canAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
-        ["canAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
-        ["canClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
-        ["canTypeOnDesktop"] = "Allow the agent to simulate keyboard input on the desktop",
-    };
-
-    private static readonly (string ApiName, string DisplayName)[] _resourceAccessTypes =
-    [
-        ("dangerousShellAccesses", "Dangerous Shell"), ("safeShellAccesses", "Safe Shell"),
-        ("containerAccesses", "Containers"), ("websiteAccesses", "Websites"),
-        ("searchEngineAccesses", "Search Engines"), ("localInfoStoreAccesses", "Local Info Stores"),
-        ("externalInfoStoreAccesses", "External Info Stores"), ("audioDeviceAccesses", "Audio Devices"),
-        ("displayDeviceAccesses", "Display Devices"), ("editorSessionAccesses", "Editor Sessions"),
-        ("agentAccesses", "Agent Management"), ("taskAccesses", "Task Management"),
-        ("skillAccesses", "Skill Management"),
-    ];
-
-    private static readonly Guid AllResourcesId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
-
-    private static readonly string[] _providerTypeNames =
-        ["OpenAI", "Anthropic", "OpenRouter", "GoogleGemini", "GoogleVertexAI",
-         "ZAI", "VercelAIGateway", "XAI", "Groq", "Cerebras", "Mistral", "GitHubCopilot", "Custom"];
-
-    private static readonly HashSet<string> DeviceCodeProviderTypes = ["GitHubCopilot"];
-
     // Role editor state
-    private readonly Dictionary<string, (CheckBox Check, ComboBox Clearance)> _flagEditors = new(7);
-    private readonly Dictionary<string, StackPanel> _resourcePanels = new(13);
-    private readonly Dictionary<Guid, string> _resourceNameCache = [];
-    private readonly Dictionary<string, List<(Guid Id, string Name)>> _resourcesByType = [];
+    private PermissionEditorBuilder? _permEditor;
 
     // Cached lists for cross-tab use
     private List<ProviderEntry>? _cachedProviders;
@@ -195,7 +137,7 @@ public sealed partial class SettingsPage : Page
         var nameBox = MakeInput("Provider name…");
         var typeBox = new ComboBox { FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
             BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 200 };
-        foreach (var t in _providerTypeNames)
+        foreach (var t in TerminalUI.ProviderTypeNames)
             typeBox.Items.Add(new ComboBoxItem { Content = t, Tag = t });
         typeBox.SelectedIndex = 0;
         var epBox = MakeInput("https://... (Custom only)");
@@ -234,7 +176,7 @@ public sealed partial class SettingsPage : Page
         Lbl($"type: {p.ProviderType}   key: {(p.HasApiKey ? "✓ set" : "✗ not set")}", 0x999999);
         Lbl($"id: {p.Id}", 0x555555);
 
-        var isDeviceCode = DeviceCodeProviderTypes.Contains(p.ProviderType);
+        var isDeviceCode = TerminalUI.DeviceCodeProviderTypes.Contains(p.ProviderType);
 
         if (isDeviceCode)
         {
@@ -737,104 +679,20 @@ public sealed partial class SettingsPage : Page
 
     private async Task BuildRoleEditorAsync(Guid roleId, JsonElement root)
     {
+        _permEditor = new PermissionEditorBuilder(Api)
+            .WithCallerFilter(_callerPermissions)
+            .WithExisting(root)
+            .WithFlagClearance(true)
+            .WithGrantClearance(true);
+
         Sub("Global Permissions");
         Lbl("Capabilities the agent can use. Each has its own clearance level.", 0x808080);
-        _flagEditors.Clear();
-        var flagsPanel = new StackPanel { Spacing = 10 };
-        for (var i = 0; i < _globalFlagNames.Length; i++)
-        {
-            var flag = _globalFlagNames[i];
-            var clrN = _globalFlagClearanceNames[i];
-
-            // Only show flags the current user holds
-            var callerHasFlag = _callerPermissions is { } cp
-                && cp.TryGetProperty(flag, out var cfp) && cfp.GetBoolean();
-            if (_callerPermissions is not null && !callerHasFlag)
-                continue;
-
-            var on = root.TryGetProperty(flag, out var fp) && fp.GetBoolean();
-            var cl = root.TryGetProperty(clrN, out var cpp) ? cpp.GetString() ?? "Unset" : "Unset";
-            var row = new StackPanel { Spacing = 4 };
-            var cb = new CheckBox
-            {
-                IsChecked = on, MinWidth = 0, MinHeight = 0,
-                Padding = new Thickness(4, 0, 0, 0),
-                Content = new TextBlock { Text = FormatFlagName(flag), FontFamily = Mono, FontSize = 11, Foreground = B(0xE0E0E0) },
-            };
-            if (_globalFlagTooltips.TryGetValue(flag, out var tip))
-                ToolTipService.SetToolTip(cb, tip);
-            row.Children.Add(cb);
-            var clrLabel = new TextBlock { Text = "Clearance:", FontFamily = Mono, FontSize = 9,
-                Foreground = B(0x808080), Margin = new Thickness(24, 2, 0, 0) };
-            row.Children.Add(clrLabel);
-            var clrBox = ClearanceCombo(cl, true);
-            clrBox.Margin = new Thickness(24, 0, 0, 0);
-            row.Children.Add(clrBox);
-            _flagEditors[flag] = (cb, clrBox);
-            flagsPanel.Children.Add(row);
-        }
-        if (flagsPanel.Children.Count == 0)
+        if (!_permEditor.BuildGlobalFlags(ContentPanel))
             Lbl("You hold no global permissions to grant.", 0x555555);
-        ContentPanel.Children.Add(flagsPanel);
 
         Sub("Resource Accesses");
         Lbl("Per-resource grants with individual clearance levels.", 0x808080);
-        _resourcePanels.Clear();
-        _resourceNameCache.Clear();
-        _resourcesByType.Clear();
-        await PreloadAllResourceNamesAsync();
-
-        var resCont = new StackPanel { Spacing = 16 };
-        foreach (var (apiName, displayName) in _resourceAccessTypes)
-        {
-            // Only show resource types the caller has grants for
-            var callerIds = GetCallerResourceIds(apiName);
-            if (_callerPermissions is not null && callerIds is null)
-                continue;
-
-            var section = new StackPanel { Spacing = 4 };
-            section.Children.Add(new TextBlock { Text = displayName, FontFamily = Mono, FontSize = 12,
-                Foreground = B(0x00CCFF), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            var gp = new StackPanel { Spacing = 6, Margin = new Thickness(12, 0, 0, 0) };
-            _resourcePanels[apiName] = gp;
-            if (root.TryGetProperty(apiName, out var ap) && ap.ValueKind == JsonValueKind.Array)
-                foreach (var g in ap.EnumerateArray())
-                    if (g.TryGetProperty("resourceId", out var rid) && rid.ValueKind == JsonValueKind.String)
-                    {
-                        var cl = g.TryGetProperty("clearance", out var clp) ? clp.GetString() ?? "Unset" : "Unset";
-                        AddGrantRow(gp, rid.GetGuid(), cl);
-                    }
-            section.Children.Add(gp);
-
-            var addRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            addRow.Children.Add(new TextBlock { Text = "Resource:", FontFamily = Mono, FontSize = 10,
-                Foreground = B(0x00CCFF), VerticalAlignment = VerticalAlignment.Center });
-            var resSelector = new ComboBox { FontFamily = Mono, FontSize = 10, Background = B(0x0A1A2A),
-                Foreground = B(0x00CCFF), BorderBrush = B(0x00CCFF), BorderThickness = new Thickness(1), MinWidth = 220 };
-            var capturedApi = apiName;
-            PopulateResourceSelector(resSelector, capturedApi);
-            var addBtn = new Button
-            {
-                Content = new TextBlock { Text = "+ add", FontFamily = Mono, FontSize = 10, Foreground = B(0x00FF00) },
-                Background = Trans, BorderThickness = new Thickness(0),
-                Padding = new Thickness(4, 2), MinWidth = 0, MinHeight = 0,
-            };
-            addBtn.Click += (_, _) =>
-            {
-                if (resSelector.SelectedItem is not ComboBoxItem { Tag: Guid resId } || resId == Guid.Empty) return;
-                if (!_resourcePanels.TryGetValue(capturedApi, out var panel)) return;
-                foreach (var child in panel.Children)
-                    if (child is StackPanel r && r.Children.Count > 0
-                        && r.Children[0] is TextBlock { Tag: Guid existing } && existing == resId)
-                        return;
-                AddGrantRow(panel, resId, "Independent");
-            };
-            addRow.Children.Add(resSelector);
-            addRow.Children.Add(addBtn);
-            section.Children.Add(addRow);
-            resCont.Children.Add(section);
-        }
-        ContentPanel.Children.Add(resCont);
+        await _permEditor.BuildResourceGrantsAsync(ContentPanel);
 
         var saveBtn = new Button
         {
@@ -846,107 +704,12 @@ public sealed partial class SettingsPage : Page
         ContentPanel.Children.Add(saveBtn);
     }
 
-    private async Task PreloadAllResourceNamesAsync()
-    {
-        var tasks = _resourceAccessTypes.Select(async r =>
-        {
-            try
-            {
-                using var resp = await Api.GetAsync($"/resources/lookup/{r.ApiName}");
-                if (!resp.IsSuccessStatusCode) return;
-                using var s = await resp.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(s);
-                var items = new List<(Guid Id, string Name)>();
-                foreach (var item in doc.RootElement.EnumerateArray())
-                {
-                    var id = item.GetProperty("id").GetGuid();
-                    var name = item.GetProperty("name").GetString() ?? id.ToString()[..8];
-                    _resourceNameCache[id] = name;
-                    items.Add((id, name));
-                }
-                _resourcesByType[r.ApiName] = items;
-            }
-            catch { /* swallow */ }
-        });
-        await Task.WhenAll(tasks);
-    }
-
-    private void PopulateResourceSelector(ComboBox selector, string accessType)
-    {
-        var callerIds = GetCallerResourceIds(accessType);
-
-        // If caller has no grants for this type, show disabled placeholder
-        if (_callerPermissions is not null && callerIds is null)
-        {
-            selector.Items.Add(new ComboBoxItem { Content = "(no access)", Tag = Guid.Empty, IsEnabled = false });
-            selector.SelectedIndex = 0;
-            return;
-        }
-
-        var hasWildcard = callerIds is not null && callerIds.Contains(AllResourcesId);
-
-        if (callerIds is null || hasWildcard)
-            selector.Items.Add(new ComboBoxItem { Content = "* (all resources)", Tag = AllResourcesId });
-
-        if (_resourcesByType.TryGetValue(accessType, out var items))
-            foreach (var (id, name) in items)
-                if (callerIds is null || hasWildcard || callerIds.Contains(id))
-                    selector.Items.Add(new ComboBoxItem { Content = name, Tag = id });
-
-        if (selector.Items.Count > 0)
-            selector.SelectedIndex = 0;
-    }
-
-    private void AddGrantRow(StackPanel panel, Guid resId, string clearance)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        string idText;
-        if (resId == AllResourcesId)
-            idText = "* (all)";
-        else if (_resourceNameCache.TryGetValue(resId, out var name))
-            idText = name;
-        else
-            idText = resId.ToString()[..8] + "\u2026";
-        var idBlock = new TextBlock { Text = idText, FontFamily = Mono, FontSize = 11,
-            Foreground = B(0xE0E0E0), VerticalAlignment = VerticalAlignment.Center, MinWidth = 140, Tag = resId };
-        if (resId != AllResourcesId) ToolTipService.SetToolTip(idBlock, resId.ToString());
-        row.Children.Add(idBlock);
-        row.Children.Add(new TextBlock { Text = "Clearance:", FontFamily = Mono, FontSize = 9,
-            Foreground = B(0x808080), VerticalAlignment = VerticalAlignment.Center });
-        row.Children.Add(ClearanceCombo(clearance, true));
-        var rm = new Button
-        {
-            Content = new TextBlock { Text = "✕", FontFamily = Mono, FontSize = 9, Foreground = B(0xFF4444) },
-            Background = Trans, BorderThickness = new Thickness(0),
-            Padding = new Thickness(2), MinWidth = 0, MinHeight = 0,
-        };
-        rm.Click += (_, _) => panel.Children.Remove(row);
-        row.Children.Add(rm);
-        panel.Children.Add(row);
-    }
-
     private async Task SaveRolePermsAsync(Guid roleId)
     {
-        var req = new Dictionary<string, object?>();
-        for (var i = 0; i < _globalFlagNames.Length; i++)
-        {
-            if (!_flagEditors.TryGetValue(_globalFlagNames[i], out var ed)) continue;
-            req[_globalFlagNames[i]] = ed.Check.IsChecked == true;
-            req[_globalFlagClearanceNames[i]] = ed.Clearance.SelectedItem is ComboBoxItem { Tag: string cl } ? cl : "Unset";
-        }
-        foreach (var (apiName, panel) in _resourcePanels)
-        {
-            var grants = new List<object>();
-            foreach (var child in panel.Children)
-                if (child is StackPanel row && row.Children.Count >= 2
-                    && row.Children[0] is TextBlock { Tag: Guid resId }
-                    && row.Children[1] is ComboBox cb && cb.SelectedItem is ComboBoxItem ci)
-                    grants.Add(new { resourceId = resId, clearance = ci.Tag?.ToString() ?? "Unset" });
-            req[apiName] = grants;
-        }
+        if (_permEditor is null) return;
         try
         {
-            var body = JsonSerializer.Serialize(req, Json);
+            var body = JsonSerializer.Serialize(_permEditor.CollectAll(), Json);
             var resp = await Api.PutAsync($"/roles/{roleId}/permissions",
                 new StringContent(body, Encoding.UTF8, "application/json"));
             Status(resp.IsSuccessStatusCode ? "✓ Permissions saved." : "✗ Save failed.", resp.IsSuccessStatusCode ? 0x00FF00 : 0xFF4444);
@@ -1010,25 +773,8 @@ public sealed partial class SettingsPage : Page
         return (form, list);
     }
 
-    private ComboBox ClearanceCombo(string selected, bool includeUnset)
-    {
-        var box = new ComboBox { FontFamily = Mono, FontSize = 10, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
-            BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 280, Padding = new Thickness(4, 2) };
-        var selIdx = 0; var idx = 0;
-        if (includeUnset)
-        {
-            box.Items.Add(new ComboBoxItem { Content = "Unset", Tag = "Unset" });
-            if (string.Equals("Unset", selected, StringComparison.OrdinalIgnoreCase)) selIdx = 0;
-            idx = 1;
-        }
-        for (var i = 0; i < _clearanceOptions.Length; i++, idx++)
-        {
-            box.Items.Add(new ComboBoxItem { Content = _clearanceOptions[i].Label, Tag = _clearanceOptions[i].Tag });
-            if (string.Equals(_clearanceOptions[i].Tag, selected, StringComparison.OrdinalIgnoreCase)) selIdx = idx;
-        }
-        box.SelectedIndex = selIdx;
-        return box;
-    }
+    private static ComboBox ClearanceCombo(string selected, bool includeUnset)
+        => TerminalUI.MakeClearanceCombo(selected, includeUnset);
 
     private void H(string text) => ContentPanel.Children.Add(new TextBlock
     {
@@ -1121,44 +867,11 @@ public sealed partial class SettingsPage : Page
         return row;
     }
 
-    private async Task<List<T>?> FetchListAsync<T>(string path)
-    {
-        try
-        {
-            using var resp = await Api.GetAsync(path);
-            if (resp.IsSuccessStatusCode)
-            {
-                using var s = await resp.Content.ReadAsStreamAsync();
-                return await JsonSerializer.DeserializeAsync<List<T>>(s, Json);
-            }
-        }
-        catch { /* swallow */ }
-        return null;
-    }
+    private Task<List<T>?> FetchListAsync<T>(string path) => Api.FetchListAsync<T>(path, Json);
 
-    private static string FormatFlagName(string camelCase)
-    {
-        var s = camelCase.AsSpan();
-        if (s.StartsWith("can")) s = s[3..];
-        var sb = new StringBuilder(s.Length + 4);
-        for (var i = 0; i < s.Length; i++)
-        {
-            if (i > 0 && char.IsUpper(s[i])) sb.Append(' ');
-            sb.Append(i == 0 ? char.ToUpper(s[i]) : s[i]);
-        }
-        return sb.ToString();
-    }
+    private static string FormatFlagName(string camelCase) => TerminalUI.FormatFlagName(camelCase);
 
-    private static SolidColorBrush B(int rgb)
-    {
-        if (!BrushMap.TryGetValue(rgb, out var brush))
-        {
-            brush = new SolidColorBrush(Windows.UI.Color.FromArgb(255,
-                (byte)((rgb >> 16) & 0xFF), (byte)((rgb >> 8) & 0xFF), (byte)(rgb & 0xFF)));
-            BrushMap[rgb] = brush;
-        }
-        return brush;
-    }
+    private static SolidColorBrush B(int rgb) => TerminalUI.Brush(rgb);
 
     private void OnBackClick(object sender, RoutedEventArgs e)
     {

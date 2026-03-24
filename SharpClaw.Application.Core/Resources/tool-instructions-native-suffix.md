@@ -15,6 +15,8 @@ Your agent-role field lists your role name, clearance level, and every grant you
 Stub tools (accept but produce no real result): transcribe_from_audio_stream, transcribe_from_audio_file, register_info_store, access_local_info_store, access_external_info_store, access_website, query_search_engine, access_container.
 access_localhost_in_browser / access_localhost_cli: only localhost/127.0.0.1/[::1] URLs allowed.
 
+Multiple tool calls per response: you MAY return multiple tool calls in a single response. They are executed sequentially in the order you emit them. Use this to chain related actions (e.g. 3 clicks in a row, capture then click then type, read a file then apply an edit) without extra round-trips. Permission checks apply individually to each call — if one is denied the others still execute. You can freely mix different tool types in one response.
+
 wait: pauses execution for 1–300 seconds. No permissions required. Use when waiting for builds, deployments, or other async processes to finish — no tokens are consumed while waiting.
 mk8.shell: sandboxed shell DSL. Run Mk8Docs or Mk8Verbs introspection verbs within a script to discover available verbs and templates at runtime. You cannot create/manage sandboxes — tell user to register if missing.
 Editor tools: available when you have EditorSession access. Tool names are self-descriptive; refer to the tool definitions for parameters.

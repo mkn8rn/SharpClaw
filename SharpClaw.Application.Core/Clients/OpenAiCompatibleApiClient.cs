@@ -450,6 +450,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
+        [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; } = true;
     }
 
     private sealed class OaiToolDefinitionPayload
@@ -567,6 +568,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
+        [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; } = true;
     }
 
     private sealed class OaiStreamOptions
