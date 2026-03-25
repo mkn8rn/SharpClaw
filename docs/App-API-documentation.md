@@ -1,4 +1,4 @@
-﻿# SharpClaw Application API Reference
+# SharpClaw Application API Reference
 
 > **Base URL:** `http://127.0.0.1:48923`
 >
@@ -229,6 +229,35 @@ SharpClaw uses a two-layer authentication scheme:
 Access tokens are short-lived and stateless (validated by signature +
 expiry). Refresh tokens are stored server-side and support revocation
 and rotation.
+
+### Development / testing auth flags
+
+Both authentication layers can be individually disabled via `.env` for
+local development and testing.  **Never disable in production.**
+
+| `.env` key | Layer disabled | Default |
+|---|---|---|
+| `Auth:DisableApiKeyCheck` | API-key middleware (`X-Api-Key` header) — all requests pass without a key | `false` |
+| `Auth:DisableAccessTokenCheck` | JWT session middleware — all requests pass without a Bearer token | `false` |
+
+Example `.env` snippet:
+
+```json
+{
+  "Auth": {
+    "DisableApiKeyCheck": true,
+    "DisableAccessTokenCheck": true
+  }
+}
+```
+
+When `DisableApiKeyCheck` is `true`, the `ApiKeyMiddleware` short-circuits
+immediately (equivalent to every request carrying a valid key).
+
+When `DisableAccessTokenCheck` is `true`, the `JwtSessionMiddleware`
+short-circuits immediately — no JWT is parsed, no session is populated,
+and no 401 is returned for missing/expired tokens.  Endpoints that rely
+on `SessionService.UserId` will see `null`.
 
 ### Complete token lifecycle
 
