@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -22,7 +23,7 @@ namespace SharpClaw.Application.API.Api;
 /// access token via <c>POST /auth/refresh</c>.
 /// </para>
 /// </summary>
-public sealed class JwtSessionMiddleware(RequestDelegate next)
+public sealed class JwtSessionMiddleware(RequestDelegate next, IConfiguration configuration)
 {
     private static readonly HashSet<string> ExemptPaths = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -33,8 +34,16 @@ public sealed class JwtSessionMiddleware(RequestDelegate next)
         "/auth/refresh",
     };
 
+    private readonly bool _disabled = configuration.GetValue<bool>("Auth:DisableAccessTokenCheck");
+
     public async Task InvokeAsync(HttpContext context)
     {
+        if (_disabled)
+        {
+            await next(context);
+            return;
+        }
+
         var tokenExpired = false;
 
         var authHeader = context.Request.Headers.Authorization.ToString();
