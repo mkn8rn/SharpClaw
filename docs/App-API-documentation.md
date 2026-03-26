@@ -609,6 +609,8 @@ remain valid until their natural expiry.
 
 Get the authenticated user's profile.
 
+**CLI:** `me`
+
 **Response `200`:**
 
 ```json

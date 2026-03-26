@@ -217,6 +217,9 @@ public static class CliDispatcher
             "resource" => await HandleResourceCommand(args, sp),
             "task" => await HandleTaskCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
+            "me" => await AuthHandlers.Me(
+                sp.GetRequiredService<SessionService>(),
+                sp.GetRequiredService<AuthService>()),
             "help" or "--help" or "-h" => PrintHelp(),
             _ => null
         };
@@ -2932,6 +2935,7 @@ public static class CliDispatcher
 
             Auth:
               register <user> <pass>          login <user> <pass>          logout
+              me                               Show current user profile & role
 
             Provider:  provider <sub> [args]    (add, get, list, update, delete)
               provider add <name> <type> [endpoint]
