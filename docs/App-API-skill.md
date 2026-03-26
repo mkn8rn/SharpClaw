@@ -62,16 +62,18 @@ LocalModelStatus: Pending, Downloading, Ready, Failed.
 ────────────────────────────────────────
 AGENTS
 ────────────────────────────────────────
-POST   /agents                     { name, modelId, systemPrompt?, maxCompletionTokens? }
+POST   /agents                     { name, modelId, systemPrompt?, maxCompletionTokens?, customChatHeader? }
 GET    /agents
 GET    /agents/{id}
-PUT    /agents/{id}                { name?, modelId?, systemPrompt?, maxCompletionTokens? }
+PUT    /agents/{id}                { name?, modelId?, systemPrompt?, maxCompletionTokens?, customChatHeader? }
 DELETE /agents/{id}
 PUT    /agents/{id}/role           { roleId }
 
 maxCompletionTokens (integer|null): caps the number of tokens the model may generate per response. Sent as max_tokens, max_completion_tokens, or max_output_tokens depending on the provider/API version. null (default) = no limit (provider default). Useful for controlling response size and latency — smaller limits yield faster responses.
 
-AgentResponse includes: id, name, systemPrompt, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens.
+customChatHeader (string|null): template that replaces the default chat header for this agent. Uses {{tag}} placeholders expanded at send time. See CUSTOM CHAT HEADER section.
+
+AgentResponse includes: id, name, systemPrompt, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens, customChatHeader.
 
 AgentSummary (embedded in channel/context responses): id, name, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens. Same as AgentResponse minus systemPrompt.
 
@@ -85,9 +87,9 @@ PUT    /roles/{id}/permissions     (full replacement)
 
 SetRolePermissionsRequest fields:
   defaultClearance (PermissionClearance enum)
-  Global flags: canCreateSubAgents, canCreateContainers, canRegisterInfoStores, canAccessLocalhostInBrowser, canAccessLocalhostCli, canClickDesktop, canTypeOnDesktop, canReadCrossThreadHistory
+  Global flags: canCreateSubAgents, canCreateContainers, canRegisterInfoStores, canAccessLocalhostInBrowser, canAccessLocalhostCli, canClickDesktop, canTypeOnDesktop, canReadCrossThreadHistory, canEditAgentHeader, canEditChannelHeader
   Per-resource arrays (each entry is { resourceId, clearance }):
-    dangerousShellAccesses, safeShellAccesses, containerAccesses, websiteAccesses, searchEngineAccesses, localInfoStoreAccesses, externalInfoStoreAccesses, audioDeviceAccesses, agentAccesses, taskAccesses, skillAccesses
+    dangerousShellAccesses, safeShellAccesses, containerAccesses, websiteAccesses, searchEngineAccesses, localInfoStoreAccesses, externalInfoStoreAccesses, audioDeviceAccesses, agentAccesses, taskAccesses, skillAccesses, agentHeaderAccesses, channelHeaderAccesses
 
 Wildcard resourceId: ffffffff-ffff-ffff-ffff-ffffffffffff (all resources of that type).
 
@@ -123,10 +125,10 @@ ContextAllowedAgentsResponse returns: contextId, defaultAgent (AgentSummary), al
 ────────────────────────────────────────
 CHANNELS
 ────────────────────────────────────────
-POST   /channels                   { agentId?, title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader? }
+POST   /channels                   { agentId?, title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader? }
 GET    /channels?agentId={guid}
 GET    /channels/{id}
-PUT    /channels/{id}              { title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader? }
+PUT    /channels/{id}              { title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader? }
 DELETE /channels/{id}
 
 Set default agent:
@@ -150,7 +152,7 @@ Valid default resource keys: dangshell, safeshell, container, website, search, l
 Either agentId or contextId (with agent) required on create.
 allowedAgentIds on PUT replaces the set. permissionSetId=00000000-... removes the override; null leaves unchanged.
 
-ChannelResponse returns: id, title, agent (AgentSummary?), contextId, contextName, permissionSetId, effectivePermissionSetId, allowedAgents (AgentSummary[]), disableChatHeader, createdAt, updatedAt.
+ChannelResponse returns: id, title, agent (AgentSummary?), contextId, contextName, permissionSetId, effectivePermissionSetId, allowedAgents (AgentSummary[]), disableChatHeader, customChatHeader, createdAt, updatedAt.
 ChannelAllowedAgentsResponse returns: channelId, defaultAgent (AgentSummary?), allowedAgents (AgentSummary[]).
 
 All responses embed full AgentSummary objects (id, name, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens) instead of bare GUIDs — no follow-up requests needed to resolve agent details.
@@ -614,3 +616,55 @@ Core .env keys: Encryption:Key, Jwt:Secret, Jwt:AccessTokenLifetime, Jwt:Refresh
 Interface .env keys: Api:Url (default http://127.0.0.1:48923), Backend:Enabled (default true).
 
 Changes to Core .env require a backend restart to take effect.
+
+────────────────────────────────────────
+CUSTOM CHAT HEADER
+────────────────────────────────────────
+Agents and channels have an optional customChatHeader field (string|null) that replaces the default metadata header prepended to each user message.
+
+Override chain: channel.customChatHeader > agent.customChatHeader > built-in default. disableChatHeader=true suppresses all headers.
+
+Template syntax: {{tagName}} placeholders, case-insensitive.
+
+Context tags (single value):
+  {{time}}               → 2025-07-14 09:30:00 UTC
+  {{user}}               → marko
+  {{via}}                → CLI | API | Telegram | Discord | WhatsApp | VisualStudio | VisualStudioCode | Uno* | Other
+  {{role}}               → Admin (CreateSubAgents, SafeShell)
+  {{bio}}                → Backend developer, likes Rust
+  {{agent-name}}         → CodeReview Agent
+  {{agent-role}}         → DevOps clearance=Independent (SafeShell[guid,...], ManageAgent[guid,...])
+  {{clearance}}          → Independent
+  {{grants}}             → CreateSubAgents, SafeShell, ManageAgent  (user grants, name-only)
+  {{agent-grants}}       → SafeShell[guid,...], EditTask[guid,...]  (agent grants with resource IDs)
+  {{editor}}             → VisualStudio2026 18.4 file=Program.cs lang=csharp sel=10-25 selection="public async Task RunAsync()"
+  {{accessible-threads}} → Debug Session [Ops Channel] (guid), Planning [Strategy] (guid)
+
+Wildcard grants (ffffffff-...) resolve to all concrete resource IDs of that type.
+
+Resource tags (enumerate entities):
+  {{Agents}}             → comma-separated GUIDs (no template)
+  {{Agents:{Name} ({Id})}}  → per-item formatted: CodeReview Agent (3fa8...), DevOps Agent (7c9e...)
+
+Supported resource tag names: Agents, Models, Providers, Channels, Threads, Roles, Users, Containers, Websites, SearchEngines, AudioDevices, DisplayDevices, EditorSessions, Skills, SystemUsers, LocalInfoStores, ExternalInfoStores, ScheduledTasks, Tasks.
+
+Fields with [HeaderSensitive] (PasswordHash, PasswordSalt, EncryptedApiKey) → [redacted]. Unknown fields → [FieldName?].
+
+Permissions: canEditAgentHeader / canEditChannelHeader (global flags) + agentHeaderAccesses / channelHeaderAccesses (per-resource arrays in role permissions).
+
+Examples:
+
+  Template: [{{time}} | {{user}} via {{via}}]
+  Output:   [2025-07-14 09:30:00 UTC | marko via CLI]
+
+  Template: [time: {{time}} | user: {{user}} | agent: {{agent-name}} | role: {{agent-role}}]
+  Output:   [time: 2025-07-14 09:30:00 UTC | user: marko | agent: CodeReview Agent | role: DevOps clearance=Independent (SafeShell[3fa85f64-...], ManageAgent[7c9e6679-...])]
+
+  Template: Agents: {{Agents:{Name} (model={ModelName})}}
+  Output:   Agents: CodeReview Agent (model=gpt-4o), DevOps Agent (model=claude-sonnet-4-20250514)
+
+  Template: Users: {{Users:{Username} hash={PasswordHash}}}
+  Output:   Users: marko hash=[redacted], admin hash=[redacted]
+
+  Template: [{{time}} | {{editor}}]
+  Output:   [2025-07-14 09:30:00 UTC | VisualStudio2026 18.4.2 workspace=E:\source\SharpClaw file=Program.cs lang=csharp sel=10-25 selection="public async Task RunAsync()"]

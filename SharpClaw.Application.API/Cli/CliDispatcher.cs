@@ -563,10 +563,10 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "agent add <name> <modelId>  [system prompt] [--max-tokens <n>] [--params <json>]",
+                "agent add <name> <modelId>  [system prompt] [--max-tokens <n>] [--params <json>] [--header <template>]",
                 "agent get <id>",
                 "agent list",
-                "agent update <id> <name> [modelId] [system prompt] [--max-tokens <n>] [--params <json>]",
+                "agent update <id> <name> [modelId] [system prompt] [--max-tokens <n>] [--params <json>] [--header <template>]",
                 "agent role <id> <roleId>                  Assign a role (use 'role list')",
                 "agent role <id> none                      Remove role",
                 "agent sync-with-models                    Create default-<model> agents",
@@ -655,6 +655,7 @@ public static class CliDispatcher
         int? seed = null;
         JsonElement? responseFormat = null;
         string? reasoningEffort = null;
+        string? customChatHeader = null;
         var promptParts = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
@@ -706,6 +707,10 @@ public static class CliDispatcher
             {
                 reasoningEffort = args[i + 1]; i++;
             }
+            else if (args[i] is "--header" && i + 1 < args.Length)
+            {
+                customChatHeader = args[i + 1]; i++;
+            }
             else
             {
                 promptParts.Add(args[i]);
@@ -718,7 +723,8 @@ public static class CliDispatcher
                 Temperature: temperature, TopP: topP, TopK: topK,
                 FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
                 Stop: stop, Seed: seed, ResponseFormat: responseFormat,
-                ReasoningEffort: reasoningEffort, ProviderParameters: providerParams), svc);
+                ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
+                CustomChatHeader: customChatHeader), svc);
     }
 
     private static async Task<IResult> HandleAgentUpdate(string[] args, AgentService svc)
@@ -738,6 +744,7 @@ public static class CliDispatcher
         int? seed = null;
         JsonElement? responseFormat = null;
         string? reasoningEffort = null;
+        string? customChatHeader = null;
         var positional = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
@@ -789,6 +796,10 @@ public static class CliDispatcher
             {
                 reasoningEffort = args[i + 1]; i++;
             }
+            else if (args[i] is "--header" && i + 1 < args.Length)
+            {
+                customChatHeader = args[i + 1]; i++;
+            }
             else
             {
                 positional.Add(args[i]);
@@ -806,7 +817,8 @@ public static class CliDispatcher
             Temperature: temperature, TopP: topP, TopK: topK,
             FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
             Stop: stop, Seed: seed, ResponseFormat: responseFormat,
-            ReasoningEffort: reasoningEffort, ProviderParameters: providerParams);
+            ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
+            CustomChatHeader: customChatHeader);
         return await AgentHandlers.Update(agentId, request, svc);
     }
 
@@ -1246,7 +1258,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "channel add [--agent <id>] [--context <id>] [title]",
+                "channel add [--agent <id>] [--context <id>] [--header <template>] [title]",
                 "  Either --agent or --context is required.",
                 "channel list [agentId]                     List channels",
                 "channel select <id>                        Select active channel",
@@ -1321,6 +1333,7 @@ public static class CliDispatcher
     {
         Guid? agentId = null;
         Guid? contextId = null;
+        string? customChatHeader = null;
         var titleParts = new List<string>();
 
         for (var i = 2; i < args.Length; i++)
@@ -1332,6 +1345,9 @@ public static class CliDispatcher
                     break;
                 case "--agent" or "-a" when i + 1 < args.Length:
                     agentId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--header" when i + 1 < args.Length:
+                    customChatHeader = args[++i];
                     break;
                 default:
                     titleParts.Add(args[i]);
@@ -1348,7 +1364,7 @@ public static class CliDispatcher
         var title = titleParts.Count > 0 ? string.Join(' ', titleParts) : null;
 
         var result = await ChannelHandlers.Create(
-            new CreateChannelRequest(agentId, title, ContextId: contextId), svc);
+            new CreateChannelRequest(agentId, title, ContextId: contextId, CustomChatHeader: customChatHeader), svc);
 
         // Auto-select the newly created channel
         if (result is IValueHttpResult { Value: ChannelResponse ch })

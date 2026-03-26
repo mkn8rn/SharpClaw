@@ -174,10 +174,10 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             "role" => FormatUserRole(ctx),
             "bio" => ctx.User?.Bio ?? "",
             "agent-name" => ctx.Agent.Name,
-            "agent-role" => FormatAgentRole(ctx),
+            "agent-role" => await FormatAgentRoleAsync(ctx, ct),
             "clearance" => ctx.AgentPs?.DefaultClearance.ToString() ?? "Unset",
             "grants" => FormatGrants(ctx.UserPs),
-            "agent-grants" => FormatGrants(ctx.AgentPs),
+            "agent-grants" => await FormatAgentGrantsAsync(ctx, ct),
             "editor" => FormatEditor(ctx.EditorContext),
             "accessible-threads" => await FormatAccessibleThreadsAsync(ctx, ct),
             _ => await TryExpandResourceTagAsync(tagName, itemTemplate, ct)
@@ -201,7 +201,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             : ctx.User.Role.Name;
     }
 
-    private static string FormatAgentRole(HeaderContext ctx)
+    private async Task<string> FormatAgentRoleAsync(HeaderContext ctx, CancellationToken ct)
     {
         if (ctx.AgentRole is null)
             return "(none) clearance=Unset";
@@ -211,12 +211,19 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         sb.Append(" clearance=").Append(ctx.AgentPs?.DefaultClearance ?? PermissionClearance.Unset);
         if (ctx.AgentPs is not null)
         {
-            var grants = CollectGrantNames(ctx.AgentPs);
+            var grants = await CollectGrantNamesWithResourcesAsync(ctx.AgentPs, ct);
             sb.Append(grants.Count > 0
                 ? $" ({string.Join(", ", grants)})"
                 : " (no grants)");
         }
         return sb.ToString();
+    }
+
+    private async Task<string> FormatAgentGrantsAsync(HeaderContext ctx, CancellationToken ct)
+    {
+        if (ctx.AgentPs is null) return "(none)";
+        var grants = await CollectGrantNamesWithResourcesAsync(ctx.AgentPs, ct);
+        return grants.Count > 0 ? string.Join(", ", grants) : "(none)";
     }
 
     private static string FormatGrants(PermissionSetDB? ps)
@@ -257,6 +264,114 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         return grants;
     }
 
+    /// <summary>
+    /// Collects grant names with enumerated resource IDs for agent
+    /// self-awareness — mirrors <c>ChatService.CollectGrantsWithResourcesAsync</c>.
+    /// When a wildcard grant is present, all resource IDs of that type
+    /// are resolved from the database.
+    /// </summary>
+    private async Task<List<string>> CollectGrantNamesWithResourcesAsync(
+        PermissionSetDB ps, CancellationToken ct)
+    {
+        var grants = new List<string>();
+        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
+        if (ps.CanCreateContainers) grants.Add("CreateContainers");
+        if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
+        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
+        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
+        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
+        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
+        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
+        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
+        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
+
+        await AppendResourceGrantAsync(grants, "DangerousShell",
+            ps.DangerousShellAccesses.Select(a => a.SystemUserId),
+            () => db.SystemUsers.Select(s => s.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "SafeShell",
+            ps.SafeShellAccesses.Select(a => a.ContainerId),
+            () => db.Containers.Select(c => c.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "ContainerAccess",
+            ps.ContainerAccesses.Select(a => a.ContainerId),
+            () => db.Containers.Select(c => c.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "WebsiteAccess",
+            ps.WebsiteAccesses.Select(a => a.WebsiteId),
+            () => db.Websites.Select(w => w.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "SearchEngineAccess",
+            ps.SearchEngineAccesses.Select(a => a.SearchEngineId),
+            () => db.SearchEngines.Select(s => s.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "LocalInfoStore",
+            ps.LocalInfoStorePermissions.Select(a => a.LocalInformationStoreId),
+            () => db.LocalInformationStores.Select(l => l.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "ExternalInfoStore",
+            ps.ExternalInfoStorePermissions.Select(a => a.ExternalInformationStoreId),
+            () => db.ExternalInformationStores.Select(e => e.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "AudioDevice",
+            ps.AudioDeviceAccesses.Select(a => a.AudioDeviceId),
+            () => db.AudioDevices.Select(a => a.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "DisplayDevice",
+            ps.DisplayDeviceAccesses.Select(a => a.DisplayDeviceId),
+            () => db.DisplayDevices.Select(d => d.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "EditorSession",
+            ps.EditorSessionAccesses.Select(a => a.EditorSessionId),
+            () => db.EditorSessions.Select(e => e.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "ManageAgent",
+            ps.AgentPermissions.Select(a => a.AgentId),
+            () => db.Agents.Select(a => a.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "EditTask",
+            ps.TaskPermissions.Select(a => a.ScheduledTaskId),
+            () => db.ScheduledTasks.Select(t => t.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "AccessSkill",
+            ps.SkillPermissions.Select(a => a.SkillId),
+            () => db.Skills.Select(s => s.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "EditAgentHeader",
+            ps.AgentHeaderAccesses.Select(a => a.AgentId),
+            () => db.Agents.Select(a => a.Id).ToListAsync(ct));
+
+        await AppendResourceGrantAsync(grants, "EditChannelHeader",
+            ps.ChannelHeaderAccesses.Select(a => a.ChannelId),
+            () => db.Channels.Select(c => c.Id).ToListAsync(ct));
+
+        return grants;
+    }
+
+    private static async Task AppendResourceGrantAsync(
+        List<string> grants, string grantName,
+        IEnumerable<Guid> grantedIds, Func<Task<List<Guid>>> loadAllIdsAsync)
+    {
+        var ids = grantedIds.ToList();
+        if (ids.Count == 0)
+            return;
+
+        List<Guid> resolved;
+        if (ids.Any(id => id == WellKnownIds.AllResources))
+            resolved = await loadAllIdsAsync();
+        else
+            resolved = ids;
+
+        if (resolved.Count == 0)
+        {
+            grants.Add(grantName);
+            return;
+        }
+
+        var idList = string.Join(",", resolved.Select(id => id.ToString("D")));
+        grants.Add($"{grantName}[{idList}]");
+    }
+
     private static string FormatEditor(EditorContext? ec)
     {
         if (ec is null) return "(none)";
@@ -268,6 +383,8 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         if (ec.ActiveFileLanguage is not null) sb.Append(" lang=").Append(ec.ActiveFileLanguage);
         if (ec.SelectionStartLine is not null)
             sb.Append(" sel=").Append(ec.SelectionStartLine).Append('-').Append(ec.SelectionEndLine);
+        if (ec.SelectedText is { Length: > 0 and <= 200 })
+            sb.Append(" selection=\"").Append(ec.SelectedText).Append('"');
         return sb.ToString();
     }
 

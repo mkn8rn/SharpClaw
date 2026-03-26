@@ -60,6 +60,7 @@ fastest way to make that happen.
 - [Token cost tracking](#token-cost-tracking)
 - [Provider cost](#provider-cost)
 - [Env file management](#env-file-management)
+- [Custom chat header](#custom-chat-header)
 - [Permission Resolution](#permission-resolution)
 
 ---
@@ -924,7 +925,8 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
   "seed": "integer | null",
   "responseFormat": { "type": "json_object" } | null,
   "reasoningEffort": "string | null",
-  "providerParameters": { "key": "value" }
+  "providerParameters": { "key": "value" },
+  "customChatHeader": "string | null"
 }
 ```
 
@@ -932,6 +934,10 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 response. Sent as `max_tokens`, `max_completion_tokens`, or
 `max_output_tokens` depending on the provider and API version. `null`
 (default) means no limit — the provider default applies.
+
+`customChatHeader` is an optional template string that overrides the
+default chat header for this agent. See [Custom chat header](#custom-chat-header)
+for the full tag reference and examples.
 
 **First-class completion parameters** — `temperature`, `topP`, `topK`,
 `frequencyPenalty`, `presencePenalty`, `stop`, `seed`, `responseFormat`,
@@ -987,12 +993,16 @@ overwritten.
   "seed": "integer | null",
   "responseFormat": { "type": "json_object" } | null,
   "reasoningEffort": "string | null",
-  "providerParameters": { "key": "value" }
+  "providerParameters": { "key": "value" },
+  "customChatHeader": "string | null"
 }
 ```
 
 Pass `providerParameters` as `{}` (empty object) to clear existing
 parameters.  Omit the field (or pass `null`) to leave them unchanged.
+
+`customChatHeader`: pass a template string to set, `""` (empty string)
+to clear, or `null` / omit to leave unchanged.
 
 For typed completion parameters: omit a field (or pass `null`) to leave
 it unchanged. Pass `stop` as `[]` (empty array) to clear stop sequences.
@@ -1049,7 +1059,8 @@ Assign a role to an agent.
   "seed": "integer | null",
   "responseFormat": { "type": "json_object" } | null,
   "reasoningEffort": "string | null",
-  "providerParameters": { "key": "value" }
+  "providerParameters": { "key": "value" },
+  "customChatHeader": "string | null"
 }
 ```
 
@@ -1242,12 +1253,17 @@ Request (example):
   "title": "string | null",
   "contextId": "guid | null",
   "permissionSetId": "guid | null",
-  "allowedAgentIds": ["guid", ...] | null
+  "allowedAgentIds": ["guid", ...] | null,
+  "customChatHeader": "string | null"
 }
 ```
 
+`customChatHeader` is an optional template string that overrides the
+agent's header (if any) for this channel. See
+[Custom chat header](#custom-chat-header) for the full tag reference.
+
 `allowedAgentIds` specifies additional agents (beyond the default
-`agentId`) allowed to operate on this channel. The model used for
+`agentId`) allowed to operate on this channel.
 completions is always the resolved agent's model.
 
 Response `200`: `ChannelResponse`
@@ -1273,9 +1289,13 @@ Request (example):
   "title": "string | null",
   "contextId": "guid | null",
   "permissionSetId": "guid | null",
-  "allowedAgentIds": ["guid", ...] | null
+  "allowedAgentIds": ["guid", ...] | null,
+  "customChatHeader": "string | null"
 }
 ```
+
+`customChatHeader`: pass a template string to set, `""` (empty string)
+to clear, or `null` / omit to leave unchanged.
 
 When `allowedAgentIds` is provided it replaces the current set.
 `permissionSetId` set to `Guid.Empty` removes the override; `null` leaves
@@ -1369,6 +1389,7 @@ Valid keys: `dangshell`, `safeshell`, `container`, `website`, `search`,
   "effectivePermissionSetId": "guid | null",
   "allowedAgents": [ { /* AgentSummary */ } ],
   "disableChatHeader": false,
+  "customChatHeader": "string | null",
   "createdAt": "datetime",
   "updatedAt": "datetime"
 }
@@ -2317,6 +2338,8 @@ don't have.
   "canClickDesktop": false,
   "canTypeOnDesktop": false,
   "canReadCrossThreadHistory": false,
+  "canEditAgentHeader": false,
+  "canEditChannelHeader": false,
   "dangerousShellAccesses": [{ "resourceId": "guid", "clearance": "Independent" }],
   "safeShellAccesses": [{ "resourceId": "guid", "clearance": "Independent" }],
   "containerAccesses": null,
@@ -2327,7 +2350,9 @@ don't have.
   "audioDeviceAccesses": null,
   "agentAccesses": null,
   "taskAccesses": null,
-  "skillAccesses": null
+  "skillAccesses": null,
+  "agentHeaderAccesses": null,
+  "channelHeaderAccesses": null
 }
 ```
 
@@ -2369,6 +2394,8 @@ wildcard grant that covers all resources of that type.
   "canClickDesktop": false,
   "canTypeOnDesktop": false,
   "canReadCrossThreadHistory": false,
+  "canEditAgentHeader": false,
+  "canEditChannelHeader": false,
   "dangerousShellAccesses": [{ "resourceId": "guid", "clearance": "Independent" }],
   "safeShellAccesses": [],
   "containerAccesses": [],
@@ -2379,7 +2406,9 @@ wildcard grant that covers all resources of that type.
   "audioDeviceAccesses": [],
   "agentAccesses": [],
   "taskAccesses": [],
-  "skillAccesses": []
+  "skillAccesses": [],
+  "agentHeaderAccesses": [],
+  "channelHeaderAccesses": []
 }
 ```
 
@@ -3098,6 +3127,224 @@ Overwrite the Core `.env` file with new content.
 |-----|-------------|
 | `Api:Url` | API base URL (default: `http://127.0.0.1:48923`) |
 | `Backend:Enabled` | When `false`, the Uno client skips launching the bundled backend (default: `true`) |
+
+---
+
+## Custom chat header
+
+By default every user message sent to the model is prefixed with a
+metadata header built by `ChatService.BuildChatHeaderAsync`. The
+`customChatHeader` field on agents and channels lets you **replace** that
+default with a free-form template string containing `{{tag}}`
+placeholders that are expanded at send time.
+
+### Override chain
+
+| Priority | Source | How to set |
+|----------|--------|------------|
+| 1 (highest) | `channel.customChatHeader` | `PUT /channels/{id}` |
+| 2 | `agent.customChatHeader` | `PUT /agents/{id}` |
+| 3 (lowest) | Built-in default header | — |
+
+If `disableChatHeader` is `true` on the channel (or inherited from its
+context), **no header is sent** regardless of `customChatHeader`.
+
+### Template syntax
+
+Placeholders use double-brace syntax: `{{tagName}}`. Tags are
+case-insensitive.
+
+**Context tags** resolve to a single value:
+
+| Tag | Output | Example |
+|-----|--------|---------|
+| `{{time}}` | Current UTC timestamp | `2025-07-14 09:30:00 UTC` |
+| `{{user}}` | Logged-in username | `marko` |
+| `{{via}}` | `ChatClientType` of the caller | `CLI` |
+| `{{role}}` | User role name with granted permission names | `Admin (CreateSubAgents, SafeShell)` |
+| `{{bio}}` | User bio text | `Backend developer, likes Rust` |
+| `{{agent-name}}` | Agent display name | `CodeReview Agent` |
+| `{{agent-role}}` | Agent role with clearance and resource-ID grants | `DevOps clearance=Independent (SafeShell[...], ManageAgent[...])` |
+| `{{clearance}}` | Agent default clearance level | `Independent` |
+| `{{grants}}` | User permission grant names (name-only) | `CreateSubAgents, SafeShell, ManageAgent` |
+| `{{agent-grants}}` | Agent grants with enumerated resource IDs | `SafeShell[3fa85f64-...], EditTask[7c9e6679-...]` |
+| `{{editor}}` | IDE context (type, file, selection) | `VisualStudio2026 18.4 file=Program.cs lang=csharp sel=10-15` |
+| `{{accessible-threads}}` | Cross-channel threads the agent can read | `Debug Session [Ops Channel] (guid)` |
+
+When a grant includes the wildcard resource
+(`ffffffff-ffff-ffff-ffff-ffffffffffff`), all concrete resource IDs of
+that type are resolved from the database and listed individually.
+
+**Resource tags** enumerate entities from the database:
+
+| Tag | Entities loaded |
+|-----|-----------------|
+| `{{Agents}}` | All agents |
+| `{{Models}}` | All models (includes provider) |
+| `{{Providers}}` | All providers |
+| `{{Channels}}` | All channels |
+| `{{Threads}}` | All threads |
+| `{{Roles}}` | All roles |
+| `{{Users}}` | All users |
+| `{{Containers}}` | All containers |
+| `{{Websites}}` | All websites |
+| `{{SearchEngines}}` | All search engines |
+| `{{AudioDevices}}` | All audio devices |
+| `{{DisplayDevices}}` | All display devices |
+| `{{EditorSessions}}` | All editor sessions |
+| `{{Skills}}` | All skills |
+| `{{SystemUsers}}` | All system users |
+| `{{LocalInfoStores}}` | All local information stores |
+| `{{ExternalInfoStores}}` | All external information stores |
+| `{{ScheduledTasks}}` | All scheduled tasks |
+| `{{Tasks}}` | All task definitions |
+
+Without a per-item template, resource tags emit comma-separated GUIDs.
+With a template, each entity is formatted using `{FieldName}` property
+placeholders:
+
+```
+{{Agents:{Name} ({Id})}}
+```
+
+Fields decorated with `[HeaderSensitive]` (e.g. `PasswordHash`,
+`EncryptedApiKey`) are replaced with `[redacted]`. Unknown field names
+produce `[FieldName?]`.
+
+### Permissions
+
+Editing custom headers is controlled by two global permission flags and
+two per-resource grant collections:
+
+| Permission | Scope |
+|------------|-------|
+| `canEditAgentHeader` | Global flag — can edit any agent's header |
+| `canEditChannelHeader` | Global flag — can edit any channel's header |
+| `agentHeaderAccesses` | Per-agent grants (resource = agent ID) |
+| `channelHeaderAccesses` | Per-channel grants (resource = channel ID) |
+
+### Examples
+
+#### Minimal context-only header
+
+**Template:**
+
+```
+[{{time}} | {{user}} via {{via}}]
+```
+
+**Output:**
+
+```
+[2025-07-14 09:30:00 UTC | marko via CLI]
+```
+
+#### Agent self-awareness header
+
+**Template:**
+
+```
+[time: {{time}} | user: {{user}} | agent: {{agent-name}} | role: {{agent-role}} | clearance: {{clearance}}]
+```
+
+**Output:**
+
+```
+[time: 2025-07-14 09:30:00 UTC | user: marko | agent: CodeReview Agent | role: DevOps clearance=Independent (SafeShell[3fa85f64-5717-4562-b3fc-2c963f66afa6], ManageAgent[7c9e6679-a0f9-11d2-9e96-0060976f8900]) | clearance: Independent]
+```
+
+#### Resource inventory header
+
+**Template:**
+
+```
+[{{time}}] user={{user}} bio="{{bio}}"
+Available agents: {{Agents:{Name} (model={ModelName}, provider={ProviderName})}}
+Available models: {{Models:{Name} ({Id})}}
+```
+
+**Output:**
+
+```
+[2025-07-14 09:30:00 UTC] user=marko bio="Backend developer, likes Rust"
+Available agents: CodeReview Agent (model=gpt-4o, provider=OpenAI), DevOps Agent (model=claude-sonnet-4-20250514, provider=Anthropic)
+Available models: gpt-4o (3fa85f64-5717-4562-b3fc-2c963f66afa6), claude-sonnet-4-20250514 (7c9e6679-a0f9-11d2-9e96-0060976f8900)
+```
+
+#### Full header matching default format
+
+The built-in default header can be reproduced exactly:
+
+**Template:**
+
+```
+[time: {{time}} | user: {{user}} | via: {{via}} | role: {{role}} | bio: {{bio}} | agent-role: {{agent-role}}]
+```
+
+**Output:**
+
+```
+[time: 2025-07-14 09:30:00 UTC | user: marko | via: CLI | role: Admin (CreateSubAgents, SafeShell, ManageAgent) | bio: Backend developer, likes Rust | agent-role: DevOps clearance=Independent (SafeShell[3fa85f64-5717-4562-b3fc-2c963f66afa6], ManageAgent[7c9e6679-a0f9-11d2-9e96-0060976f8900])]
+```
+
+#### Editor-aware header (IDE extensions)
+
+**Template:**
+
+```
+[{{time}} | {{user}} | {{editor}}]
+```
+
+**Output:**
+
+```
+[2025-07-14 09:30:00 UTC | marko | VisualStudio2026 18.4.2 workspace=E:\source\SharpClaw file=Program.cs lang=csharp sel=10-25 selection="public async Task RunAsync()"]
+```
+
+#### GUIDs-only resource list
+
+**Template:**
+
+```
+Containers: {{Containers}}
+```
+
+**Output:**
+
+```
+Containers: 3fa85f64-5717-4562-b3fc-2c963f66afa6, 7c9e6679-a0f9-11d2-9e96-0060976f8900
+```
+
+#### Sensitive field protection
+
+**Template:**
+
+```
+Users: {{Users:{Username} hash={PasswordHash}}}
+```
+
+**Output:**
+
+```
+Users: marko hash=[redacted], admin hash=[redacted]
+```
+
+#### Cross-thread awareness
+
+**Template:**
+
+```
+[{{time}} | {{user}} | threads: {{accessible-threads}}]
+```
+
+**Output:**
+
+```
+[2025-07-14 09:30:00 UTC | marko | threads: Debug Session [Ops Channel] (d4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f90), Planning [Strategy Channel] (a1b2c3d4-e5f6-7890-abcd-ef1234567890)]
+```
+
+When the agent has no cross-thread access or no accessible threads
+exist, the tag outputs `(none)`.
 
 ---
 
