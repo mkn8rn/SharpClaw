@@ -27,6 +27,17 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next)
                 await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }, JsonOptions));
             }
         }
+        catch (HttpRequestException ex)
+        {
+            // Provider / upstream HTTP errors → 502 Bad Gateway.
+            Log.Warning(ex, "Provider error on {Method} {Path}", context.Request.Method, context.Request.Path);
+            if (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = StatusCodes.Status502BadGateway;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }, JsonOptions));
+            }
+        }
         catch (Exception ex)
         {
             Log.Error(ex, "Unhandled exception on {Method} {Path}", context.Request.Method, context.Request.Path);

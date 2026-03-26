@@ -374,15 +374,25 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         => ValueTask.FromResult(apiKey);
 
     /// <summary>
+    /// Translates provider-native parameter names to their OpenAI-compatible
+    /// equivalents before merging.  Override in subclasses whose native APIs
+    /// use different parameter names (e.g. Google Gemini's
+    /// <c>response_mime_type</c> → <c>response_format</c>).
+    /// </summary>
+    protected virtual Dictionary<string, JsonElement>? TranslateProviderParameters(
+        Dictionary<string, JsonElement>? providerParameters) => providerParameters;
+
+    /// <summary>
     /// Serializes <paramref name="payload"/> and merges any user-supplied
     /// <paramref name="providerParameters"/> into the top-level JSON object.
-    /// Delegates to <see cref="ProviderParameterMerger"/>.
+    /// Calls <see cref="TranslateProviderParameters"/> first, then delegates
+    /// to <see cref="ProviderParameterMerger"/>.
     /// </summary>
-    protected static HttpContent MergeProviderParameters<T>(
+    protected HttpContent MergeProviderParameters<T>(
         T payload,
         Dictionary<string, JsonElement>? providerParameters,
         JsonSerializerOptions? options = null)
-        => ProviderParameterMerger.Merge(payload, providerParameters, options);
+        => ProviderParameterMerger.Merge(payload, TranslateProviderParameters(providerParameters), options);
 
     /// <summary>
     /// Allows subclasses to add provider-specific headers to outgoing API requests.

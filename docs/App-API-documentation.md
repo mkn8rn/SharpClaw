@@ -879,7 +879,8 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
   "name": "string",
   "modelId": "guid",
   "systemPrompt": "string | null",
-  "maxCompletionTokens": "integer | null"
+  "maxCompletionTokens": "integer | null",
+  "providerParameters": { "key": "value" }
 }
 ```
 
@@ -887,6 +888,77 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 response. Sent as `max_tokens`, `max_completion_tokens`, or
 `max_output_tokens` depending on the provider and API version. `null`
 (default) means no limit — the provider default applies.
+
+`providerParameters` is an optional JSON object of arbitrary key-value
+pairs merged into every API request payload sent to this agent's
+provider.  Keys that the client already sets (e.g. `model`, `messages`,
+`tools`) are **never overwritten** — user-supplied parameters are
+additive only.  This is useful for provider-specific options such as
+`response_format` (OpenAI), `response_mime_type` (Gemini), etc.
+
+**Automatic parameter translation (Google Gemini / Vertex AI):**
+Google providers in SharpClaw route through OpenAI-compatible endpoints,
+so native Gemini parameter names are **automatically translated** before
+the request is sent:
+
+| Native Gemini parameter                          | Translated to (OpenAI-compatible)                |
+|--------------------------------------------------|--------------------------------------------------|
+| `"generation_config": { ... }`                   | Unwrapped — inner keys promoted to top level     |
+| `"response_mime_type": "application/json"`       | `"response_format": { "type": "json_object" }`  |
+| `"response_mime_type": "text/plain"`             | *(removed — text is the default)*                |
+
+**`generation_config` unwrapping:** The native Gemini API wraps
+parameters inside a `generation_config` object. SharpClaw automatically
+extracts the inner keys and promotes them to the top level so they work
+on the OpenAI-compatible endpoint. If the same key exists both inside
+`generation_config` and at the top level, the top-level value takes
+precedence.
+
+You may use either form — SharpClaw handles the mapping.
+
+Examples (both work for Google Gemini and Vertex AI agents):
+
+```json
+{ "response_mime_type": "application/json" }
+```
+
+```json
+{
+  "generation_config": {
+    "temperature": 1,
+    "response_mime_type": "application/json"
+  }
+}
+```
+
+Both produce the same result: `temperature` is passed through directly
+and `response_mime_type` is translated to
+`response_format: { "type": "json_object" }`.
+
+**Common `response_format` values (OpenAI / OpenAI-compatible):**
+
+| Value | Description |
+|-------|-------------|
+| `{ "type": "text" }` | Plain text output (default) |
+| `{ "type": "json_object" }` | Forces valid JSON output |
+| `{ "type": "json_schema", "json_schema": { "name": "...", "schema": { ... } } }` | Structured output with a strict JSON schema |
+
+> ⚠️ When using `"type": "json_schema"` you **must** include the
+> `json_schema` object with a `name` and `schema` — omitting it causes
+> the provider to return a 400 error.
+
+**Error handling:** Invalid or unrecognised provider parameters cause
+the upstream provider to reject the request. SharpClaw surfaces this as
+**HTTP 502 Bad Gateway** with the provider's original error message:
+
+```json
+{ "error": "Provider API error 400 (Bad Request): Missing required parameter: 'response_format.json_schema'." }
+```
+
+> ⚠️ **Parameters are provider-dependent.** Passing a parameter the
+> provider does not recognise will cause a **502** error at chat time.
+> SharpClaw does not validate unknown parameter names — the user is
+> responsible for correctness.
 
 **Response `200`:** `AgentResponse`
 
@@ -914,9 +986,13 @@ response. Sent as `max_tokens`, `max_completion_tokens`, or
   "name": "string | null",
   "modelId": "guid | null",
   "systemPrompt": "string | null",
-  "maxCompletionTokens": "integer | null"
+  "maxCompletionTokens": "integer | null",
+  "providerParameters": { "key": "value" }
 }
 ```
+
+Pass `providerParameters` as `{}` (empty object) to clear existing
+parameters.  Omit the field (or pass `null`) to leave them unchanged.
 
 **Response `200`:** `AgentResponse`
 **Response `404`:** Not found.
@@ -960,7 +1036,8 @@ Assign a role to an agent.
   "providerName": "string",
   "roleId": "guid | null",
   "roleName": "string | null",
-  "maxCompletionTokens": "integer | null"
+  "maxCompletionTokens": "integer | null",
+  "providerParameters": { "key": "value" }
 }
 ```
 
@@ -978,7 +1055,8 @@ Omits `systemPrompt` to keep payloads compact.
   "providerName": "string",
   "roleId": "guid | null",
   "roleName": "string | null",
-  "maxCompletionTokens": "integer | null"
+  "maxCompletionTokens": "integer | null",
+  "providerParameters": { "key": "value" }
 }
 ```
 
