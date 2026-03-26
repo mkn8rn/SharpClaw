@@ -36,9 +36,7 @@ public sealed partial class EnvEditorPage : Page
 
         if (_target == EnvTarget.Core)
         {
-            // Core target: all I/O goes through the API which enforces
-            // auth server-side.  Show the API base URL as the path hint.
-            PathBlock.Text = "(managed by API)";
+            PathBlock.Visibility = Visibility.Collapsed;
             await LoadEntriesFromApiAsync();
         }
         else
@@ -129,8 +127,8 @@ public sealed partial class EnvEditorPage : Page
 
     private void PopulateEntries(string raw)
     {
-        var lines = raw.Split('\n');
-        ParseEnvLines(lines);
+        if (!TryParseStructuredJson(raw))
+            ParseEnvLines(raw.Split('\n'));
 
         foreach (var entry in _entries)
             EntriesPanel.Children.Add(BuildEntryRow(entry));
@@ -179,6 +177,53 @@ public sealed partial class EnvEditorPage : Page
                 }
             }
         }
+    }
+
+    private bool TryParseStructuredJson(string json)
+    {
+        try
+        {
+            var stripped = StripJsonComments(json);
+            using var doc = JsonDocument.Parse(stripped,
+                new JsonDocumentOptions { AllowTrailingCommas = true });
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                string value;
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                {
+                    var parts = new List<string>();
+                    foreach (var sub in prop.Value.EnumerateObject())
+                        parts.Add($"{sub.Name}={sub.Value}");
+                    value = string.Join(", ", parts);
+                }
+                else
+                {
+                    value = prop.Value.ToString();
+                }
+                _entries.Add(new EnvEntry(prop.Name, value, string.Empty, isActive: true));
+            }
+
+            return _entries.Count > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string StripJsonComments(string json)
+    {
+        var sb = new StringBuilder(json.Length);
+        foreach (var line in json.Split('\n'))
+        {
+            if (!line.TrimStart().StartsWith("//"))
+                sb.AppendLine(line);
+        }
+        return sb.ToString();
     }
 
     private static bool TryParseJsonLine(string line, out string key, out string value)
@@ -458,20 +503,20 @@ public sealed partial class EnvEditorPage : Page
 
     // ── View mode toggle ──────────────────────────────────────────
 
-    private void OnViewToggleClick(object sender, RoutedEventArgs e)
+    private async void OnViewToggleClick(object sender, RoutedEventArgs e)
     {
         _jsonViewActive = !_jsonViewActive;
 
         if (_jsonViewActive)
         {
-            // Switching to JSON view — load raw file content
-            SyncJsonFromFile();
+            // Switching to JSON view — show panel immediately, load content
             EntriesScroller.Visibility = Visibility.Collapsed;
             JsonPanel.Visibility = Visibility.Visible;
             CopyJsonButton.Visibility = Visibility.Visible;
             PasteJsonButton.Visibility = Visibility.Visible;
             ViewToggleLabel.Text = "☰ Options";
             ViewToggleLabel.Foreground = TerminalUI.Brush(0xFF9944);
+            await SyncJsonFromFileAsync();
         }
         else
         {
@@ -486,7 +531,7 @@ public sealed partial class EnvEditorPage : Page
         }
     }
 
-    private async void SyncJsonFromFile()
+    private async Task SyncJsonFromFileAsync()
     {
         if (_target == EnvTarget.Core)
         {
@@ -527,10 +572,11 @@ public sealed partial class EnvEditorPage : Page
         var json = JsonTextBox.Text;
         if (string.IsNullOrWhiteSpace(json)) return;
 
-        var lines = json.Split('\n');
         _entries.Clear();
         EntriesPanel.Children.Clear();
-        ParseEnvLines(lines);
+
+        if (!TryParseStructuredJson(json))
+            ParseEnvLines(json.Split('\n'));
 
         foreach (var entry in _entries)
             EntriesPanel.Children.Add(BuildEntryRow(entry));
