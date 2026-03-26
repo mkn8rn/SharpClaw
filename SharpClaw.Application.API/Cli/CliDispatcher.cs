@@ -366,7 +366,7 @@ public static class CliDispatcher
                 "  Capabilities (comma-separated): Chat, Transcription,",
                 "    ImageGeneration, Embedding, TextToSpeech",
                 "model get <id>",
-                "model list",
+                "model list [--provider <id>]           List models (optionally by provider)",
                 "model update <id> <name> [--cap <capabilities>]",
                 "model delete <id>",
                 "",
@@ -402,7 +402,7 @@ public static class CliDispatcher
                 => await ModelHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
             "get" => UsageResult("model get <id>"),
 
-            "list" => await ModelHandlers.List(svc),
+            "list" => await HandleModelList(args, svc),
 
             "update" when args.Length >= 4
                 => await ModelHandlers.Update(
@@ -431,6 +431,20 @@ public static class CliDispatcher
 
             _ => UsageResult($"Unknown sub-command: model {sub}. Try 'help' for usage.")
         };
+    }
+
+    private static async Task<IResult> HandleModelList(string[] args, ModelService svc)
+    {
+        Guid? providerId = null;
+        for (var i = 2; i < args.Length; i++)
+        {
+            if (args[i] is "--provider" && i + 1 < args.Length)
+            {
+                providerId = CliIdMap.Resolve(args[++i]);
+                break;
+            }
+        }
+        return await ModelHandlers.List(svc, providerId);
     }
 
     // ── Local model CLI handlers ─────────────────────────────────

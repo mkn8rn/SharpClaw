@@ -849,6 +849,10 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 
 ### GET /models
 
+| Query param  | Type   | Required | Description                         |
+|--------------|--------|----------|-------------------------------------|
+| `providerId` | `guid` | No       | Filter models by provider.          |
+
 **Response `200`:** `ModelResponse[]`
 
 ---
