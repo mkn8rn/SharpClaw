@@ -60,8 +60,13 @@ and an issue is welcome.
 | `presencePenalty` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | `stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | `seed` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| `responseFormat` | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| `reasoningEffort` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `responseFormat` | ✅ | ❌ | ✅ | ⚠️¹ | ⚠️¹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| `reasoningEffort` | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+> ¹ Google Gemini / Vertex AI: only the full `json_schema` variant is
+> supported through Google's OpenAI-compatible endpoint. The simplified
+> `{"type": "json_object"}` form is **not** supported and will be rejected
+> at validation time. See [Google-specific notes](#google-vertex-ai--gemini).
 
 ---
 
@@ -132,11 +137,34 @@ produce identical output (best-effort, not guaranteed by all providers).
 
 ### reasoningEffort
 
-Valid values: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`.
+Valid values vary by provider:
 
-Only supported by OpenAI (o-series and gpt-5 models via the Responses API) and
-GitHub Copilot (GitHub Models API). Mapped to `reasoning.effort` in
-the Responses API request body.
+| Provider | Valid values |
+|---|---|
+| OpenAI | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| Google Gemini | `"none"`², `"minimal"`, `"low"`, `"medium"`, `"high"` |
+| Google Vertex AI | `"none"`², `"minimal"`, `"low"`, `"medium"`, `"high"` |
+| GitHub Copilot | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+
+> ² `"none"` disables thinking on Gemini 2.5 models only. Reasoning
+> cannot be turned off for Gemini 2.5 Pro or Gemini 3 models.
+
+On OpenAI, `reasoningEffort` is supported on o-series and gpt-5 models
+via the Responses API. Mapped to `reasoning.effort` in the Responses API
+request body, or `reasoning_effort` at the top level in Chat Completions.
+
+On Google, `reasoning_effort` is mapped to the model's internal thinking
+level:
+
+| `reasoning_effort` | Gemini 3.1 Pro | Gemini 3.1 Flash-Lite | Gemini 3 Flash | Gemini 2.5 |
+|---|---|---|---|---|
+| `minimal` | `low` | `minimal` | `minimal` | budget 1 024 |
+| `low` | `low` | `low` | `low` | budget 1 024 |
+| `medium` | `medium` | `medium` | `medium` | budget 8 192 |
+| `high` | `high` | `high` | `high` | budget 24 576 |
+
+If no `reasoningEffort` is set, Google uses each model's default thinking
+level or budget.
 
 ---
 
@@ -208,6 +236,8 @@ typed parameter on a Local agent will be rejected by validation.
 All other providers (OpenRouter, Google Vertex AI, Google Gemini, xAI,
 Groq, Cerebras, Mistral, GitHub Copilot, ZAI, Vercel AI Gateway,
 Minimax) use the same wire format as OpenAI Chat Completions.
+`reasoningEffort` is sent as `reasoning_effort` at the top level for
+providers that support it (Google Gemini, Google Vertex AI).
 Unsupported parameters are omitted from the payload.
 
 ---
@@ -223,11 +253,10 @@ This translation is handled by
 
 ### Translation rules
 
-| Native Gemini parameter | Translated to (OpenAI-compatible) |
+| Native Gemini parameter | Behaviour |
 |---|---|
 | `"generation_config": { ... }` | Unwrapped — inner keys promoted to top level |
-| `"response_mime_type": "application/json"` | `"response_format": { "type": "json_object" }` |
-| `"response_mime_type": "text/plain"` | *(removed — text is the default)* |
+| `"response_mime_type"` | **Rejected** — throws `NotSupportedException` with alternatives |
 
 ### `generation_config` unwrapping
 
@@ -236,9 +265,40 @@ object. SharpClaw extracts the inner keys and promotes them to the top
 level. If the same key exists both inside `generation_config` and at
 the top level, the **top-level value takes precedence**.
 
+### `response_mime_type` is not supported
+
+Google's OpenAI-compatible endpoint does not support the simplified
+`response_format: {"type": "json_object"}` form — their documentation
+only shows the full `json_schema` variant via the SDK's `parse()` API.
+Since `response_mime_type` is a native Gemini parameter (not a valid
+OpenAI field), it cannot be passed through either.
+
+If `response_mime_type` is present — either at the top level or inside
+`generation_config` — SharpClaw throws a `NotSupportedException` with
+a clear error message listing the alternatives:
+
+1. Use the typed `responseFormat` completion parameter with a full
+   `json_schema` definition
+   (`response_format: {"type": "json_schema", ...}`).
+2. Instruct the model to respond in JSON via the system prompt.
+3. Remove `response_mime_type` and use only supported parameters.
+
 ### Examples
 
-Both forms work for Google Gemini and Vertex AI agents:
+`generation_config` unwrapping with supported parameters:
+
+```json
+{
+  "generation_config": {
+    "temperature": 1,
+    "top_k": 20
+  }
+}
+```
+
+This is unwrapped to `temperature: 1` and `top_k: 20` at the top level.
+
+The following will produce an error:
 
 ```json
 { "response_mime_type": "application/json" }
@@ -253,9 +313,9 @@ Both forms work for Google Gemini and Vertex AI agents:
 }
 ```
 
-Both produce the same result: `temperature` is passed through and
-`response_mime_type` is translated to
-`response_format: { "type": "json_object" }`.
+Both throw a `NotSupportedException` explaining that
+`response_mime_type` is not supported through Google's OpenAI-compatible
+endpoint and listing alternatives.
 
 ---
 
@@ -264,12 +324,17 @@ Both produce the same result: `temperature` is passed through and
 | Value | Description |
 |---|---|
 | `{ "type": "text" }` | Plain text output (default) |
-| `{ "type": "json_object" }` | Forces valid JSON output |
+| `{ "type": "json_object" }` | Forces valid JSON output (⚠️ not supported by Google — see below) |
 | `{ "type": "json_schema", "json_schema": { "name": "...", "schema": { ... } } }` | Structured output with a strict JSON schema |
 
 > ⚠️ When using `"type": "json_schema"` you **must** include the
 > `json_schema` object with a `name` and `schema` — omitting it causes
 > the provider to return a 400 error.
+>
+> ⚠️ Google Gemini and Google Vertex AI **do not** support
+> `{"type": "json_object"}`. Use the full `json_schema` variant or
+> instruct the model via system prompt. SharpClaw catches this at
+> validation time.
 
 ---
 
@@ -375,6 +440,19 @@ Every validation error includes:
 
 - `topK` maximum is 40.
 - Maximum stop sequences is 5 (not 4).
+- `responseFormat`: only the full `json_schema` variant is supported
+  through Google's OpenAI-compatible endpoint. The simplified
+  `{"type": "json_object"}` form is **not** supported — SharpClaw
+  rejects it at validation time with an actionable error message
+  before the request reaches Google's servers.
+- `reasoningEffort`: supported via `reasoning_effort` in Chat
+  Completions. Google maps values to internal thinking levels (see
+  [reasoningEffort](#reasoningeffort)). Valid values: `"none"` (2.5
+  models only), `"minimal"`, `"low"`, `"medium"`, `"high"`. The
+  `"xhigh"` value is **not** supported by Google.
+- `response_mime_type` in `providerParameters` is **rejected** with a
+  `NotSupportedException` — it cannot be translated to any format that
+  Google's OpenAI compatibility layer accepts.
 - Native Gemini parameters in `providerParameters` are auto-translated
   (see [translation rules](#google-gemini--vertex-ai-parameter-translation)).
 

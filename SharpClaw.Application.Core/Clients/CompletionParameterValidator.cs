@@ -80,7 +80,7 @@ public static class CompletionParameterValidator
                 errors.Add(
                     $"'{spec.ProviderName}' does not support the 'frequencyPenalty' parameter. " +
                     "Remove it or switch to a provider that supports it " +
-                    "(OpenAI, OpenRouter, xAI, Groq).");
+                    "(OpenAI, Google, OpenRouter, xAI, Groq).");
             else if (freqPen < spec.FrequencyPenaltyMin || freqPen > spec.FrequencyPenaltyMax)
                 errors.Add(
                     $"Invalid frequencyPenalty value {freqPen} for '{spec.ProviderName}'. " +
@@ -94,7 +94,7 @@ public static class CompletionParameterValidator
                 errors.Add(
                     $"'{spec.ProviderName}' does not support the 'presencePenalty' parameter. " +
                     "Remove it or switch to a provider that supports it " +
-                    "(OpenAI, OpenRouter, xAI, Groq).");
+                    "(OpenAI, Google, OpenRouter, xAI, Groq).");
             else if (presPen < spec.PresencePenaltyMin || presPen > spec.PresencePenaltyMax)
                 errors.Add(
                     $"Invalid presencePenalty value {presPen} for '{spec.ProviderName}'. " +
@@ -130,14 +130,26 @@ public static class CompletionParameterValidator
             errors.Add(
                 $"'{spec.ProviderName}' does not support the 'seed' parameter. " +
                 "Remove it or switch to a provider that supports deterministic " +
-                "sampling (OpenAI, Mistral, Groq, xAI).");
+                "sampling (OpenAI, Google, Mistral, Groq, xAI, OpenRouter, Cerebras).");
 
         // ── Response format ──────────────────────────────────────
-        if (parameters.ResponseFormat is not null && !spec.SupportsResponseFormat)
-            errors.Add(
-                $"'{spec.ProviderName}' does not support the 'responseFormat' parameter. " +
-                "Remove it or switch to a provider that supports structured output " +
-                "(OpenAI, Mistral, Groq, xAI, OpenRouter).");
+        if (parameters.ResponseFormat is { } responseFormat)
+        {
+            if (!spec.SupportsResponseFormat)
+                errors.Add(
+                    $"'{spec.ProviderName}' does not support the 'responseFormat' parameter. " +
+                    "Remove it or switch to a provider that supports structured output " +
+                    "(OpenAI, Google, Mistral, Groq, xAI, OpenRouter).");
+            else if (spec.RejectsJsonObjectResponseFormat &&
+                     responseFormat.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                     responseFormat.TryGetProperty("type", out var typeProp) &&
+                     typeProp.GetString() is "json_object")
+                errors.Add(
+                    $"'{spec.ProviderName}' does not support response_format " +
+                    "{\"type\": \"json_object\"}. Use the full json_schema variant instead " +
+                    "(response_format: {\"type\": \"json_schema\", ...}) or instruct the model " +
+                    "to respond in JSON via the system prompt.");
+        }
 
         // ── Reasoning effort ─────────────────────────────────────
         if (parameters.ReasoningEffort is { } effort)
@@ -145,7 +157,8 @@ public static class CompletionParameterValidator
             if (!spec.SupportsReasoningEffort)
                 errors.Add(
                     $"'{spec.ProviderName}' does not support the 'reasoningEffort' parameter. " +
-                    "This parameter is available on OpenAI reasoning and gpt-5 models only.");
+                    "This parameter is available on OpenAI (o-series, gpt-5), " +
+                    "Google Gemini, and Google Vertex AI only.");
             else if (!spec.ValidReasoningEffortValues.Contains(effort, StringComparer.OrdinalIgnoreCase))
                 errors.Add(
                     $"Invalid reasoningEffort value '{effort}' for '{spec.ProviderName}'. " +

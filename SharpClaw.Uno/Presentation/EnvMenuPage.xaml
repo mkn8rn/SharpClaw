@@ -77,6 +77,24 @@
         </StackPanel>
       </Button>
 
+      <!-- Public Gateway -->
+      <Button Style="{StaticResource TerminalButton}"
+              Click="OnGatewayClick"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Left"
+              Padding="12,10">
+        <StackPanel Spacing="2">
+          <TextBlock Text="› Public Gateway"
+                     Style="{StaticResource TerminalText}"
+                     FontSize="14"
+                     Foreground="#00FF00" />
+          <TextBlock Text="  Gateway port, endpoint toggles, bot integrations"
+                     Style="{StaticResource TerminalText}"
+                     FontSize="11"
+                     Foreground="#666666" />
+        </StackPanel>
+      </Button>
+
       <!-- Status message (admin gate, errors) -->
       <TextBlock x:Name="StatusBlock"
                  Style="{StaticResource TerminalText}"

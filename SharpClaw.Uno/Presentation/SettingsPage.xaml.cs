@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.UI.Xaml.Media;
 using SharpClaw.Helpers;
@@ -60,6 +61,8 @@ public sealed partial class SettingsPage : Page
         AddTabButton("Roles", "sharpclaw role list");
         AddTabSection("Audio");
         AddTabButton("Sound Input", "sharpclaw resource audiodevice list");
+        AddTabSection("Integrations");
+        AddTabButton("Bots", "sharpclaw bots status");
         if (_isUserAdmin)
         {
             AddTabSection("Admin");
@@ -107,6 +110,7 @@ public sealed partial class SettingsPage : Page
             "Agents" => LoadAgentsAsync(),
             "Roles" => LoadRolesListAsync(),
             "Sound Input" => LoadSoundInputAsync(),
+            "Bots" => LoadBotsAsync(),
             "Users" => LoadUsersAsync(),
             "Danger Zone" => LoadDangerZoneAsync(),
             _ => Task.CompletedTask,
@@ -645,6 +649,272 @@ public sealed partial class SettingsPage : Page
 
     private static string? LoadLocalSetting(string key)
         => App.Services?.GetService<ClientSettings>()?.Get(key);
+
+    // ═══════════════════════════════════════════════════════════════
+    // BOTS (Gateway Integrations)
+    // ═══════════════════════════════════════════════════════════════
+
+    private async Task LoadBotsAsync()
+    {
+        ContentPanel.Children.Clear();
+        H("Bot Integrations");
+        Lbl("Connect Telegram or Discord bots to the gateway.", 0x808080);
+
+        var gateway = App.Services?.GetService<GatewayProcessManager>();
+        if (gateway is null)
+        {
+            Status("✗ Gateway manager not available.", 0xFF4444);
+            return;
+        }
+
+        var gatewayUrl = gateway.ClientUrl;
+        bool reachable;
+        try { reachable = await gateway.IsGatewayReachableAsync(); }
+        catch { reachable = false; }
+
+        if (!reachable)
+        {
+            var notEnabled = gateway.SkipLaunch && !gateway.IsRunning;
+
+            var msgPanel = new StackPanel { Spacing = 6 };
+            msgPanel.Children.Add(new TextBlock
+            {
+                Text = notEnabled ? "Gateway Not Enabled" : "Gateway Offline",
+                FontFamily = Mono, FontSize = 13,
+                Foreground = B(0xFFAA00), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            });
+
+            if (notEnabled)
+            {
+                msgPanel.Children.Add(new TextBlock
+                {
+                    Text = "The gateway is required for bot integrations but is currently disabled.\n"
+                         + "Enable it in the Interface .env (Gateway:Enabled = true), then come back here.",
+                    FontFamily = Mono, FontSize = 11, Foreground = B(0xBBBBBB),
+                    TextWrapping = TextWrapping.Wrap, MaxWidth = 560,
+                });
+            }
+            else
+            {
+                msgPanel.Children.Add(new TextBlock
+                {
+                    Text = $"Cannot reach the gateway at {gatewayUrl}.\n"
+                         + "It may still be starting up — click Start or Retry below.",
+                    FontFamily = Mono, FontSize = 11, Foreground = B(0xBBBBBB),
+                    TextWrapping = TextWrapping.Wrap, MaxWidth = 560,
+                });
+            }
+
+            ContentPanel.Children.Add(new Border
+            {
+                BorderBrush = B(0x332211), BorderThickness = new Thickness(1),
+                Background = B(0x1A1208), CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(16, 12),
+                Child = msgPanel,
+            });
+
+            if (notEnabled)
+            {
+                // Direct link to the env editor
+                var envBtn = GreenButton("Open Interface .env");
+                envBtn.Click += (_, _) =>
+                {
+                    if (App.Services is not { } svc) return;
+                    EnvMenuPage.PendingOrigin = "Settings";
+                    _ = svc.GetRequiredService<INavigator>().NavigateRouteAsync(this, "EnvMenu");
+                };
+                ContentPanel.Children.Add(envBtn);
+            }
+            else if (gateway.IsAvailable && !gateway.IsRunning)
+            {
+                // Gateway is available on disk but not running — offer to start
+                var startBtn = GreenButton("▶ Start Gateway");
+                startBtn.Click += async (_, _) =>
+                {
+                    startBtn.IsEnabled = false;
+                    Status("Starting gateway…", 0x808080);
+                    try
+                    {
+                        gateway.SkipLaunch = false;
+                        await gateway.EnsureStartedAsync();
+                        // Wait for it to become reachable
+                        for (var i = 0; i < 20; i++)
+                        {
+                            if (await gateway.IsGatewayReachableAsync()) break;
+                            await Task.Delay(500);
+                        }
+                        await LoadBotsAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Status($"✗ {ex.Message}", 0xFF4444);
+                        startBtn.IsEnabled = true;
+                    }
+                };
+                ContentPanel.Children.Add(startBtn);
+            }
+
+            var retryBtn = GreenButton("↻ Retry");
+            retryBtn.Click += (_, _) => _ = LoadBotsAsync();
+            ContentPanel.Children.Add(retryBtn);
+            return;
+        }
+
+        // Fetch current bot config from the gateway
+        JsonElement? telegramCfg = null, discordCfg = null;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var resp = await http.GetAsync($"{gatewayUrl}/api/bots/config");
+            if (resp.IsSuccessStatusCode)
+            {
+                using var s = await resp.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(s);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("telegram", out var t)) telegramCfg = t.Clone();
+                if (root.TryGetProperty("discord", out var d)) discordCfg = d.Clone();
+            }
+            else
+            {
+                Status("✗ Failed to load bot config from gateway.", 0xFF4444);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Status($"✗ {ex.Message}", 0xFF4444);
+            return;
+        }
+
+        // ── Telegram card ────────────────────────────────────────
+        BuildBotCard("Telegram", "🤖", telegramCfg,
+            "Bot token from @BotFather on Telegram.",
+            gatewayUrl);
+
+        // ── Discord card ─────────────────────────────────────────
+        BuildBotCard("Discord", "🎮", discordCfg,
+            "Bot token from the Discord Developer Portal.",
+            gatewayUrl);
+    }
+
+    private void BuildBotCard(string botName, string icon, JsonElement? cfg,
+        string tokenHint, string gatewayUrl)
+    {
+        var enabled = cfg?.TryGetProperty("enabled", out var en) == true && en.GetBoolean();
+        var token = cfg?.TryGetProperty("botToken", out var tk) == true ? tk.GetString() ?? "" : "";
+
+        var card = new Border
+        {
+            BorderBrush = B(enabled ? 0x2A5A2A : 0x333333),
+            BorderThickness = new Thickness(1),
+            Background = B(0x141414),
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(0, 12, 0, 0),
+            Padding = new Thickness(16, 12),
+        };
+
+        var panel = new StackPanel { Spacing = 8 };
+
+        // Header row: icon + name + status
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        headerRow.Children.Add(new TextBlock { Text = icon, FontSize = 18,
+            VerticalAlignment = VerticalAlignment.Center });
+        headerRow.Children.Add(new TextBlock { Text = botName, FontFamily = Mono, FontSize = 14,
+            Foreground = B(0xE0E0E0), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center });
+        headerRow.Children.Add(new TextBlock
+        {
+            Text = enabled ? "● ENABLED" : "○ DISABLED",
+            FontFamily = Mono, FontSize = 10,
+            Foreground = B(enabled ? 0x00FF00 : 0x666666),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        });
+        panel.Children.Add(headerRow);
+
+        // Enable toggle
+        var toggle = new ToggleSwitch
+        {
+            IsOn = enabled,
+            OnContent = new TextBlock { Text = "Enabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x00FF00) },
+            OffContent = new TextBlock { Text = "Disabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x666666) },
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        panel.Children.Add(toggle);
+
+        // Token input
+        panel.Children.Add(new TextBlock { Text = "Bot Token", FontFamily = Mono, FontSize = 11,
+            Foreground = B(0xBBBBBB), Margin = new Thickness(0, 4, 0, 0) });
+        panel.Children.Add(new TextBlock { Text = tokenHint, FontFamily = Mono, FontSize = 10,
+            Foreground = B(0x666666) });
+
+        var tokenBox = new PasswordBox
+        {
+            Password = token,
+            PlaceholderText = $"Paste {botName} bot token…",
+            FontFamily = Mono, FontSize = 12,
+            Foreground = B(0x00FF00), Background = B(0x1A1A1A),
+            BorderBrush = B(0x333333), BorderThickness = new Thickness(1),
+            MinWidth = 360, Padding = new Thickness(8, 6),
+        };
+        panel.Children.Add(tokenBox);
+
+        // Status area for feedback
+        var statusBlock = new TextBlock { FontFamily = Mono, FontSize = 11,
+            Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(statusBlock);
+
+        // Save button
+        var saveBtn = new Button
+        {
+            Content = new TextBlock { Text = $"Save {botName}", FontFamily = Mono, FontSize = 12, Foreground = B(0x00FF00) },
+            Background = B(0x1A2A1A), BorderBrush = B(0x00FF00), BorderThickness = new Thickness(1),
+            Padding = new Thickness(16, 8), Margin = new Thickness(0, 4, 0, 0),
+        };
+        saveBtn.Click += async (_, _) =>
+        {
+            saveBtn.IsEnabled = false;
+            statusBlock.Text = "Saving…";
+            statusBlock.Foreground = B(0x808080);
+            try
+            {
+                var payload = new JsonObject();
+                var entry = new JsonObject
+                {
+                    ["enabled"] = toggle.IsOn,
+                    ["botToken"] = tokenBox.Password ?? ""
+                };
+                payload[botName.ToLowerInvariant()] = entry;
+
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                var content = new StringContent(
+                    payload.ToJsonString(), Encoding.UTF8, "application/json");
+                using var resp = await http.PutAsync($"{gatewayUrl}/api/bots/config", content);
+
+                if (resp.IsSuccessStatusCode)
+                {
+                    statusBlock.Text = "✓ Saved. Restart the gateway for changes to take effect.";
+                    statusBlock.Foreground = B(0x00FF00);
+                }
+                else
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    statusBlock.Text = $"✗ Save failed: {body}";
+                    statusBlock.Foreground = B(0xFF4444);
+                }
+            }
+            catch (Exception ex)
+            {
+                statusBlock.Text = $"✗ {ex.Message}";
+                statusBlock.Foreground = B(0xFF4444);
+            }
+            finally { saveBtn.IsEnabled = true; }
+        };
+        panel.Children.Add(saveBtn);
+
+        card.Child = panel;
+        ContentPanel.Children.Add(card);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // ROLES
@@ -1212,7 +1482,14 @@ public sealed partial class SettingsPage : Page
 
         var errors = new List<string>();
 
-        // 1. Stop the backend process so files are not locked.
+        // 1. Stop the backend and gateway processes so files are not locked.
+        try
+        {
+            var gateway = App.Services?.GetService<GatewayProcessManager>();
+            gateway?.Dispose();
+        }
+        catch { /* best-effort */ }
+
         try
         {
             var backend = App.Services?.GetService<BackendProcessManager>();
@@ -1220,8 +1497,8 @@ public sealed partial class SettingsPage : Page
         }
         catch (Exception ex) { errors.Add($"Stop backend: {ex.Message}"); }
 
-        // Small delay to let the process release file handles.
-        await Task.Delay(500);
+        // Wait for processes to fully release file handles.
+        await Task.Delay(2000);
 
         // 2. Clear frontend-only preferences (client-settings.json) in memory
         //    so they are not re-flushed to disk before the directory is deleted.
@@ -1234,35 +1511,21 @@ public sealed partial class SettingsPage : Page
 
         // 3. Delete %LOCALAPPDATA%/SharpClaw (api-key, encryption keys, setup marker,
         //    client-settings.json).
-        try
-        {
-            var localAppData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SharpClaw");
-            if (Directory.Exists(localAppData))
-                Directory.Delete(localAppData, recursive: true);
-        }
-        catch (Exception ex) { errors.Add($"LocalAppData: {ex.Message}"); }
+        var localAppData = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SharpClaw");
+        await DeleteWithRetryAsync(localAppData, "LocalAppData", errors);
 
         // 4. Delete the backend's Data directory (JSON persistence).
         //    It lives next to the backend executable or, in dev mode, next
         //    to the Infrastructure assembly.  We check both the bundled
         //    location and the common dev-time location.
-        try
-        {
-            var baseDir = AppContext.BaseDirectory;
-            DeleteIfExists(Path.Combine(baseDir, "backend", "Data"));
-            DeleteIfExists(Path.Combine(baseDir, "Data"));
-        }
-        catch (Exception ex) { errors.Add($"Data dir: {ex.Message}"); }
+        var baseDir = AppContext.BaseDirectory;
+        await DeleteWithRetryAsync(Path.Combine(baseDir, "backend", "Data"), "Data dir", errors);
+        await DeleteWithRetryAsync(Path.Combine(baseDir, "Data"), "Data dir (dev)", errors);
 
         // 5. Delete the backend's Environment directory (config files).
-        try
-        {
-            var baseDir = AppContext.BaseDirectory;
-            DeleteIfExists(Path.Combine(baseDir, "backend", "Environment"));
-        }
-        catch (Exception ex) { errors.Add($"Backend env: {ex.Message}"); }
+        await DeleteWithRetryAsync(Path.Combine(baseDir, "backend", "Environment"), "Backend env", errors);
 
         // Show result
         ContentPanel.Children.Clear();
@@ -1289,9 +1552,26 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private static void DeleteIfExists(string path)
+    private static async Task DeleteWithRetryAsync(string path, string label, List<string> errors)
     {
-        if (Directory.Exists(path))
-            Directory.Delete(path, recursive: true);
+        if (!Directory.Exists(path)) return;
+
+        const int maxAttempts = 3;
+        for (int i = 1; i <= maxAttempts; i++)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch when (i < maxAttempts)
+            {
+                await Task.Delay(1000);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{label}: {ex.Message}");
+            }
+        }
     }
 }

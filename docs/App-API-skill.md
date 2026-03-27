@@ -612,7 +612,7 @@ GET  /env/core/auth  → { authorised: bool }  (pre-check — is caller allowed 
 GET  /env/core       → { content: "raw JSON string" }  (403 if not authorised, 404 if file missing)
 PUT  /env/core       { content }  → { saved: true }  (403 if not authorised)
 
-Core .env keys: Encryption:Key, Jwt:Secret, Jwt:AccessTokenLifetime, Jwt:RefreshTokenLifetime, ConnectionStrings:Postgres, Api:ListenUrl, Admin:Username, Admin:Password, Browser:Executable, Browser:Arguments, Local:GpuLayerCount, Local:ContextSize, Local:KeepLoaded, Local:IdleCooldownMinutes, EnvEditor:AllowNonAdmin, Backend:Enabled, Auth:DisableApiKeyCheck, Auth:DisableAccessTokenCheck, Agent:DisableCustomProviderParameters.
+Core .env keys: Encryption:Key, Jwt:Secret, Jwt:AccessTokenLifetime, Jwt:RefreshTokenLifetime, ConnectionStrings:Postgres, Api:ListenUrl, Admin:Username, Admin:Password, Admin:ReconcilePermissions, Browser:Executable, Browser:Arguments, Local:GpuLayerCount, Local:ContextSize, Local:KeepLoaded, Local:IdleCooldownMinutes, EnvEditor:AllowNonAdmin, Backend:Enabled, Auth:DisableApiKeyCheck, Auth:DisableAccessTokenCheck, Agent:DisableCustomProviderParameters.
 Interface .env keys: Api:Url (default http://127.0.0.1:48923), Backend:Enabled (default true).
 
 Changes to Core .env require a backend restart to take effect.

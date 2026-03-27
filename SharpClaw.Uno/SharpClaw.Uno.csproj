@@ -51,17 +51,22 @@
 
   <!--
     Bundle the API backend into the output under a "backend" subfolder.
+    The gateway is bundled into a "gateway" subfolder.
 
     During DEVELOPMENT: both projects run separately (start API project first,
     then the Uno app connects to it). The Uno app detects the running API
     via the /echo endpoint and skips process launch.
 
     For DISTRIBUTION: publish with /p:BundleBackend=true to auto-publish
-    the backend into the output alongside the Uno app:
+    both the backend and gateway into the output alongside the Uno app:
       dotnet publish SharpClaw.Uno.csproj -c Release /p:BundleBackend=true
+
+    To bundle only the gateway (without the backend):
+      dotnet publish SharpClaw.Uno.csproj -c Release /p:BundleGateway=true
 
     Or manually:
       dotnet publish ..\SharpClaw.Application.API -c Release -o publish\backend
+      dotnet publish ..\SharpClaw.Gateway -c Release -o publish\gateway
       dotnet publish SharpClaw.Uno.csproj -c Release
   -->
   <!--
@@ -89,6 +94,18 @@
       <_BackendSelfContained Condition="'$(SelfContained)' != 'true'">--no-self-contained</_BackendSelfContained>
     </PropertyGroup>
     <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\SharpClaw.Application.API\SharpClaw.Application.API.csproj&quot; -c $(Configuration) $(_BackendSelfContained) -o &quot;$(PublishDir)backend&quot;" ConsoleToMsBuild="true" StandardOutputImportance="low" />
+  </Target>
+
+  <!--
+    Bundle the public-facing Gateway into the output under a "gateway" subfolder.
+    Opt-in via /p:BundleGateway=true (or /p:BundleBackend=true implies both).
+  -->
+  <Target Name="PublishWithGateway" BeforeTargets="Publish" Condition="('$(BundleGateway)' == 'true' OR '$(BundleBackend)' == 'true') AND Exists('..\SharpClaw.Gateway\SharpClaw.Gateway.csproj')">
+    <PropertyGroup>
+      <_GatewaySelfContained Condition="'$(SelfContained)' == 'true'">--self-contained -r $(RuntimeIdentifier) -p:PublishReadyToRun=true -p:PublishTrimmed=false</_GatewaySelfContained>
+      <_GatewaySelfContained Condition="'$(SelfContained)' != 'true'">--no-self-contained</_GatewaySelfContained>
+    </PropertyGroup>
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\SharpClaw.Gateway\SharpClaw.Gateway.csproj&quot; -c $(Configuration) $(_GatewaySelfContained) -o &quot;$(PublishDir)gateway&quot;" ConsoleToMsBuild="true" StandardOutputImportance="low" />
   </Target>
 
   <ItemGroup>
@@ -132,6 +149,10 @@
   -->
   <ItemGroup Condition="'$(BackendStagingDir)' != '' AND Exists('$(BackendStagingDir)')">
     <Content Include="$(BackendStagingDir)\**" Link="backend\%(RecursiveDir)%(FileName)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(GatewayStagingDir)' != '' AND Exists('$(GatewayStagingDir)')">
+    <Content Include="$(GatewayStagingDir)\**" Link="gateway\%(RecursiveDir)%(FileName)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
