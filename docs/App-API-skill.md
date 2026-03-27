@@ -62,10 +62,10 @@ LocalModelStatus: Pending, Downloading, Ready, Failed.
 ────────────────────────────────────────
 AGENTS
 ────────────────────────────────────────
-POST   /agents                     { name, modelId, systemPrompt?, maxCompletionTokens?, customChatHeader? }
+POST   /agents                     { name, modelId, systemPrompt?, maxCompletionTokens?, customChatHeader?, toolAwarenessSetId? }
 GET    /agents
 GET    /agents/{id}
-PUT    /agents/{id}                { name?, modelId?, systemPrompt?, maxCompletionTokens?, customChatHeader? }
+PUT    /agents/{id}                { name?, modelId?, systemPrompt?, maxCompletionTokens?, customChatHeader?, toolAwarenessSetId? }
 DELETE /agents/{id}
 PUT    /agents/{id}/role           { roleId }
 
@@ -73,9 +73,11 @@ maxCompletionTokens (integer|null): caps the number of tokens the model may gene
 
 customChatHeader (string|null): template that replaces the default chat header for this agent. Uses {{tag}} placeholders expanded at send time. See CUSTOM CHAT HEADER section.
 
-AgentResponse includes: id, name, systemPrompt, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens, customChatHeader.
+toolAwarenessSetId (guid|null): links a tool awareness set that controls which tool-call schemas are sent in API requests. See TOOL AWARENESS SETS section. Channel's set overrides the agent's; null = all tools enabled. On PUT, pass Guid.Empty to clear.
 
-AgentSummary (embedded in channel/context responses): id, name, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens. Same as AgentResponse minus systemPrompt.
+AgentResponse includes: id, name, systemPrompt, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens, customChatHeader, toolAwarenessSetId.
+
+AgentSummary (embedded in channel/context responses): id, name, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens, toolAwarenessSetId. Same as AgentResponse minus systemPrompt.
 
 ────────────────────────────────────────
 ROLES & PERMISSIONS
@@ -125,10 +127,10 @@ ContextAllowedAgentsResponse returns: contextId, defaultAgent (AgentSummary), al
 ────────────────────────────────────────
 CHANNELS
 ────────────────────────────────────────
-POST   /channels                   { agentId?, title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader? }
+POST   /channels                   { agentId?, title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader?, toolAwarenessSetId? }
 GET    /channels?agentId={guid}
 GET    /channels/{id}
-PUT    /channels/{id}              { title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader? }
+PUT    /channels/{id}              { title?, contextId?, permissionSetId?, allowedAgentIds?, disableChatHeader?, customChatHeader?, toolAwarenessSetId? }
 DELETE /channels/{id}
 
 Set default agent:
@@ -152,7 +154,9 @@ Valid default resource keys: dangshell, safeshell, container, website, search, l
 Either agentId or contextId (with agent) required on create.
 allowedAgentIds on PUT replaces the set. permissionSetId=00000000-... removes the override; null leaves unchanged.
 
-ChannelResponse returns: id, title, agent (AgentSummary?), contextId, contextName, permissionSetId, effectivePermissionSetId, allowedAgents (AgentSummary[]), disableChatHeader, customChatHeader, createdAt, updatedAt.
+toolAwarenessSetId (guid|null): links a tool awareness set. Overrides the agent's set. See TOOL AWARENESS SETS section. On PUT, pass Guid.Empty to clear; null leaves unchanged.
+
+ChannelResponse returns: id, title, agent (AgentSummary?), contextId, contextName, permissionSetId, effectivePermissionSetId, allowedAgents (AgentSummary[]), disableChatHeader, customChatHeader, toolAwarenessSetId, createdAt, updatedAt.
 ChannelAllowedAgentsResponse returns: channelId, defaultAgent (AgentSummary?), allowedAgents (AgentSummary[]).
 
 All responses embed full AgentSummary objects (id, name, modelId, modelName, providerName, roleId, roleName, maxCompletionTokens) instead of bare GUIDs — no follow-up requests needed to resolve agent details.
@@ -668,3 +672,46 @@ Examples:
 
   Template: [{{time}} | {{editor}}]
   Output:   [2025-07-14 09:30:00 UTC | VisualStudio2026 18.4.2 workspace=E:\source\SharpClaw file=Program.cs lang=csharp sel=10-25 selection="public async Task RunAsync()"]
+
+────────────────────────────────────────
+TOOL AWARENESS SETS
+────────────────────────────────────────
+A reusable named configuration controlling which tool-call schemas are sent in API requests. Reduces prompt-token overhead by excluding tools the agent will never use (~2,500–3,000 tokens for the full 34-tool schema set).
+
+POST   /tool-awareness-sets                   { name, tools? }
+GET    /tool-awareness-sets
+GET    /tool-awareness-sets/{id}
+PUT    /tool-awareness-sets/{id}               { name?, tools? }
+DELETE /tool-awareness-sets/{id}
+
+tools: Dictionary<string, bool>. Keys are tool names (e.g. "execute_mk8_shell", "capture_display"). Tools whose key is true or absent are included; only tools explicitly set to false are excluded. Empty dict {} = all tools enabled.
+
+Override chain: channel.toolAwarenessSetId > agent.toolAwarenessSetId > null (all tools). Assign via toolAwarenessSetId field on POST/PUT agents and channels.
+
+On DELETE, agents/channels referencing the set have their toolAwarenessSetId set to null (SetNull cascade).
+
+ToolAwarenessSetResponse: id, name, tools (Dictionary<string,bool>), createdAt, updatedAt.
+
+CLI:
+  tools add <name> [json]            Create a tool awareness set
+  tools list                         List all sets
+  tools get <id>                     Show set details
+  tools update <id> [--name <n>] [json]  Update a set
+  tools delete <id>                  Delete a set
+  agent add <name> <modelId> --tools <setId>    Assign on creation
+  agent update <id> <name> --tools <setId>      Assign on update
+  channel add --agent <id> --tools <setId>      Assign on creation
+
+Available tool names (34):
+  wait, list_accessible_threads, read_thread_history,
+  execute_mk8_shell, execute_dangerous_shell,
+  transcribe_from_audio_device, transcribe_from_audio_stream, transcribe_from_audio_file,
+  create_sub_agent, create_container, register_info_store,
+  access_localhost_in_browser, access_localhost_cli,
+  access_local_info_store, access_external_info_store,
+  access_website, query_search_engine, access_container,
+  manage_agent, edit_task, access_skill,
+  capture_display, click_desktop, type_on_desktop,
+  editor_read_file, editor_get_open_files, editor_get_selection, editor_get_diagnostics,
+  editor_apply_edit, editor_create_file, editor_delete_file,
+  editor_show_diff, editor_run_build, editor_run_terminal

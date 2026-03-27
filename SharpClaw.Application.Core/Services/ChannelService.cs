@@ -52,6 +52,8 @@ public sealed class ChannelService(SharpClawDbContext db)
             PermissionSetId = request.PermissionSetId,
             DisableChatHeader = request.DisableChatHeader ?? false,
             CustomId = request.CustomId,
+            ToolAwarenessSetId = request.ToolAwarenessSetId,
+            DisableToolSchemas = request.DisableToolSchemas ?? false,
         };
 
         if (request.AllowedAgentIds is { Count: > 0 } agentIds)
@@ -167,6 +169,12 @@ public sealed class ChannelService(SharpClawDbContext db)
 
         if (request.CustomChatHeader is not null)
             channel.CustomChatHeader = request.CustomChatHeader.Length > 0 ? request.CustomChatHeader : null;
+
+        if (request.ToolAwarenessSetId is not null)
+            channel.ToolAwarenessSetId = request.ToolAwarenessSetId == Guid.Empty ? null : request.ToolAwarenessSetId;
+
+        if (request.DisableToolSchemas is not null)
+            channel.DisableToolSchemas = request.DisableToolSchemas.Value;
 
         await db.SaveChangesAsync(ct);
         return ToResponse(channel, channel.Agent, channel.AgentContext);
@@ -345,7 +353,9 @@ public sealed class ChannelService(SharpClawDbContext db)
             channel.CreatedAt,
             channel.UpdatedAt,
             channel.CustomId,
-            channel.CustomChatHeader);
+            channel.CustomChatHeader,
+            channel.ToolAwarenessSetId,
+            channel.DisableToolSchemas);
     }
 
     internal static AgentSummary ToSummary(AgentDB agent) =>
@@ -361,5 +371,6 @@ public sealed class ChannelService(SharpClawDbContext db)
             agent.Temperature, agent.TopP, agent.TopK,
             agent.FrequencyPenalty, agent.PresencePenalty, agent.Stop,
             agent.Seed, agent.ResponseFormat, agent.ReasoningEffort,
-            agent.ProviderParameters, agent.CustomChatHeader);
+            agent.ProviderParameters, agent.CustomChatHeader, agent.ToolAwarenessSetId,
+            agent.DisableToolSchemas);
 }

@@ -37,6 +37,7 @@ public sealed partial class MainPage
         var api = App.Services!.GetRequiredService<SharpClawApiClient>();
 
         bool disableChatHeader = false;
+        bool disableToolSchemas = false;
         string? customChatHeader = null;
         List<(Guid Id, string Name, string ProviderModel)> allowedAgents = [];
         Guid? channelPermSetId = null;
@@ -52,6 +53,7 @@ public sealed partial class MainPage
             var root = chDoc.RootElement;
 
             disableChatHeader = root.TryGetProperty("disableChatHeader", out var dch) && dch.GetBoolean();
+            disableToolSchemas = root.TryGetProperty("disableToolSchemas", out var dts) && dts.GetBoolean();
             if (root.TryGetProperty("customChatHeader", out var cch) && cch.ValueKind == JsonValueKind.String) customChatHeader = cch.GetString();
             if (root.TryGetProperty("permissionSetId", out var psi) && psi.ValueKind == JsonValueKind.String) channelPermSetId = psi.GetGuid();
             if (root.TryGetProperty("agent", out var agentProp) && agentProp.ValueKind == JsonValueKind.Object
@@ -116,10 +118,10 @@ public sealed partial class MainPage
         }
         catch { /* swallow */ }
 
-        await BuildSettingsPanelAsync(api, channelId, disableChatHeader, customChatHeader, allowedAgents, channelDefaultAgentId, permRoleId, permJson, transcriptionModelIds);
+        await BuildSettingsPanelAsync(api, channelId, disableChatHeader, disableToolSchemas, customChatHeader, allowedAgents, channelDefaultAgentId, permRoleId, permJson, transcriptionModelIds);
     }
 
-    private async Task BuildSettingsPanelAsync(SharpClawApiClient api, Guid channelId, bool disableChatHeader, string? customChatHeader,
+    private async Task BuildSettingsPanelAsync(SharpClawApiClient api, Guid channelId, bool disableChatHeader, bool disableToolSchemas, string? customChatHeader,
         List<(Guid Id, string Name, string ProviderModel)> allowedAgents,
         Guid? channelDefaultAgentId, Guid? permRoleId, JsonElement? permJson, HashSet<Guid> transcriptionModelIds)
     {
@@ -139,6 +141,20 @@ public sealed partial class MainPage
         };
         headerRow.Children.Add(toggle);
         SettingsPanel.Children.Add(headerRow);
+
+        // Disable tool schemas toggle
+        var toolSchemaRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        toolSchemaRow.Children.Add(new TextBlock { Text = "disable tool schemas:", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(0xCCCCCC), VerticalAlignment = VerticalAlignment.Center });
+        var toolSchemaToggle = new ToggleSwitch { IsOn = disableToolSchemas, OnContent = "yes", OffContent = "no" };
+        ToolTipService.SetToolTip(toolSchemaToggle, "When enabled, no tool schemas or tool instruction suffix are sent — the model sees only the system prompt and conversation history. Overrides the agent's setting.");
+        toolSchemaToggle.Toggled += async (_, _) =>
+        {
+            var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+            try { var body = JsonSerializer.Serialize(new { disableToolSchemas = toolSchemaToggle.IsOn }, Json); await api.PutAsync($"/channels/{channelId}", new StringContent(body, Encoding.UTF8, "application/json")); }
+            catch { /* swallow */ }
+        };
+        toolSchemaRow.Children.Add(toolSchemaToggle);
+        SettingsPanel.Children.Add(toolSchemaRow);
 
         // Custom chat header template
         SettingsPanel.Children.Add(new TextBlock { Text = "custom chat header:", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(0xCCCCCC), Margin = new Thickness(0, 8, 0, 2) });

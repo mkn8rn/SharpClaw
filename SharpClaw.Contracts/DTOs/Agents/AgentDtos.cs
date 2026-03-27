@@ -18,7 +18,9 @@ public sealed record CreateAgentRequest(
     JsonElement? ResponseFormat = null,
     string? ReasoningEffort = null,
     Dictionary<string, JsonElement>? ProviderParameters = null,
-    string? CustomChatHeader = null);
+    string? CustomChatHeader = null,
+    Guid? ToolAwarenessSetId = null,
+    bool? DisableToolSchemas = null);
 
 public sealed record UpdateAgentRequest(
     string? Name = null,
@@ -36,7 +38,9 @@ public sealed record UpdateAgentRequest(
     JsonElement? ResponseFormat = null,
     string? ReasoningEffort = null,
     Dictionary<string, JsonElement>? ProviderParameters = null,
-    string? CustomChatHeader = null);
+    string? CustomChatHeader = null,
+    Guid? ToolAwarenessSetId = null,
+    bool? DisableToolSchemas = null);
 
 public sealed record AssignAgentRoleRequest(Guid RoleId);
 
@@ -61,10 +65,12 @@ public sealed record AgentResponse(
     JsonElement? ResponseFormat = null,
     string? ReasoningEffort = null,
     Dictionary<string, JsonElement>? ProviderParameters = null,
-    string? CustomChatHeader = null);
+    string? CustomChatHeader = null,
+    Guid? ToolAwarenessSetId = null,
+    bool DisableToolSchemas = false);
 
 /// <summary>
-/// Lightweight agent summary
+/// Lightweight agent summary —
 /// consumers don't need additional requests to resolve agent details.
 /// Excludes <c>SystemPrompt</c> to keep payloads compact.
 /// </summary>
@@ -88,4 +94,6 @@ public sealed record AgentSummary(
     JsonElement? ResponseFormat = null,
     string? ReasoningEffort = null,
     Dictionary<string, JsonElement>? ProviderParameters = null,
-    string? CustomChatHeader = null);
+    string? CustomChatHeader = null,
+    Guid? ToolAwarenessSetId = null,
+    bool DisableToolSchemas = false);

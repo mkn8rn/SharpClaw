@@ -40,6 +40,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             ResponseFormat = request.ResponseFormat,
             ReasoningEffort = request.ReasoningEffort,
             ProviderParameters = request.ProviderParameters,
+            ToolAwarenessSetId = request.ToolAwarenessSetId,
+            DisableToolSchemas = request.DisableToolSchemas ?? false,
         };
 
         db.Agents.Add(agent);
@@ -81,7 +83,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
                 a.Temperature, a.TopP, a.TopK,
                 a.FrequencyPenalty, a.PresencePenalty, a.Stop,
                 a.Seed, a.ResponseFormat, a.ReasoningEffort,
-                a.ProviderParameters))
+                a.ProviderParameters, a.CustomChatHeader, a.ToolAwarenessSetId,
+                a.DisableToolSchemas))
             .ToListAsync(ct);
     }
 
@@ -110,6 +113,10 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             agent.ProviderParameters = request.ProviderParameters.Count > 0 ? request.ProviderParameters : null;
         if (request.CustomChatHeader is not null)
             agent.CustomChatHeader = request.CustomChatHeader.Length > 0 ? request.CustomChatHeader : null;
+        if (request.ToolAwarenessSetId is not null)
+            agent.ToolAwarenessSetId = request.ToolAwarenessSetId == Guid.Empty ? null : request.ToolAwarenessSetId;
+        if (request.DisableToolSchemas is not null)
+            agent.DisableToolSchemas = request.DisableToolSchemas.Value;
         if (request.ModelId is { } modelId)
         {
             var model = await db.Models.Include(m => m.Provider).FirstOrDefaultAsync(m => m.Id == modelId, ct)
@@ -471,7 +478,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             agent.Temperature, agent.TopP, agent.TopK,
             agent.FrequencyPenalty, agent.PresencePenalty, agent.Stop,
             agent.Seed, agent.ResponseFormat, agent.ReasoningEffort,
-            agent.ProviderParameters, agent.CustomChatHeader);
+            agent.ProviderParameters, agent.CustomChatHeader, agent.ToolAwarenessSetId,
+            agent.DisableToolSchemas);
 
     /// <summary>
     /// Validates the typed completion parameters from a create request
