@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Application.Infrastructure.Models;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts.Entities;
@@ -67,6 +68,28 @@ public class AgentDB : BaseEntity
     /// <c>{{time}}</c> or <c>{{SafeShellAccesses}}</c> are expanded at runtime.
     /// </summary>
     public string? CustomChatHeader { get; set; }
+
+    /// <summary>
+    /// When <see langword="true"/>, no tool schemas or tool instruction
+    /// suffix are sent in chat requests for this agent — the model sees
+    /// only the system prompt and conversation history.  Overridden by
+    /// the channel's <see cref="ChannelDB.DisableToolSchemas"/> when set.
+    /// </summary>
+    public bool DisableToolSchemas { get; set; }
+
+    /// <summary>
+    /// Optional tool-awareness set controlling which tool-call schemas are
+    /// sent in API requests.  Only tools whose key is <see langword="true"/>
+    /// (or absent) are included.  Reduces prompt-token overhead for agents
+    /// that only need a subset of capabilities.
+    /// <para>
+    /// Override chain: channel's set → this set → <see langword="null"/>
+    /// (all tools enabled).
+    /// </para>
+    /// Ignored when <see cref="DisableToolSchemas"/> is <see langword="true"/>.
+    /// </summary>
+    public Guid? ToolAwarenessSetId { get; set; }
+    public ToolAwarenessSetDB? ToolAwarenessSet { get; set; }
 
     public Guid ModelId { get; set; }
     public ModelDB Model { get; set; } = null!;

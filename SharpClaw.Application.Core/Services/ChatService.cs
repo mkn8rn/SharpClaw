@@ -52,7 +52,10 @@ public sealed partial class ChatService(
     {
         var channel = await db.Channels
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.ToolAwarenessSet)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.ToolAwarenessSet)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
@@ -96,7 +99,10 @@ public sealed partial class ChatService(
         if (client is LocalInferenceApiClient lic)
             lic.CurrentModelId = model.Id;
         var useNativeTools = client.SupportsNativeToolCalling;
-        var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, useNativeTools);
+        var disableTools = channel.DisableToolSchemas || agent.DisableToolSchemas;
+        var systemPrompt = disableTools
+            ? agent.SystemPrompt ?? ""
+            : BuildSystemPrompt(agent.SystemPrompt, useNativeTools);
 
         // Build chat header for the user message (if enabled)
         var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, request.EditorContext, ct, taskContext: request.TaskContext);
@@ -114,12 +120,18 @@ public sealed partial class ChatService(
         var providerParams = _disableCustomProviderParameters ? null : agent.ProviderParameters;
         var completionParams = BuildCompletionParameters(agent);
         CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderType);
+        var toolAwareness = disableTools ? null : (channel.ToolAwarenessSet?.Tools ?? agent.ToolAwarenessSet?.Tools);
 
-        var loopResult = useNativeTools
-            ? await RunNativeToolLoopAsync(
+        var loopResult = disableTools
+            ? await RunTextToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
                 taskContext: request.TaskContext)
+            : useNativeTools
+            ? await RunNativeToolLoopAsync(
+                client, httpClient, apiKey, model.Name, systemPrompt,
+                history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
+                taskContext: request.TaskContext, toolAwareness: toolAwareness)
             : await RunTextToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
@@ -498,20 +510,6 @@ public sealed partial class ChatService(
             sb.Append(" | agent-role: (none) clearance=Unset (no permissions)");
         }
 
-        // ── Accessible cross-thread history ──────────────────────
-        var accessibleThreads = await GetAccessibleThreadsAsync(agent.Id, channel.Id, ct);
-        if (accessibleThreads.Count > 0)
-        {
-            sb.Append(" | accessible-threads: ");
-            for (var i = 0; i < accessibleThreads.Count; i++)
-            {
-                if (i > 0) sb.Append(", ");
-                var (threadId, threadName, _, channelTitle) = accessibleThreads[i];
-                sb.Append(threadName).Append(" [").Append(channelTitle)
-                  .Append("] (").Append(threadId.ToString("D")).Append(')');
-            }
-        }
-
         if (editorContext is not null)
         {
             sb.Append(" | editor: ").Append(editorContext.EditorType);
@@ -783,7 +781,10 @@ public sealed partial class ChatService(
     {
         var channel = await db.Channels
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.ToolAwarenessSet)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.ToolAwarenessSet)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
@@ -826,7 +827,9 @@ public sealed partial class ChatService(
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
         if (client is LocalInferenceApiClient streamLic)
             streamLic.CurrentModelId = model.Id;
-        var systemPrompt = BuildSystemPrompt(agent.SystemPrompt, nativeToolCalling: true);
+        var systemPrompt = channel.DisableToolSchemas || agent.DisableToolSchemas
+            ? agent.SystemPrompt ?? ""
+            : BuildSystemPrompt(agent.SystemPrompt, nativeToolCalling: true);
 
         // Build chat header for the user message (if enabled)
         var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, request.EditorContext, ct, taskContext: request.TaskContext);
@@ -840,7 +843,12 @@ public sealed partial class ChatService(
         var providerParams = _disableCustomProviderParameters ? null : agent.ProviderParameters;
         var completionParams = BuildCompletionParameters(agent);
         CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderType);
-        var effectiveTools = GetEffectiveTools(request.TaskContext);
+        var toolAwareness = channel.DisableToolSchemas || agent.DisableToolSchemas
+            ? null
+            : (channel.ToolAwarenessSet?.Tools ?? agent.ToolAwarenessSet?.Tools);
+        var effectiveTools = channel.DisableToolSchemas || agent.DisableToolSchemas
+            ? []
+            : GetEffectiveTools(request.TaskContext, toolAwareness);
 
         // Convert history to tool-aware messages
         var messages = new List<ToolAwareMessage>(history.Count);
@@ -1045,27 +1053,48 @@ public sealed partial class ChatService(
     /// Returns the effective tool list for a chat call.  When a task
     /// context is present, task-specific tools (shared data, output,
     /// introspection, custom hooks) are appended to the standard set.
+    /// When a <paramref name="toolAwareness"/> filter is provided, only
+    /// tools whose key is <see langword="true"/> or absent are kept.
     /// </summary>
-    private static IReadOnlyList<ChatToolDefinition> GetEffectiveTools(TaskChatContext? taskContext)
+    private static IReadOnlyList<ChatToolDefinition> GetEffectiveTools(
+        TaskChatContext? taskContext, Dictionary<string, bool>? toolAwareness = null)
     {
+        IReadOnlyList<ChatToolDefinition> baseTools;
+
         if (taskContext is null)
-            return AllTools;
+        {
+            baseTools = AllTools;
+        }
+        else
+        {
+            var store = TaskSharedData.Get(taskContext.InstanceId);
+            if (store is null)
+            {
+                baseTools = AllTools;
+            }
+            else
+            {
+                var tools = new List<ChatToolDefinition>(AllTools);
+                tools.AddRange(BuiltInTaskTools);
 
-        var store = TaskSharedData.Get(taskContext.InstanceId);
-        if (store is null)
-            return AllTools;
+                // task_output only available when the task declares [AgentOutput]
+                if (store.AllowedOutputFormat is not null)
+                    tools.Add(TaskOutputToolDef);
 
-        var tools = new List<ChatToolDefinition>(AllTools);
-        tools.AddRange(BuiltInTaskTools);
+                // Custom [ToolCall] hooks
+                tools.AddRange(store.CustomToolDefinitions);
 
-        // task_output only available when the task declares [AgentOutput]
-        if (store.AllowedOutputFormat is not null)
-            tools.Add(TaskOutputToolDef);
+                baseTools = tools;
+            }
+        }
 
-        // Custom [ToolCall] hooks
-        tools.AddRange(store.CustomToolDefinitions);
+        if (toolAwareness is null or { Count: 0 })
+            return baseTools;
 
-        return tools;
+        // Filter: include only tools whose key is true or absent in the set.
+        return baseTools
+            .Where(t => !toolAwareness.TryGetValue(t.Name, out var enabled) || enabled)
+            .ToList();
     }
 
     /// <summary>
@@ -1430,15 +1459,12 @@ public sealed partial class ChatService(
         return
         [
             new("task_write_light_data",
-                "Write text to the task's light shared data. This text is visible "
-                + "to all agents in the chat header (max 500 words). "
-                + "Use for small metadata like status, progress, or coordination notes. "
-                + "Each write replaces the previous text entirely.",
+                "Write to light shared data (visible in header, max 500 words). Replaces previous.",
                 BuildJsonSchema("""
                     {
                         "type": "object",
                         "properties": {
-                            "text": { "type": "string", "description": "The text to store (max 500 words)." }
+                            "text": { "type": "string", "description": "Text (max 500 words)." }
                         },
                         "required": ["text"]
                     }
@@ -1454,36 +1480,33 @@ public sealed partial class ChatService(
                     """)),
 
             new("task_write_big_data",
-                "Write a large data entry to the task's big shared data store. Only the entry "
-                + "ID and title appear in the chat header; the full content must be retrieved "
-                + "with task_read_big_data. Use for large payloads like analysis results, "
-                + "code snippets, or conversation summaries.",
+                "Write a large entry to big shared data. Only ID+title in header; use task_read_big_data for content.",
                 BuildJsonSchema("""
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Optional entry ID (auto-generated if omitted)." },
-                            "title": { "type": "string", "description": "Short title for the entry." },
-                            "content": { "type": "string", "description": "The full content to store." }
+                            "id": { "type": "string", "description": "Entry ID (auto-generated if omitted)." },
+                            "title": { "type": "string", "description": "Short title." },
+                            "content": { "type": "string", "description": "Full content." }
                         },
                         "required": ["title", "content"]
                     }
                     """)),
 
             new("task_read_big_data",
-                "Read the full content of a big shared data entry by ID.",
+                "Read a big shared data entry by ID.",
                 BuildJsonSchema("""
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "The entry ID to read." }
+                            "id": { "type": "string", "description": "Entry ID." }
                         },
                         "required": ["id"]
                     }
                     """)),
 
             new("task_list_big_data",
-                "List all big shared data entry IDs and titles.",
+                "List big shared data entries (IDs and titles).",
                 BuildJsonSchema("""
                     {
                         "type": "object",
@@ -1492,7 +1515,7 @@ public sealed partial class ChatService(
                     """)),
 
             new("task_view_info",
-                "View the current task's metadata: name, description, parameters, and output format.",
+                "View task metadata (name, description, parameters, output format).",
                 BuildJsonSchema("""
                     {
                         "type": "object",
@@ -1501,7 +1524,7 @@ public sealed partial class ChatService(
                     """)),
 
             new("task_view_source",
-                "View the full source code of the current task definition.",
+                "View the task definition source code.",
                 BuildJsonSchema("""
                     {
                         "type": "object",
@@ -1514,13 +1537,12 @@ public sealed partial class ChatService(
     private static ChatToolDefinition BuildTaskOutputToolDef()
     {
         return new("task_output",
-            "Write structured output to the task instance. The output format must match "
-            + "the task's [AgentOutput] annotation. Only available when the task declares it.",
+            "Write structured output to the task. Format must match [AgentOutput] annotation.",
             BuildJsonSchema("""
                 {
                     "type": "object",
                     "properties": {
-                        "data": { "type": "string", "description": "The output data to write to the task." }
+                        "data": { "type": "string", "description": "Output data." }
                     },
                     "required": ["data"]
                 }
@@ -1665,7 +1687,8 @@ public sealed partial class ChatService(
         CompletionParameters? completionParameters,
         Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct,
-        TaskChatContext? taskContext = null)
+        TaskChatContext? taskContext = null,
+        Dictionary<string, bool>? toolAwareness = null)
     {
         var messages = new List<ToolAwareMessage>(dbHistory.Count);
         foreach (var msg in dbHistory)
@@ -1674,7 +1697,7 @@ public sealed partial class ChatService(
         var supportsVision = modelCapabilities.HasFlag(ModelCapability.Vision);
         var jobResults = new List<AgentJobResponse>();
         var rounds = 0;
-        var effectiveTools = GetEffectiveTools(taskContext);
+        var effectiveTools = GetEffectiveTools(taskContext, toolAwareness);
         var totalPromptTokens = 0;
         var totalCompletionTokens = 0;
 
@@ -2233,186 +2256,116 @@ public sealed partial class ChatService(
         [
             // ── Inline tools (no permissions) ─────────────────
             new("wait",
-                "Pause execution for a specified number of seconds (1–300). "
-                + "No permissions required. Use this to wait for external processes, "
-                + "builds, deployments, or other async operations to complete without "
-                + "wasting tokens on polling. The tool call thread is blocked for the "
-                + "duration; no inference or token cost is incurred while waiting.",
+                "Pause for 1–300 seconds. No tokens consumed while waiting.",
                 waitSchema),
 
             // ── Cross-thread context tools ────────────────────
             new("list_accessible_threads",
-                "List threads from other channels that you can read. Returns thread IDs, "
-                + "names, and their parent channel info. Requires ReadCrossThreadHistory "
-                + "permission. Only threads in channels that have opted in to cross-thread "
-                + "sharing (or where you have Independent clearance) are returned.",
+                "List readable threads from other channels (IDs, names, parent channel).",
                 globalSchema),
             new("read_thread_history",
-                "Read conversation history from a thread in another channel. Provide "
-                + "the threadId (GUID) and optionally maxMessages (1–200, default 50). "
-                + "Requires ReadCrossThreadHistory permission and the target channel "
-                + "must have opted in to cross-thread sharing.",
+                "Read history from a cross-channel thread. Provide threadId; optional maxMessages (1–200, default 50).",
                 readThreadHistorySchema),
 
             // ── Shell execution ───────────────────────────────
             new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
             new("execute_dangerous_shell",
-                "Execute a raw shell command via Bash, PowerShell, CommandPrompt, or Git. "
-                + "Requires UnsafeExecuteAsDangerousShell permission. The command string is "
-                + "passed directly to the interpreter with NO sandboxing. "
-                + "Optional workingDirectory overrides the SystemUser's default CWD.",
+                "Execute a raw shell command (Bash/PowerShell/Cmd/Git). No sandboxing. Optional workingDirectory overrides default CWD.",
                 dangerousShellSchema),
 
             // ── Transcription ────────────────────────────────
             new("transcribe_from_audio_device",
-                "Start live transcription from a system audio device. Requires a "
-                + "transcription-capable model and an audio device resource.",
+                "Start live transcription from a system audio device.",
                 transcriptionSchema),
             new("transcribe_from_audio_stream",
-                "Transcribe an incoming audio stream. [NOT YET IMPLEMENTED — job will "
-                + "execute but produce a stub result.]",
+                "Transcribe an incoming audio stream. [Stub — not yet implemented.]",
                 transcriptionSchema),
             new("transcribe_from_audio_file",
-                "Transcribe a pre-recorded audio file. [NOT YET IMPLEMENTED — job will "
-                + "execute but produce a stub result.]",
+                "Transcribe a pre-recorded audio file. [Stub — not yet implemented.]",
                 transcriptionSchema),
 
             // ── Global flags ─────────────────────────────────────
             new("create_sub_agent",
-                "Create a new sub-agent under the calling agent. Provide a name, "
-                + "modelId (GUID of the model to use), and optional systemPrompt. "
-                + "Requires CreateSubAgent global permission.",
+                "Create a sub-agent. Provide name, modelId, and optional systemPrompt.",
                 createSubAgentSchema),
             new("create_container",
-                "Create a new mk8.shell sandbox container. Provide a name (English "
-                + "letters and digits only) and a path (parent directory where the "
-                + "sandbox folder will be created). Requires CreateContainer global "
-                + "permission.",
+                "Create an mk8.shell sandbox container. Name: alphanumeric only.",
                 createContainerSchema),
             new("register_info_store",
-                "Register a new information store (local or external). [NOT YET "
-                + "IMPLEMENTED — job will execute but produce a stub result.] Requires "
-                + "RegisterInfoStore global permission.",
+                "Register an information store. [Stub — not yet implemented.]",
                 globalSchema),
             new("access_localhost_in_browser",
-                "Access a localhost URL through a headless browser (Chrome by "
-                + "default). Set mode to 'html' (default) for the DOM content or "
-                + "'screenshot' for a PNG image (vision models only — if the model "
-                + "lacks vision, use 'html' instead). Only localhost/127.0.0.1 URLs "
-                + "are allowed. Requires AccessLocalhostInBrowser permission.",
+                "Headless-browser GET on a localhost URL. mode='html' (default) returns DOM; 'screenshot' returns PNG (vision only). localhost/127.0.0.1 only.",
                 localhostBrowserSchema),
             new("access_localhost_cli",
-                "Make a direct HTTP GET to a localhost URL and return the status "
-                + "code, headers, and response body. No browser involved. Only "
-                + "localhost/127.0.0.1 URLs are allowed. Requires "
-                + "AccessLocalhostCli permission.",
+                "HTTP GET a localhost URL; returns status, headers, body. localhost/127.0.0.1 only.",
                 localhostCliSchema),
 
             // ── Per-resource ─────────────────────────────────────
             new("access_local_info_store",
-                "Query or retrieve data from a local information store. [NOT YET "
-                + "IMPLEMENTED — job will execute but produce a stub result.] "
-                + "Requires AccessLocalInfoStore permission for the target resource.",
+                "Query a local information store. [Stub.]",
                 resourceOnly),
             new("access_external_info_store",
-                "Query or retrieve data from an external information store. [NOT YET "
-                + "IMPLEMENTED — job will execute but produce a stub result.] "
-                + "Requires AccessExternalInfoStore permission for the target resource.",
+                "Query an external information store. [Stub.]",
                 resourceOnly),
             new("access_website",
-                "Access or interact with a registered website resource. [NOT YET "
-                + "IMPLEMENTED — job will execute but produce a stub result.] "
-                + "Requires AccessWebsite permission for the target resource.",
+                "Access a registered website. [Stub.]",
                 resourceOnly),
             new("query_search_engine",
-                "Query a registered search engine resource. [NOT YET IMPLEMENTED — job "
-                + "will execute but produce a stub result.] Requires QuerySearchEngine "
-                + "permission for the target resource.",
+                "Query a registered search engine. [Stub.]",
                 resourceOnly),
             new("access_container",
-                "Access a container resource (read metadata, inspect). [NOT YET "
-                + "IMPLEMENTED — job will execute but produce a stub result.] "
-                + "Requires AccessContainer permission for the target resource.",
+                "Access a container resource. [Stub.]",
                 resourceOnly),
             new("manage_agent",
-                "Update another agent's name, system prompt, or model. Provide "
-                + "targetId (the agent GUID) and the fields to update. "
-                + "Requires ManageAgent permission for the target.",
+                "Update an agent's name, systemPrompt, or modelId.",
                 manageAgentSchema),
             new("edit_task",
-                "Edit a specific scheduled task's name, interval, or retry "
-                + "settings. Provide targetId (the task GUID) and the fields "
-                + "to update. Requires EditTask permission.",
+                "Edit a task's name, interval, or retry settings.",
                 editTaskSchema),
             new("access_skill",
-                "Retrieve the instruction text of a registered skill. Returns the "
-                + "full SkillText so the agent can learn how to use the associated "
-                + "resource. Requires AccessSkill permission for the target skill.",
+                "Retrieve a skill's instruction text.",
                 resourceOnly),
             new("capture_display",
-                "Capture a screenshot of a system display/monitor. Returns a base64-encoded "
-                + "PNG image (vision models only — if the model lacks vision, you will "
-                + "receive only a text description). Requires CaptureDisplay permission "
-                + "for the target display device resource.",
+                "Screenshot a display. Returns base64 PNG (vision) or text description.",
                 resourceOnly),
             new("click_desktop",
-                "Simulate a mouse click at specific coordinates on a display. "
-                + "Coordinates are relative to the display's top-left corner. "
-                + "Returns a follow-up screenshot so you can verify the result. "
-                + "Requires CanClickDesktop global permission. Provide the "
-                + "target display device GUID.",
+                "Click at (x,y) on a display. Returns follow-up screenshot.",
                 clickDesktopSchema),
             new("type_on_desktop",
-                "Type text using keyboard input. Optionally click at coordinates "
-                + "first to focus an input field. Returns a follow-up screenshot "
-                + "so you can verify the result. Requires CanTypeOnDesktop "
-                + "global permission. Provide the target display device GUID.",
+                "Type text via keyboard. Optional (x,y) click to focus first. Returns follow-up screenshot.",
                 typeOnDesktopSchema),
 
             // ── Editor actions ────────────────────────────────────
             new("editor_read_file",
-                "Read a file's contents from the connected IDE. Provide the file path "
-                + "relative to the workspace root. Optionally specify startLine/endLine "
-                + "to read a range. Requires EditorSession permission.",
+                "Read a file from the IDE. Optional startLine/endLine for a range.",
                 editorReadFileSchema),
             new("editor_get_open_files",
-                "List all currently open files/tabs in the connected IDE. "
-                + "Requires EditorSession permission.",
+                "List open files/tabs in the IDE.",
                 resourceOnly),
             new("editor_get_selection",
-                "Get the active file path, cursor position, and currently "
-                + "selected text in the connected IDE. Requires EditorSession permission.",
+                "Get active file, cursor position, and selected text.",
                 resourceOnly),
             new("editor_get_diagnostics",
-                "Get compilation errors and warnings from the connected IDE. "
-                + "Optionally specify a filePath to scope to one file. "
-                + "Requires EditorSession permission.",
+                "Get compilation errors/warnings. Optional filePath to scope.",
                 editorFileOptionalSchema),
             new("editor_apply_edit",
-                "Apply a text edit in the connected IDE. Specify the file path, "
-                + "line range (startLine/endLine), and the newText to replace that range. "
-                + "Requires EditorSession permission.",
+                "Replace a line range in a file with newText.",
                 editorApplyEditSchema),
             new("editor_create_file",
-                "Create a new file in the connected IDE's workspace. Provide "
-                + "the file path and content. Requires EditorSession permission.",
+                "Create a file in the IDE workspace.",
                 editorCreateFileSchema),
             new("editor_delete_file",
-                "Delete a file from the connected IDE's workspace. "
-                + "Requires EditorSession permission.",
+                "Delete a file from the IDE workspace.",
                 editorFileRequiredSchema),
             new("editor_show_diff",
-                "Show a diff/proposed changes view in the connected IDE. Provide "
-                + "the file path and the proposed new content. The user can accept "
-                + "or reject. Requires EditorSession permission.",
+                "Show a diff view in the IDE. User can accept/reject.",
                 editorShowDiffSchema),
             new("editor_run_build",
-                "Trigger a build in the connected IDE and return the build output "
-                + "including any errors. Requires EditorSession permission.",
+                "Trigger a build and return output/errors.",
                 resourceOnly),
             new("editor_run_terminal",
-                "Execute a command in the connected IDE's integrated terminal. "
-                + "Returns the command output. Requires EditorSession permission.",
+                "Run a command in the IDE terminal.",
                 editorRunTerminalSchema),
         ];
     }
@@ -2425,7 +2378,7 @@ public sealed partial class ChatService(
                 "properties": {
                     "seconds": {
                         "type": "integer",
-                        "description": "Number of seconds to wait (1–300). Default 5."
+                        "description": "Seconds (1–300)."
                     }
                 },
                 "required": ["seconds"]
@@ -2442,11 +2395,11 @@ public sealed partial class ChatService(
                 "properties": {
                     "threadId": {
                         "type": "string",
-                        "description": "GUID of the thread to read. Use list_accessible_threads to discover available thread IDs."
+                        "description": "Thread GUID (from list_accessible_threads)."
                     },
                     "maxMessages": {
                         "type": "integer",
-                        "description": "Maximum number of messages to return (1–200). Default 50."
+                        "description": "Max messages (1–200, default 50)."
                     }
                 },
                 "required": ["threadId"]
@@ -2463,19 +2416,19 @@ public sealed partial class ChatService(
                 "properties": {
                     "resourceId": {
                         "type": "string",
-                        "description": "The GUID of the container resource to execute against."
+                        "description": "Container GUID."
                     },
                     "sandboxId": {
                         "type": "string",
-                        "description": "The mk8.shell sandbox name (resolved from the local registry)."
+                        "description": "Sandbox name."
                     },
                     "script": {
                         "type": "object",
-                        "description": "The mk8.shell script object.",
+                        "description": "Script object.",
                         "properties": {
                             "operations": {
                                 "type": "array",
-                                "description": "Ordered list of operations. Each needs verb and args.",
+                                "description": "Ordered operations.",
                                 "items": {
                                     "type": "object",
                                     "properties": {
@@ -2483,7 +2436,7 @@ public sealed partial class ChatService(
                                         "args": { "type": "array", "items": { "type": "string" } },
                                         "workingDirectory": {
                                             "type": "string",
-                                            "description": "Optional per-step working directory override (e.g. '$WORKSPACE/bananaapp'). ProcRun processes spawn with this as their CWD instead of the sandbox root. Use this instead of flags like git -C which are not in the template whitelist."
+                                            "description": "Per-step CWD override (e.g. '$WORKSPACE/subdir')."
                                         }
                                     },
                                     "required": ["verb", "args"]
@@ -2499,7 +2452,7 @@ public sealed partial class ChatService(
                                         "args": { "type": "array", "items": { "type": "string" } },
                                         "workingDirectory": {
                                             "type": "string",
-                                            "description": "Optional per-step working directory override."
+                                            "description": "Per-step CWD override."
                                         }
                                     },
                                     "required": ["verb", "args"]
@@ -2523,7 +2476,7 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the target resource."
+                        "description": "Resource GUID."
                     }
                 },
                 "required": ["targetId"]
@@ -2552,20 +2505,20 @@ public sealed partial class ChatService(
                 "properties": {
                     "resourceId": {
                         "type": "string",
-                        "description": "The GUID of the SystemUser resource to execute as."
+                        "description": "SystemUser GUID."
                     },
                     "shellType": {
                         "type": "string",
                         "enum": ["Bash", "PowerShell", "CommandPrompt", "Git"],
-                        "description": "The shell interpreter to use."
+                        "description": "Shell interpreter."
                     },
                     "command": {
                         "type": "string",
-                        "description": "The raw command string to pass to the interpreter."
+                        "description": "Raw command string."
                     },
                     "workingDirectory": {
                         "type": "string",
-                        "description": "Absolute path where the shell process should be spawned. Overrides the SystemUser's default working directory when set."
+                        "description": "Optional CWD override."
                     }
                 },
                 "required": ["resourceId", "shellType", "command"]
@@ -2582,15 +2535,15 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the audio device resource."
+                        "description": "Audio device GUID."
                     },
                     "transcriptionModelId": {
                         "type": "string",
-                        "description": "The GUID of the transcription-capable model to use."
+                        "description": "Transcription model GUID."
                     },
                     "language": {
                         "type": "string",
-                        "description": "Optional BCP-47 language code (e.g. 'en', 'de')."
+                        "description": "BCP-47 code (e.g. 'en')."
                     }
                 },
                 "required": ["targetId", "transcriptionModelId"]
@@ -2607,15 +2560,15 @@ public sealed partial class ChatService(
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Name for the new sub-agent."
+                        "description": "Agent name."
                     },
                     "modelId": {
                         "type": "string",
-                        "description": "The GUID of the model the sub-agent should use."
+                        "description": "Model GUID."
                     },
                     "systemPrompt": {
                         "type": "string",
-                        "description": "Optional system prompt for the sub-agent."
+                        "description": "System prompt."
                     }
                 },
                 "required": ["name", "modelId"]
@@ -2632,15 +2585,15 @@ public sealed partial class ChatService(
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Sandbox name (English letters and digits only)."
+                        "description": "Name (alphanumeric)."
                     },
                     "path": {
                         "type": "string",
-                        "description": "Absolute parent directory where the sandbox folder will be created."
+                        "description": "Absolute parent directory."
                     },
                     "description": {
                         "type": "string",
-                        "description": "Optional description for the container."
+                        "description": "Description."
                     }
                 },
                 "required": ["name", "path"]
@@ -2657,19 +2610,19 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the agent to manage."
+                        "description": "Agent GUID."
                     },
                     "name": {
                         "type": "string",
-                        "description": "New name for the agent."
+                        "description": "New name."
                     },
                     "systemPrompt": {
                         "type": "string",
-                        "description": "New system prompt for the agent."
+                        "description": "New system prompt."
                     },
                     "modelId": {
                         "type": "string",
-                        "description": "GUID of the new model to assign."
+                        "description": "New model GUID."
                     }
                 },
                 "required": ["targetId"]
@@ -2686,19 +2639,19 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the scheduled task to edit."
+                        "description": "Task GUID."
                     },
                     "name": {
                         "type": "string",
-                        "description": "New name for the task."
+                        "description": "New name."
                     },
                     "repeatIntervalMinutes": {
                         "type": "integer",
-                        "description": "New repeat interval in minutes. 0 to remove."
+                        "description": "Minutes. 0=remove."
                     },
                     "maxRetries": {
                         "type": "integer",
-                        "description": "New maximum retry count."
+                        "description": "Max retries."
                     }
                 },
                 "required": ["targetId"]
@@ -2715,12 +2668,12 @@ public sealed partial class ChatService(
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The localhost URL to access (e.g. 'http://localhost:5000/api/health'). Only localhost/127.0.0.1/[::1] allowed."
+                        "description": "Localhost URL."
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["html", "screenshot"],
-                        "description": "Return mode. 'html' (default) returns the DOM content. 'screenshot' returns a base64-encoded PNG."
+                        "description": "'html' (default)=DOM, 'screenshot'=PNG."
                     }
                 },
                 "required": ["url"]
@@ -2737,7 +2690,7 @@ public sealed partial class ChatService(
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The localhost URL to GET (e.g. 'http://localhost:5000/api/health'). Only localhost/127.0.0.1/[::1] allowed."
+                        "description": "Localhost URL."
                     }
                 },
                 "required": ["url"]
@@ -2754,25 +2707,25 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the display device to click on."
+                        "description": "Display GUID."
                     },
                     "x": {
                         "type": "integer",
-                        "description": "X coordinate relative to the display's top-left corner."
+                        "description": "X coordinate."
                     },
                     "y": {
                         "type": "integer",
-                        "description": "Y coordinate relative to the display's top-left corner."
+                        "description": "Y coordinate."
                     },
                     "button": {
                         "type": "string",
                         "enum": ["left", "right", "middle"],
-                        "description": "Mouse button. Defaults to 'left'."
+                        "description": "Default 'left'."
                     },
                     "clickType": {
                         "type": "string",
                         "enum": ["single", "double"],
-                        "description": "Click type. Defaults to 'single'."
+                        "description": "Default 'single'."
                     }
                 },
                 "required": ["targetId", "x", "y"]
@@ -2789,19 +2742,19 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": {
                         "type": "string",
-                        "description": "The GUID of the display device to type on."
+                        "description": "Display GUID."
                     },
                     "text": {
                         "type": "string",
-                        "description": "The text to type. Each character is sent as a keyboard event."
+                        "description": "Text to type."
                     },
                     "x": {
                         "type": "integer",
-                        "description": "Optional X coordinate to click before typing (to focus an input field)."
+                        "description": "X click-to-focus."
                     },
                     "y": {
                         "type": "integer",
-                        "description": "Optional Y coordinate to click before typing (to focus an input field)."
+                        "description": "Y click-to-focus."
                     }
                 },
                 "required": ["targetId", "text"]
@@ -2867,9 +2820,9 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": { "type": "string", "description": "EditorSession GUID." },
                     "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "startLine": { "type": "integer", "description": "Start line of the range to replace (1-based)." },
-                    "endLine": { "type": "integer", "description": "End line of the range to replace (1-based, inclusive)." },
-                    "newText": { "type": "string", "description": "The replacement text for the specified range." }
+                    "startLine": { "type": "integer", "description": "Start line (1-based)." },
+                    "endLine": { "type": "integer", "description": "End line (1-based, inclusive)." },
+                    "newText": { "type": "string", "description": "Replacement text." }
                 },
                 "required": ["targetId", "filePath", "startLine", "endLine", "newText"]
             }
@@ -2901,8 +2854,8 @@ public sealed partial class ChatService(
                 "properties": {
                     "targetId": { "type": "string", "description": "EditorSession GUID." },
                     "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "proposedContent": { "type": "string", "description": "The proposed new file content." },
-                    "diffTitle": { "type": "string", "description": "Optional title for the diff view." }
+                    "proposedContent": { "type": "string", "description": "Proposed file content." },
+                    "diffTitle": { "type": "string", "description": "Diff view title." }
                 },
                 "required": ["targetId", "filePath", "proposedContent"]
             }
@@ -2917,8 +2870,8 @@ public sealed partial class ChatService(
                 "type": "object",
                 "properties": {
                     "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "command": { "type": "string", "description": "The command to execute." },
-                    "workingDirectory": { "type": "string", "description": "Optional working directory." }
+                    "command": { "type": "string", "description": "Command to run." },
+                    "workingDirectory": { "type": "string", "description": "Working directory." }
                 },
                 "required": ["targetId", "command"]
             }

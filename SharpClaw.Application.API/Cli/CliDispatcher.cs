@@ -23,6 +23,7 @@ using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
@@ -216,6 +217,7 @@ public static class CliDispatcher
             "user" => await HandleUserCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
             "task" => await HandleTaskCommand(args, sp),
+            "tools" => await HandleToolAwarenessSetCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
             "me" => await AuthHandlers.Me(
                 sp.GetRequiredService<SessionService>(),
@@ -656,6 +658,8 @@ public static class CliDispatcher
         JsonElement? responseFormat = null;
         string? reasoningEffort = null;
         string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var promptParts = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
@@ -711,6 +715,14 @@ public static class CliDispatcher
             {
                 customChatHeader = args[i + 1]; i++;
             }
+            else if (args[i] is "--tools" && i + 1 < args.Length)
+            {
+                toolAwarenessSetId = CliIdMap.Resolve(args[i + 1]); i++;
+            }
+            else if (args[i] is "--no-tools")
+            {
+                disableToolSchemas = true;
+            }
             else
             {
                 promptParts.Add(args[i]);
@@ -724,7 +736,8 @@ public static class CliDispatcher
                 FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
                 Stop: stop, Seed: seed, ResponseFormat: responseFormat,
                 ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
-                CustomChatHeader: customChatHeader), svc);
+                CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId,
+                DisableToolSchemas: disableToolSchemas), svc);
     }
 
     private static async Task<IResult> HandleAgentUpdate(string[] args, AgentService svc)
@@ -745,6 +758,8 @@ public static class CliDispatcher
         JsonElement? responseFormat = null;
         string? reasoningEffort = null;
         string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var positional = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
@@ -800,6 +815,14 @@ public static class CliDispatcher
             {
                 customChatHeader = args[i + 1]; i++;
             }
+            else if (args[i] is "--tools" && i + 1 < args.Length)
+            {
+                toolAwarenessSetId = CliIdMap.Resolve(args[i + 1]); i++;
+            }
+            else if (args[i] is "--no-tools")
+            {
+                disableToolSchemas = true;
+            }
             else
             {
                 positional.Add(args[i]);
@@ -818,7 +841,8 @@ public static class CliDispatcher
             FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
             Stop: stop, Seed: seed, ResponseFormat: responseFormat,
             ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
-            CustomChatHeader: customChatHeader);
+            CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId,
+            DisableToolSchemas: disableToolSchemas);
         return await AgentHandlers.Update(agentId, request, svc);
     }
 
@@ -1334,6 +1358,8 @@ public static class CliDispatcher
         Guid? agentId = null;
         Guid? contextId = null;
         string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var titleParts = new List<string>();
 
         for (var i = 2; i < args.Length; i++)
@@ -1348,6 +1374,12 @@ public static class CliDispatcher
                     break;
                 case "--header" when i + 1 < args.Length:
                     customChatHeader = args[++i];
+                    break;
+                case "--tools" when i + 1 < args.Length:
+                    toolAwarenessSetId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--no-tools":
+                    disableToolSchemas = true;
                     break;
                 default:
                     titleParts.Add(args[i]);
@@ -1364,7 +1396,7 @@ public static class CliDispatcher
         var title = titleParts.Count > 0 ? string.Join(' ', titleParts) : null;
 
         var result = await ChannelHandlers.Create(
-            new CreateChannelRequest(agentId, title, ContextId: contextId, CustomChatHeader: customChatHeader), svc);
+            new CreateChannelRequest(agentId, title, ContextId: contextId, CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId, DisableToolSchemas: disableToolSchemas), svc);
 
         // Auto-select the newly created channel
         if (result is IValueHttpResult { Value: ChannelResponse ch })
@@ -2945,6 +2977,90 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
+    private static async Task<IResult?> HandleToolAwarenessSetCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "tools add <name> [json]                   Create a tool awareness set",
+                "tools list                                List all tool awareness sets",
+                "tools get <id>                            Show a tool awareness set",
+                "tools update <id> [--name <n>] [json]     Update a tool awareness set",
+                "tools delete <id>                         Delete a tool awareness set",
+                "",
+                "  json: '{\"tool_name\": true, ...}' — tools not listed default to enabled.");
+            return Results.Ok();
+        }
+
+        var svc = sp.GetRequiredService<ToolAwarenessSetService>();
+        var sub = args[1].ToLowerInvariant();
+
+        return sub switch
+        {
+            "add" when args.Length >= 3 => await HandleToolAwarenessSetAdd(args, svc),
+            "add" => UsageResult("tools add <name> [json]"),
+
+            "list" => await ToolAwarenessSetHandlers.List(svc),
+
+            "get" when args.Length >= 3
+                => await ToolAwarenessSetHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+            "get" => UsageResult("tools get <id>"),
+
+            "update" when args.Length >= 3
+                => await HandleToolAwarenessSetUpdate(args, svc),
+            "update" => UsageResult("tools update <id> [--name <n>] [json]"),
+
+            "delete" when args.Length >= 3
+                => await ToolAwarenessSetHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
+            "delete" => UsageResult("tools delete <id>"),
+
+            _ => UsageResult($"Unknown sub-command: tools {sub}. Try 'tools add', 'tools list', etc.")
+        };
+    }
+
+    private static async Task<IResult> HandleToolAwarenessSetAdd(string[] args, ToolAwarenessSetService svc)
+    {
+        var name = args[2];
+        Dictionary<string, bool>? tools = null;
+        if (args.Length >= 4)
+        {
+            try { tools = JsonSerializer.Deserialize<Dictionary<string, bool>>(args[3]); }
+            catch (JsonException ex)
+            {
+                Console.Error.WriteLine($"Invalid JSON: {ex.Message}");
+                return Results.BadRequest("Invalid tools JSON.");
+            }
+        }
+
+        return await ToolAwarenessSetHandlers.Create(new CreateToolAwarenessSetRequest(name, tools), svc);
+    }
+
+    private static async Task<IResult> HandleToolAwarenessSetUpdate(string[] args, ToolAwarenessSetService svc)
+    {
+        var id = CliIdMap.Resolve(args[2]);
+        string? name = null;
+        Dictionary<string, bool>? tools = null;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            if (args[i] is "--name" && i + 1 < args.Length)
+            {
+                name = args[++i];
+            }
+            else
+            {
+                try { tools = JsonSerializer.Deserialize<Dictionary<string, bool>>(args[i]); }
+                catch (JsonException ex)
+                {
+                    Console.Error.WriteLine($"Invalid JSON: {ex.Message}");
+                    return Results.BadRequest("Invalid tools JSON.");
+                }
+            }
+        }
+
+        return await ToolAwarenessSetHandlers.Update(id, new UpdateToolAwarenessSetRequest(name, tools), svc);
+    }
+
     private static IResult PrintHelp()
     {
         Console.WriteLine("""
@@ -2977,7 +3093,8 @@ public static class CliDispatcher
               Use load/unload to keep frequently-used models resident.
 
             Agent:     agent <sub> [args]       (add, get, list, update, delete)
-              agent add <name> <modelId> [system prompt]
+              agent add <name> <modelId> [system prompt] [--tools <setId>]
+              agent update <id> <name> [--tools <setId>]
               agent role <id> <roleId|none>
 
             Role:      role <sub> [args]
@@ -2990,7 +3107,7 @@ public static class CliDispatcher
               context defaults <id> [set <key> <resId> | clear <key>]
 
             Channel:   channel|chan <sub> [args] (add, get, list, select, delete)
-              channel add [--agent <id>] [--context <id>] [title]
+              channel add [--agent <id>] [--context <id>] [--tools <setId>] [title]
               channel attach|detach <id> [contextId]
               channel agents <id> [add|remove <agentId>]
               channel defaults <id> [set <key> <resId> | clear <key>]
@@ -3048,6 +3165,16 @@ public static class CliDispatcher
               Types: container, audiodevice
               resource container add mk8shell <name> <path>
               resource audiodevice add <name> [identifier]
+
+            Tools:     tools <sub> [args]       (add, get, list, update, delete)
+              tools add <name> [json]            Create a tool awareness set
+              tools list                         List all sets
+              tools get <id>                     Show set details
+              tools update <id> [--name <n>] [json]  Update a set
+              tools delete <id>                  Delete a set
+              json: '{"tool_name": true, ...}' — omitted tools default to enabled.
+              Assign to agents/channels via --tools <setId>.
+              Override chain: channel → agent → null (all enabled).
 
               exit / quit
             """);

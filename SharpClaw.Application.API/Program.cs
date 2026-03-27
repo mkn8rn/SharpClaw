@@ -136,6 +136,7 @@ try
     builder.Services.AddScoped<ContainerService>();
     builder.Services.AddScoped<DisplayDeviceService>();
     builder.Services.AddScoped<DefaultResourceSetService>();
+    builder.Services.AddScoped<ToolAwarenessSetService>();
     builder.Services.AddScoped<EditorSessionService>();
     builder.Services.AddSingleton<EditorBridgeService>();
     builder.Services.AddScoped<TaskService>();
