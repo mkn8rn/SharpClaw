@@ -120,6 +120,16 @@ public partial class App : Application
                         SkipLaunch = !backendEnabled
                     };
                     services.AddSingleton(backendManager);
+
+                    var gatewayUrl = LocalEnvironment.LoadGatewayUrl(isDev);
+                    var gatewayEnabled = LocalEnvironment.LoadGatewayEnabled(isDev);
+
+                    var gatewayManager = new GatewayProcessManager(gatewayUrl)
+                    {
+                        SkipLaunch = !gatewayEnabled
+                    };
+                    services.AddSingleton(gatewayManager);
+
                     services.AddSingleton(new SharpClawApiClient(apiUrl));
                     services.AddSingleton(new ClientSettings());
                     services.AddSingleton(new AccountStore());
@@ -145,11 +155,12 @@ public partial class App : Application
                 await navigator.NavigateRouteAsync(this, "Boot", qualifier: Qualifiers.Nested);
             });
 
-        // Stop the backend process when the app window closes.
+        // Stop managed processes when the app window closes.
         if (MainWindow is not null)
         {
             MainWindow.Closed += (_, _) =>
             {
+                Host?.Services.GetService<GatewayProcessManager>()?.Dispose();
                 Host?.Services.GetService<BackendProcessManager>()?.Dispose();
             };
         }

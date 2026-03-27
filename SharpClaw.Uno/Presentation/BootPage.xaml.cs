@@ -53,6 +53,7 @@ public sealed partial class BootPage : Page
         var services = App.Services;
         _model ??= new BootModel(
             services.GetRequiredService<BackendProcessManager>(),
+            services.GetRequiredService<GatewayProcessManager>(),
             services.GetRequiredService<SharpClawApiClient>());
 
         // Cancel any in-flight connection attempt from a previous visit.
@@ -140,6 +141,11 @@ public sealed partial class BootPage : Page
 
             if (pingResult.Ok)
             {
+                // Optional: start the public gateway (non-blocking, non-fatal).
+                var gatewayResult = await _model.RunGatewayStepAsync(ct);
+                if (gatewayResult is not null)
+                    diag.Add(gatewayResult.Line);
+
                 // Try auto-login from saved account before showing Login page
                 if (await TryAutoLoginAsync(ct))
                     return;

@@ -176,7 +176,19 @@ public sealed partial class LoginPage : Page
         var accounts = store.GetAccounts();
         SavedAccountsPanel.Children.Clear();
 
-        if (accounts.Count == 0)
+        // Only show accounts that can auto-login (valid refresh token).
+        // Stale entries are cleaned up so the user isn't teased with
+        // an account they'd have to re-authenticate manually anyway.
+        var validAccounts = accounts
+            .Where(a => a.RememberMe
+                && a.RefreshToken is not null
+                && a.RefreshTokenExpiresAt > DateTimeOffset.UtcNow)
+            .ToList();
+
+        foreach (var stale in accounts.Where(a => !validAccounts.Contains(a)))
+            store.RemoveAccount(stale.UserId);
+
+        if (validAccounts.Count == 0)
         {
             SavedAccountsSection.Visibility = Visibility.Collapsed;
             return;
@@ -184,12 +196,8 @@ public sealed partial class LoginPage : Page
 
         SavedAccountsSection.Visibility = Visibility.Visible;
 
-        foreach (var acct in accounts)
+        foreach (var acct in validAccounts)
         {
-            var hasValidRefresh = acct.RememberMe
-                && acct.RefreshToken is not null
-                && acct.RefreshTokenExpiresAt > DateTimeOffset.UtcNow;
-
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -205,33 +213,23 @@ public sealed partial class LoginPage : Page
             var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             sp.Children.Add(new TextBlock
             {
-                Text = hasValidRefresh ? "›" : "·", FontFamily = Mono, FontSize = 12,
-                Foreground = TerminalUI.Brush(hasValidRefresh ? 0x32CD32 : 0x808080),
+                Text = "›", FontFamily = Mono, FontSize = 12,
+                Foreground = TerminalUI.Brush(0x32CD32),
             });
             sp.Children.Add(new TextBlock
             {
                 Text = acct.Username, FontFamily = Mono, FontSize = 12,
-                Foreground = TerminalUI.Brush(hasValidRefresh ? 0x32CD32 : 0x808080),
+                Foreground = TerminalUI.Brush(0x32CD32),
             });
-            if (hasValidRefresh)
-                sp.Children.Add(new TextBlock
-                {
-                    Text = "→ click to login", FontFamily = Mono, FontSize = 10,
-                    Foreground = TerminalUI.Brush(0x808080),
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
+            sp.Children.Add(new TextBlock
+            {
+                Text = "\u2192 click to login", FontFamily = Mono, FontSize = 10,
+                Foreground = TerminalUI.Brush(0x808080),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
 
             var captured = acct;
-            btn.Click += async (_, _) =>
-            {
-                if (hasValidRefresh)
-                    await AutoLoginWithRefreshAsync(captured);
-                else
-                {
-                    UsernameBox.Text = captured.Username;
-                    PasswordBox.Focus(FocusState.Programmatic);
-                }
-            };
+            btn.Click += async (_, _) => await AutoLoginWithRefreshAsync(captured);
             btn.Content = sp;
             Grid.SetColumn(btn, 0);
             row.Children.Add(btn);
@@ -329,17 +327,12 @@ public sealed partial class LoginPage : Page
                 }
             }
 
-            // Refresh failed — clear stale tokens
+            // Refresh failed — remove the stale account entirely.
+            // The user will need to log in with credentials.
             var s = App.Services?.GetService<AccountStore>();
-            if (s is not null)
-            {
-                account.RefreshToken = null;
-                account.RefreshTokenExpiresAt = null;
-                account.RememberMe = false;
-                s.SaveAccount(account);
-            }
+            s?.RemoveAccount(account.UserId);
 
-            ShowStatus("✗ Session expired. Please log in again.", error: true);
+            ShowStatus($"Session for {account.Username} is no longer valid. Please log in.", error: true);
             PopulateSavedAccounts();
         }
         catch (Exception ex)

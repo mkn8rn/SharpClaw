@@ -30,9 +30,12 @@ public sealed partial class EnvEditorPage : Page
     {
         _target = PendingTarget;
 
-        TitleBlock.Text = _target == EnvTarget.Core
-            ? "Application Core"
-            : "Application Interface";
+        TitleBlock.Text = _target switch
+        {
+            EnvTarget.Core => "Application Core",
+            EnvTarget.Gateway => "Public Gateway",
+            _ => "Application Interface",
+        };
 
         if (_target == EnvTarget.Core)
         {
@@ -41,8 +44,10 @@ public sealed partial class EnvEditorPage : Page
         }
         else
         {
-            // Interface target: client's own .env — direct file I/O.
-            _envFilePath = ResolveInterfaceEnvFilePath();
+            // Interface and Gateway targets: local file I/O.
+            _envFilePath = _target == EnvTarget.Gateway
+                ? ResolveGatewayEnvFilePath()
+                : ResolveInterfaceEnvFilePath();
             PathBlock.Text = _envFilePath;
             LoadEntriesFromFile();
         }
@@ -55,6 +60,13 @@ public sealed partial class EnvEditorPage : Page
         return Path.Combine(
             Path.GetDirectoryName(typeof(EnvEditorPage).Assembly.Location)!,
             "Environment", ".env");
+    }
+
+    private static string ResolveGatewayEnvFilePath()
+    {
+        return Path.Combine(
+            Path.GetDirectoryName(typeof(EnvEditorPage).Assembly.Location)!,
+            "gateway", "Environment", ".env");
     }
 
     // ── Load / Parse ───────────────────────────────────────────────
@@ -415,6 +427,12 @@ public sealed partial class EnvEditorPage : Page
     {
         if (App.Services is not { } services) return;
 
+        if (_target == EnvTarget.Gateway)
+        {
+            await RestartGatewayAsync(services);
+            return;
+        }
+
         var backend = services.GetRequiredService<BackendProcessManager>();
         var apiClient = services.GetRequiredService<SharpClawApiClient>();
 
@@ -451,6 +469,47 @@ public sealed partial class EnvEditorPage : Page
         catch (Exception ex)
         {
             ShowStatus($"✗ Restart failed: {ex.Message}", error: true);
+        }
+    }
+
+    private async Task RestartGatewayAsync(IServiceProvider services)
+    {
+        var gateway = services.GetRequiredService<GatewayProcessManager>();
+
+        if (gateway.IsExternal)
+        {
+            ShowStatus("✓ Applied. The gateway is running externally — restart it manually to pick up changes.", error: false, success: true);
+            return;
+        }
+
+        if (gateway.SkipLaunch && !gateway.IsRunning)
+        {
+            ShowStatus("✓ Saved. Gateway is not currently running (enable it in Application Interface to auto-start).", error: false, success: true);
+            return;
+        }
+
+        gateway.Stop();
+        await Task.Delay(500);
+
+        try
+        {
+            await gateway.EnsureStartedAsync();
+
+            for (var i = 0; i < 20; i++)
+            {
+                if (await gateway.IsGatewayReachableAsync())
+                {
+                    ShowStatus("✓ Gateway restarted successfully.", error: false, success: true);
+                    return;
+                }
+                await Task.Delay(500);
+            }
+
+            ShowStatus("⚠ Gateway started but not yet reachable. It may still be initializing.", error: false, success: true);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"✗ Gateway restart failed: {ex.Message}", error: true);
         }
     }
 

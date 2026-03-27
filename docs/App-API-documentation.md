@@ -3109,6 +3109,7 @@ Overwrite the Core `.env` file with new content.
 | `Api:ListenUrl` | HTTP listen URL (default: `http://127.0.0.1:48923`) |
 | `Admin:Username` | Seeded admin username |
 | `Admin:Password` | Seeded admin password |
+| `Admin:ReconcilePermissions` | When `true`, reconcile the Admin role's permission set on every startup to back-fill newly added flags and wildcard grants (default: `false`) |
 | `Browser:Executable` | Chromium executable path for `AccessLocalhostInBrowser` |
 | `Browser:Arguments` | Extra browser launch arguments |
 | `Local:GpuLayerCount` | Default GPU layers for local inference (default: `-1` = auto) |

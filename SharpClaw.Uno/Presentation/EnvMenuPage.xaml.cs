@@ -45,6 +45,14 @@ public sealed partial class EnvMenuPage : Page
         EnvEditorPage.PendingTarget = EnvTarget.Interface;
         _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "EnvEditor");
     }
+
+    private void OnGatewayClick(object sender, RoutedEventArgs e)
+    {
+        if (App.Services is not { } services) return;
+        StatusBlock.Visibility = Visibility.Collapsed;
+        EnvEditorPage.PendingTarget = EnvTarget.Gateway;
+        _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "EnvEditor");
+    }
 }
 
-public enum EnvTarget { Core, Interface }
+public enum EnvTarget { Core, Interface, Gateway }

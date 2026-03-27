@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    Publishes SharpClaw (Uno desktop + API backend) as a self-contained
-    distributable for GitHub Releases.
+    Publishes SharpClaw (Uno desktop + API backend + public gateway) as a
+    self-contained distributable for GitHub Releases.
 
 .DESCRIPTION
     Produces a single folder containing:
       - SharpClaw.Uno.exe      (Uno desktop app, self-contained, R2R)
       - backend\               (API backend, self-contained, R2R)
+      - gateway\               (Public gateway proxy, self-contained, R2R)
 
     Neither project is trimmed: both use reflection-based JSON serialization
     (anonymous types, DTOs) that the IL trimmer cannot preserve.
@@ -14,7 +15,9 @@
     NuGet packages are not published for .NET 10.
 
     The Uno app automatically launches the backend as a hidden child process
-    (no terminal window required). Double-click SharpClaw.Uno.exe to run.
+    (no terminal window required). The gateway is optional — enable it via
+    the Application Interface .env editor. Double-click SharpClaw.Uno.exe
+    to run.
 
 .PARAMETER Rid
     Runtime identifier. Default: win-x64.
@@ -108,7 +111,7 @@ function Publish-SharpClaw {
     $tfm = "net10.0-desktop"
 
     # Publish
-    Write-Host "Publishing Uno app + bundled backend ..." -ForegroundColor Cyan
+    Write-Host "Publishing Uno app + bundled backend + gateway ..." -ForegroundColor Cyan
     Write-Host "  TFM: $tfm | RID: $TargetRid | Self-contained + R2R (no trimming)" -ForegroundColor DarkGray
 
     $publishArgs = @(
@@ -145,6 +148,20 @@ function Publish-SharpClaw {
 
     Write-Host ""
     Write-Host "Backend bundled at: $backendExe" -ForegroundColor Green
+
+    # Verify gateway was bundled
+    $gatewayDir = Join-Path $stageDir "gateway"
+    $gatewayExe = if ($isWin) {
+        Join-Path $gatewayDir "SharpClaw.Gateway.exe"
+    } else {
+        Join-Path $gatewayDir "SharpClaw.Gateway"
+    }
+
+    if (-not (Test-Path $gatewayExe)) {
+        Write-Warning "Gateway executable not found at '$gatewayExe'. The BundleGateway target may have failed — gateway will not be available."
+    } else {
+        Write-Host "Gateway bundled at: $gatewayExe" -ForegroundColor Green
+    }
 
     # -- Strip foreign-platform native libraries to reclaim ~500+ MB --
     # The LLamaSharp platform-conditional packages handle the bulk of this at
@@ -234,6 +251,7 @@ if ($ridsToPublish.Count -gt 1) {
     Write-Host "========================================" -ForegroundColor Green
 }
 Write-Host "Done. No terminal required to run -- double-click the app executable." -ForegroundColor Green
+Write-Host "Gateway is opt-in: enable it from the .env editor (Application Interface)." -ForegroundColor DarkGray
 Write-Host ""
 
 if ($failed.Count -gt 0) { exit 1 }

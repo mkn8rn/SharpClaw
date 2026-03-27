@@ -57,16 +57,25 @@ public sealed record CompletionParameters
 
     /// <summary>
     /// Structured output format passed as-is to the provider.
-    /// Google translation is handled by <see cref="GoogleParameterTranslator"/>.
-    /// See <see cref="CompletionParameterSpec"/> for provider support.
+    /// <para>
+    /// Google's OpenAI compatibility endpoint only supports the full
+    /// <c>json_schema</c> variant (<c>{"type": "json_schema", …}</c>).
+    /// The simplified <c>{"type": "json_object"}</c> form is rejected —
+    /// see <see cref="CompletionParameterSpec.RejectsJsonObjectResponseFormat"/>.
+    /// </para>
+    /// See <see cref="CompletionParameterSpec"/> for per-provider support.
     /// </summary>
     public JsonElement? ResponseFormat { get; init; }
 
     /// <summary>
-    /// Reasoning effort hint (OpenAI o-series and gpt-5). Valid values:
-    /// <c>"none"</c>, <c>"minimal"</c>, <c>"low"</c>, <c>"medium"</c>,
-    /// <c>"high"</c>, <c>"xhigh"</c>.
-    /// Not supported by most other providers.
+    /// Reasoning effort hint. Supported by OpenAI (o-series, gpt-5),
+    /// Google Gemini, and Google Vertex AI. Valid values vary by provider:
+    /// OpenAI accepts <c>"none"</c>, <c>"minimal"</c>, <c>"low"</c>,
+    /// <c>"medium"</c>, <c>"high"</c>, <c>"xhigh"</c>.
+    /// Google accepts <c>"none"</c> (2.5 models only), <c>"minimal"</c>,
+    /// <c>"low"</c>, <c>"medium"</c>, <c>"high"</c>.
+    /// Mapped to <c>reasoning_effort</c> on the Chat Completions wire
+    /// format and to <c>reasoning.effort</c> on the Responses API.
     /// </summary>
     public string? ReasoningEffort { get; init; }
 

@@ -90,6 +90,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Stop = completionParameters?.Stop,
             Seed = completionParameters?.Seed,
             ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
@@ -162,6 +163,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Stop = completionParameters?.Stop,
             Seed = completionParameters?.Seed,
             ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
@@ -298,6 +300,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Stop = completionParameters?.Stop,
             Seed = completionParameters?.Seed,
             ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
@@ -494,6 +497,10 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("response_format")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public JsonElement? ResponseFormat { get; init; }
+
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed record CompletionMessagePayload(
@@ -553,6 +560,9 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("response_format")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public JsonElement? ResponseFormat { get; init; }
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed class OaiToolDefinitionPayload
@@ -692,6 +702,9 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("response_format")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public JsonElement? ResponseFormat { get; init; }
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed class OaiStreamOptions

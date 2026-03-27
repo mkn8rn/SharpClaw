@@ -48,6 +48,14 @@ public sealed record CompletionParameterSpec
     // ── Response format ──────────────────────────────────────────
     public bool SupportsResponseFormat { get; init; }
 
+    /// <summary>
+    /// When <see langword="true"/>, the provider supports <c>response_format</c>
+    /// but rejects the simplified <c>{"type": "json_object"}</c> form.
+    /// Google's OpenAI compatibility endpoint only accepts the full
+    /// <c>{"type": "json_schema", …}</c> variant.
+    /// </summary>
+    public bool RejectsJsonObjectResponseFormat { get; init; }
+
     // ── Reasoning effort ─────────────────────────────────────────
     public bool SupportsReasoningEffort { get; init; }
     public string[] ValidReasoningEffortValues { get; init; } = ["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -195,12 +203,14 @@ public sealed record CompletionParameterSpec
             MaxStopSequences = 5,
             SupportsSeed = true,
             SupportsResponseFormat = true,
-            SupportsReasoningEffort = false,
+            RejectsJsonObjectResponseFormat = true,
+            SupportsReasoningEffort = true,
+            ValidReasoningEffortValues = ["none", "minimal", "low", "medium", "high"],
         },
 
         // ─────────────────────────────────────────────────────────
         // Google Gemini  (OpenAI-compatible endpoint)
-        // https://ai.google.dev/api/rest
+        // https://ai.google.dev/gemini-api/docs/openai
         // ─────────────────────────────────────────────────────────
         [ProviderType.GoogleGemini] = new()
         {
@@ -224,7 +234,9 @@ public sealed record CompletionParameterSpec
             MaxStopSequences = 5,
             SupportsSeed = true,
             SupportsResponseFormat = true,
-            SupportsReasoningEffort = false,
+            RejectsJsonObjectResponseFormat = true,
+            SupportsReasoningEffort = true,
+            ValidReasoningEffortValues = ["none", "minimal", "low", "medium", "high"],
         },
 
         // ─────────────────────────────────────────────────────────

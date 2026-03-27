@@ -90,11 +90,16 @@ public sealed class RoleService(SharpClawDbContext db)
         if (role is null)
             return null;
 
-        // Load caller's own permission set for validation.
-        var callerPs = await LoadCallerPermissionSetAsync(callerUserId, ct);
+        // Admin users bypass permission validation — they can grant anything.
+        var isAdmin = await db.Users.AnyAsync(u => u.Id == callerUserId && u.IsUserAdmin, ct);
+        if (!isAdmin)
+        {
+            // Load caller's own permission set for validation.
+            var callerPs = await LoadCallerPermissionSetAsync(callerUserId, ct);
 
-        ValidateGlobalFlags(request, callerPs);
-        ValidateResourceGrants(request, callerPs);
+            ValidateGlobalFlags(request, callerPs);
+            ValidateResourceGrants(request, callerPs);
+        }
 
         // Replace the permission set (delete old access entries, rebuild).
         PermissionSetDB ps;

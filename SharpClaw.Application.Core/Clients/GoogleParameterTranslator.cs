@@ -17,15 +17,17 @@ internal static class GoogleParameterTranslator
     ///     promoted to the top level (existing top-level keys take precedence).
     ///   </item>
     ///   <item>
-    ///     <c>response_mime_type</c> — removed.  Google's OpenAI compatibility
-    ///     endpoint does not support the simplified
-    ///     <c>response_format: { "type": "json_object" }</c> form; it only
-    ///     supports the full <c>json_schema</c> variant via the SDK's
-    ///     <c>parse()</c> method.  Keeping <c>response_mime_type</c> in the
-    ///     payload would also be rejected (not an OpenAI field).
+    ///     <c>response_mime_type</c> — rejected with an informative error.
+    ///     Google's OpenAI compatibility endpoint does not support the
+    ///     simplified <c>response_format: { "type": "json_object" }</c>
+    ///     form, and <c>response_mime_type</c> is not a valid OpenAI field.
     ///   </item>
     /// </list>
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when <c>response_mime_type</c> is present (directly or inside
+    /// <c>generation_config</c>).
+    /// </exception>
     internal static Dictionary<string, JsonElement>? Translate(
         Dictionary<string, JsonElement>? providerParameters)
     {
@@ -52,12 +54,26 @@ internal static class GoogleParameterTranslator
             }
         }
 
-        // Phase 2: Remove response_mime_type — it's a native Gemini parameter
+        // Phase 2: Reject response_mime_type — it's a native Gemini parameter
         // with no working equivalent in Google's OpenAI compatibility layer.
-        // The simplified response_format: {"type":"json_object"} is not
+        // The simplified response_format {"type":"json_object"} is not
         // supported by Google's /openai/chat/completions endpoint (their docs
-        // only show the full json_schema variant via the parse() API).
-        translated.Remove("response_mime_type");
+        // only show the full json_schema variant via the SDK's parse() API),
+        // and response_mime_type itself is not a valid OpenAI field.
+        if (translated.ContainsKey("response_mime_type"))
+        {
+            throw new NotSupportedException(
+                "'response_mime_type' is not supported through Google's OpenAI-compatible endpoint. " +
+                "Google's compatibility layer does not accept the simplified " +
+                "response_format: {\"type\": \"json_object\"} form, and 'response_mime_type' " +
+                "is a native Gemini parameter that is not a valid OpenAI field. " +
+                "Alternatives: (1) Use the typed 'responseFormat' completion parameter with a full " +
+                "json_schema definition instead (response_format: {\"type\": \"json_schema\", ...}). " +
+                "(2) Instruct the model to respond in JSON via the system prompt. " +
+                "(3) Remove 'response_mime_type' from providerParameters and use only " +
+                "parameters supported by Google's OpenAI compatibility endpoint " +
+                "(temperature, top_p, top_k, frequency_penalty, presence_penalty, stop, seed, reasoning_effort).");
+        }
 
         return translated;
     }
