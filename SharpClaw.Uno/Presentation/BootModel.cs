@@ -23,13 +23,16 @@ public sealed record StepResult(bool Ok, DiagnosticLine Line);
 public sealed class BootModel
 {
     private readonly BackendProcessManager _backend;
+    private readonly GatewayProcessManager _gateway;
     private readonly SharpClawApiClient _api;
 
     public BootModel(
         BackendProcessManager backend,
+        GatewayProcessManager gateway,
         SharpClawApiClient api)
     {
         _backend = backend;
+        _gateway = gateway;
         _api = api;
     }
 
@@ -159,6 +162,36 @@ public sealed class BootModel
         catch (Exception ex)
         {
             return (new(false, new("Ping", ex.Message, true)), apiKeyLine);
+        }
+    }
+
+    /// <summary>
+    /// Optional step: start the public gateway when enabled.
+    /// Non-fatal — the gateway is opt-in and not required for core functionality.
+    /// Returns <c>null</c> when the gateway is disabled (skip launch).
+    /// </summary>
+    public async Task<StepResult?> RunGatewayStepAsync(CancellationToken ct)
+    {
+        if (_gateway.SkipLaunch)
+            return null;
+
+        try
+        {
+            // Forward the verified API key so the gateway can authenticate
+            // with the core API without relying on file I/O (MSIX VFS safe).
+            _gateway.ApiKey = _api.CachedApiKey;
+
+            await _gateway.EnsureStartedAsync(ct);
+
+            var mode = _gateway.IsExternal ? "external" : "bundled";
+            var running = _gateway.IsRunning ? "running" : (_gateway.IsExternal ? "detected" : "started");
+            return new(true, new("Gateway", $"{running} ({mode}) on {_gateway.GatewayUrl}", false));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Non-fatal — the core API still works without the gateway.
+            return new(false, new("Gateway", ex.Message, true));
         }
     }
 

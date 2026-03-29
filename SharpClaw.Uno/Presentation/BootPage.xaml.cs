@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Text;
+using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -39,6 +41,11 @@ public sealed partial class BootPage : Page
     private CancellationTokenSource? _retryCts;
     private ImmutableArray<DiagnosticLine> _lastDiag;
 
+    private static readonly JsonSerializerOptions _autoLoginJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -46,6 +53,7 @@ public sealed partial class BootPage : Page
         var services = App.Services;
         _model ??= new BootModel(
             services.GetRequiredService<BackendProcessManager>(),
+            services.GetRequiredService<GatewayProcessManager>(),
             services.GetRequiredService<SharpClawApiClient>());
 
         // Cancel any in-flight connection attempt from a previous visit.
@@ -120,6 +128,7 @@ public sealed partial class BootPage : Page
             }
 
             // -- Step 3: Type "sharpclaw ping" → run ping probe --
+            Cursor.Freeze();
             PingCursor.Visibility = Visibility.Visible;
             await PingCursor.TypeCommandAsync("sharpclaw ping");
             StartDots(PingDotsBlock);
@@ -133,7 +142,16 @@ public sealed partial class BootPage : Page
 
             if (pingResult.Ok)
             {
-                // Success — show briefly then navigate
+                // Optional: start the public gateway (non-blocking, non-fatal).
+                var gatewayResult = await _model.RunGatewayStepAsync(ct);
+                if (gatewayResult is not null)
+                    diag.Add(gatewayResult.Line);
+
+                // Try auto-login from saved account before showing Login page
+                if (await TryAutoLoginAsync(ct))
+                    return;
+
+                // No auto-login — navigate to login page
                 await Task.Delay(1000, CancellationToken.None);
                 var navigator = App.Services!.GetRequiredService<INavigator>();
                 await navigator.NavigateRouteAsync(this, "Login", qualifier: Qualifiers.ClearBackStack);
@@ -235,7 +253,9 @@ public sealed partial class BootPage : Page
     private void ResetAllVisuals()
     {
         StopDots();
+        Cursor.Unfreeze();
         Cursor.ClearCommand();
+        PingCursor.Unfreeze();
         PingCursor.ClearCommand();
         EchoResultPanel.Visibility = Visibility.Collapsed;
         PingCursor.Visibility = Visibility.Collapsed;
@@ -395,5 +415,72 @@ public sealed partial class BootPage : Page
     {
         if (_model is { IsAwaitingInput: true })
             this.Focus(FocusState.Programmatic);
+    }
+
+    // ---------------------------------------------------------------
+    // Auto-login from saved account
+    // ---------------------------------------------------------------
+    private async Task<bool> TryAutoLoginAsync(CancellationToken ct)
+    {
+        var store = App.Services?.GetService<AccountStore>();
+        var account = store?.GetActiveAccount();
+        if (account is null || !account.RememberMe
+            || account.RefreshToken is null
+            || account.RefreshTokenExpiresAt <= DateTimeOffset.UtcNow)
+            return false;
+
+        try
+        {
+            var api = App.Services!.GetRequiredService<SharpClawApiClient>();
+            var body = JsonSerializer.Serialize(
+                new { refreshToken = account.RefreshToken }, _autoLoginJson);
+            using var resp = await api.PostAsync("/auth/refresh",
+                new StringContent(body, Encoding.UTF8, "application/json"), ct);
+
+            if (!resp.IsSuccessStatusCode)
+                return false;
+
+            using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var root = doc.RootElement;
+
+            var accessToken = root.TryGetProperty("accessToken", out var atProp)
+                ? atProp.GetString() : null;
+            if (accessToken is null) return false;
+
+            api.SetAccessToken(accessToken);
+
+            // Update stored tokens with fresh values
+            account.AccessToken = accessToken;
+            if (root.TryGetProperty("accessTokenExpiresAt", out var atExp))
+                account.AccessTokenExpiresAt = atExp.GetDateTimeOffset();
+            if (root.TryGetProperty("refreshToken", out var rt) && rt.ValueKind == JsonValueKind.String)
+                account.RefreshToken = rt.GetString();
+            if (root.TryGetProperty("refreshTokenExpiresAt", out var rtExp) && rtExp.ValueKind != JsonValueKind.Null)
+                account.RefreshTokenExpiresAt = rtExp.GetDateTimeOffset();
+            store!.SaveAccount(account);
+
+            // Switch per-user settings
+            App.Services!.GetRequiredService<ClientSettings>().SwitchUser(account.UserId);
+
+            await Task.Delay(1000, CancellationToken.None);
+            var needsSetup = !FirstSetupMarker.IsCompleted;
+            var needsUpgrade = !needsSetup && FirstSetupMarker.NeedsUpgradeRerun;
+            var target = needsSetup || needsUpgrade ? "FirstSetup" : "Main";
+            var navigator = App.Services!.GetRequiredService<INavigator>();
+            await navigator.NavigateRouteAsync(this, target, qualifier: Qualifiers.ClearBackStack);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void OnEnvClick(object sender, RoutedEventArgs e)
+    {
+        if (App.Services is not { } services) return;
+        EnvMenuPage.PendingOrigin = "Boot";
+        _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "EnvMenu");
     }
 }

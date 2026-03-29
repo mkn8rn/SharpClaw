@@ -23,7 +23,9 @@ using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
+using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -216,7 +218,12 @@ public static class CliDispatcher
             "user" => await HandleUserCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
             "task" => await HandleTaskCommand(args, sp),
+            "tools" => await HandleToolAwarenessSetCommand(args, sp),
+            "bot" => await HandleBotCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
+            "me" => await AuthHandlers.Me(
+                sp.GetRequiredService<SessionService>(),
+                sp.GetRequiredService<AuthService>()),
             "help" or "--help" or "-h" => PrintHelp(),
             _ => null
         };
@@ -286,7 +293,7 @@ public static class CliDispatcher
                 "provider login <providerId>",
                 "provider sync-models <providerId>",
                 "provider cost <providerId> [--days <n>]",
-                "provider cost-total [--days <n>]");
+                "provider cost-total [--days <n>] [--simple] [--all]");
             return Results.Ok();
         }
 
@@ -304,7 +311,7 @@ public static class CliDispatcher
             "add" when args.Length < 4
                 => UsageResult("provider add <name> <type>",
                     "Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,",
-                    "       ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom"),
+                    "       ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Minimax, Custom"),
             "add" => UsageResult("Unknown provider type. Valid types: " +
                      string.Join(", ", Enum.GetNames<ProviderType>())),
 
@@ -348,7 +355,7 @@ public static class CliDispatcher
             "cost" => UsageResult("provider cost <id> [--days <n>]"),
 
             "cost-total"
-                => await HandleProviderCostTotal(ParseDaysFlag(args, 2), sp),
+                => await HandleProviderCostTotal(args, sp),
 
             _ => UsageResult($"Unknown sub-command: provider {sub}. Try 'help' for usage.")
         };
@@ -366,7 +373,7 @@ public static class CliDispatcher
                 "  Capabilities (comma-separated): Chat, Transcription,",
                 "    ImageGeneration, Embedding, TextToSpeech",
                 "model get <id>",
-                "model list",
+                "model list [--provider <id>]           List models (optionally by provider)",
                 "model update <id> <name> [--cap <capabilities>]",
                 "model delete <id>",
                 "",
@@ -402,7 +409,7 @@ public static class CliDispatcher
                 => await ModelHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
             "get" => UsageResult("model get <id>"),
 
-            "list" => await ModelHandlers.List(svc),
+            "list" => await HandleModelList(args, svc),
 
             "update" when args.Length >= 4
                 => await ModelHandlers.Update(
@@ -431,6 +438,20 @@ public static class CliDispatcher
 
             _ => UsageResult($"Unknown sub-command: model {sub}. Try 'help' for usage.")
         };
+    }
+
+    private static async Task<IResult> HandleModelList(string[] args, ModelService svc)
+    {
+        Guid? providerId = null;
+        for (var i = 2; i < args.Length; i++)
+        {
+            if (args[i] is "--provider" && i + 1 < args.Length)
+            {
+                providerId = CliIdMap.Resolve(args[++i]);
+                break;
+            }
+        }
+        return await ModelHandlers.List(svc, providerId);
     }
 
     // ── Local model CLI handlers ─────────────────────────────────
@@ -546,10 +567,10 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "agent add <name> <modelId>  [system prompt] [--max-tokens <n>]",
+                "agent add <name> <modelId>  [system prompt] [--max-tokens <n>] [--params <json>] [--header <template>]",
                 "agent get <id>",
                 "agent list",
-                "agent update <id> <name> [modelId] [system prompt] [--max-tokens <n>]",
+                "agent update <id> <name> [modelId] [system prompt] [--max-tokens <n>] [--params <json>] [--header <template>]",
                 "agent role <id> <roleId>                  Assign a role (use 'role list')",
                 "agent role <id> none                      Remove role",
                 "agent sync-with-models                    Create default-<model> agents",
@@ -628,12 +649,81 @@ public static class CliDispatcher
 
         // Separate flags from positional args (system prompt)
         int? maxTokens = null;
+        Dictionary<string, JsonElement>? providerParams = null;
+        float? temperature = null;
+        float? topP = null;
+        int? topK = null;
+        float? frequencyPenalty = null;
+        float? presencePenalty = null;
+        string[]? stop = null;
+        int? seed = null;
+        JsonElement? responseFormat = null;
+        string? reasoningEffort = null;
+        string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var promptParts = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
             if (args[i] is "--max-tokens" && i + 1 < args.Length && int.TryParse(args[i + 1], out var mt))
             {
                 maxTokens = mt; i++;
+            }
+            else if (args[i] is "--params" && i + 1 < args.Length)
+            {
+                try { providerParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(args[i + 1]); }
+                catch (JsonException ex) { Console.Error.WriteLine($"Invalid --params JSON: {ex.Message}"); return Results.BadRequest("Invalid --params JSON."); }
+                i++;
+            }
+            else if (args[i] is "--temperature" or "--temp" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var temp))
+            {
+                temperature = temp; i++;
+            }
+            else if (args[i] is "--top-p" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var tp))
+            {
+                topP = tp; i++;
+            }
+            else if (args[i] is "--top-k" && i + 1 < args.Length && int.TryParse(args[i + 1], out var tk))
+            {
+                topK = tk; i++;
+            }
+            else if (args[i] is "--frequency-penalty" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var fp))
+            {
+                frequencyPenalty = fp; i++;
+            }
+            else if (args[i] is "--presence-penalty" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var pp))
+            {
+                presencePenalty = pp; i++;
+            }
+            else if (args[i] is "--stop" && i + 1 < args.Length)
+            {
+                stop = args[i + 1].Split(','); i++;
+            }
+            else if (args[i] is "--seed" && i + 1 < args.Length && int.TryParse(args[i + 1], out var sd))
+            {
+                seed = sd; i++;
+            }
+            else if (args[i] is "--response-format" && i + 1 < args.Length)
+            {
+                try { responseFormat = JsonDocument.Parse(args[i + 1]).RootElement.Clone(); }
+                catch (JsonException ex) { Console.Error.WriteLine($"Invalid --response-format JSON: {ex.Message}"); return Results.BadRequest("Invalid --response-format JSON."); }
+                i++;
+            }
+            else if (args[i] is "--reasoning-effort" && i + 1 < args.Length)
+            {
+                reasoningEffort = args[i + 1]; i++;
+            }
+            else if (args[i] is "--header" && i + 1 < args.Length)
+            {
+                customChatHeader = args[i + 1]; i++;
+            }
+            else if (args[i] is "--tools" && i + 1 < args.Length)
+            {
+                toolAwarenessSetId = CliIdMap.Resolve(args[i + 1]); i++;
+            }
+            else if (args[i] is "--no-tools")
+            {
+                disableToolSchemas = true;
             }
             else
             {
@@ -643,7 +733,13 @@ public static class CliDispatcher
 
         var prompt = promptParts.Count > 0 ? string.Join(' ', promptParts) : null;
         return await AgentHandlers.Create(
-            new CreateAgentRequest(args[2], modelId, prompt, maxTokens), svc);
+            new CreateAgentRequest(args[2], modelId, prompt, maxTokens,
+                Temperature: temperature, TopP: topP, TopK: topK,
+                FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
+                Stop: stop, Seed: seed, ResponseFormat: responseFormat,
+                ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
+                CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId,
+                DisableToolSchemas: disableToolSchemas), svc);
     }
 
     private static async Task<IResult> HandleAgentUpdate(string[] args, AgentService svc)
@@ -653,12 +749,81 @@ public static class CliDispatcher
 
         // Separate flags from positional args
         int? maxTokens = null;
+        Dictionary<string, JsonElement>? providerParams = null;
+        float? temperature = null;
+        float? topP = null;
+        int? topK = null;
+        float? frequencyPenalty = null;
+        float? presencePenalty = null;
+        string[]? stop = null;
+        int? seed = null;
+        JsonElement? responseFormat = null;
+        string? reasoningEffort = null;
+        string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var positional = new List<string>();
         for (var i = 4; i < args.Length; i++)
         {
             if (args[i] is "--max-tokens" && i + 1 < args.Length && int.TryParse(args[i + 1], out var mt))
             {
                 maxTokens = mt; i++;
+            }
+            else if (args[i] is "--params" && i + 1 < args.Length)
+            {
+                try { providerParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(args[i + 1]); }
+                catch (JsonException ex) { Console.Error.WriteLine($"Invalid --params JSON: {ex.Message}"); return Results.BadRequest("Invalid --params JSON."); }
+                i++;
+            }
+            else if (args[i] is "--temperature" or "--temp" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var temp))
+            {
+                temperature = temp; i++;
+            }
+            else if (args[i] is "--top-p" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var tp))
+            {
+                topP = tp; i++;
+            }
+            else if (args[i] is "--top-k" && i + 1 < args.Length && int.TryParse(args[i + 1], out var tk))
+            {
+                topK = tk; i++;
+            }
+            else if (args[i] is "--frequency-penalty" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var fp))
+            {
+                frequencyPenalty = fp; i++;
+            }
+            else if (args[i] is "--presence-penalty" && i + 1 < args.Length && float.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var pp))
+            {
+                presencePenalty = pp; i++;
+            }
+            else if (args[i] is "--stop" && i + 1 < args.Length)
+            {
+                stop = args[i + 1].Split(','); i++;
+            }
+            else if (args[i] is "--seed" && i + 1 < args.Length && int.TryParse(args[i + 1], out var sd))
+            {
+                seed = sd; i++;
+            }
+            else if (args[i] is "--response-format" && i + 1 < args.Length)
+            {
+                try { responseFormat = JsonDocument.Parse(args[i + 1]).RootElement.Clone(); }
+                catch (JsonException ex) { Console.Error.WriteLine($"Invalid --response-format JSON: {ex.Message}"); return Results.BadRequest("Invalid --response-format JSON."); }
+                i++;
+            }
+            else if (args[i] is "--reasoning-effort" && i + 1 < args.Length)
+            {
+                reasoningEffort = args[i + 1]; i++;
+            }
+            else if (args[i] is "--header" && i + 1 < args.Length)
+            {
+                customChatHeader = args[i + 1]; i++;
+            }
+            else if (args[i] is "--tools" && i + 1 < args.Length)
+            {
+                toolAwarenessSetId = CliIdMap.Resolve(args[i + 1]); i++;
+            }
+            else if (args[i] is "--no-tools")
+            {
+                disableToolSchemas = true;
             }
             else
             {
@@ -673,7 +838,13 @@ public static class CliDispatcher
         else if (modelId is null && positional.Count >= 1)
             prompt = string.Join(' ', positional);
 
-        var request = new UpdateAgentRequest(name, modelId, prompt, maxTokens);
+        var request = new UpdateAgentRequest(name, modelId, prompt, maxTokens,
+            Temperature: temperature, TopP: topP, TopK: topK,
+            FrequencyPenalty: frequencyPenalty, PresencePenalty: presencePenalty,
+            Stop: stop, Seed: seed, ResponseFormat: responseFormat,
+            ReasoningEffort: reasoningEffort, ProviderParameters: providerParams,
+            CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId,
+            DisableToolSchemas: disableToolSchemas);
         return await AgentHandlers.Update(agentId, request, svc);
     }
 
@@ -1113,7 +1284,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "channel add [--agent <id>] [--context <id>] [title]",
+                "channel add [--agent <id>] [--context <id>] [--header <template>] [title]",
                 "  Either --agent or --context is required.",
                 "channel list [agentId]                     List channels",
                 "channel select <id>                        Select active channel",
@@ -1188,6 +1359,9 @@ public static class CliDispatcher
     {
         Guid? agentId = null;
         Guid? contextId = null;
+        string? customChatHeader = null;
+        Guid? toolAwarenessSetId = null;
+        bool? disableToolSchemas = null;
         var titleParts = new List<string>();
 
         for (var i = 2; i < args.Length; i++)
@@ -1199,6 +1373,15 @@ public static class CliDispatcher
                     break;
                 case "--agent" or "-a" when i + 1 < args.Length:
                     agentId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--header" when i + 1 < args.Length:
+                    customChatHeader = args[++i];
+                    break;
+                case "--tools" when i + 1 < args.Length:
+                    toolAwarenessSetId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--no-tools":
+                    disableToolSchemas = true;
                     break;
                 default:
                     titleParts.Add(args[i]);
@@ -1215,7 +1398,7 @@ public static class CliDispatcher
         var title = titleParts.Count > 0 ? string.Join(' ', titleParts) : null;
 
         var result = await ChannelHandlers.Create(
-            new CreateChannelRequest(agentId, title, ContextId: contextId), svc);
+            new CreateChannelRequest(agentId, title, ContextId: contextId, CustomChatHeader: customChatHeader, ToolAwarenessSetId: toolAwarenessSetId, DisableToolSchemas: disableToolSchemas), svc);
 
         // Auto-select the newly created channel
         if (result is IValueHttpResult { Value: ChannelResponse ch })
@@ -1527,6 +1710,7 @@ public static class CliDispatcher
                 "  --localhost-cli                         Grant CanAccessLocalhostCli",
                 "  --click-desktop                         Grant CanClickDesktop",
                 "  --type-on-desktop                       Grant CanTypeOnDesktop",
+                "  --read-cross-thread-history             Grant CanReadCrossThreadHistory",
                 "  --dangerous-shell <id>[:<clearance>]    Add DangerousShell grant",
                 "  --safe-shell <id>[:<clearance>]         Add SafeShell grant",
                 "  --container <id>[:<clearance>]          Add Container grant",
@@ -1596,6 +1780,7 @@ public static class CliDispatcher
         var localhostCli = false;
         var clickDesktop = false;
         var typeOnDesktop = false;
+        var readCrossThreadHistory = false;
 
         var dangerousShell = new List<ResourceGrant>();
         var safeShell = new List<ResourceGrant>();
@@ -1624,6 +1809,7 @@ public static class CliDispatcher
                 case "--localhost-cli": localhostCli = true; break;
                 case "--click-desktop": clickDesktop = true; break;
                 case "--type-on-desktop": typeOnDesktop = true; break;
+                case "--read-cross-thread-history": readCrossThreadHistory = true; break;
                 case "--dangerous-shell" when i + 1 < args.Length:
                     dangerousShell.Add(ParseResourceGrant(args[++i])); break;
                 case "--safe-shell" when i + 1 < args.Length:
@@ -1658,6 +1844,7 @@ public static class CliDispatcher
             CanAccessLocalhostCli: localhostCli,
             CanClickDesktop: clickDesktop,
             CanTypeOnDesktop: typeOnDesktop,
+            CanReadCrossThreadHistory: readCrossThreadHistory,
             DangerousShellAccesses: dangerousShell.Count > 0 ? dangerousShell : null,
             SafeShellAccesses: safeShell.Count > 0 ? safeShell : null,
             ContainerAccesses: container.Count > 0 ? container : null,
@@ -2123,10 +2310,23 @@ public static class CliDispatcher
         return await ProviderHandlers.GetCost(providerId, costSvc, days);
     }
 
-    private static async Task<IResult> HandleProviderCostTotal(int days, IServiceProvider sp)
+    private static async Task<IResult> HandleProviderCostTotal(string[] args, IServiceProvider sp)
     {
+        var days = ParseDaysFlag(args, 2);
+        var simple = args.Skip(2).Any(a => a is "--simple");
+        var all = args.Skip(2).Any(a => a is "--all");
+
         var costSvc = sp.GetRequiredService<ProviderCostService>();
-        return await ProviderHandlers.GetCostTotal(costSvc, days);
+
+        if (simple)
+        {
+            var result = await costSvc.GetTotalCostAsync(days, includeAll: all);
+            var formatted = ProviderHandlers.FormatSimpleCost(result);
+            Console.WriteLine(formatted.Summary);
+            return Results.Ok();
+        }
+
+        return await ProviderHandlers.GetCostTotal(costSvc, days, all: all);
     }
 
     private static int ParseDaysFlag(string[] args, int startIndex)
@@ -2729,6 +2929,75 @@ public static class CliDispatcher
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Bot integrations
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleBotCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "bot list                                  List all bot integrations",
+                "bot get <id>                              Show a bot integration",
+                "bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]",
+                "                                          Update a bot integration",
+                "bot config <type>                         Show decrypted config (telegram|discord|whatsapp)");
+            return Results.Ok();
+        }
+
+        var svc = sp.GetRequiredService<BotIntegrationService>();
+        var sub = args[1].ToLowerInvariant();
+
+        return sub switch
+        {
+            "list" => await BotHandlers.List(svc),
+
+            "get" when args.Length >= 3
+                => await BotHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+            "get" => UsageResult("bot get <id>"),
+
+            "update" when args.Length >= 3
+                => await HandleBotUpdate(args, svc),
+            "update" => UsageResult("bot update <id> [--name <name>] [--enabled true|false] [--token <tok>] [--channel <channelId>]"),
+
+            "config" when args.Length >= 3
+                => await BotHandlers.GetConfig(args[2], svc),
+            "config" => UsageResult("bot config <type>  (telegram|discord|whatsapp)"),
+
+            _ => UsageResult($"Unknown sub-command: bot {sub}. Try 'bot list', 'bot get', etc.")
+        };
+    }
+
+    private static async Task<IResult> HandleBotUpdate(string[] args, BotIntegrationService svc)
+    {
+        var id = CliIdMap.Resolve(args[2]);
+        string? name = null;
+        bool? enabled = null;
+        string? token = null;
+        Guid? channelId = null;
+
+        for (var i = 3; i < args.Length - 1; i++)
+        {
+            switch (args[i].ToLowerInvariant())
+            {
+                case "--name":
+                    name = args[++i]; break;
+                case "--enabled" when bool.TryParse(args[i + 1], out var e):
+                    enabled = e; i++; break;
+                case "--token":
+                    token = args[++i]; break;
+                case "--channel" when Guid.TryParse(args[i + 1], out var ch):
+                    channelId = ch; i++; break;
+                case "--channel" when args[i + 1].ToLowerInvariant() is "none" or "clear":
+                    channelId = Guid.Empty; i++; break;
+            }
+        }
+
+        var request = new UpdateBotIntegrationRequest(name, enabled, token, channelId);
+        return await BotHandlers.Update(id, request, svc);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Bio
     // ═══════════════════════════════════════════════════════════════
 
@@ -2779,6 +3048,90 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
+    private static async Task<IResult?> HandleToolAwarenessSetCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "tools add <name> [json]                   Create a tool awareness set",
+                "tools list                                List all tool awareness sets",
+                "tools get <id>                            Show a tool awareness set",
+                "tools update <id> [--name <n>] [json]     Update a tool awareness set",
+                "tools delete <id>                         Delete a tool awareness set",
+                "",
+                "  json: '{\"tool_name\": true, ...}' — tools not listed default to enabled.");
+            return Results.Ok();
+        }
+
+        var svc = sp.GetRequiredService<ToolAwarenessSetService>();
+        var sub = args[1].ToLowerInvariant();
+
+        return sub switch
+        {
+            "add" when args.Length >= 3 => await HandleToolAwarenessSetAdd(args, svc),
+            "add" => UsageResult("tools add <name> [json]"),
+
+            "list" => await ToolAwarenessSetHandlers.List(svc),
+
+            "get" when args.Length >= 3
+                => await ToolAwarenessSetHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
+            "get" => UsageResult("tools get <id>"),
+
+            "update" when args.Length >= 3
+                => await HandleToolAwarenessSetUpdate(args, svc),
+            "update" => UsageResult("tools update <id> [--name <n>] [json]"),
+
+            "delete" when args.Length >= 3
+                => await ToolAwarenessSetHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
+            "delete" => UsageResult("tools delete <id>"),
+
+            _ => UsageResult($"Unknown sub-command: tools {sub}. Try 'tools add', 'tools list', etc.")
+        };
+    }
+
+    private static async Task<IResult> HandleToolAwarenessSetAdd(string[] args, ToolAwarenessSetService svc)
+    {
+        var name = args[2];
+        Dictionary<string, bool>? tools = null;
+        if (args.Length >= 4)
+        {
+            try { tools = JsonSerializer.Deserialize<Dictionary<string, bool>>(args[3]); }
+            catch (JsonException ex)
+            {
+                Console.Error.WriteLine($"Invalid JSON: {ex.Message}");
+                return Results.BadRequest("Invalid tools JSON.");
+            }
+        }
+
+        return await ToolAwarenessSetHandlers.Create(new CreateToolAwarenessSetRequest(name, tools), svc);
+    }
+
+    private static async Task<IResult> HandleToolAwarenessSetUpdate(string[] args, ToolAwarenessSetService svc)
+    {
+        var id = CliIdMap.Resolve(args[2]);
+        string? name = null;
+        Dictionary<string, bool>? tools = null;
+
+        for (var i = 3; i < args.Length; i++)
+        {
+            if (args[i] is "--name" && i + 1 < args.Length)
+            {
+                name = args[++i];
+            }
+            else
+            {
+                try { tools = JsonSerializer.Deserialize<Dictionary<string, bool>>(args[i]); }
+                catch (JsonException ex)
+                {
+                    Console.Error.WriteLine($"Invalid JSON: {ex.Message}");
+                    return Results.BadRequest("Invalid tools JSON.");
+                }
+            }
+        }
+
+        return await ToolAwarenessSetHandlers.Update(id, new UpdateToolAwarenessSetRequest(name, tools), svc);
+    }
+
     private static IResult PrintHelp()
     {
         Console.WriteLine("""
@@ -2789,6 +3142,7 @@ public static class CliDispatcher
 
             Auth:
               register <user> <pass>          login <user> <pass>          logout
+              me                               Show current user profile & role
 
             Provider:  provider <sub> [args]    (add, get, list, update, delete)
               provider add <name> <type> [endpoint]
@@ -2810,7 +3164,8 @@ public static class CliDispatcher
               Use load/unload to keep frequently-used models resident.
 
             Agent:     agent <sub> [args]       (add, get, list, update, delete)
-              agent add <name> <modelId> [system prompt]
+              agent add <name> <modelId> [system prompt] [--tools <setId>]
+              agent update <id> <name> [--tools <setId>]
               agent role <id> <roleId|none>
 
             Role:      role <sub> [args]
@@ -2823,7 +3178,7 @@ public static class CliDispatcher
               context defaults <id> [set <key> <resId> | clear <key>]
 
             Channel:   channel|chan <sub> [args] (add, get, list, select, delete)
-              channel add [--agent <id>] [--context <id>] [title]
+              channel add [--agent <id>] [--context <id>] [--tools <setId>] [title]
               channel attach|detach <id> [contextId]
               channel agents <id> [add|remove <agentId>]
               channel defaults <id> [set <key> <resId> | clear <key>]
@@ -2881,6 +3236,22 @@ public static class CliDispatcher
               Types: container, audiodevice
               resource container add mk8shell <name> <path>
               resource audiodevice add <name> [identifier]
+
+            Tools:     tools <sub> [args]       (add, get, list, update, delete)
+              tools add <name> [json]            Create a tool awareness set
+              tools list                         List all sets
+              tools get <id>                     Show set details
+              tools update <id> [--name <n>] [json]  Update a set
+              tools delete <id>                  Delete a set
+              json: '{"tool_name": true, ...}' — omitted tools default to enabled.
+              Assign to agents/channels via --tools <setId>.
+              Override chain: channel → agent → null (all enabled).
+
+            Bot:       bot <sub> [args]
+              bot list                           List all bot integrations
+              bot get <id>                       Show a bot integration
+              bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]
+              bot config <type>                  Show decrypted config (telegram|discord|whatsapp)
 
               exit / quit
             """);

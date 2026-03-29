@@ -39,33 +39,30 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             .ToList() ?? [];
     }
 
-    public async Task<string> ChatCompletionAsync(
+    public async Task<ChatCompletionResult> ChatCompletionAsync(
         HttpClient httpClient,
         string apiKey,
         string model,
         string? systemPrompt,
         IReadOnlyList<ChatCompletionMessage> messages,
         int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
         CancellationToken ct = default)
     {
         // Responses API path
         if (UseResponsesApi(model))
         {
-            var sb = new System.Text.StringBuilder();
+            ChatCompletionResult? final = null;
             await foreach (var chunk in StreamResponsesApiAsync(
                 httpClient, apiKey, model, systemPrompt,
                 messages.Select(m => new ToolAwareMessage { Role = m.Role, Content = m.Content }).ToList(),
-                [], maxCompletionTokens, ct))
+                [], maxCompletionTokens, providerParameters, completionParameters, ct))
             {
                 if (chunk.IsFinished)
-                    return chunk.Finished!.Content
-                        ?? throw new InvalidOperationException("No response content from provider.");
-                if (chunk.Delta is not null)
-                    sb.Append(chunk.Delta);
+                    final = chunk.Finished;
             }
-            return sb.Length > 0
-                ? sb.ToString()
-                : throw new InvalidOperationException("No response content from provider.");
+            return final ?? throw new InvalidOperationException("No response content from provider.");
         }
 
         var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
@@ -78,19 +75,38 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         foreach (var msg in messages)
             payloadMessages.Add(new CompletionMessagePayload(msg.Role, msg.Content));
 
-        var payload = new CompletionRequest(model, payloadMessages) { MaxTokens = maxCompletionTokens };
+        var payload = new CompletionRequest(model, payloadMessages)
+        {
+            MaxTokens = maxCompletionTokens,
+            Temperature = completionParameters?.Temperature,
+            TopP = completionParameters?.TopP,
+            FrequencyPenalty = completionParameters?.FrequencyPenalty,
+            PresencePenalty = completionParameters?.PresencePenalty,
+            Stop = completionParameters?.Stop,
+            Seed = completionParameters?.Seed,
+            ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
+        };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resolvedKey);
         ConfigureRequest(request);
-        request.Content = JsonContent.Create(payload);
+        request.Content = MergeProviderParameters(payload, providerParameters);
 
         var response = await httpClient.SendAsync(request, ct);
         await response.EnsureSuccessOrThrowAsync(ct);
 
         var result = await response.Content.ReadFromJsonAsync<CompletionResponse>(ct);
-        return result?.Choices?.FirstOrDefault()?.Message?.Content
+        var content = result?.Choices?.FirstOrDefault()?.Message?.Content
             ?? throw new InvalidOperationException("No response content from provider.");
+
+        return new ChatCompletionResult
+        {
+            Content = content,
+            Usage = result?.Usage is { } u
+                ? new TokenUsage(u.PromptTokens, u.CompletionTokens)
+                : null
+        };
     }
 
     public virtual async Task<ChatCompletionResult> ChatCompletionWithToolsAsync(
@@ -101,6 +117,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ToolAwareMessage> messages,
         IReadOnlyList<ChatToolDefinition> tools,
         int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
         CancellationToken ct = default)
     {
         // Responses API path
@@ -108,7 +126,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         {
             ChatCompletionResult? final = null;
             await foreach (var chunk in StreamResponsesApiAsync(
-                httpClient, apiKey, model, systemPrompt, messages, tools, maxCompletionTokens, ct))
+                httpClient, apiKey, model, systemPrompt, messages, tools, maxCompletionTokens, providerParameters, completionParameters, ct))
             {
                 if (chunk.IsFinished)
                     final = chunk.Finished;
@@ -131,6 +149,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Model = model,
             Messages = payloadMessages,
             MaxTokens = maxCompletionTokens,
+            ParallelToolCalls = true,
             Tools = tools.Select(t => new OaiToolDefinitionPayload
             {
                 Function = new OaiFunctionDefinitionPayload
@@ -139,13 +158,21 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
                     Description = t.Description,
                     Parameters = t.ParametersSchema
                 }
-            }).ToList()
+            }).ToList(),
+            Temperature = completionParameters?.Temperature,
+            TopP = completionParameters?.TopP,
+            FrequencyPenalty = completionParameters?.FrequencyPenalty,
+            PresencePenalty = completionParameters?.PresencePenalty,
+            Stop = completionParameters?.Stop,
+            Seed = completionParameters?.Seed,
+            ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resolvedKey);
         ConfigureRequest(request);
-        request.Content = JsonContent.Create(payload, options: OaiToolJsonOptions);
+        request.Content = MergeProviderParameters(payload, providerParameters, OaiToolJsonOptions);
 
         var response = await httpClient.SendAsync(request, ct);
         await response.EnsureSuccessOrThrowAsync(ct);
@@ -229,13 +256,15 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ToolAwareMessage> messages,
         IReadOnlyList<ChatToolDefinition> tools,
         int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         // Responses API path — delegate entirely
         if (UseResponsesApi(model))
         {
             await foreach (var chunk in StreamResponsesApiAsync(
-                httpClient, apiKey, model, systemPrompt, messages, tools, maxCompletionTokens, ct))
+                httpClient, apiKey, model, systemPrompt, messages, tools, maxCompletionTokens, providerParameters, completionParameters, ct))
             {
                 yield return chunk;
             }
@@ -255,6 +284,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Model = model,
             Messages = payloadMessages,
             MaxTokens = maxCompletionTokens,
+            ParallelToolCalls = true,
             Tools = tools.Select(t => new OaiToolDefinitionPayload
             {
                 Function = new OaiFunctionDefinitionPayload
@@ -265,13 +295,21 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
                 }
             }).ToList(),
             Stream = true,
-            StreamOptions = new OaiStreamOptions { IncludeUsage = true }
+            StreamOptions = new OaiStreamOptions { IncludeUsage = true },
+            Temperature = completionParameters?.Temperature,
+            TopP = completionParameters?.TopP,
+            FrequencyPenalty = completionParameters?.FrequencyPenalty,
+            PresencePenalty = completionParameters?.PresencePenalty,
+            Stop = completionParameters?.Stop,
+            Seed = completionParameters?.Seed,
+            ResponseFormat = completionParameters?.ResponseFormat,
+            ReasoningEffort = completionParameters?.ReasoningEffort,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resolvedKey);
         ConfigureRequest(request);
-        request.Content = JsonContent.Create(payload, options: OaiToolJsonOptions);
+        request.Content = MergeProviderParameters(payload, providerParameters, OaiToolJsonOptions);
 
         using var response = await httpClient.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -371,6 +409,27 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         => ValueTask.FromResult(apiKey);
 
     /// <summary>
+    /// Translates provider-native parameter names to their OpenAI-compatible
+    /// equivalents before merging.  Override in subclasses whose native APIs
+    /// use different parameter names (e.g. Google Gemini's
+    /// <c>response_mime_type</c> → <c>response_format</c>).
+    /// </summary>
+    protected virtual Dictionary<string, JsonElement>? TranslateProviderParameters(
+        Dictionary<string, JsonElement>? providerParameters) => providerParameters;
+
+    /// <summary>
+    /// Serializes <paramref name="payload"/> and merges any user-supplied
+    /// <paramref name="providerParameters"/> into the top-level JSON object.
+    /// Calls <see cref="TranslateProviderParameters"/> first, then delegates
+    /// to <see cref="ProviderParameterMerger"/>.
+    /// </summary>
+    protected HttpContent MergeProviderParameters<T>(
+        T payload,
+        Dictionary<string, JsonElement>? providerParameters,
+        JsonSerializerOptions? options = null)
+        => ProviderParameterMerger.Merge(payload, TranslateProviderParameters(providerParameters), options);
+
+    /// <summary>
     /// Allows subclasses to add provider-specific headers to outgoing API requests.
     /// </summary>
     protected virtual void ConfigureRequest(HttpRequestMessage request) { }
@@ -413,6 +472,38 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
+
+        [JsonPropertyName("temperature")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? Temperature { get; init; }
+
+        [JsonPropertyName("top_p")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? TopP { get; init; }
+
+        [JsonPropertyName("frequency_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? FrequencyPenalty { get; init; }
+
+        [JsonPropertyName("presence_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? PresencePenalty { get; init; }
+
+        [JsonPropertyName("stop")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? Stop { get; init; }
+
+        [JsonPropertyName("seed")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? Seed { get; init; }
+
+        [JsonPropertyName("response_format")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public JsonElement? ResponseFormat { get; init; }
+
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed record CompletionMessagePayload(
@@ -450,6 +541,31 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
+        [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; }
+        [JsonPropertyName("temperature")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? Temperature { get; init; }
+        [JsonPropertyName("top_p")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? TopP { get; init; }
+        [JsonPropertyName("frequency_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? FrequencyPenalty { get; init; }
+        [JsonPropertyName("presence_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? PresencePenalty { get; init; }
+        [JsonPropertyName("stop")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? Stop { get; init; }
+        [JsonPropertyName("seed")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? Seed { get; init; }
+        [JsonPropertyName("response_format")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public JsonElement? ResponseFormat { get; init; }
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed class OaiToolDefinitionPayload
@@ -567,6 +683,31 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
+        [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; }
+        [JsonPropertyName("temperature")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? Temperature { get; init; }
+        [JsonPropertyName("top_p")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? TopP { get; init; }
+        [JsonPropertyName("frequency_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? FrequencyPenalty { get; init; }
+        [JsonPropertyName("presence_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? PresencePenalty { get; init; }
+        [JsonPropertyName("stop")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? Stop { get; init; }
+        [JsonPropertyName("seed")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? Seed { get; init; }
+        [JsonPropertyName("response_format")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public JsonElement? ResponseFormat { get; init; }
+        [JsonPropertyName("reasoning_effort")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningEffort { get; init; }
     }
 
     private sealed class OaiStreamOptions
@@ -623,6 +764,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         IReadOnlyList<ToolAwareMessage> messages,
         IReadOnlyList<ChatToolDefinition> tools,
         int? maxCompletionTokens,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var resolvedKey = await ResolveApiKeyAsync(httpClient, apiKey, ct);
@@ -704,13 +847,21 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Input = input,
             Tools = respTools.Count > 0 ? respTools : null,
             MaxOutputTokens = maxCompletionTokens,
-            Stream = true
+            Stream = true,
+            Temperature = completionParameters?.Temperature,
+            TopP = completionParameters?.TopP,
+            FrequencyPenalty = completionParameters?.FrequencyPenalty,
+            PresencePenalty = completionParameters?.PresencePenalty,
+            Stop = completionParameters?.Stop,
+            Seed = completionParameters?.Seed,
+            Reasoning = completionParameters?.ReasoningEffort is { } effort
+                ? new RespReasoningConfig { Effort = effort } : null,
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiEndpoint}/responses");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resolvedKey);
         ConfigureRequest(request);
-        request.Content = JsonContent.Create(payload, options: OaiToolJsonOptions);
+        request.Content = MergeProviderParameters(payload, providerParameters, OaiToolJsonOptions);
 
         using var response = await httpClient.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -913,6 +1064,32 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("max_output_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxOutputTokens { get; init; }
+        [JsonPropertyName("temperature")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? Temperature { get; init; }
+        [JsonPropertyName("top_p")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? TopP { get; init; }
+        [JsonPropertyName("frequency_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? FrequencyPenalty { get; init; }
+        [JsonPropertyName("presence_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public float? PresencePenalty { get; init; }
+        [JsonPropertyName("stop")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? Stop { get; init; }
+        [JsonPropertyName("seed")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? Seed { get; init; }
+        [JsonPropertyName("reasoning")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public RespReasoningConfig? Reasoning { get; init; }
+    }
+
+    private sealed class RespReasoningConfig
+    {
+        [JsonPropertyName("effort")] public required string Effort { get; init; }
     }
 
     // Streaming event — covers the subset of fields we care about.

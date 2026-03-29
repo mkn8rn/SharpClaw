@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    Publishes SharpClaw (Uno desktop + API backend) as a self-contained
-    distributable for GitHub Releases.
+    Publishes SharpClaw (Uno desktop + API backend + public gateway) as a
+    self-contained distributable for GitHub Releases.
 
 .DESCRIPTION
     Produces a single folder containing:
       - SharpClaw.Uno.exe      (Uno desktop app, self-contained, R2R)
       - backend\               (API backend, self-contained, R2R)
+      - gateway\               (Public gateway proxy, self-contained, R2R)
 
     Neither project is trimmed: both use reflection-based JSON serialization
     (anonymous types, DTOs) that the IL trimmer cannot preserve.
@@ -14,14 +15,16 @@
     NuGet packages are not published for .NET 10.
 
     The Uno app automatically launches the backend as a hidden child process
-    (no terminal window required). Double-click SharpClaw.Uno.exe to run.
+    (no terminal window required). The gateway is optional — enable it via
+    the Application Interface .env editor. Double-click SharpClaw.Uno.exe
+    to run.
 
 .PARAMETER Rid
     Runtime identifier. Default: win-x64.
-    Supported: win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64.
+    Supported: win-x64, linux-x64, linux-arm64, osx-arm64.
     Shorthands: "win" is an alias for win-x64.
                "linux" publishes both linux-x64 and linux-arm64.
-               "osx" publishes both osx-x64 and osx-arm64.
+               "osx" is an alias for osx-arm64 (Apple Silicon).
                "all" publishes every supported RID.
     Note: win-arm64 is NOT supported by Uno desktop (Skia). Use win-x64
     on ARM64 Windows -- it runs under x64 emulation with no issues.
@@ -39,7 +42,7 @@
     .\publish-release.ps1
     .\publish-release.ps1 -Rid osx
     .\publish-release.ps1 -Rid all
-    .\publish-release.ps1 -Rid linux-x64 -SkipZip
+    .\publish-release.ps1 -Rid linux -SkipZip
 #>
 param(
     [string]$Rid = "win-x64",
@@ -55,12 +58,12 @@ Set-StrictMode -Version Latest
 $supportedRids = @(
     "win-x64",
     "linux-x64", "linux-arm64",
-    "osx-x64", "osx-arm64"
+    "osx-arm64"
 )
 $ridGroups = @{
     "win"   = @("win-x64")
     "linux" = @("linux-x64", "linux-arm64")
-    "osx"   = @("osx-x64", "osx-arm64")
+    "osx"   = @("osx-arm64")
     "all"   = $supportedRids
 }
 
@@ -72,7 +75,8 @@ if ($ridGroups.ContainsKey($Rid)) {
     Write-Error ("RID '$Rid' is not supported for Uno desktop (Skia) builds.`n" +
         "Supported RIDs: $($supportedRids -join ', ')`n" +
         "Shorthands: win, linux, osx, all`n" +
-        "Note: On ARM64 Windows, use 'win-x64' -- it runs under x64 emulation with no issues.")
+        "Note: On ARM64 Windows, use 'win-x64' -- it runs under x64 emulation with no issues.`n" +
+        "Note: osx-arm64 targets Apple Silicon (M1/M2/M3/M4). Intel Macs are no longer supported.")
     exit 1
 }
 
@@ -108,7 +112,7 @@ function Publish-SharpClaw {
     $tfm = "net10.0-desktop"
 
     # Publish
-    Write-Host "Publishing Uno app + bundled backend ..." -ForegroundColor Cyan
+    Write-Host "Publishing Uno app + bundled backend + gateway ..." -ForegroundColor Cyan
     Write-Host "  TFM: $tfm | RID: $TargetRid | Self-contained + R2R (no trimming)" -ForegroundColor DarkGray
 
     $publishArgs = @(
@@ -145,6 +149,20 @@ function Publish-SharpClaw {
 
     Write-Host ""
     Write-Host "Backend bundled at: $backendExe" -ForegroundColor Green
+
+    # Verify gateway was bundled
+    $gatewayDir = Join-Path $stageDir "gateway"
+    $gatewayExe = if ($isWin) {
+        Join-Path $gatewayDir "SharpClaw.Gateway.exe"
+    } else {
+        Join-Path $gatewayDir "SharpClaw.Gateway"
+    }
+
+    if (-not (Test-Path $gatewayExe)) {
+        Write-Warning "Gateway executable not found at '$gatewayExe'. The BundleGateway target may have failed — gateway will not be available."
+    } else {
+        Write-Host "Gateway bundled at: $gatewayExe" -ForegroundColor Green
+    }
 
     # -- Strip foreign-platform native libraries to reclaim ~500+ MB --
     # The LLamaSharp platform-conditional packages handle the bulk of this at
@@ -234,6 +252,7 @@ if ($ridsToPublish.Count -gt 1) {
     Write-Host "========================================" -ForegroundColor Green
 }
 Write-Host "Done. No terminal required to run -- double-click the app executable." -ForegroundColor Green
+Write-Host "Gateway is opt-in: enable it from the .env editor (Application Interface)." -ForegroundColor DarkGray
 Write-Host ""
 
 if ($failed.Count -gt 0) { exit 1 }
