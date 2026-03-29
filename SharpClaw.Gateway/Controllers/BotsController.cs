@@ -126,77 +126,6 @@ public class BotsController(GatewayRequestDispatcher dispatcher, BotReloadSignal
         }
     }
 
-    /// <summary>
-    /// Returns the current bot configuration (tokens included — core decrypts them).
-    /// </summary>
-    [HttpGet("config")]
-    public async Task<IActionResult> GetConfig(CancellationToken ct)
-    {
-        try
-        {
-            var result = new Dictionary<string, object>();
-            foreach (var type in Enum.GetValues<BotType>())
-            {
-                var name = type.ToString().ToLowerInvariant();
-                var cfg = await dispatcher.GetAsync<BotConfigDto>($"/bots/config/{name}", ct);
-                result[name] = new { enabled = cfg?.Enabled ?? false, botToken = cfg?.BotToken ?? "" };
-            }
-
-            return Ok(result);
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(502, new { error = $"Core API unreachable: {ex.Message}" });
-        }
-    }
-
-    /// <summary>
-    /// Updates bot configuration via the core API.
-    /// Accepts the <see cref="BotConfigRequest"/> shape with a property per bot type.
-    /// </summary>
-    [HttpPut("config")]
-    public async Task<IActionResult> UpdateConfig([FromBody] BotConfigRequest request, CancellationToken ct)
-    {
-        try
-        {
-            var entries = new (string Type, BotConfigEntry? Entry)[]
-            {
-                ("telegram", request.Telegram),
-                ("discord", request.Discord),
-                ("whatsapp", request.WhatsApp),
-                ("slack", request.Slack),
-                ("matrix", request.Matrix),
-                ("signal", request.Signal),
-                ("email", request.Email),
-                ("teams", request.Teams),
-            };
-
-            foreach (var (type, entry) in entries)
-            {
-                if (entry is not null)
-                    await UpdateBotByTypeAsync(type, entry, ct);
-            }
-
-            return Ok(new { saved = true });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(502, new { error = $"Core API error: {ex.Message}" });
-        }
-    }
-
-    private async Task UpdateBotByTypeAsync(string type, BotConfigEntry entry, CancellationToken ct)
-    {
-        // Resolve the bot id via a direct GET (reads bypass the queue)
-        var bot = await dispatcher.GetAsync<BotIntegrationDto>($"/bots/type/{type}", ct)
-            ?? throw new InvalidOperationException($"Bot integration for '{type}' not found in core.");
-
-        var update = new { enabled = entry.Enabled, botToken = entry.BotToken };
-        var result = await dispatcher.PutAsync($"/bots/{bot.Id}", update, ct);
-        if (!result.IsSuccess)
-            throw new HttpRequestException($"Core PUT /bots/{bot.Id} failed: {result.Error}");
-    }
-
     private static object DeserializeOrRaw(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -214,35 +143,4 @@ internal sealed class BotConfigDto
     public string? BotToken { get; set; }
     public Guid? DefaultChannelId { get; set; }
     public Guid? DefaultThreadId { get; set; }
-}
-
-internal sealed class BotIntegrationDto
-{
-    public Guid Id { get; set; }
-    public string? Name { get; set; }
-    public string? BotType { get; set; }
-    public bool Enabled { get; set; }
-    public bool HasBotToken { get; set; }
-    public Guid? DefaultChannelId { get; set; }
-    public Guid? DefaultThreadId { get; set; }
-}
-
-// ── Legacy request DTOs (kept for backward compat) ───────────────
-
-public sealed class BotConfigEntry
-{
-    public bool Enabled { get; set; }
-    public string? BotToken { get; set; }
-}
-
-public sealed class BotConfigRequest
-{
-    public BotConfigEntry? Telegram { get; set; }
-    public BotConfigEntry? Discord { get; set; }
-    public BotConfigEntry? WhatsApp { get; set; }
-    public BotConfigEntry? Slack { get; set; }
-    public BotConfigEntry? Matrix { get; set; }
-    public BotConfigEntry? Signal { get; set; }
-    public BotConfigEntry? Email { get; set; }
-    public BotConfigEntry? Teams { get; set; }
 }

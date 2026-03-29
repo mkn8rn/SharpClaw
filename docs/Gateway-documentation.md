@@ -1,4 +1,4 @@
-﻿# SharpClaw Gateway API Reference
+# SharpClaw Gateway API Reference
 
 > **Default URL:** `https://your-domain.example.com` (user-configured)
 >
@@ -1171,47 +1171,6 @@ Returns the enabled/configured state of bot integrations.
 `enabled` reflects the core database value. `configured` is `true`
 when a non-empty `BotToken` is present (or for Signal, when `ApiUrl`
 and `PhoneNumber` are set in platform config).
-
----
-
-### GET /api/bots/config
-
-Returns the current bot configuration (tokens included — core
-decrypts them).
-
-**200:**
-
-```json
-{
-  "telegram": { "enabled": true, "botToken": "", "platformConfig": null },
-  "discord":  { "enabled": false, "botToken": "", "platformConfig": null },
-  "whatsapp": { "enabled": false, "botToken": "", "platformConfig": "{...}" },
-  "slack":    { "enabled": false, "botToken": "", "platformConfig": "{...}" },
-  "matrix":   { "enabled": false, "botToken": "", "platformConfig": "{...}" },
-  "signal":   { "enabled": false, "botToken": "", "platformConfig": "{...}" },
-  "email":    { "enabled": false, "botToken": "", "platformConfig": "{...}" },
-  "teams":    { "enabled": false, "botToken": "", "platformConfig": "{...}" }
-}
-```
-
----
-
-### PUT /api/bots/config
-
-Legacy endpoint for updating bot configuration. Accepts a combined
-payload:
-
-```json
-{
-  "telegram": { "enabled": true, "botToken": "123:ABC" },
-  "discord":  { "enabled": false, "botToken": "" },
-  "whatsapp": { "enabled": false, "botToken": "" }
-}
-```
-
-Resolves each bot by type, then PUTs the update via the core API.
-
-**200** → `{ saved: true }`
 
 ---
 

@@ -10,8 +10,8 @@
     <!-- App Identifier -->
     <ApplicationId>com.mkn8rn.SharpClaw</ApplicationId>
     <!-- Versions -->
-    <ApplicationDisplayVersion>0.0.2-alpha</ApplicationDisplayVersion>
-    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationDisplayVersion>0.0.3-alpha</ApplicationDisplayVersion>
+    <ApplicationVersion>3</ApplicationVersion>
     <!-- Package Publisher -->
     <ApplicationPublisher>marko</ApplicationPublisher>
     <!-- Package Description -->
