@@ -4,12 +4,16 @@
     self-contained distributable for GitHub Releases.
 
 .DESCRIPTION
-    Produces a single folder containing:
+    Produces a self-contained distributable per platform:
       - SharpClaw.Uno.exe      (Uno desktop app, self-contained, R2R)
       - backend\               (API backend, self-contained, R2R)
       - gateway\               (Public gateway proxy, self-contained, R2R)
 
-    Neither project is trimmed: both use reflection-based JSON serialization
+    Platform packages (unless -SkipPackaging):
+      - Windows:  .msix  (via MakeAppx.exe from Windows SDK)
+      - Linux:    .snap  (via snapcraft) and .flatpak (via flatpak-builder)
+
+    Neither project is trimmed
     (anonymous types, DTOs) that the IL trimmer cannot preserve.
     Uses CoreCLR runtime (UseMonoRuntime=false) because the Mono runtime
     NuGet packages are not published for .NET 10.
@@ -38,17 +42,23 @@
 .PARAMETER SkipZip
     If set, skips creating the zip archive (useful for local testing).
 
+.PARAMETER SkipPackaging
+    If set, skips platform-specific packaging (MSIX, Snap, Flatpak).
+    The base publish and zip archive are still produced.
+
 .EXAMPLE
     .\publish-release.ps1
     .\publish-release.ps1 -Rid osx
     .\publish-release.ps1 -Rid all
     .\publish-release.ps1 -Rid linux -SkipZip
+    .\publish-release.ps1 -Rid all -SkipPackaging
 #>
 param(
     [string]$Rid = "win-x64",
     [string]$Configuration = "Release",
     [string]$OutputDir = (Join-Path $PSScriptRoot "publish"),
-    [switch]$SkipZip
+    [switch]$SkipZip,
+    [switch]$SkipPackaging
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +92,211 @@ if ($ridGroups.ContainsKey($Rid)) {
 
 $repoRoot   = $PSScriptRoot
 $unoProject = Join-Path (Join-Path $repoRoot "SharpClaw.Uno") "SharpClaw.Uno.csproj"
+
+# -- Version helper --
+function Get-ProjectVersion {
+    $propsPath = Join-Path $repoRoot "Directory.Build.props"
+    if (-not (Test-Path $propsPath)) { return "0.0.0" }
+    [xml]$xml = Get-Content $propsPath -Raw
+    $v = $xml.Project.PropertyGroup.Version
+    if ($v) { return $v } else { return "0.0.0" }
+}
+
+# -- MSIX packaging (Windows) --
+function Package-Msix {
+    param([string]$StageDir, [string]$TargetRid)
+
+    Write-Host ""
+    Write-Host "-- MSIX Packaging ($TargetRid) --" -ForegroundColor Cyan
+
+    # Locate MakeAppx.exe in Windows 10/11 SDK
+    $makeAppx = $null
+    $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+    if (Test-Path $sdkBin) {
+        $sdkVer = Get-ChildItem $sdkBin -Directory |
+                  Where-Object { $_.Name -match '^\d+\.' } |
+                  Sort-Object Name -Descending | Select-Object -First 1
+        if ($sdkVer) {
+            $c = Join-Path $sdkVer.FullName "x64\makeappx.exe"
+            if (Test-Path $c) { $makeAppx = $c }
+        }
+    }
+    if (-not $makeAppx) {
+        Write-Warning "MakeAppx.exe not found — install the Windows 10/11 SDK to enable MSIX packaging."
+        return
+    }
+    Write-Host "  Tool: $makeAppx" -ForegroundColor DarkGray
+
+    $version = Get-ProjectVersion
+    $vParts = $version.Split('-')[0].Split('.')
+    while ($vParts.Count -lt 4) { $vParts += "0" }
+    $msixVer = $vParts[0..3] -join '.'
+
+    $iconSrc = Join-Path $repoRoot "SharpClaw.Uno\Environment\icon.png"
+
+    # Inject Assets/StoreLogo.png into stage dir for the manifest
+    $assetsDir = Join-Path $StageDir "Assets"
+    $createdAssets = -not (Test-Path $assetsDir)
+    if ($createdAssets) { New-Item $assetsDir -ItemType Directory | Out-Null }
+    Copy-Item $iconSrc (Join-Path $assetsDir "StoreLogo.png") -Force
+
+    # Generate a fully-resolved AppxManifest.xml
+    # (Package.appxmanifest uses MSBuild variables that MakeAppx cannot process)
+    $manifestDst = Join-Path $StageDir "AppxManifest.xml"
+    $xml = @(
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<Package',
+        '  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"',
+        '  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"',
+        '  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"',
+        '  IgnorableNamespaces="uap rescap">',
+        '  <Identity Name="com.mkn8rn.SharpClaw"',
+        '           Publisher="CN=SharpClaw Dev"',
+        "           Version=`"$msixVer`" />",
+        '  <Properties>',
+        '    <DisplayName>SharpClaw</DisplayName>',
+        '    <PublisherDisplayName>marko</PublisherDisplayName>',
+        '    <Logo>Assets\StoreLogo.png</Logo>',
+        '  </Properties>',
+        '  <Dependencies>',
+        '    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />',
+        '  </Dependencies>',
+        '  <Resources>',
+        '    <Resource Language="en-us" />',
+        '  </Resources>',
+        '  <Applications>',
+        '    <Application Id="App" Executable="SharpClaw.Uno.exe" EntryPoint="Windows.FullTrustApplication">',
+        '      <uap:VisualElements DisplayName="SharpClaw" Description="SharpClaw AI Agent Platform"',
+        '        BackgroundColor="#0D0D0D" Square150x150Logo="Assets\StoreLogo.png"',
+        '        Square44x44Logo="Assets\StoreLogo.png" />',
+        '    </Application>',
+        '  </Applications>',
+        '  <Capabilities>',
+        '    <Capability Name="internetClient" />',
+        '    <Capability Name="privateNetworkClientServer" />',
+        '    <rescap:Capability Name="runFullTrust" />',
+        '    <DeviceCapability Name="microphone" />',
+        '  </Capabilities>',
+        '</Package>'
+    )
+    $xml -join "`r`n" | Set-Content $manifestDst -Encoding UTF8
+
+    # Pack MSIX
+    $msixPath = Join-Path $OutputDir "SharpClaw-$msixVer-$TargetRid.msix"
+    if (Test-Path $msixPath) { Remove-Item $msixPath -Force }
+    & $makeAppx pack /d $StageDir /p $msixPath /o
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "MSIX packaging failed (exit code $LASTEXITCODE)."
+    } else {
+        $sz = [math]::Round((Get-Item $msixPath).Length / 1MB, 1)
+        Write-Host "  MSIX: $msixPath ($sz MB)" -ForegroundColor Green
+        Write-Host "  Unsigned — use SignTool for distribution." -ForegroundColor DarkGray
+    }
+
+    # Clean injected packaging files from stage dir
+    Remove-Item $manifestDst -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $assetsDir "StoreLogo.png") -Force -ErrorAction SilentlyContinue
+    if ($createdAssets) { Remove-Item $assetsDir -Force -ErrorAction SilentlyContinue }
+}
+
+# -- Snap packaging (Linux) --
+function Package-Snap {
+    param([string]$StageDir, [string]$TargetRid)
+
+    Write-Host ""
+    Write-Host "-- Snap Packaging ($TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command snapcraft -ErrorAction SilentlyContinue)) {
+        Write-Warning "snapcraft not found — install it to enable Snap packaging."
+        Write-Warning "  Linux: sudo snap install snapcraft --classic"
+        Write-Warning "  Template: packaging/snap/snapcraft.yaml"
+        return
+    }
+
+    $version  = Get-ProjectVersion
+    $snapArch = if ($TargetRid -like "*arm64") { "arm64" } else { "amd64" }
+
+    $workDir = Join-Path $OutputDir "_snap-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    New-Item $workDir -ItemType Directory | Out-Null
+    New-Item (Join-Path $workDir "snap")     -ItemType Directory | Out-Null
+    New-Item (Join-Path $workDir "snap\gui") -ItemType Directory | Out-Null
+
+    Copy-Item $StageDir -Destination (Join-Path $workDir "publish") -Recurse
+
+    $yaml = (Get-Content (Join-Path $repoRoot "packaging\snap\snapcraft.yaml") -Raw) -replace '__VERSION__', $version
+    Set-Content (Join-Path $workDir "snap\snapcraft.yaml") $yaml -Encoding UTF8
+    Copy-Item (Join-Path $repoRoot "packaging\snap\gui\sharpclaw.desktop") (Join-Path $workDir "snap\gui\sharpclaw.desktop") -Force
+    Copy-Item (Join-Path $repoRoot "SharpClaw.Uno\Environment\icon.png")   (Join-Path $workDir "snap\gui\icon.png")          -Force
+
+    Push-Location $workDir
+    try {
+        & snapcraft pack --build-for $snapArch
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Snap packaging failed (exit code $LASTEXITCODE)."; return }
+        $snap = Get-ChildItem $workDir -Filter "*.snap" | Select-Object -First 1
+        if ($snap) {
+            $dest = Join-Path $OutputDir $snap.Name
+            Move-Item $snap.FullName $dest -Force
+            $sz = [math]::Round((Get-Item $dest).Length / 1MB, 1)
+            Write-Host "  Snap: $dest ($sz MB)" -ForegroundColor Green
+        }
+    } finally {
+        Pop-Location
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# -- Flatpak packaging (Linux) --
+function Package-Flatpak {
+    param([string]$StageDir, [string]$TargetRid)
+
+    Write-Host ""
+    Write-Host "-- Flatpak Packaging ($TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command flatpak-builder -ErrorAction SilentlyContinue)) {
+        Write-Warning "flatpak-builder not found — install it to enable Flatpak packaging."
+        Write-Warning "  Linux: sudo apt install flatpak-builder"
+        Write-Warning "  Manifest: packaging/flatpak/com.mkn8rn.SharpClaw.yml"
+        return
+    }
+
+    $version = Get-ProjectVersion
+    $fpArch  = if ($TargetRid -like "*arm64") { "aarch64" } else { "x86_64" }
+
+    $workDir = Join-Path $OutputDir "_flatpak-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    New-Item $workDir -ItemType Directory | Out-Null
+    Copy-Item $StageDir -Destination (Join-Path $workDir "publish") -Recurse
+
+    # Stamp metainfo with version and date
+    $meta = (Get-Content (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.metainfo.xml") -Raw)
+    $meta = $meta -replace '__VERSION__', $version
+    $meta = $meta -replace '__DATE__', (Get-Date -Format "yyyy-MM-dd")
+    Set-Content (Join-Path $workDir "com.mkn8rn.SharpClaw.metainfo.xml") $meta -Encoding UTF8
+
+    Copy-Item (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.yml")     (Join-Path $workDir "com.mkn8rn.SharpClaw.yml")     -Force
+    Copy-Item (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.desktop")  (Join-Path $workDir "com.mkn8rn.SharpClaw.desktop")  -Force
+    Copy-Item (Join-Path $repoRoot "SharpClaw.Uno\Environment\icon.png")              (Join-Path $workDir "icon.png")                      -Force
+
+    $buildDir = Join-Path $workDir "build"
+    $repoDir  = Join-Path $workDir "repo"
+
+    Push-Location $workDir
+    try {
+        & flatpak-builder --force-clean "--repo=$repoDir" "--arch=$fpArch" $buildDir "com.mkn8rn.SharpClaw.yml"
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Flatpak build failed (exit code $LASTEXITCODE)."; return }
+
+        $bundlePath = Join-Path $OutputDir "SharpClaw-$version-$TargetRid.flatpak"
+        & flatpak build-bundle $repoDir $bundlePath com.mkn8rn.SharpClaw "--arch=$fpArch"
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Flatpak bundle creation failed."; return }
+
+        $sz = [math]::Round((Get-Item $bundlePath).Length / 1MB, 1)
+        Write-Host "  Flatpak: $bundlePath ($sz MB)" -ForegroundColor Green
+    } finally {
+        Pop-Location
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # -- Publish function --
 function Publish-SharpClaw {
@@ -233,11 +448,18 @@ function Publish-SharpClaw {
     return $true
 }
 
-# -- Run publishes --
+# -- Run publishes + packaging --
 $failed = @()
 foreach ($rid in $ridsToPublish) {
     $ok = Publish-SharpClaw -TargetRid $rid
-    if (-not $ok) { $failed += $rid }
+    if (-not $ok) { $failed += $rid; continue }
+
+    if (-not $SkipPackaging) {
+        $stageDir = Join-Path $OutputDir "SharpClaw-$rid"
+        if ($rid -like "win-*")   { Package-Msix    -StageDir $stageDir -TargetRid $rid }
+        if ($rid -like "linux-*") { Package-Snap    -StageDir $stageDir -TargetRid $rid }
+        if ($rid -like "linux-*") { Package-Flatpak -StageDir $stageDir -TargetRid $rid }
+    }
 }
 
 # -- Final report --
