@@ -189,6 +189,7 @@ public partial class App : Application
             new ViewMap<MainPage>(),
             new ViewMap<SettingsPage>(),
             new ViewMap<LegalNoticesPage>(),
+            new ViewMap<UserGuidePage>(),
             new ViewMap<EnvMenuPage>(),
             new ViewMap<EnvEditorPage>()
         );
@@ -203,6 +204,7 @@ public partial class App : Application
                     new ("Main", View: views.FindByView<MainPage>(), IsDefault:true),
                     new ("Settings", View: views.FindByView<SettingsPage>()),
                     new ("LegalNotices", View: views.FindByView<LegalNoticesPage>()),
+                    new ("UserGuide", View: views.FindByView<UserGuidePage>()),
                     new ("EnvMenu", View: views.FindByView<EnvMenuPage>()),
                     new ("EnvEditor", View: views.FindByView<EnvEditorPage>())
                 ]

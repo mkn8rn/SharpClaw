@@ -186,8 +186,7 @@
   </ItemGroup>
 
   <!-- Auto-stamp Package.appxmanifest Identity/Version from Directory.Build.props at build time -->
-  <UsingTask TaskName="StampManifestVersion" TaskFactory="RoslynCodeTaskFactory"
-             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+  <UsingTask TaskName="StampManifestVersion" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <FilePath ParameterType="System.String" Required="true" />
       <NewVersion ParameterType="System.String" Required="true" />
@@ -206,10 +205,14 @@ if (text != updated)
     </Task>
   </UsingTask>
 
-  <Target Name="StampAppxManifestVersion" BeforeTargets="BeforeBuild"
-          Condition="Exists('$(MSBuildProjectDirectory)\Package.appxmanifest')">
-    <StampManifestVersion FilePath="$(MSBuildProjectDirectory)\Package.appxmanifest"
-                          NewVersion="$(AssemblyVersion)" />
+  <Target Name="StampAppxManifestVersion" BeforeTargets="BeforeBuild" Condition="Exists('$(MSBuildProjectDirectory)\Package.appxmanifest')">
+    <StampManifestVersion FilePath="$(MSBuildProjectDirectory)\Package.appxmanifest" NewVersion="$(AssemblyVersion)" />
   </Target>
+
+  <ItemGroup>
+    <Page Update="Presentation\UserGuidePage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
 
 </Project>

@@ -64,6 +64,8 @@
       <StackPanel Grid.Row="3" Margin="16,0,16,12" Spacing="6">
         <Border Height="1" Background="#1A1A1A" Margin="0,0,0,4" />
         <Button Background="Transparent" BorderThickness="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"
                 Click="OnSettingsClick">
           <TextBlock Text="› Settings"
                      Style="{StaticResource TerminalText}"
@@ -71,6 +73,8 @@
                      Foreground="#808080" />
         </Button>
         <Button Background="Transparent" BorderThickness="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"
                 Click="OnLogoutClick">
           <TextBlock Text="› Logout"
                      Style="{StaticResource TerminalText}"
@@ -78,8 +82,19 @@
                      Foreground="#808080" />
         </Button>
         <Button Background="Transparent" BorderThickness="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"
                 Click="OnLegalNoticesClick">
           <TextBlock Text="› Legal Notices"
+                     Style="{StaticResource TerminalText}"
+                     FontSize="12"
+                     Foreground="#808080" />
+        </Button>
+        <Button Background="Transparent" BorderThickness="0" Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"
+                Click="OnUserGuideClick">
+          <TextBlock Text="› User Guide"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />

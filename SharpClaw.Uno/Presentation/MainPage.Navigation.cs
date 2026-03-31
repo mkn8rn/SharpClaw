@@ -240,6 +240,12 @@ public sealed partial class MainPage
         _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "LegalNotices");
     }
 
+    private void OnUserGuideClick(object sender, RoutedEventArgs e)
+    {
+        if (App.Services is not { } services) return;
+        _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "UserGuide");
+    }
+
     // ── Role assignment (right-click context menu) ─────────────
 
     private MenuFlyout? BuildRoleMenuFlyout(bool isUser, Guid? agentId)
