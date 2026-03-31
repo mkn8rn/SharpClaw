@@ -594,39 +594,35 @@ operation fails before compilation with `Mk8GigaBlacklistException`:
 Gigablacklisted term not allowed: [mk8.shell.env] — Argument '...' contains gigablacklisted term.
 ```
 
-The gigablacklist includes two compile-time groups plus env-sourced
-custom patterns:
+The compile-time gigablacklist is intentionally minimal — only patterns
+that protect mk8.shell's own infrastructure and raw block devices:
 
 1. **mk8.shell env patterns** — `mk8.shell.env`, `mk8.shell.signed.env`,
    `mk8.shell.base.env`, `mk8.shell.key`. These protect the sandbox's
    own configuration and signing keys from agent access.
-2. **Hardcoded patterns** — shell injection markers, destructive
-   filesystem commands (rm -rf, format, mkfs, dd, diskpart, shred),
-   raw block-device paths (/dev/sda, \\.\PhysicalDrive), system control
-   commands (shutdown, reboot, halt, poweroff), process kill-all patterns,
-   sensitive system files (/etc/shadow, /etc/sudoers), fork bombs, SQL
-   destruction (DROP DATABASE, DROP TABLE, xp_cmdshell), Windows
-   registry/service manipulation, and privilege escalation commands.
+2. **Hardcoded patterns** — raw block-device paths (`/dev/sda`,
+   `\\.\PhysicalDrive`, `\\.\GLOBALROOT`). These reference physical
+   storage devices — catastrophic if any tool consumes them.
 3. **Custom patterns** — loaded from `CustomBlacklist` in base.env
    (global, cached at startup) and `MK8_BLACKLIST` in sandbox signed env
    (loaded fresh per execution). Both sources merge additively. Patterns
    shorter than 2 characters are silently ignored.
 
+> **Why minimal?** mk8.shell never executes a shell — shell injection
+> markers (`&&`, `$(`, etc.), destructive commands (`rm -rf`, `DROP TABLE`),
+> and privilege escalation patterns (`sudo`, `passwd`) are structurally
+> inert here.  Blocking them in file content and commit messages is
+> counterproductive — agents can't write Dockerfiles, deploy scripts,
+> or migration files containing normal shell/SQL syntax.  Developers who
+> need project-specific restrictions should use `CustomBlacklist` /
+> `MK8_BLACKLIST`.
+
 **Disable flags** (base.env-only, ignored in sandbox env):
 
 | Flag | Default | Effect |
 |---|---|---|
-| `DisableHardcodedGigablacklist` | `false` | Disables group 2 (hardcoded patterns). Group 1 (env patterns) stays active. |
+| `DisableHardcodedGigablacklist` | `false` | Disables group 2 (block-device patterns). Group 1 (env patterns) stays active. |
 | `DisableMk8shellEnvsGigablacklist` | `false` | Only takes effect when `DisableHardcodedGigablacklist` is also `true`. Disables group 1 (env patterns). |
-
-> **⚠ WARNING:** `DisableHardcodedGigablacklist` should essentially
-> never be set to `true` except in a dedicated test environment. The
-> hardcoded patterns exist for a reason — they prevent agents from
-> producing arguments referencing catastrophically destructive commands.
-> Even when hardcoded patterns are disabled, the mk8.shell env/key
-> patterns remain active by default. Setting *both* flags to `true`
-> removes ALL compile-time protection — only custom patterns remain.
-> This is strongly discouraged even in test environments.
 
 #### Allowed command templates
 
@@ -818,10 +814,7 @@ itself — just avoids the cryptic "command not found" error on failure.
 4. **`.git/` write protection** (`Mk8PathSanitizer.ResolveForWrite`): blocks
    all writes to paths containing `.git/`, preventing hook injection and
    config tampering.
-5. **`.gitattributes` / `.gitmodules` write block**: these filenames are in
-   `BlockedWriteFilenames` to prevent filter driver redirection and
-   submodule URL manipulation.
-6. **Sandbox env GIGABLACKLIST** (`Mk8PathSanitizer.Resolve`): `mk8.shell.env`
+5. **Sandbox env GIGABLACKLIST** (`Mk8PathSanitizer.Resolve`): `mk8.shell.env`
    and `mk8.shell.signed.env` are blocked on ALL operations — read, write,
    copy, move, delete, hash, list. Enforced in `Resolve()` itself, not just
    `ResolveForWrite()`. Only the user or mk8.shell.startup may access them.
@@ -1523,24 +1516,30 @@ admin-level `.sh` file that a CI pipeline picks up independently.
 
 ```
 FileWrite  ["$WORKSPACE/deploy.sh", "#!/bin/bash\napt update && ..."]  → OK
-FileWrite  ["$WORKSPACE/setup.py", "from setuptools import ..."]       → OK
+FileWrite  ["$WORKSPACE/setup.py", "from setuptools import ..."]       → OK  (python3/pip3 permanently blocked)
 ```
 
 The agent cannot execute these because `bash`, `sh`, `python`, `python3`,
-`powershell`, and all other interpreters are permanently blocked.
+`powershell`, and all other interpreters are permanently blocked.  Python
+packaging files (`setup.py`, `setup.cfg`, `pyproject.toml`) are also
+allowed for writing — `pip3` is permanently blocked, so they cannot
+trigger code execution within mk8.shell.
 
-#### Tier 2: BLOCKED from writing (executable by OS or allowed binaries)
+#### Tier 2: BLOCKED from writing
 
 | Category | Extensions / Names | Why |
 |---|---|---|
-| Native executables | `.exe`, `.com`, `.scr`, `.msi`, `.msp`, `.dll`, `.bin`, `.run`, `.elf`, `.so`, `.dylib`, `.appimage` | OS runs directly |
-| Node.js code files | `.js`, `.mjs`, `.cjs` | `node` is on the allowlist |
-| MSBuild project files | `.csproj`, `.fsproj`, `.vbproj`, `.proj`, `.targets`, `.props`, `.sln` | `dotnet build` executes `<Exec>` targets |
-| Rust source files | `.rs` | `cargo build` executes `build.rs` scripts |
-| Windows script host | `.jse`, `.wsf`, `.wsh`, `.msh`, `.vbs`, `.vbe` | OS can invoke via file association |
-| Build config files (by name) | `Makefile`, `GNUmakefile`, `CMakeLists.txt`, `Dockerfile`, `.npmrc`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `nuget.config`, `package.json`, `build.rs`, `Cargo.toml`, `setup.py`, `setup.cfg`, `pyproject.toml`, `.gitattributes`, `.gitmodules`, `mk8.shell.env`, `mk8.shell.signed.env` | Build tools execute code from these implicitly / sandbox security |
+| Native executables | `.exe`, `.com`, `.scr`, `.msi`, `.msp`, `.dll`, `.bin`, `.run`, `.elf`, `.so`, `.dylib`, `.appimage` | OS runs directly — binary planting / DLL hijacking |
+| MSBuild project files | `.csproj`, `.fsproj`, `.vbproj`, `.proj`, `.targets`, `.props` | `dotnet build` is on the ProcRun allowlist and executes `<Exec>` targets |
+| Config files (by name) | `nuget.config`, `mk8.shell.env`, `mk8.shell.signed.env` | `dotnet restore` reads nuget.config → malicious feed → MSBuild Exec escape / sandbox security |
 
-##### Why these are blocked: the binary planting attack
+> **Philosophy:** Only files with a genuine live attack path through the
+> current ProcRun template set are blocked.  Everything else is the
+> developer's responsibility — use `CustomBlacklist` in base.env or
+> `MK8_BLACKLIST` in sandbox signed env to add project-specific restrictions
+> (e.g. `package.json`, `.gitattributes`, `build.rs`, `Cargo.toml`).
+
+##### Why native executables are blocked: the binary planting attack
 
 The mk8.shell sandbox is a real directory on a real server. Other software
 often shares that directory — CI runners, web servers, application runtimes,
@@ -1604,7 +1603,6 @@ no argument points to a code file an allowed binary would interpret:
 ```
 ProcRun ["node", "$WORKSPACE/script.js"]  → BLOCKED (code-file argument)
 ProcRun ["node", "--version"]             → OK (no code file)
-ProcRun ["make", "-f", "Makefile"]        → BLOCKED (dangerous config)
 ```
 
 ### Execution Limits

@@ -25,38 +25,31 @@ public static class Mk8PathSanitizer
     };
 
     /// <summary>
-    /// File extensions that remain blocked on write targets because
-    /// an allowed binary on the ProcRun allowlist could directly execute
-    /// them, or because they are native executables the OS runs directly.
+    /// File extensions blocked on write targets. Only two categories:
+    /// <list type="bullet">
+    ///   <item><b>Native executables</b> — OS-loadable binaries and shared
+    ///     libraries that other processes in the sandbox could implicitly
+    ///     execute or link against (DLL hijacking, binary planting).</item>
+    ///   <item><b>MSBuild project files</b> — <c>dotnet build</c> is on the
+    ///     ProcRun allowlist and executes &lt;Exec&gt; targets, source generators,
+    ///     and pre/post build events from these files.</item>
+    /// </list>
     /// <para>
-    /// <b>NOT blocked here</b>: script extensions whose interpreters are
-    /// ALL permanently blocked (e.g. .sh, .bat, .ps1, .py). Agents can
-    /// author these for humans or unrestricted external tooling — the
-    /// agent itself has no way to run them through mk8.shell.
+    /// Everything else is the developer's responsibility. Use
+    /// <c>CustomBlacklist</c> in base.env or <c>MK8_BLACKLIST</c> in sandbox
+    /// env to add project-specific restrictions.
     /// </para>
     /// </summary>
     private static readonly HashSet<string> BlockedWriteExtensions =
         new(StringComparer.OrdinalIgnoreCase)
     {
-        // ── Native executables (OS runs directly) ─────────────────
+        // ── Native executables (OS runs directly / binary planting) ─
         ".exe", ".com", ".scr", ".msi", ".msp", ".dll",
         ".bin", ".run", ".appimage", ".elf", ".so", ".dylib",
 
-        // ── Extensions executable by ALLOWED ProcRun binaries ─────
-        // node (on allowlist) can run these directly
-        ".js", ".mjs", ".cjs",
-        // Windows script host (could be invoked by OS association)
-        ".jse", ".wsf", ".wsh", ".msh", ".vbs", ".vbe",
-
         // ── MSBuild project files (dotnet build executes <Exec> targets) ──
-        // dotnet is on the allowlist; these files trigger arbitrary
-        // command execution via MSBuild <Exec>, <Target>, source
-        // generators, and pre/post build events.
         ".csproj", ".fsproj", ".vbproj", ".proj",
-        ".targets", ".props", ".sln",
-
-        // ── Cargo build scripts (cargo build executes build.rs) ───
-        ".rs",
+        ".targets", ".props",
     };
 
     public static string Resolve(string userPath, string sandboxRoot)
@@ -93,13 +86,14 @@ public static class Mk8PathSanitizer
     /// Validates a path that will be the TARGET of a write, append,
     /// move, or copy operation. Blocks:
     /// <list type="bullet">
-    ///   <item>Native executables and code files runnable by allowed binaries</item>
-    ///   <item>Config filenames that trigger implicit code execution (e.g. Makefile)</item>
+    ///   <item>Native executables and shared libraries (binary planting)</item>
+    ///   <item>MSBuild project files (dotnet build executes &lt;Exec&gt; targets)</item>
+    ///   <item>Config filenames with live attack paths (nuget.config)</item>
+    ///   <item>Paths inside <c>.git/</c> (hook injection, config tampering)</item>
     /// </list>
     /// <para>
-    /// Script extensions whose interpreters are ALL permanently blocked
-    /// (.sh, .bat, .ps1, .py, etc.) are intentionally ALLOWED — agents
-    /// can author these for humans or external tooling.
+    /// Everything else is allowed. Developers can add project-specific
+    /// restrictions via <c>CustomBlacklist</c> / <c>MK8_BLACKLIST</c>.
     /// </para>
     /// </summary>
     public static string ResolveForWrite(string userPath, string sandboxRoot)
@@ -186,48 +180,38 @@ public static class Mk8PathSanitizer
         var ext = Path.GetExtension(resolvedPath);
         if (!string.IsNullOrEmpty(ext) && BlockedWriteExtensions.Contains(ext))
             throw new Mk8CompileException(Mk8ShellVerb.FileWrite,
-                $"Cannot write to executable file type '{ext}': '{originalPath}'.\n" +
-                "This extension is blocked because the file could be executed by the OS " +
-                "or by an allowed binary (dotnet, node, cargo) without the agent invoking " +
-                "it — other processes sharing the sandbox could load it implicitly.\n" +
-                "  ✓ Correct: .txt, .json, .yaml, .xml, .csv, .md, .sh, .py, .ps1 (scripts OK — interpreters blocked)\n" +
-                $"  ✗ Wrong:   {ext} (blocked: native executable, code runnable by allowed binary, or MSBuild project)\n" +
-                "If you need to create a configuration or data file, use a safe extension. " +
-                "Run { \"verb\": \"Mk8Docs\", \"args\": [] } to see the full write-protection model.");
+                $"Cannot write to '{ext}' file: '{originalPath}'.\n" +
+                "This extension is blocked because the file is either a native executable " +
+                "(OS-loadable binary/shared library — binary planting risk) or an MSBuild " +
+                "project file (dotnet build executes <Exec> targets from these).\n" +
+                "  ✓ Correct: .txt, .json, .yaml, .xml, .csv, .md, .sh, .py, .js, .rs, .toml\n" +
+                $"  ✗ Wrong:   {ext} (native executable or MSBuild project file)\n" +
+                "If you need to create a configuration or data file, use a safe extension.");
     }
 
     /// <summary>
-    /// Filenames that trigger code execution by proximity — just
-    /// existing in a directory causes allowed build tools to run
-    /// whatever is inside them.
+    /// Filenames blocked on write targets. Only files with a genuine
+    /// live attack path through the current ProcRun template set:
+    /// <list type="bullet">
+    ///   <item><c>nuget.config</c> — <c>dotnet restore</c> reads package
+    ///     sources → malicious feed → MSBuild &lt;Exec&gt; in .targets from
+    ///     NuGet cache → arbitrary code execution.</item>
+    ///   <item>Sandbox env files — also GIGABLACKLISTED, listed here for
+    ///     defence-in-depth.</item>
+    /// </list>
+    /// <para>
+    /// Everything else is the developer's responsibility. Use
+    /// <c>CustomBlacklist</c> in base.env or <c>MK8_BLACKLIST</c> in sandbox
+    /// env to add project-specific restrictions (e.g. <c>package.json</c>,
+    /// <c>.gitattributes</c>, <c>build.rs</c>).
+    /// </para>
     /// </summary>
     private static readonly HashSet<string> BlockedWriteFilenames =
         new(StringComparer.OrdinalIgnoreCase)
     {
-        // make / cmake
-        "Makefile", "makefile", "GNUmakefile",
-        "CMakeLists.txt",
-        "Dockerfile",
-        ".npmrc",
-
-        // dotnet — MSBuild targets can contain <Exec Command="..."/>
-        "Directory.Build.props", "Directory.Build.targets",
-        "Directory.Packages.props",
+        // dotnet restore reads this → malicious package source →
+        // MSBuild <Exec> escape via .targets in NuGet cache.
         "nuget.config", "NuGet.Config", "NuGet.config",
-
-        // npm / node — lifecycle scripts run during install
-        "package.json",
-
-        // cargo — build.rs runs at build time
-        "build.rs", "Cargo.toml",
-
-        // python — pip3 executes during install
-        "setup.py", "setup.cfg", "pyproject.toml",
-
-        // git — .gitattributes can redirect filter drivers (clean/smudge)
-        // to different file patterns if .git/config has driver definitions.
-        // .gitmodules can redirect submodule URLs.
-        ".gitattributes", ".gitmodules",
 
         // mk8.shell sandbox env files — also in GigaBlacklistedFilenames
         // but listed here too for defence-in-depth on the write path.
@@ -241,15 +225,13 @@ public static class Mk8PathSanitizer
         var fileName = Path.GetFileName(resolvedPath);
         if (BlockedWriteFilenames.Contains(fileName))
             throw new Mk8CompileException(Mk8ShellVerb.FileWrite,
-                $"Cannot write to config file '{fileName}': '{originalPath}'.\n" +
-                "This filename triggers implicit code execution by build tools " +
-                "(e.g., Makefile by make, package.json by npm, Cargo.toml by cargo, " +
-                ".csproj by dotnet build). Writing to it could cause arbitrary code " +
-                "execution the next time the build tool runs in this directory.\n" +
+                $"Cannot write to '{fileName}': '{originalPath}'.\n" +
+                "This filename has a live attack path through the current ProcRun " +
+                "template set (e.g. nuget.config → dotnet restore → malicious NuGet " +
+                "feed → MSBuild <Exec> escape).\n" +
                 "  ✓ Correct: { \"verb\": \"FileWrite\", \"args\": [\"$WORKSPACE/config.yaml\", \"...\"] }\n" +
                 $"  ✗ Wrong:   {{ \"verb\": \"FileWrite\", \"args\": [\"$WORKSPACE/{fileName}\", \"...\"] }}\n" +
-                "Use a non-dangerous filename, or use FileTemplate/FilePatch to modify " +
-                "existing safe files instead.");
+                "Use FileTemplate/FilePatch to modify existing safe files instead.");
     }
 
     /// <summary>

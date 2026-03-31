@@ -10,27 +10,23 @@ namespace Mk8.Shell.Safety;
 /// validation, on every string the agent produces.
 /// </para>
 /// <para>
-/// The compile-time patterns are split into two groups:
+/// The compile-time patterns are intentionally minimal — only patterns
+/// that protect mk8.shell's own infrastructure (sandbox env/key files)
+/// and raw block-device paths that could cause catastrophic data loss
+/// if referenced anywhere:
 /// <list type="bullet">
-///   <item><b>mk8.shell env patterns</b> — the 4 sandbox env/key filenames
-///     (<c>mk8.shell.env</c>, <c>mk8.shell.signed.env</c>, <c>mk8.shell.base.env</c>,
-///     <c>mk8.shell.key</c>). Disabled only via <c>DisableMk8shellEnvsGigablacklist</c>
+///   <item><b>mk8.shell env patterns</b> — the 4 sandbox env/key filenames.
+///     Disabled only via <c>DisableMk8shellEnvsGigablacklist</c>
 ///     in base.env.</item>
-///   <item><b>Hardcoded patterns</b> — destructive commands, block devices,
-///     system control, SQL destruction, etc. Disabled via
-///     <c>DisableHardcodedGigablacklist</c> in base.env.</item>
+///   <item><b>Hardcoded patterns</b> — raw block-device paths only.
+///     Disabled via <c>DisableHardcodedGigablacklist</c> in base.env.</item>
 /// </list>
-/// Both flags are base.env-only (ignored in sandbox env) and default to
-/// <c>false</c>. Disabling either is strongly discouraged outside test
-/// environments.
 /// </para>
 /// <para>
-/// Additional patterns can be loaded additively from
-/// <c>mk8.shell.base.env</c> (global — loaded once at startup, cached
-/// until restart) and per-sandbox signed env (loaded fresh on every
-/// script execution). Custom patterns are validated at load time —
-/// empty/whitespace entries are ignored, patterns shorter than 2
-/// characters are rejected.
+/// Everything else is the developer's responsibility. Use
+/// <c>CustomBlacklist</c> in base.env (global) or <c>MK8_BLACKLIST</c>
+/// in sandbox signed env (per-sandbox) to add project-specific patterns.
+/// Both are additive — patterns from all sources are merged.
 /// </para>
 /// </summary>
 public sealed class Mk8GigaBlacklist
@@ -53,43 +49,22 @@ public sealed class Mk8GigaBlacklist
     ];
 
     /// <summary>
-    /// Compile-time hardcoded patterns covering destructive commands,
-    /// shell injection markers, block devices, system control, SQL
-    /// destruction, registry/service manipulation, and privilege
-    /// escalation. Disabled via <c>DisableHardcodedGigablacklist</c>.
+    /// Compile-time hardcoded patterns — limited to raw block-device
+    /// paths that could cause catastrophic data loss. Everything else
+    /// (shell injection markers, destructive commands, SQL destruction,
+    /// privilege escalation, etc.) is not enforceable here — mk8.shell
+    /// never executes a shell, and blocking these strings in file content
+    /// or commit messages is counterproductive. Developers can add
+    /// project-specific patterns via <c>CustomBlacklist</c> / <c>MK8_BLACKLIST</c>.
+    /// Disabled via <c>DisableHardcodedGigablacklist</c>.
     /// </summary>
     private static readonly string[] HardcodedPatterns =
     [
-        // ── Shell injection markers (defense-in-depth) ────────────
-        "$(", "`", "&&", "||", ">>", "<<", "${",
-        "; rm ", ";rm ", "| ", " |",
-
-        // ── Destructive filesystem — Linux/macOS ──────────────────
-        "rm -rf /",
-        "rm -rf /*",
-        "rm -rf ~",
-        "rm -rf .",
-        "--no-preserve-root",
-        "mkfs.",
-        "dd if=/dev/",
-        "wipefs",
-        "shred ",
-        "shred -",
-
-        // ── Destructive filesystem — Windows ──────────────────────
-        "format c:",
-        "format d:",
-        "rd /s /q",
-        "rmdir /s /q",
-        "del /s /q",
-        "del /f /s /q",
-        "cipher /w:",
-        "diskpart",
-        "bcdedit",
-        "sfc /scannow",
-        "dism ",
-
         // ── Raw block-device access ───────────────────────────────
+        // These paths reference physical storage devices. While mk8.shell
+        // itself can't open them (outside sandbox), blocking references
+        // prevents agents from crafting content that other tools might
+        // consume to target raw devices.
         "/dev/sda",
         "/dev/sdb",
         "/dev/sdc",
@@ -97,75 +72,8 @@ public sealed class Mk8GigaBlacklist
         "/dev/vda",
         "/dev/hda",
         "/dev/xvda",
-        "/dev/loop",
-        "/dev/dm-",
-        "/dev/md",
-        "/dev/mmcblk",
         "\\\\.\\PhysicalDrive",
-        "\\\\.\\HarddiskVolume",
         "\\\\.\\GLOBALROOT",
-
-        // ── System shutdown / reboot / halt ───────────────────────
-        "shutdown -h",
-        "shutdown -r",
-        "shutdown /s",
-        "shutdown /r",
-        "shutdown /f",
-        "poweroff",
-        "halt",
-        "reboot",
-        "init 0",
-        "init 6",
-        "systemctl reboot",
-        "systemctl poweroff",
-
-        // ── Process kill-all ──────────────────────────────────────
-        "kill -9 -1",
-        "killall -9",
-        "taskkill /f /im *",
-        "pkill -9",
-
-        // ── Sensitive system files ────────────────────────────────
-        "/etc/shadow",
-        "/etc/sudoers",
-        "/etc/gshadow",
-        "SAM database",
-        "SYSTEM hive",
-
-        // ── Fork bomb patterns ────────────────────────────────────
-        ":(){ ",
-        "%0|%0",
-
-        // ── SQL destruction ───────────────────────────────────────
-        "DROP DATABASE",
-        "DROP TABLE",
-        "TRUNCATE TABLE",
-        "DROP SCHEMA",
-        "DROP ALL",
-        "xp_cmdshell",
-        "EXEC xp_",
-        "sp_configure",
-
-        // ── Windows registry attacks ──────────────────────────────
-        "reg delete",
-        "reg add hklm",
-        "reg add hkcu",
-
-        // ── Service manipulation ──────────────────────────────────
-        "sc delete",
-        "sc stop",
-        "net stop",
-        "net user ",
-        "schtasks /delete",
-
-        // ── Privilege escalation markers ──────────────────────────
-        "visudo",
-        "passwd ",
-        "usermod ",
-        "useradd ",
-        "userdel ",
-        "groupmod ",
-        "chpasswd",
     ];
 
     /// <summary>
@@ -194,33 +102,18 @@ public sealed class Mk8GigaBlacklist
     /// sandbox env. Merged additively — both sources contribute.
     /// </param>
     /// <param name="disableHardcoded">
-    /// When <c>true</c>, the hardcoded destructive-command patterns are
-    /// excluded. The mk8.shell env patterns remain active unless
+    /// When <c>true</c>, the hardcoded block-device patterns are excluded.
+    /// The mk8.shell env patterns remain active unless
     /// <paramref name="disableMk8shellEnvs"/> is also <c>true</c>.
-    /// <para>
-    /// <b>WARNING:</b> This should essentially never be set to <c>true</c>
-    /// except in a dedicated test environment. The hardcoded patterns
-    /// exist for a reason — they prevent agents from producing arguments
-    /// that reference catastrophically destructive commands, raw block
-    /// devices, system control sequences, and privilege escalation tools.
-    /// Disabling them removes a critical defense-in-depth layer.
-    /// </para>
     /// </param>
     /// <param name="disableMk8shellEnvs">
     /// When <c>true</c>, the mk8.shell env/key filename patterns are
-    /// also excluded. This means agents can reference
-    /// <c>mk8.shell.env</c>, <c>mk8.shell.signed.env</c>,
-    /// <c>mk8.shell.base.env</c>, and <c>mk8.shell.key</c> in their
-    /// arguments — which could allow them to read or manipulate sandbox
-    /// configuration and signing keys.
+    /// also excluded. Only takes effect when
+    /// <paramref name="disableHardcoded"/> is also <c>true</c>.
     /// <para>
-    /// <b>WARNING:</b> This is a separate opt-out that only takes effect
-    /// when <paramref name="disableHardcoded"/> is also <c>true</c> (if
-    /// hardcoded patterns are active, the env filenames are always
-    /// enforced regardless of this flag). Even when hardcoded patterns
-    /// are disabled, the env filenames remain blocked by default.
-    /// Disabling both flags simultaneously removes ALL compile-time
-    /// protection and is strongly discouraged even in test environments.
+    /// <b>WARNING:</b> Disabling both flags removes ALL compile-time
+    /// protection — only custom patterns remain. This is strongly
+    /// discouraged.
     /// </para>
     /// </param>
     public Mk8GigaBlacklist(

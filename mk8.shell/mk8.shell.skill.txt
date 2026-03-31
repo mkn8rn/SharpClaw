@@ -125,23 +125,11 @@ Forbidden files (ALL operations blocked):
   mk8.shell.signed.env
 
 Write-blocked filenames:
-  Makefile
-  CMakeLists.txt
-  Dockerfile
-  .npmrc
-  Directory.Build.props
-  Directory.Packages.props
   nuget.config
-  package.json
-  build.rs
-  Cargo.toml
-  setup.py
-  pyproject.toml
-  .gitattributes
-  .gitmodules
 
 Write-blocked extensions:
-  .exe .dll .so .dylib .js .mjs .cjs .vbs .sln .csproj .targets .props .rs ...
+  .exe .dll .so .dylib .bin .run .appimage .elf .com .scr .msi .msp
+  .csproj .fsproj .vbproj .proj .targets .props
 
 Writes to .git/ paths are blocked.
 
@@ -160,9 +148,10 @@ EnvGet allowlist:
   PWD HOSTNAME SHELL EDITOR DOTNET_ROOT NODE_ENV
 
 Gigablacklist:
-  Destructive patterns always blocked.
   Env/key filenames always blocked.
+  Raw block-device paths always blocked.
   Any argument containing blocked pattern fails.
+  Use CustomBlacklist / MK8_BLACKLIST for project-specific patterns.
 
 Hard limits:
   Max 1024 operations

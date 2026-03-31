@@ -1,4 +1,4 @@
-<![CDATA[using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media;
 using SharpClaw.Helpers;
 
 namespace SharpClaw.Presentation;
@@ -179,4 +179,3 @@ public sealed partial class UserGuidePage : Page
         _ = services.GetRequiredService<INavigator>().NavigateRouteAsync(this, "Main");
     }
 }
-]]>
