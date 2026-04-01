@@ -23,10 +23,12 @@ public enum TranscriptionMode
     Simple = 1,
 
     /// <summary>
-    /// Single-pass sliding window.  Segments are only emitted after the
-    /// full commit delay, deduplication, and hallucination filtering
-    /// pipeline confirms them.  Higher accuracy but ~5–8 s perceived
-    /// latency before the first text appears.
+    /// Non-overlapping sequential windows.  Each window of audio is
+    /// transcribed exactly once — one API call per window.  Cross-window
+    /// continuity is maintained through prompt conditioning.  The full
+    /// deduplication and hallucination filtering pipeline still runs as
+    /// a safety net.  Minimal token cost; perceived latency equals the
+    /// window length.
     /// </summary>
     StrictSlidingWindow = 2,
 }
