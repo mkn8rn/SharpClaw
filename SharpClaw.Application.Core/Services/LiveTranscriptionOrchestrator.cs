@@ -159,9 +159,17 @@ public sealed class LiveTranscriptionOrchestrator(
             : effectiveWindow;
         var isTwoPass = mode == TranscriptionMode.SlidingWindow;
 
+        // Poll cadence is always short (2 s) so the loop reacts
+        // quickly to new audio.  For modes where step == window
+        // (Simple, StrictSlidingWindow), inference only fires once
+        // a full window of new samples has accumulated.
+        var pollSeconds = InferenceIntervalSeconds;
+        var samplesPerWindow = (long)effectiveWindow * SampleRate;
+        var lastInferenceSample = ringBuffer.TotalWritten;
+
         logger.LogInformation(
-            "Job {JobId}: mode={Mode}, window={Window}s, step={Step}s",
-            jobId, mode, effectiveWindow, effectiveStep);
+            "Job {JobId}: mode={Mode}, window={Window}s, step={Step}s, poll={Poll}s",
+            jobId, mode, effectiveWindow, effectiveStep, pollSeconds);
 
         try
         {
@@ -204,7 +212,7 @@ public sealed class LiveTranscriptionOrchestrator(
 
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(effectiveStep), ct);
+                await Task.Delay(TimeSpan.FromSeconds(pollSeconds), ct);
 
                 // ── Data-flow watchdog ────────────────────────────
                 // Detect when the audio capture has stalled or the
@@ -224,10 +232,10 @@ public sealed class LiveTranscriptionOrchestrator(
                     if (noDataTicks >= maxNoDataTicks)
                     {
                         await AddJobLogAsync(jobId,
-                            $"No new audio data for {noDataTicks * effectiveStep}s — capture may have stalled.",
+                            $"No new audio data for {noDataTicks * pollSeconds}s — capture may have stalled.",
                             "Error");
                         throw new InvalidOperationException(
-                            $"No new audio data received for {noDataTicks * effectiveStep} seconds. " +
+                            $"No new audio data received for {noDataTicks * pollSeconds} seconds. " +
                             "Audio capture may have stalled or the device was disconnected.");
                     }
 
@@ -238,6 +246,15 @@ public sealed class LiveTranscriptionOrchestrator(
                 }
                 noDataTicks = 0;
                 lastDataWritten = currentWritten;
+
+                // ── Accumulation gate ─────────────────────────────
+                // For modes where step == window, wait until a full
+                // window of new audio has been captured before firing
+                // inference.  SlidingWindow already uses a short step
+                // so it fires every poll tick.
+                if (!isTwoPass
+                    && currentWritten - lastInferenceSample < samplesPerWindow)
+                    continue;
 
                 try
                 {
@@ -269,6 +286,10 @@ public sealed class LiveTranscriptionOrchestrator(
                     var rms = ComputeRms(windowSamples);
                     if (rms < 0.005)
                     {
+                        // Advance the accumulation cursor so non-two-pass
+                        // modes don't re-check the same silent window
+                        // every poll tick.
+                        lastInferenceSample = currentWritten;
                         await AddJobLogAsync(jobId,
                             $"[tick {tickCount}] silence gate: RMS={rms:F6}, skipping", "Trace");
                         continue;
@@ -290,6 +311,7 @@ public sealed class LiveTranscriptionOrchestrator(
                         effectiveLanguage, promptBuffer, ct);
 
                     consecutiveErrors = 0;
+                    lastInferenceSample = currentWritten;
 
                     if (effectiveLanguage is null
                         && !string.IsNullOrWhiteSpace(result.Language))
