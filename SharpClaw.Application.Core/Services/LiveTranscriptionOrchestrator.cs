@@ -152,9 +152,9 @@ public sealed class LiveTranscriptionOrchestrator(
         var tickCount = 0;
 
         var effectiveWindow = Clamp(windowSecondsOverride, 5, BufferCapacitySeconds, WindowSeconds);
-        var effectiveStep = mode == TranscriptionMode.Simple
-            ? effectiveWindow
-            : Clamp(stepSecondsOverride, 1, effectiveWindow, InferenceIntervalSeconds);
+        var effectiveStep = mode == TranscriptionMode.SlidingWindow
+            ? Clamp(stepSecondsOverride, 1, effectiveWindow, InferenceIntervalSeconds)
+            : effectiveWindow;
         var isTwoPass = mode == TranscriptionMode.SlidingWindow;
 
         logger.LogInformation(
@@ -240,6 +240,26 @@ public sealed class LiveTranscriptionOrchestrator(
                 try
                 {
                     tickCount++;
+
+                    // ── Step-region silence check ────────────────────
+                    // In sliding-window modes the step is shorter than
+                    // the window, so most audio was already processed
+                    // last tick.  When the NEW portion (last step
+                    // seconds) is silent, re-transcribing the full
+                    // window would only produce duplicate segments —
+                    // skip the API call entirely.
+                    if (effectiveStep < effectiveWindow)
+                    {
+                        var stepSamples = ringBuffer.GetLastSeconds(effectiveStep);
+                        if (stepSamples.Length > 0 && ComputeRms(stepSamples) < 0.005)
+                        {
+                            await AddJobLogAsync(jobId,
+                                $"[tick {tickCount}] step-region silence (RMS<0.005), " +
+                                "skipping inference", "Trace");
+                            continue;
+                        }
+                    }
+
                     var windowSamples = ringBuffer.GetLastSeconds(effectiveWindow);
                     if (windowSamples.Length == 0)
                         continue;
