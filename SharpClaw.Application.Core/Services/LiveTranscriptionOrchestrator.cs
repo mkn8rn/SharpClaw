@@ -31,7 +31,7 @@ public sealed class LiveTranscriptionOrchestrator(
     private const int InferenceIntervalSeconds = 2;
     private const int BufferCapacitySeconds = 15;
     private const double CommitDelaySeconds = 2.0;
-    private const int MaxPromptChars = 500;
+    private const int MaxPromptChars = 250;
     private const int SampleRate = 16_000;
 
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _activeSessions = new();
@@ -146,9 +146,6 @@ public sealed class LiveTranscriptionOrchestrator(
         const int maxConsecutiveErrors = 5;
         var previousWindowText = "";
         var emittedTexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var promptBuffer = language is not null
-            ? LanguageScriptValidator.GetPromptSeed(language)
-            : "";
         var effectiveLanguage = language;
         var tickCount = 0;
 
@@ -157,6 +154,9 @@ public sealed class LiveTranscriptionOrchestrator(
             ? Clamp(stepSecondsOverride, 1, effectiveWindow, InferenceIntervalSeconds)
             : effectiveWindow;
         var isTwoPass = mode == TranscriptionMode.SlidingWindow;
+        var promptBuffer = isTwoPass && language is not null
+            ? LanguageScriptValidator.GetPromptSeed(language)
+            : "";
 
         // Poll cadence is always short (2 s) so the loop reacts
         // quickly to new audio.  For StrictWindow (step == window),
@@ -340,7 +340,7 @@ public sealed class LiveTranscriptionOrchestrator(
 
                     var result = await sttClient.TranscribeAsync(
                         httpClient, apiKey, modelName, wavBytes,
-                        effectiveLanguage, promptBuffer, ct);
+                        effectiveLanguage, isTwoPass ? promptBuffer : null, ct);
 
                     consecutiveErrors = 0;
                     lastInferenceSample = currentWritten;
@@ -548,7 +548,8 @@ public sealed class LiveTranscriptionOrchestrator(
                             "Job {JobId}: [tick {Tick}] cursor: lastSeenEnd {From} -> {To}",
                             jobId, tickCount, lastSeenEnd, absEnd);
                         lastSeenEnd = absEnd;
-                        AppendPrompt(ref promptBuffer, seg.Text);
+                        if (isTwoPass)
+                            AppendPrompt(ref promptBuffer, seg.Text);
                     }
 
                     if (isTwoPass)

@@ -87,8 +87,8 @@ public class AgentJobDB : BaseEntity
     public int? WindowSeconds { get; set; }
 
     /// <summary>
-    /// Seconds between inference ticks.  Null = default.  In Simple mode
-    /// this is ignored (step equals window — no overlap).
+    /// Seconds between inference ticks.  Null = default.  In StrictWindow
+    /// mode this is ignored (step equals window — no overlap).
     /// </summary>
     public int? StepSeconds { get; set; }
 
