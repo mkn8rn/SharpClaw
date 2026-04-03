@@ -664,6 +664,27 @@ public class SharpClawDbContext(
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ── Agent & Channel header permissions ────────────────────
+        modelBuilder.Entity<AgentHeaderAccessDB>(e =>
+        {
+            e.HasIndex(a => new { a.PermissionSetId, a.AgentId }).IsUnique();
+            e.Property(a => a.Clearance).HasConversion<string>();
+            e.HasOne(a => a.Agent)
+                .WithMany()
+                .HasForeignKey(a => a.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ChannelHeaderAccessDB>(e =>
+        {
+            e.HasIndex(c => new { c.PermissionSetId, c.ChannelId }).IsUnique();
+            e.Property(c => c.Clearance).HasConversion<string>();
+            e.HasOne(c => c.Channel)
+                .WithMany()
+                .HasForeignKey(c => c.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // ── Clearance whitelists ──────────────────────────────────
         modelBuilder.Entity<ClearanceUserWhitelistEntryDB>(e =>
         {
