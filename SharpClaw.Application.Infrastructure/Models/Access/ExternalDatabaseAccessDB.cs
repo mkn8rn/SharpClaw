@@ -6,11 +6,11 @@ using SharpClaw.Contracts.Enums;
 namespace SharpClaw.Application.Infrastructure.Models.Access;
 
 /// <summary>
-/// Grants a role a specific access level to an <see cref="ExternalInformationStoreDB"/>.
+/// Grants a role a specific access level to an <see cref="ExternalDatabaseDB"/>.
 /// </summary>
-public class ExternalInfoStoreAccessDB : BaseEntity
+public class ExternalDatabaseAccessDB : BaseEntity
 {
-    public InfoStoreAccessLevel AccessLevel { get; set; }
+    public DatabaseAccessLevel AccessLevel { get; set; }
 
     /// <summary>
     /// Per-permission clearance override.
@@ -21,6 +21,6 @@ public class ExternalInfoStoreAccessDB : BaseEntity
     public Guid PermissionSetId { get; set; }
     public PermissionSetDB PermissionSet { get; set; } = null!;
 
-    public Guid ExternalInformationStoreId { get; set; }
-    public ExternalInformationStoreDB ExternalInformationStore { get; set; } = null!;
+    public Guid ExternalDatabaseId { get; set; }
+    public ExternalDatabaseDB ExternalDatabase { get; set; } = null!;
 }

@@ -8,7 +8,7 @@ public enum AgentActionType
     // ── Global flags ──────────────────────────────────────────────
     CreateSubAgent = 0,
     CreateContainer = 1,
-    RegisterInfoStore = 2,
+    RegisterDatabase = 2,
     AccessLocalhostInBrowser = 3,
     AccessLocalhostCli = 4,
     ClickDesktop = 5,
@@ -17,8 +17,8 @@ public enum AgentActionType
     // ── Per-resource grants ───────────────────────────────────────
     UnsafeExecuteAsDangerousShell = 7,
     ExecuteAsSafeShell = 8,
-    AccessLocalInfoStore = 9,
-    AccessExternalInfoStore = 10,
+    AccessInternalDatabases = 9,
+    AccessExternalDatabase = 10,
     AccessWebsite = 11,
     QuerySearchEngine = 12,
     AccessContainer = 13,

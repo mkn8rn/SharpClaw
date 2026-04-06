@@ -29,9 +29,9 @@ public class PermissionSetDB : BaseEntity
     public bool CanCreateContainers { get; set; }
     public PermissionClearance CreateContainersClearance { get; set; } = PermissionClearance.Unset;
 
-    /// <summary>Register new local or external information stores.</summary>
-    public bool CanRegisterInfoStores { get; set; }
-    public PermissionClearance RegisterInfoStoresClearance { get; set; } = PermissionClearance.Unset;
+    /// <summary>Register new internal or external databases.</summary>
+    public bool CanRegisterDatabases { get; set; }
+    public PermissionClearance RegisterDatabasesClearance { get; set; } = PermissionClearance.Unset;
 
     /// <summary>Access localhost URLs through a browser (headless Chrome by default).</summary>
     public bool CanAccessLocalhostInBrowser { get; set; }
@@ -105,8 +105,8 @@ public class PermissionSetDB : BaseEntity
 
     public ICollection<DangerousShellAccessDB> DangerousShellAccesses { get; set; } = [];
     public ICollection<SafeShellAccessDB> SafeShellAccesses { get; set; } = [];
-    public ICollection<LocalInfoStoreAccessDB> LocalInfoStorePermissions { get; set; } = [];
-    public ICollection<ExternalInfoStoreAccessDB> ExternalInfoStorePermissions { get; set; } = [];
+    public ICollection<InternalDatabaseAccessDB> InternalDatabaseAccesses { get; set; } = [];
+    public ICollection<ExternalDatabaseAccessDB> ExternalDatabaseAccesses { get; set; } = [];
     public ICollection<WebsiteAccessDB> WebsiteAccesses { get; set; } = [];
     public ICollection<SearchEngineAccessDB> SearchEngineAccesses { get; set; } = [];
     public ICollection<ContainerAccessDB> ContainerAccesses { get; set; } = [];
@@ -132,11 +132,11 @@ public class PermissionSetDB : BaseEntity
     public Guid? DefaultSafeShellAccessId { get; set; }
     public SafeShellAccessDB? DefaultSafeShellAccess { get; set; }
 
-    public Guid? DefaultLocalInfoStorePermissionId { get; set; }
-    public LocalInfoStoreAccessDB? DefaultLocalInfoStorePermission { get; set; }
+    public Guid? DefaultInternalDatabaseAccessId { get; set; }
+    public InternalDatabaseAccessDB? DefaultInternalDatabaseAccess { get; set; }
 
-    public Guid? DefaultExternalInfoStorePermissionId { get; set; }
-    public ExternalInfoStoreAccessDB? DefaultExternalInfoStorePermission { get; set; }
+    public Guid? DefaultExternalDatabaseAccessId { get; set; }
+    public ExternalDatabaseAccessDB? DefaultExternalDatabaseAccess { get; set; }
 
     public Guid? DefaultWebsiteAccessId { get; set; }
     public WebsiteAccessDB? DefaultWebsiteAccess { get; set; }

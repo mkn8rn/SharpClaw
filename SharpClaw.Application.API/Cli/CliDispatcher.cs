@@ -1074,20 +1074,20 @@ public static class CliDispatcher
         var d = current;
         return key switch
         {
-            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "localinfo" or "localinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "externalinfo" or "externalinfostore" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, value, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "audiodevice" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
-            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.LocalInfoStoreResourceId, d.ExternalInfoStoreResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
+            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "internaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "externaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, value, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "audiodevice" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
+            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
             _ => null,
         };
     }
@@ -1707,7 +1707,7 @@ public static class CliDispatcher
                 "  --clearance <level>                     Default clearance (Unset, Independent, etc.)",
                 "  --create-sub-agents                     Grant CanCreateSubAgents",
                 "  --create-containers                     Grant CanCreateContainers",
-                "  --register-info-stores                  Grant CanRegisterInfoStores",
+                "  --register-databases                    Grant CanRegisterDatabases",
                 "  --localhost-browser                     Grant CanAccessLocalhostInBrowser",
                 "  --localhost-cli                         Grant CanAccessLocalhostCli",
                 "  --click-desktop                         Grant CanClickDesktop",
@@ -1728,8 +1728,8 @@ public static class CliDispatcher
                 "  --container <id>[:<clearance>]          Add Container grant",
                 "  --website <id>[:<clearance>]            Add Website grant",
                 "  --search-engine <id>[:<clearance>]      Add SearchEngine grant",
-                "  --local-info <id>[:<clearance>]         Add LocalInfoStore grant",
-                "  --external-info <id>[:<clearance>]      Add ExternalInfoStore grant",
+                "  --internal-db <id>[:<clearance>]        Add InternalDatabase grant",
+                "  --external-db <id>[:<clearance>]        Add ExternalDatabase grant",
                 "  --audio-device <id>[:<clearance>]       Add AudioDevice grant",
                 "  --agent <id>[:<clearance>]              Add Agent grant",
                 "  --task <id>[:<clearance>]               Add Task grant",
@@ -1787,7 +1787,7 @@ public static class CliDispatcher
         var clearance = PermissionClearance.Unset;
         var createSubAgents = false;
         var createContainers = false;
-        var registerInfoStores = false;
+        var registerDatabases = false;
         var localhostBrowser = false;
         var localhostCli = false;
         var clickDesktop = false;
@@ -1809,8 +1809,8 @@ public static class CliDispatcher
         var container = new List<ResourceGrant>();
         var website = new List<ResourceGrant>();
         var searchEngine = new List<ResourceGrant>();
-        var localInfo = new List<ResourceGrant>();
-        var externalInfo = new List<ResourceGrant>();
+        var internalDb = new List<ResourceGrant>();
+        var externalDb = new List<ResourceGrant>();
         var audioDevice = new List<ResourceGrant>();
         var agent = new List<ResourceGrant>();
         var task = new List<ResourceGrant>();
@@ -1826,7 +1826,7 @@ public static class CliDispatcher
                     break;
                 case "--create-sub-agents": createSubAgents = true; break;
                 case "--create-containers": createContainers = true; break;
-                case "--register-info-stores": registerInfoStores = true; break;
+                case "--register-databases": registerDatabases = true; break;
                 case "--localhost-browser": localhostBrowser = true; break;
                 case "--localhost-cli": localhostCli = true; break;
                 case "--click-desktop": clickDesktop = true; break;
@@ -1852,10 +1852,10 @@ public static class CliDispatcher
                     website.Add(ParseResourceGrant(args[++i])); break;
                 case "--search-engine" when i + 1 < args.Length:
                     searchEngine.Add(ParseResourceGrant(args[++i])); break;
-                case "--local-info" when i + 1 < args.Length:
-                    localInfo.Add(ParseResourceGrant(args[++i])); break;
-                case "--external-info" when i + 1 < args.Length:
-                    externalInfo.Add(ParseResourceGrant(args[++i])); break;
+                case "--internal-db" when i + 1 < args.Length:
+                    internalDb.Add(ParseResourceGrant(args[++i])); break;
+                case "--external-db" when i + 1 < args.Length:
+                    externalDb.Add(ParseResourceGrant(args[++i])); break;
                 case "--audio-device" when i + 1 < args.Length:
                     audioDevice.Add(ParseResourceGrant(args[++i])); break;
                 case "--agent" when i + 1 < args.Length:
@@ -1871,7 +1871,7 @@ public static class CliDispatcher
             DefaultClearance: clearance,
             CanCreateSubAgents: createSubAgents,
             CanCreateContainers: createContainers,
-            CanRegisterInfoStores: registerInfoStores,
+            CanRegisterDatabases: registerDatabases,
             CanAccessLocalhostInBrowser: localhostBrowser,
             CanAccessLocalhostCli: localhostCli,
             CanClickDesktop: clickDesktop,
@@ -1892,8 +1892,8 @@ public static class CliDispatcher
             ContainerAccesses: container.Count > 0 ? container : null,
             WebsiteAccesses: website.Count > 0 ? website : null,
             SearchEngineAccesses: searchEngine.Count > 0 ? searchEngine : null,
-            LocalInfoStoreAccesses: localInfo.Count > 0 ? localInfo : null,
-            ExternalInfoStoreAccesses: externalInfo.Count > 0 ? externalInfo : null,
+            InternalDatabaseAccesses: internalDb.Count > 0 ? internalDb : null,
+            ExternalDatabaseAccesses: externalDb.Count > 0 ? externalDb : null,
             AudioDeviceAccesses: audioDevice.Count > 0 ? audioDevice : null,
             AgentAccesses: agent.Count > 0 ? agent : null,
             TaskAccesses: task.Count > 0 ? task : null,
@@ -1950,10 +1950,10 @@ public static class CliDispatcher
                 "job listen <jobId>                         Stream live transcription segments",
                 "",
                 "Action types (global): CreateSubAgent, CreateContainer,",
-                "  RegisterInfoStore, AccessLocalhostInBrowser, AccessLocalhostCli",
+                "  RegisterDatabase, AccessLocalhostInBrowser, AccessLocalhostCli",
                 "Action types (resource): UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell,",
-                "  AccessLocalInfoStore,",
-                "  AccessExternalInfoStore, AccessWebsite, QuerySearchEngine,",
+                "  AccessInternalDatabases,",
+                "  AccessExternalDatabase, AccessWebsite, QuerySearchEngine,",
                 "  AccessContainer, ManageAgent, EditTask, AccessSkill",
                 "Transcription types: TranscribeFromAudioDevice,",
                 "  TranscribeFromAudioStream (API only), TranscribeFromAudioFile (API only)",

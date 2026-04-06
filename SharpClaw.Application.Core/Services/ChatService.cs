@@ -485,8 +485,8 @@ public sealed class ChatService(
                 .Include(p => p.ContainerAccesses)
                 .Include(p => p.WebsiteAccesses)
                 .Include(p => p.SearchEngineAccesses)
-                .Include(p => p.LocalInfoStorePermissions)
-                .Include(p => p.ExternalInfoStorePermissions)
+                .Include(p => p.InternalDatabaseAccesses)
+                .Include(p => p.ExternalDatabaseAccesses)
                 .Include(p => p.AudioDeviceAccesses)
                 .Include(p => p.DisplayDeviceAccesses)
                 .Include(p => p.EditorSessionAccesses)
@@ -549,8 +549,8 @@ public sealed class ChatService(
                     .Include(p => p.ContainerAccesses)
                     .Include(p => p.WebsiteAccesses)
                     .Include(p => p.SearchEngineAccesses)
-                    .Include(p => p.LocalInfoStorePermissions)
-                    .Include(p => p.ExternalInfoStorePermissions)
+                    .Include(p => p.InternalDatabaseAccesses)
+                    .Include(p => p.ExternalDatabaseAccesses)
                     .Include(p => p.AudioDeviceAccesses)
                     .Include(p => p.DisplayDeviceAccesses)
                     .Include(p => p.EditorSessionAccesses)
@@ -623,7 +623,7 @@ public sealed class ChatService(
         var grants = new List<string>();
         if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
         if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
+        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
         if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
         if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
         if (ps.CanClickDesktop) grants.Add("ClickDesktop");
@@ -660,13 +660,13 @@ public sealed class ChatService(
             ps.SearchEngineAccesses.Select(a => a.SearchEngineId),
             () => db.SearchEngines.Select(s => s.Id).ToListAsync(ct), ct);
 
-        await AppendResourceGrantAsync(grants, "LocalInfoStore",
-            ps.LocalInfoStorePermissions.Select(a => a.LocalInformationStoreId),
-            () => db.LocalInformationStores.Select(l => l.Id).ToListAsync(ct), ct);
+        await AppendResourceGrantAsync(grants, "InternalDatabase",
+            ps.InternalDatabaseAccesses.Select(a => a.InternalDatabaseId),
+            () => db.InternalDatabases.Select(l => l.Id).ToListAsync(ct), ct);
 
-        await AppendResourceGrantAsync(grants, "ExternalInfoStore",
-            ps.ExternalInfoStorePermissions.Select(a => a.ExternalInformationStoreId),
-            () => db.ExternalInformationStores.Select(e => e.Id).ToListAsync(ct), ct);
+        await AppendResourceGrantAsync(grants, "ExternalDatabase",
+            ps.ExternalDatabaseAccesses.Select(a => a.ExternalDatabaseId),
+            () => db.ExternalDatabases.Select(e => e.Id).ToListAsync(ct), ct);
 
         await AppendResourceGrantAsync(grants, "AudioDevice",
             ps.AudioDeviceAccesses.Select(a => a.AudioDeviceId),
@@ -1931,11 +1931,11 @@ public sealed class ChatService(
         ["execute_dangerous_shell"]        = AgentActionType.UnsafeExecuteAsDangerousShell,
         ["create_sub_agent"]               = AgentActionType.CreateSubAgent,
         ["create_container"]               = AgentActionType.CreateContainer,
-        ["register_info_store"]            = AgentActionType.RegisterInfoStore,
+        ["register_database"]               = AgentActionType.RegisterDatabase,
         ["access_localhost_in_browser"]    = AgentActionType.AccessLocalhostInBrowser,
         ["access_localhost_cli"]           = AgentActionType.AccessLocalhostCli,
-        ["access_local_info_store"]        = AgentActionType.AccessLocalInfoStore,
-        ["access_external_info_store"]     = AgentActionType.AccessExternalInfoStore,
+        ["access_internal_databases"]      = AgentActionType.AccessInternalDatabases,
+        ["access_external_database"]        = AgentActionType.AccessExternalDatabase,
         ["access_website"]                 = AgentActionType.AccessWebsite,
         ["query_search_engine"]            = AgentActionType.QuerySearchEngine,
         ["access_container"]               = AgentActionType.AccessContainer,
@@ -2087,6 +2087,9 @@ public sealed class ChatService(
         var createContainerSchema = BuildCreateContainerSchema();
         var manageAgentSchema = BuildManageAgentSchema();
         var editTaskSchema = BuildEditTaskSchema();
+        var accessWebsiteSchema = BuildAccessWebsiteSchema();
+        var accessExternalDatabaseSchema = BuildAccessExternalDatabaseSchema();
+        var querySearchEngineSchema = BuildQuerySearchEngineSchema();
         var localhostBrowserSchema = BuildLocalhostBrowserSchema();
         var localhostCliSchema = BuildLocalhostCliSchema();
         var clickDesktopSchema = BuildClickDesktopSchema();
@@ -2154,8 +2157,8 @@ public sealed class ChatService(
             new("create_container",
                 "Create an mk8.shell sandbox container. Alphanumeric name only.",
                 createContainerSchema),
-            new("register_info_store",
-                "Register an information store. [Stub.]",
+            new("register_database",
+                "Register a new database resource. [Stub.]",
                 globalSchema),
             new("access_localhost_in_browser",
                 "Headless GET localhost. html=DOM (default), screenshot=PNG (vision). localhost/127.0.0.1 only.",
@@ -2165,10 +2168,24 @@ public sealed class ChatService(
                 localhostCliSchema),
 
             // ── Per-resource ─────────────────────────────────────
-            new("access_local_info_store", "Query local info store. [Stub.]", resourceOnly),
-            new("access_external_info_store", "Query external info store. [Stub.]", resourceOnly),
-            new("access_website", "Access registered website. [Stub.]", resourceOnly),
-            new("query_search_engine", "Query registered search engine. [Stub.]", resourceOnly),
+            new("access_internal_databases", "Query an internal (SharpClaw-managed) database. [Stub.]", resourceOnly),
+            new("access_external_database",
+                "Execute a query against a registered external database. " +
+                "The query language must match the database type (e.g. SQL for MySQL/PostgreSQL/MSSQL, " +
+                "MongoDB query JSON for MongoDB, Redis commands for Redis). " +
+                "Provide the targetId of the registered database and the raw query string.",
+                accessExternalDatabaseSchema),
+            new("access_website",
+                "Fetch a registered external website. cli=HTTP GET (default), html=headless DOM, screenshot=PNG. " +
+                "Optional path appends to the registered base URL. " +
+                "Downloads are blocked; binary content types are rejected; redirects are pinned to the registered origin.",
+                accessWebsiteSchema),
+            new("query_search_engine",
+                "Query a registered search engine. Parameters vary by engine type — " +
+                "Google supports dateRestrict/siteRestrict/fileType/exactTerms/excludeTerms/searchType/sortBy; " +
+                "Bing supports siteRestrict; SearXNG supports category; Tavily supports topic/searchType(basic|advanced); " +
+                "all support query, count, offset, language, region, safeSearch.",
+                querySearchEngineSchema),
             new("access_container", "Access container resource. [Stub.]", resourceOnly),
             new("manage_agent", "Update agent name, systemPrompt, or modelId.", manageAgentSchema),
             new("edit_task", "Edit task name, interval, or retries.", editTaskSchema),
@@ -2772,6 +2789,31 @@ public sealed class ChatService(
         return doc.RootElement.Clone();
     }
 
+    private static JsonElement BuildAccessExternalDatabaseSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "External database GUID."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Raw query in the database's native language. Must match the database type: SQL for MySQL/PostgreSQL/MSSQL/SQLite/MariaDB/CockroachDB/Oracle/Firebird, MongoDB query JSON for MongoDB, Redis commands for Redis, SQL for CosmosDB."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Query timeout in seconds (default 30, max 120)."
+                    }
+                },
+                "required": ["targetId", "query"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
     private static JsonElement BuildCreateSubAgentSchema()
     {
         using var doc = JsonDocument.Parse("""
@@ -2914,6 +2956,109 @@ public sealed class ChatService(
                     }
                 },
                 "required": ["url"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildAccessWebsiteSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "Website resource GUID."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["cli", "html", "screenshot"],
+                        "description": "'cli' (default)=HTTP GET with headers+body, 'html'=headless browser DOM, 'screenshot'=headless browser PNG."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional path appended to the registered base URL (e.g. '/api/v1/status')."
+                    }
+                },
+                "required": ["targetId"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildQuerySearchEngineSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "targetId": {
+                        "type": "string",
+                        "description": "Search engine resource GUID."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query text."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Max results to return (default 10)."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Result offset for pagination (default 0)."
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Language code (e.g. 'en', 'lang_en' for Google, BCP-47 for others)."
+                    },
+                    "region": {
+                        "type": "string",
+                        "description": "Region/market code (e.g. 'us', 'en-US' for Bing)."
+                    },
+                    "safeSearch": {
+                        "type": "string",
+                        "description": "Safe search level. Google: off/medium/high. Bing: Off/Moderate/Strict. Brave: off/moderate/strict. SearXNG: 0/1/2."
+                    },
+                    "dateRestrict": {
+                        "type": "string",
+                        "description": "Google only. Restrict by date: d[N], w[N], m[N], y[N]."
+                    },
+                    "siteRestrict": {
+                        "type": "string",
+                        "description": "Google/Bing: restrict to a specific site domain."
+                    },
+                    "fileType": {
+                        "type": "string",
+                        "description": "Google only. Filter by file type (e.g. 'pdf', 'doc')."
+                    },
+                    "exactTerms": {
+                        "type": "string",
+                        "description": "Google only. Phrase that must appear in results."
+                    },
+                    "excludeTerms": {
+                        "type": "string",
+                        "description": "Google only. Terms to exclude from results."
+                    },
+                    "searchType": {
+                        "type": "string",
+                        "description": "Google: 'image' for image search. Tavily: 'basic' or 'advanced'."
+                    },
+                    "sortBy": {
+                        "type": "string",
+                        "description": "Google only. Sort order (e.g. 'date')."
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Tavily only. Topic filter: 'general' or 'news'."
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "SearXNG only. Category: general, images, news, etc."
+                    }
+                },
+                "required": ["targetId", "query"]
             }
             """);
         return doc.RootElement.Clone();

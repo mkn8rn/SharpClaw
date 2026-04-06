@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -43,6 +44,7 @@ ExcelComInteropService excelComInteropService,
 DocumentSessionService documentSessionService,
 DesktopAwarenessService desktopAwarenessService,
 NativeApplicationService nativeApplicationService,
+SearchEngineService searchEngineService,
 IConfiguration configuration)
 {
     /// <summary>
@@ -739,6 +741,14 @@ IConfiguration configuration)
                 => await ExecuteAccessLocalhostInBrowserAsync(job, ct),
             AgentActionType.AccessLocalhostCli
                 => await ExecuteAccessLocalhostCliAsync(job, ct),
+
+            // External website access (per-resource: registered website)
+            AgentActionType.AccessWebsite
+                => await ExecuteAccessWebsiteAsync(job, ct),
+
+            // Search engine query (per-resource: registered search engine)
+            AgentActionType.QuerySearchEngine
+                => await ExecuteQuerySearchEngineAsync(job, ct),
 
             // Display capture
             AgentActionType.CaptureDisplay
@@ -1527,6 +1537,460 @@ IConfiguration configuration)
     {
         PropertyNameCaseInsensitive = true
     };
+
+    // ═══════════════════════════════════════════════════════════════
+    // QUERY SEARCH ENGINE
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class QuerySearchEnginePayload
+    {
+        public string? ResourceId { get; set; }
+        public string? TargetId { get; set; }
+        public string? Query { get; set; }
+        public int? Count { get; set; }
+        public int? Offset { get; set; }
+        public string? Language { get; set; }
+        public string? Region { get; set; }
+        public string? SafeSearch { get; set; }
+        public string? DateRestrict { get; set; }
+        public string? SiteRestrict { get; set; }
+        public string? FileType { get; set; }
+        public string? ExactTerms { get; set; }
+        public string? ExcludeTerms { get; set; }
+        public string? SearchType { get; set; }
+        public string? SortBy { get; set; }
+        public string? Topic { get; set; }
+        public string? Category { get; set; }
+    }
+
+    /// <summary>
+    /// Executes a search query against a registered <see cref="SearchEngineDB"/>.
+    /// The engine's <see cref="SearchEngineType"/> determines which API-specific
+    /// parameters are forwarded by <see cref="SearchEngineService.QueryAsync"/>.
+    /// </summary>
+    private async Task<string?> ExecuteQuerySearchEngineAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "QuerySearchEngine requires a ResourceId (search engine).");
+
+        var engine = await db.SearchEngines
+            .Include(e => e.Skill)
+            .FirstOrDefaultAsync(e => e.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"Search engine {job.ResourceId} not found.");
+
+        var payload = DeserializePayload<QuerySearchEnginePayload>(job,
+            "QuerySearchEngine");
+
+        if (string.IsNullOrWhiteSpace(payload.Query))
+            throw new InvalidOperationException(
+                "QuerySearchEngine requires a 'query' field.");
+
+        AddLog(job, $"Search engine '{engine.Name}' ({engine.Type}): {payload.Query}");
+        await db.SaveChangesAsync(ct);
+
+        var result = await searchEngineService.QueryAsync(
+            engine,
+            payload.Query,
+            count: payload.Count ?? 10,
+            offset: payload.Offset ?? 0,
+            language: payload.Language,
+            region: payload.Region,
+            safeSearch: payload.SafeSearch,
+            dateRestrict: payload.DateRestrict,
+            siteRestrict: payload.SiteRestrict,
+            fileType: payload.FileType,
+            exactTerms: payload.ExactTerms,
+            excludeTerms: payload.ExcludeTerms,
+            searchType: payload.SearchType,
+            sortBy: payload.SortBy,
+            topic: payload.Topic,
+            category: payload.Category,
+            ct: ct);
+
+        if (engine.Skill is { SkillText.Length: > 0 } skill)
+            result = $"[Search Engine Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
+
+        return result;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ACCESS WEBSITE — external sites, hardened
+    // ═══════════════════════════════════════════════════════════════
+
+    private sealed class AccessWebsitePayload
+    {
+        public string? ResourceId { get; set; }
+        public string? TargetId { get; set; }
+        public string? Mode { get; set; }
+        public string? Path { get; set; }
+    }
+
+    /// <summary>
+    /// Maximum response body size (2 MB) to prevent memory exhaustion from
+    /// malicious or very large external pages.
+    /// </summary>
+    private const int MaxWebsiteResponseBytes = 2 * 1024 * 1024;
+
+    /// <summary>
+    /// Content-Type prefixes that are considered safe to return as text.
+    /// Binary types (images, executables, archives, etc.) are blocked.
+    /// </summary>
+    private static readonly string[] SafeContentTypePrefixes =
+    [
+        "text/",
+        "application/json",
+        "application/xml",
+        "application/xhtml+xml",
+        "application/javascript",
+        "application/x-javascript",
+    ];
+
+    /// <summary>
+    /// Fetches an external website registered in <see cref="WebsiteDB"/>
+    /// using either a headless browser (<c>mode=html|screenshot</c>) or
+    /// a direct HTTP GET (<c>mode=cli</c>, the default).
+    /// <para>
+    /// Unlike localhost access, external websites are untrusted.
+    /// The following precautions are enforced:
+    /// <list type="bullet">
+    ///   <item>Only the registered base URL (plus optional <c>path</c>
+    ///         suffix) is allowed — agents cannot browse arbitrary
+    ///         external sites.</item>
+    ///   <item>Responses are capped at <see cref="MaxWebsiteResponseBytes"/>
+    ///         to prevent memory exhaustion.</item>
+    ///   <item>Binary content types are rejected — only text-based
+    ///         responses are returned to the agent.</item>
+    ///   <item>Browser mode uses <c>--disable-downloads</c> to prevent
+    ///         the headless browser from saving files to disk.</item>
+    ///   <item>Redirect chains are limited to 10 hops and must stay
+    ///         within the registered origin (scheme + host + port).</item>
+    ///   <item>Private/loopback IPs are blocked to prevent SSRF.</item>
+    ///   <item>30-second hard timeout kills runaway requests.</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private async Task<string?> ExecuteAccessWebsiteAsync(
+        AgentJobDB job, CancellationToken ct)
+    {
+        if (!job.ResourceId.HasValue)
+            throw new InvalidOperationException(
+                "AccessWebsite requires a ResourceId (Website).");
+
+        var website = await db.Websites
+            .Include(w => w.Skill)
+            .FirstOrDefaultAsync(w => w.Id == job.ResourceId.Value, ct)
+            ?? throw new InvalidOperationException(
+                $"Website {job.ResourceId} not found.");
+
+        var payload = DeserializePayload<AccessWebsitePayload>(job, "AccessWebsite");
+        var mode = (payload.Mode ?? "cli").ToLowerInvariant();
+
+        // Build the final URL: registered base + optional path suffix.
+        var url = BuildWebsiteUrl(website.Url, payload.Path);
+
+        // Validate the resolved URL is safe for external access.
+        ValidateExternalUrl(url, website.Url);
+
+        AddLog(job, $"Website '{website.Name}' ({mode}): {url}");
+        await db.SaveChangesAsync(ct);
+
+        string? result = mode switch
+        {
+            "html" or "screenshot"
+                => await ExecuteAccessWebsiteBrowserAsync(job, url, mode, ct),
+            _ => await ExecuteAccessWebsiteCliAsync(url, ct),
+        };
+
+        // Prepend skill instructions when available so the agent knows
+        // how to interpret the website's structure and navigation.
+        if (website.Skill is { SkillText.Length: > 0 } skill)
+            result = $"[Website Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
+
+        return result;
+    }
+
+    /// <summary>
+    /// Browser-based external website access.  Identical to the localhost
+    /// browser implementation but with hardened flags for untrusted sites.
+    /// </summary>
+    private async Task<string?> ExecuteAccessWebsiteBrowserAsync(
+        AgentJobDB job, string url, string mode, CancellationToken ct)
+    {
+        var executable = configuration["Browser:Executable"] ?? ResolveChromiumExecutable();
+        var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
+
+        var tempFile = mode == "screenshot"
+            ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sc_web_{job.Id:N}.png")
+            : null;
+
+        // Security: external sites get stricter flags than localhost.
+        //   --disable-downloads           — block all file downloads
+        //   --disable-extensions          — no extension side-effects
+        //   --disable-plugins             — no NPAPI/PPAPI plugins
+        //   --disable-popup-blocking      — *off* so popups don't spawn
+        //   --no-first-run               — skip Chrome first-run experience
+        //   --disable-background-networking — reduce background traffic
+        //   --disable-default-apps        — no default app installs
+        //   --disable-sync               — no account sync
+        //
+        // NOTE: --ignore-certificate-errors is intentionally OMITTED for
+        // external sites — a bad cert is a genuine red flag.
+        var securityFlags = "--disable-downloads --disable-extensions --disable-plugins " +
+                            "--no-first-run --disable-background-networking " +
+                            "--disable-default-apps --disable-sync";
+
+        var headlessArgs = mode switch
+        {
+            "screenshot" =>
+                $"--headless --disable-gpu --no-sandbox --virtual-time-budget=10000 " +
+                $"{securityFlags} {extraArgs} --screenshot=\"{tempFile}\" \"{url}\"",
+            _ =>
+                $"--headless --disable-gpu --no-sandbox --virtual-time-budget=10000 " +
+                $"{securityFlags} {extraArgs} --dump-dom \"{url}\"",
+        };
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = executable,
+            Arguments = headlessArgs,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        process.Start();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw new InvalidOperationException(
+                $"Browser timed out after 30 seconds for URL: {url}");
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Browser exited with code {process.ExitCode}.\nstderr: {stderr}");
+
+        if (mode == "screenshot" && tempFile is not null && File.Exists(tempFile))
+        {
+            var bytes = await File.ReadAllBytesAsync(tempFile, ct);
+            File.Delete(tempFile);
+            return $"Screenshot captured ({bytes.Length} bytes) of {url}\n[SCREENSHOT_BASE64]{Convert.ToBase64String(bytes)}";
+        }
+
+        return string.IsNullOrWhiteSpace(stdout) ? "(empty page)" : stdout;
+    }
+
+    /// <summary>
+    /// Direct HTTP GET for an external website. Enforces size limits,
+    /// content-type allow-listing, redirect origin pinning, and SSRF
+    /// protection.
+    /// </summary>
+    private async Task<string?> ExecuteAccessWebsiteCliAsync(
+        string url, CancellationToken ct)
+    {
+        // ── Handler: redirect pinning + SSRF protection ──────────
+        var allowedOrigin = new Uri(url).GetLeftPart(UriPartial.Authority);
+
+        using var handler = new HttpClientHandler
+        {
+            MaxAutomaticRedirections = 10,
+            AllowAutoRedirect = false, // we follow redirects manually
+        };
+
+        using var httpClient = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(30),
+            MaxResponseContentBufferSize = MaxWebsiteResponseBytes,
+        };
+
+        // Set a realistic user-agent so sites don't block us outright.
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (compatible; SharpClaw/1.0; +https://github.com/mkn8rn/SharpClaw)");
+
+        // ── Manual redirect loop with origin pinning ─────────────
+        var currentUrl = url;
+        HttpResponseMessage response;
+        var redirectCount = 0;
+        const int maxRedirects = 10;
+
+        do
+        {
+            var requestUri = new Uri(currentUrl);
+            RejectPrivateAddress(requestUri);
+
+            response = await httpClient.GetAsync(
+                requestUri, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if ((int)response.StatusCode is >= 300 and < 400
+                && response.Headers.Location is { } location)
+            {
+                var redirectUri = location.IsAbsoluteUri
+                    ? location
+                    : new Uri(requestUri, location);
+
+                // Pin redirects to the original origin to prevent open-redirect SSRF.
+                if (!string.Equals(
+                        redirectUri.GetLeftPart(UriPartial.Authority),
+                        allowedOrigin, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        $"Redirect to a different origin is blocked: {redirectUri}");
+
+                currentUrl = redirectUri.AbsoluteUri;
+                response.Dispose();
+                redirectCount++;
+            }
+            else
+            {
+                break;
+            }
+        } while (redirectCount < maxRedirects);
+
+        if (redirectCount >= maxRedirects)
+            throw new InvalidOperationException(
+                $"Too many redirects ({maxRedirects}) for URL: {url}");
+
+        // ── Content-type guard: reject binary payloads ────────────
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+        var isSafeContent = SafeContentTypePrefixes.Any(
+            prefix => contentType.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+        if (!isSafeContent)
+        {
+            response.Dispose();
+            throw new InvalidOperationException(
+                $"Blocked: content type '{contentType}' is not text-based. " +
+                "Binary downloads are not permitted.");
+        }
+
+        // ── Read body with size cap ──────────────────────────────
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+        var buffer = new char[MaxWebsiteResponseBytes / sizeof(char)];
+        var charsRead = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
+        var body = new string(buffer, 0, charsRead);
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+        foreach (var header in response.Headers)
+            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+        foreach (var header in response.Content.Headers)
+            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
+        sb.AppendLine();
+        sb.Append(body);
+
+        if (!reader.EndOfStream)
+            sb.AppendLine("\n\n[TRUNCATED — response exceeded 2 MB limit]");
+
+        return sb.ToString();
+    }
+
+    // ── Website helpers ──────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the final URL by combining the website's registered base URL
+    /// with an optional agent-specified path suffix.
+    /// </summary>
+    private static string BuildWebsiteUrl(string baseUrl, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return baseUrl;
+
+        // Prevent path traversal and injection.
+        if (path.Contains("..", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "Path traversal ('..') is not permitted.");
+
+        // Strip leading slash to avoid double-slash.
+        var trimmedBase = baseUrl.TrimEnd('/');
+        var trimmedPath = path.TrimStart('/');
+
+        return $"{trimmedBase}/{trimmedPath}";
+    }
+
+    /// <summary>
+    /// Validates that the resolved URL is safe for external access:
+    /// must be http/https, must share the same origin as the registered
+    /// website, and must not target private/loopback addresses.
+    /// </summary>
+    private static void ValidateExternalUrl(string url, string registeredBaseUrl)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException($"Invalid URL: '{url}'.");
+
+        if (uri.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException(
+                $"Only http/https schemes are allowed. Got: '{uri.Scheme}'.");
+
+        // The resolved URL must stay within the registered website's origin.
+        if (!Uri.TryCreate(registeredBaseUrl, UriKind.Absolute, out var baseUri))
+            throw new InvalidOperationException(
+                $"Registered website has an invalid base URL: '{registeredBaseUrl}'.");
+
+        if (!string.Equals(
+                uri.GetLeftPart(UriPartial.Authority),
+                baseUri.GetLeftPart(UriPartial.Authority),
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"URL origin does not match the registered website. " +
+                $"Expected: {baseUri.GetLeftPart(UriPartial.Authority)}, " +
+                $"got: {uri.GetLeftPart(UriPartial.Authority)}.");
+
+        RejectPrivateAddress(uri);
+    }
+
+    /// <summary>
+    /// Blocks requests to loopback and private IP ranges to prevent SSRF.
+    /// External website access must never target internal infrastructure.
+    /// </summary>
+    private static void RejectPrivateAddress(Uri uri)
+    {
+        if (uri.Host is "localhost" or "127.0.0.1" or "[::1]")
+            throw new InvalidOperationException(
+                "External website access cannot target localhost. " +
+                "Use the localhost tools instead.");
+
+        if (System.Net.IPAddress.TryParse(uri.Host, out var ip))
+        {
+            if (System.Net.IPAddress.IsLoopback(ip))
+                throw new InvalidOperationException(
+                    $"Blocked: loopback address '{uri.Host}'.");
+
+            // RFC 1918 / RFC 4193 private ranges
+            var bytes = ip.GetAddressBytes();
+            var isPrivate = bytes switch
+            {
+                [10, ..] => true,                                      // 10.0.0.0/8
+                [172, >= 16 and <= 31, ..] => true,                    // 172.16.0.0/12
+                [192, 168, ..] => true,                                // 192.168.0.0/16
+                [169, 254, ..] => true,                                // 169.254.0.0/16 (link-local)
+                [0, ..] => true,                                       // 0.0.0.0/8
+                _ => false,
+            };
+
+            if (isPrivate)
+                throw new InvalidOperationException(
+                    $"Blocked: private/reserved IP address '{uri.Host}'.");
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // CAPTURE DISPLAY
@@ -2572,8 +3036,8 @@ IConfiguration configuration)
                 => actions.CreateSubAgentAsync(agentId, caller, ct: ct),
             AgentActionType.CreateContainer
                 => actions.CreateContainerAsync(agentId, caller, ct: ct),
-            AgentActionType.RegisterInfoStore
-                => actions.RegisterInfoStoreAsync(agentId, caller, ct: ct),
+            AgentActionType.RegisterDatabase
+                => actions.RegisterDatabaseAsync(agentId, caller, ct: ct),
             AgentActionType.AccessLocalhostInBrowser
                 => actions.AccessLocalhostInBrowserAsync(agentId, caller, ct: ct),
             AgentActionType.AccessLocalhostCli
@@ -2586,10 +3050,10 @@ IConfiguration configuration)
                 => actions.UnsafeExecuteAsDangerousShellAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
                 => actions.ExecuteAsSafeShellAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessLocalInfoStore when resourceId.HasValue
-                => actions.AccessLocalInfoStoreAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessExternalInfoStore when resourceId.HasValue
-                => actions.AccessExternalInfoStoreAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.AccessInternalDatabases when resourceId.HasValue
+                => actions.AccessInternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
+            AgentActionType.AccessExternalDatabase when resourceId.HasValue
+                => actions.AccessExternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.AccessWebsite when resourceId.HasValue
                 => actions.AccessWebsiteAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.QuerySearchEngine when resourceId.HasValue
@@ -2649,8 +3113,8 @@ IConfiguration configuration)
     private static bool IsPerResourceAction(AgentActionType type) =>
         type is AgentActionType.UnsafeExecuteAsDangerousShell
             or AgentActionType.ExecuteAsSafeShell
-            or AgentActionType.AccessLocalInfoStore
-            or AgentActionType.AccessExternalInfoStore
+            or AgentActionType.AccessInternalDatabases
+            or AgentActionType.AccessExternalDatabase
             or AgentActionType.AccessWebsite
             or AgentActionType.QuerySearchEngine
             or AgentActionType.AccessContainer
@@ -2739,8 +3203,8 @@ IConfiguration configuration)
             .Where(p => permissionSetIds.Contains(p.Id))
             .Include(p => p.DefaultDangerousShellAccess)
             .Include(p => p.DefaultSafeShellAccess)
-            .Include(p => p.DefaultLocalInfoStorePermission)
-            .Include(p => p.DefaultExternalInfoStorePermission)
+            .Include(p => p.DefaultInternalDatabaseAccess)
+            .Include(p => p.DefaultExternalDatabaseAccess)
             .Include(p => p.DefaultWebsiteAccess)
             .Include(p => p.DefaultSearchEngineAccess)
             .Include(p => p.DefaultContainerAccess)
@@ -2794,8 +3258,8 @@ IConfiguration configuration)
     {
         AgentActionType.UnsafeExecuteAsDangerousShell => drs.DangerousShellResourceId,
         AgentActionType.ExecuteAsSafeShell => drs.SafeShellResourceId,
-        AgentActionType.AccessLocalInfoStore => drs.LocalInfoStoreResourceId,
-        AgentActionType.AccessExternalInfoStore => drs.ExternalInfoStoreResourceId,
+        AgentActionType.AccessInternalDatabases => drs.InternalDatabaseResourceId,
+        AgentActionType.AccessExternalDatabase => drs.ExternalDatabaseResourceId,
         AgentActionType.AccessWebsite => drs.WebsiteResourceId,
         AgentActionType.QuerySearchEngine => drs.SearchEngineResourceId,
         AgentActionType.AccessContainer => drs.ContainerResourceId,
@@ -2842,10 +3306,10 @@ IConfiguration configuration)
             => permissionSet.DefaultDangerousShellAccess?.SystemUserId,
         AgentActionType.ExecuteAsSafeShell
             => permissionSet.DefaultSafeShellAccess?.ContainerId,
-        AgentActionType.AccessLocalInfoStore
-            => permissionSet.DefaultLocalInfoStorePermission?.LocalInformationStoreId,
-        AgentActionType.AccessExternalInfoStore
-            => permissionSet.DefaultExternalInfoStorePermission?.ExternalInformationStoreId,
+        AgentActionType.AccessInternalDatabases
+            => permissionSet.DefaultInternalDatabaseAccess?.InternalDatabaseId,
+        AgentActionType.AccessExternalDatabase
+            => permissionSet.DefaultExternalDatabaseAccess?.ExternalDatabaseId,
         AgentActionType.AccessWebsite
             => permissionSet.DefaultWebsiteAccess?.WebsiteId,
         AgentActionType.QuerySearchEngine
@@ -2993,7 +3457,7 @@ IConfiguration configuration)
         // ── Global flags ──────────────────────────────────────────
         AgentActionType.CreateSubAgent    => ps.CanCreateSubAgents,
         AgentActionType.CreateContainer   => ps.CanCreateContainers,
-        AgentActionType.RegisterInfoStore => ps.CanRegisterInfoStores,
+        AgentActionType.RegisterDatabase => ps.CanRegisterDatabases,
         AgentActionType.AccessLocalhostInBrowser => ps.CanAccessLocalhostInBrowser,
         AgentActionType.AccessLocalhostCli       => ps.CanAccessLocalhostCli,
 
@@ -3006,13 +3470,13 @@ IConfiguration configuration)
             => ps.SafeShellAccesses.Any(a =>
                 a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
 
-        AgentActionType.AccessLocalInfoStore when resourceId.HasValue
-            => ps.LocalInfoStorePermissions.Any(a =>
-                a.LocalInformationStoreId == resourceId || a.LocalInformationStoreId == WellKnownIds.AllResources),
+        AgentActionType.AccessInternalDatabases when resourceId.HasValue
+            => ps.InternalDatabaseAccesses.Any(a =>
+                a.InternalDatabaseId == resourceId || a.InternalDatabaseId == WellKnownIds.AllResources),
 
-        AgentActionType.AccessExternalInfoStore when resourceId.HasValue
-            => ps.ExternalInfoStorePermissions.Any(a =>
-                a.ExternalInformationStoreId == resourceId || a.ExternalInformationStoreId == WellKnownIds.AllResources),
+        AgentActionType.AccessExternalDatabase when resourceId.HasValue
+            => ps.ExternalDatabaseAccesses.Any(a =>
+                a.ExternalDatabaseId == resourceId || a.ExternalDatabaseId == WellKnownIds.AllResources),
 
         AgentActionType.AccessWebsite when resourceId.HasValue
             => ps.WebsiteAccesses.Any(a =>

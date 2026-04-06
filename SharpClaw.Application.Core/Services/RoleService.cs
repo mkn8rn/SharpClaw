@@ -115,8 +115,8 @@ public sealed class RoleService(SharpClawDbContext db)
             ps.ContainerAccesses.Clear();
             ps.WebsiteAccesses.Clear();
             ps.SearchEngineAccesses.Clear();
-            ps.LocalInfoStorePermissions.Clear();
-            ps.ExternalInfoStorePermissions.Clear();
+            ps.InternalDatabaseAccesses.Clear();
+            ps.ExternalDatabaseAccesses.Clear();
             ps.AudioDeviceAccesses.Clear();
             ps.DisplayDeviceAccesses.Clear();
             ps.EditorSessionAccesses.Clear();
@@ -142,8 +142,8 @@ public sealed class RoleService(SharpClawDbContext db)
         ps.CreateSubAgentsClearance = request.CreateSubAgentsClearance;
         ps.CanCreateContainers = request.CanCreateContainers;
         ps.CreateContainersClearance = request.CreateContainersClearance;
-        ps.CanRegisterInfoStores = request.CanRegisterInfoStores;
-        ps.RegisterInfoStoresClearance = request.RegisterInfoStoresClearance;
+        ps.CanRegisterDatabases = request.CanRegisterDatabases;
+        ps.RegisterDatabasesClearance = request.RegisterDatabasesClearance;
         ps.CanAccessLocalhostInBrowser = request.CanAccessLocalhostInBrowser;
         ps.AccessLocalhostInBrowserClearance = request.AccessLocalhostInBrowserClearance;
         ps.CanAccessLocalhostCli = request.CanAccessLocalhostCli;
@@ -196,13 +196,13 @@ public sealed class RoleService(SharpClawDbContext db)
             (g, psId) => new SearchEngineAccessDB
             { PermissionSetId = psId, SearchEngineId = g.ResourceId, Clearance = g.Clearance });
 
-        AddGrants(ps.LocalInfoStorePermissions, request.LocalInfoStoreAccesses,
-            (g, psId) => new LocalInfoStoreAccessDB
-            { PermissionSetId = psId, LocalInformationStoreId = g.ResourceId, Clearance = g.Clearance });
+        AddGrants(ps.InternalDatabaseAccesses, request.InternalDatabaseAccesses,
+            (g, psId) => new InternalDatabaseAccessDB
+            { PermissionSetId = psId, InternalDatabaseId = g.ResourceId, Clearance = g.Clearance });
 
-        AddGrants(ps.ExternalInfoStorePermissions, request.ExternalInfoStoreAccesses,
-            (g, psId) => new ExternalInfoStoreAccessDB
-            { PermissionSetId = psId, ExternalInformationStoreId = g.ResourceId, Clearance = g.Clearance });
+        AddGrants(ps.ExternalDatabaseAccesses, request.ExternalDatabaseAccesses,
+            (g, psId) => new ExternalDatabaseAccessDB
+            { PermissionSetId = psId, ExternalDatabaseId = g.ResourceId, Clearance = g.Clearance });
 
         AddGrants(ps.AudioDeviceAccesses, request.AudioDeviceAccesses,
             (g, psId) => new AudioDeviceAccessDB
@@ -262,7 +262,7 @@ public sealed class RoleService(SharpClawDbContext db)
                 {
                     CanCreateSubAgents: false,
                     CanCreateContainers: false,
-                    CanRegisterInfoStores: false,
+                    CanRegisterDatabases: false,
                     CanAccessLocalhostInBrowser: false,
                     CanAccessLocalhostCli: false,
                     CanClickDesktop: false,
@@ -293,9 +293,9 @@ public sealed class RoleService(SharpClawDbContext db)
             throw new UnauthorizedAccessException(
                 "Cannot grant CanCreateContainers — you do not hold this permission.");
 
-        if (request.CanRegisterInfoStores && !callerPs.CanRegisterInfoStores)
+        if (request.CanRegisterDatabases && !callerPs.CanRegisterDatabases)
             throw new UnauthorizedAccessException(
-                "Cannot grant CanRegisterInfoStores — you do not hold this permission.");
+                "Cannot grant CanRegisterDatabases — you do not hold this permission.");
 
         if (request.CanAccessLocalhostInBrowser && !callerPs.CanAccessLocalhostInBrowser)
             throw new UnauthorizedAccessException(
@@ -371,10 +371,10 @@ public sealed class RoleService(SharpClawDbContext db)
             callerPs?.WebsiteAccesses, a => a.WebsiteId);
         ValidateCollection("SearchEngineAccesses", request.SearchEngineAccesses,
             callerPs?.SearchEngineAccesses, a => a.SearchEngineId);
-        ValidateCollection("LocalInfoStoreAccesses", request.LocalInfoStoreAccesses,
-            callerPs?.LocalInfoStorePermissions, a => a.LocalInformationStoreId);
-        ValidateCollection("ExternalInfoStoreAccesses", request.ExternalInfoStoreAccesses,
-            callerPs?.ExternalInfoStorePermissions, a => a.ExternalInformationStoreId);
+        ValidateCollection("InternalDatabaseAccesses", request.InternalDatabaseAccesses,
+            callerPs?.InternalDatabaseAccesses, a => a.InternalDatabaseId);
+        ValidateCollection("ExternalDatabaseAccesses", request.ExternalDatabaseAccesses,
+            callerPs?.ExternalDatabaseAccesses, a => a.ExternalDatabaseId);
         ValidateCollection("AudioDeviceAccesses", request.AudioDeviceAccesses,
             callerPs?.AudioDeviceAccesses, a => a.AudioDeviceId);
         ValidateCollection("DisplayDeviceAccesses", request.DisplayDeviceAccesses,
@@ -467,8 +467,8 @@ public sealed class RoleService(SharpClawDbContext db)
             .Include(p => p.ContainerAccesses)
             .Include(p => p.WebsiteAccesses)
             .Include(p => p.SearchEngineAccesses)
-            .Include(p => p.LocalInfoStorePermissions)
-            .Include(p => p.ExternalInfoStorePermissions)
+            .Include(p => p.InternalDatabaseAccesses)
+            .Include(p => p.ExternalDatabaseAccesses)
             .Include(p => p.AudioDeviceAccesses)
             .Include(p => p.DisplayDeviceAccesses)
             .Include(p => p.EditorSessionAccesses)
@@ -492,8 +492,8 @@ public sealed class RoleService(SharpClawDbContext db)
             CreateSubAgentsClearance: ps?.CreateSubAgentsClearance ?? PermissionClearance.Unset,
             CanCreateContainers: ps?.CanCreateContainers ?? false,
             CreateContainersClearance: ps?.CreateContainersClearance ?? PermissionClearance.Unset,
-            CanRegisterInfoStores: ps?.CanRegisterInfoStores ?? false,
-            RegisterInfoStoresClearance: ps?.RegisterInfoStoresClearance ?? PermissionClearance.Unset,
+            CanRegisterDatabases: ps?.CanRegisterDatabases ?? false,
+            RegisterDatabasesClearance: ps?.RegisterDatabasesClearance ?? PermissionClearance.Unset,
             CanAccessLocalhostInBrowser: ps?.CanAccessLocalhostInBrowser ?? false,
             AccessLocalhostInBrowserClearance: ps?.AccessLocalhostInBrowserClearance ?? PermissionClearance.Unset,
             CanAccessLocalhostCli: ps?.CanAccessLocalhostCli ?? false,
@@ -529,8 +529,8 @@ public sealed class RoleService(SharpClawDbContext db)
             ContainerAccesses: MapGrants(ps?.ContainerAccesses, a => a.ContainerId, a => a.Clearance),
             WebsiteAccesses: MapGrants(ps?.WebsiteAccesses, a => a.WebsiteId, a => a.Clearance),
             SearchEngineAccesses: MapGrants(ps?.SearchEngineAccesses, a => a.SearchEngineId, a => a.Clearance),
-            LocalInfoStoreAccesses: MapGrants(ps?.LocalInfoStorePermissions, a => a.LocalInformationStoreId, a => a.Clearance),
-            ExternalInfoStoreAccesses: MapGrants(ps?.ExternalInfoStorePermissions, a => a.ExternalInformationStoreId, a => a.Clearance),
+            InternalDatabaseAccesses: MapGrants(ps?.InternalDatabaseAccesses, a => a.InternalDatabaseId, a => a.Clearance),
+            ExternalDatabaseAccesses: MapGrants(ps?.ExternalDatabaseAccesses, a => a.ExternalDatabaseId, a => a.Clearance),
             AudioDeviceAccesses: MapGrants(ps?.AudioDeviceAccesses, a => a.AudioDeviceId, a => a.Clearance),
             DisplayDeviceAccesses: MapGrants(ps?.DisplayDeviceAccesses, a => a.DisplayDeviceId, a => a.Clearance),
             EditorSessionAccesses: MapGrants(ps?.EditorSessionAccesses, a => a.EditorSessionId, a => a.Clearance),

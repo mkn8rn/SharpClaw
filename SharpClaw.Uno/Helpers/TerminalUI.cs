@@ -60,8 +60,8 @@ internal static class TerminalUI
         ("containerAccesses", "Containers"),
         ("websiteAccesses", "Websites"),
         ("searchEngineAccesses", "Search Engines"),
-        ("localInfoStoreAccesses", "Local Info Stores"),
-        ("externalInfoStoreAccesses", "External Info Stores"),
+        ("internalDatabaseAccesses", "Internal Databases"),
+        ("externalDatabaseAccesses", "External Databases"),
         ("audioDeviceAccesses", "Audio Devices"),
         ("displayDeviceAccesses", "Display Devices"),
         ("editorSessionAccesses", "Editor Sessions"),
@@ -75,7 +75,7 @@ internal static class TerminalUI
     ];
 
     public static readonly string[] GlobalFlagNames =
-        ["canCreateSubAgents", "canCreateContainers", "canRegisterInfoStores",
+        ["canCreateSubAgents", "canCreateContainers", "canRegisterDatabases",
          "canAccessLocalhostInBrowser", "canAccessLocalhostCli",
          "canClickDesktop", "canTypeOnDesktop", "canReadCrossThreadHistory",
          "canEditAgentHeader", "canEditChannelHeader",
@@ -84,7 +84,7 @@ internal static class TerminalUI
          "canSendHotkey", "canReadClipboard", "canWriteClipboard"];
 
     public static readonly string[] GlobalFlagClearanceNames =
-        ["createSubAgentsClearance", "createContainersClearance", "registerInfoStoresClearance",
+        ["createSubAgentsClearance", "createContainersClearance", "registerDatabasesClearance",
          "accessLocalhostInBrowserClearance", "accessLocalhostCliClearance",
          "clickDesktopClearance", "typeOnDesktopClearance", "readCrossThreadHistoryClearance",
          "editAgentHeaderClearance", "editChannelHeaderClearance",
@@ -96,7 +96,7 @@ internal static class TerminalUI
     {
         ["canCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
         ["canCreateContainers"] = "Allow the agent to create sandboxed execution containers",
-        ["canRegisterInfoStores"] = "Allow the agent to register local or external information stores",
+        ["canRegisterDatabases"] = "Allow the agent to register internal or external databases",
         ["canAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
         ["canAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
         ["canClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
@@ -121,8 +121,8 @@ internal static class TerminalUI
         ["containerAccesses"] = "Access to sandboxed execution containers",
         ["websiteAccesses"] = "Access to registered website resources",
         ["searchEngineAccesses"] = "Access to registered search engine resources",
-        ["localInfoStoreAccesses"] = "Access to local information store files",
-        ["externalInfoStoreAccesses"] = "Access to external information store endpoints",
+        ["internalDatabaseAccesses"] = "Access to SharpClaw-managed internal databases",
+        ["externalDatabaseAccesses"] = "Access to registered external database endpoints",
         ["audioDeviceAccesses"] = "Access to audio capture devices for transcription",
         ["displayDeviceAccesses"] = "Access to display devices for screen capture",
         ["editorSessionAccesses"] = "Access to IDE editor sessions via the editor bridge",

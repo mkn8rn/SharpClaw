@@ -215,8 +215,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             Deny(roleName, "CanCreateSubAgents");
         if (targetPs.CanCreateContainers && !callerPs.CanCreateContainers)
             Deny(roleName, "CanCreateContainers");
-        if (targetPs.CanRegisterInfoStores && !callerPs.CanRegisterInfoStores)
-            Deny(roleName, "CanRegisterInfoStores");
+        if (targetPs.CanRegisterDatabases && !callerPs.CanRegisterDatabases)
+            Deny(roleName, "CanRegisterDatabases");
         if (targetPs.CanAccessLocalhostInBrowser && !callerPs.CanAccessLocalhostInBrowser)
             Deny(roleName, "CanAccessLocalhostInBrowser");
         if (targetPs.CanAccessLocalhostCli && !callerPs.CanAccessLocalhostCli)
@@ -242,12 +242,12 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
         ValidateResourceCoverage(roleName, "SearchEngineAccesses",
             targetPs.SearchEngineAccesses, callerPs.SearchEngineAccesses,
             a => a.SearchEngineId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "LocalInfoStorePermissions",
-            targetPs.LocalInfoStorePermissions, callerPs.LocalInfoStorePermissions,
-            a => a.LocalInformationStoreId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "ExternalInfoStorePermissions",
-            targetPs.ExternalInfoStorePermissions, callerPs.ExternalInfoStorePermissions,
-            a => a.ExternalInformationStoreId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
+        ValidateResourceCoverage(roleName, "InternalDatabaseAccesses",
+            targetPs.InternalDatabaseAccesses, callerPs.InternalDatabaseAccesses,
+            a => a.InternalDatabaseId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
+        ValidateResourceCoverage(roleName, "ExternalDatabaseAccesses",
+            targetPs.ExternalDatabaseAccesses, callerPs.ExternalDatabaseAccesses,
+            a => a.ExternalDatabaseId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
         ValidateResourceCoverage(roleName, "AudioDeviceAccesses",
             targetPs.AudioDeviceAccesses, callerPs.AudioDeviceAccesses,
             a => a.AudioDeviceId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
@@ -337,8 +337,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             .Include(p => p.ContainerAccesses)
             .Include(p => p.WebsiteAccesses)
             .Include(p => p.SearchEngineAccesses)
-            .Include(p => p.LocalInfoStorePermissions)
-            .Include(p => p.ExternalInfoStorePermissions)
+            .Include(p => p.InternalDatabaseAccesses)
+            .Include(p => p.ExternalDatabaseAccesses)
             .Include(p => p.AudioDeviceAccesses)
             .Include(p => p.DisplayDeviceAccesses)
             .Include(p => p.EditorSessionAccesses)

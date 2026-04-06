@@ -43,6 +43,7 @@ public sealed class SeedingService(
         await SeedWellKnownProvidersAsync(db, ct);
         await SeedDefaultAudioDeviceAsync(db, ct);
         await SeedDefaultDisplayDeviceAsync(db, ct);
+        await SeedWellKnownSearchEnginesAsync(db, ct);
         await ReconcileStaleTranscriptionJobsAsync(db, ct);
     }
 
@@ -90,7 +91,7 @@ public sealed class SeedingService(
         DefaultClearance = PermissionClearance.Independent,
         CanCreateSubAgents = true,
         CanCreateContainers = true,
-        CanRegisterInfoStores = true,
+        CanRegisterDatabases = true,
         CanAccessLocalhostInBrowser = true,
         CanAccessLocalhostCli = true,
         CanClickDesktop = true,
@@ -104,8 +105,8 @@ public sealed class SeedingService(
         // by AgentActionService and is immutable at runtime.
         DangerousShellAccesses       = [new() { SystemUserId               = WellKnownIds.AllResources }],
         SafeShellAccesses            = [new() { ContainerId               = WellKnownIds.AllResources }],
-        LocalInfoStorePermissions    = [new() { LocalInformationStoreId    = WellKnownIds.AllResources }],
-        ExternalInfoStorePermissions = [new() { ExternalInformationStoreId = WellKnownIds.AllResources }],
+        InternalDatabaseAccesses     = [new() { InternalDatabaseId         = WellKnownIds.AllResources }],
+        ExternalDatabaseAccesses     = [new() { ExternalDatabaseId         = WellKnownIds.AllResources }],
         WebsiteAccesses              = [new() { WebsiteId                  = WellKnownIds.AllResources }],
         SearchEngineAccesses         = [new() { SearchEngineId             = WellKnownIds.AllResources }],
         ContainerAccesses            = [new() { ContainerId                = WellKnownIds.AllResources }],
@@ -133,8 +134,8 @@ public sealed class SeedingService(
             .Include(p => p.ContainerAccesses)
             .Include(p => p.WebsiteAccesses)
             .Include(p => p.SearchEngineAccesses)
-            .Include(p => p.LocalInfoStorePermissions)
-            .Include(p => p.ExternalInfoStorePermissions)
+            .Include(p => p.InternalDatabaseAccesses)
+            .Include(p => p.ExternalDatabaseAccesses)
             .Include(p => p.AudioDeviceAccesses)
             .Include(p => p.DisplayDeviceAccesses)
             .Include(p => p.EditorSessionAccesses)
@@ -159,7 +160,7 @@ public sealed class SeedingService(
         }
         changed |= ReconcileFlag(v => ps.CanCreateSubAgents = v, ps.CanCreateSubAgents);
         changed |= ReconcileFlag(v => ps.CanCreateContainers = v, ps.CanCreateContainers);
-        changed |= ReconcileFlag(v => ps.CanRegisterInfoStores = v, ps.CanRegisterInfoStores);
+        changed |= ReconcileFlag(v => ps.CanRegisterDatabases = v, ps.CanRegisterDatabases);
         changed |= ReconcileFlag(v => ps.CanAccessLocalhostInBrowser = v, ps.CanAccessLocalhostInBrowser);
         changed |= ReconcileFlag(v => ps.CanAccessLocalhostCli = v, ps.CanAccessLocalhostCli);
         changed |= ReconcileFlag(v => ps.CanClickDesktop = v, ps.CanClickDesktop);
@@ -179,10 +180,10 @@ public sealed class SeedingService(
             () => new WebsiteAccessDB { PermissionSetId = psId, WebsiteId = WellKnownIds.AllResources });
         changed |= EnsureWildcard(ps.SearchEngineAccesses, a => a.SearchEngineId,
             () => new SearchEngineAccessDB { PermissionSetId = psId, SearchEngineId = WellKnownIds.AllResources });
-        changed |= EnsureWildcard(ps.LocalInfoStorePermissions, a => a.LocalInformationStoreId,
-            () => new LocalInfoStoreAccessDB { PermissionSetId = psId, LocalInformationStoreId = WellKnownIds.AllResources });
-        changed |= EnsureWildcard(ps.ExternalInfoStorePermissions, a => a.ExternalInformationStoreId,
-            () => new ExternalInfoStoreAccessDB { PermissionSetId = psId, ExternalInformationStoreId = WellKnownIds.AllResources });
+        changed |= EnsureWildcard(ps.InternalDatabaseAccesses, a => a.InternalDatabaseId,
+            () => new InternalDatabaseAccessDB { PermissionSetId = psId, InternalDatabaseId = WellKnownIds.AllResources });
+        changed |= EnsureWildcard(ps.ExternalDatabaseAccesses, a => a.ExternalDatabaseId,
+            () => new ExternalDatabaseAccessDB { PermissionSetId = psId, ExternalDatabaseId = WellKnownIds.AllResources });
         changed |= EnsureWildcard(ps.AudioDeviceAccesses, a => a.AudioDeviceId,
             () => new AudioDeviceAccessDB { PermissionSetId = psId, AudioDeviceId = WellKnownIds.AllResources });
         changed |= EnsureWildcard(ps.DisplayDeviceAccesses, a => a.DisplayDeviceId,
@@ -323,6 +324,56 @@ public sealed class SeedingService(
             DisplayIndex = 0,
             Description = "System primary display"
         });
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Seeds one <see cref="SearchEngineDB"/> entry per well-known
+    /// <see cref="SearchEngineType"/> (excluding <c>Custom</c>).
+    /// API keys are left empty — users supply them after first run.
+    /// </summary>
+    private async Task SeedWellKnownSearchEnginesAsync(SharpClawDbContext db, CancellationToken ct)
+    {
+        var existing = await db.SearchEngines
+            .Select(e => e.Type)
+            .ToHashSetAsync(ct);
+
+        var defaultEndpoints = new Dictionary<SearchEngineType, string>
+        {
+            [SearchEngineType.Google] = "https://www.googleapis.com/customsearch/v1",
+            [SearchEngineType.Bing] = "https://api.bing.microsoft.com/v7.0/search",
+            [SearchEngineType.DuckDuckGo] = "https://api.duckduckgo.com/",
+            [SearchEngineType.Brave] = "https://api.search.brave.com/res/v1/web/search",
+            [SearchEngineType.SearXNG] = "https://searx.be/search",
+            [SearchEngineType.Tavily] = "https://api.tavily.com/search",
+            [SearchEngineType.Serper] = "https://google.serper.dev/search",
+            [SearchEngineType.Kagi] = "https://kagi.com/api/v0/search",
+            [SearchEngineType.YouDotCom] = "https://api.ydc-index.io/search",
+            [SearchEngineType.Mojeek] = "https://www.mojeek.com/search",
+            [SearchEngineType.Yandex] = "https://yandex.com/search/xml",
+            [SearchEngineType.Baidu] = "https://api.baidu.com/search",
+        };
+
+        var toSeed = Enum.GetValues<SearchEngineType>()
+            .Where(t => t != SearchEngineType.Custom && !existing.Contains(t))
+            .ToList();
+
+        if (toSeed.Count == 0)
+            return;
+
+        logger.LogInformation("Seeding {Count} well-known search engine(s): {Types}.",
+            toSeed.Count, string.Join(", ", toSeed));
+
+        foreach (var type in toSeed)
+        {
+            db.SearchEngines.Add(new SearchEngineDB
+            {
+                Name = type.ToString(),
+                Type = type,
+                Endpoint = defaultEndpoints.GetValueOrDefault(type, string.Empty),
+            });
+        }
 
         await db.SaveChangesAsync(ct);
     }

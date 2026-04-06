@@ -112,8 +112,8 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
                     .Include(p => p.ContainerAccesses)
                     .Include(p => p.WebsiteAccesses)
                     .Include(p => p.SearchEngineAccesses)
-                    .Include(p => p.LocalInfoStorePermissions)
-                    .Include(p => p.ExternalInfoStorePermissions)
+                    .Include(p => p.InternalDatabaseAccesses)
+                    .Include(p => p.ExternalDatabaseAccesses)
                     .Include(p => p.AudioDeviceAccesses)
                     .Include(p => p.DisplayDeviceAccesses)
                     .Include(p => p.EditorSessionAccesses)
@@ -140,8 +140,8 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
                 .Include(p => p.ContainerAccesses)
                 .Include(p => p.WebsiteAccesses)
                 .Include(p => p.SearchEngineAccesses)
-                .Include(p => p.LocalInfoStorePermissions)
-                .Include(p => p.ExternalInfoStorePermissions)
+                .Include(p => p.InternalDatabaseAccesses)
+                .Include(p => p.ExternalDatabaseAccesses)
                 .Include(p => p.AudioDeviceAccesses)
                 .Include(p => p.DisplayDeviceAccesses)
                 .Include(p => p.EditorSessionAccesses)
@@ -244,7 +244,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         var grants = new List<string>();
         if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
         if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
+        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
         if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
         if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
         if (ps.CanClickDesktop) grants.Add("ClickDesktop");
@@ -265,8 +265,8 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         if (ps.ContainerAccesses.Count > 0) grants.Add("ContainerAccess");
         if (ps.WebsiteAccesses.Count > 0) grants.Add("WebsiteAccess");
         if (ps.SearchEngineAccesses.Count > 0) grants.Add("SearchEngineAccess");
-        if (ps.LocalInfoStorePermissions.Count > 0) grants.Add("LocalInfoStore");
-        if (ps.ExternalInfoStorePermissions.Count > 0) grants.Add("ExternalInfoStore");
+        if (ps.InternalDatabaseAccesses.Count > 0) grants.Add("InternalDatabase");
+        if (ps.ExternalDatabaseAccesses.Count > 0) grants.Add("ExternalDatabase");
         if (ps.AudioDeviceAccesses.Count > 0) grants.Add("AudioDevice");
         if (ps.DisplayDeviceAccesses.Count > 0) grants.Add("DisplayDevice");
         if (ps.EditorSessionAccesses.Count > 0) grants.Add("EditorSession");
@@ -292,7 +292,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         var grants = new List<string>();
         if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
         if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterInfoStores) grants.Add("RegisterInfoStores");
+        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
         if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
         if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
         if (ps.CanClickDesktop) grants.Add("ClickDesktop");
@@ -329,13 +329,13 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             ps.SearchEngineAccesses.Select(a => a.SearchEngineId),
             () => db.SearchEngines.Select(s => s.Id).ToListAsync(ct));
 
-        await AppendResourceGrantAsync(grants, "LocalInfoStore",
-            ps.LocalInfoStorePermissions.Select(a => a.LocalInformationStoreId),
-            () => db.LocalInformationStores.Select(l => l.Id).ToListAsync(ct));
+        await AppendResourceGrantAsync(grants, "InternalDatabase",
+            ps.InternalDatabaseAccesses.Select(a => a.InternalDatabaseId),
+            () => db.InternalDatabases.Select(l => l.Id).ToListAsync(ct));
 
-        await AppendResourceGrantAsync(grants, "ExternalInfoStore",
-            ps.ExternalInfoStorePermissions.Select(a => a.ExternalInformationStoreId),
-            () => db.ExternalInformationStores.Select(e => e.Id).ToListAsync(ct));
+        await AppendResourceGrantAsync(grants, "ExternalDatabase",
+            ps.ExternalDatabaseAccesses.Select(a => a.ExternalDatabaseId),
+            () => db.ExternalDatabases.Select(e => e.Id).ToListAsync(ct));
 
         await AppendResourceGrantAsync(grants, "AudioDevice",
             ps.AudioDeviceAccesses.Select(a => a.AudioDeviceId),
@@ -525,8 +525,8 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             "editorsessions" => Cast(await db.EditorSessions.ToListAsync(ct)),
             "skills" => Cast(await db.Skills.ToListAsync(ct)),
             "systemusers" => Cast(await db.SystemUsers.ToListAsync(ct)),
-            "localinfostores" => Cast(await db.LocalInformationStores.ToListAsync(ct)),
-            "externalinfostores" => Cast(await db.ExternalInformationStores.ToListAsync(ct)),
+            "internaldatabases" => Cast(await db.InternalDatabases.ToListAsync(ct)),
+            "externaldatabases" => Cast(await db.ExternalDatabases.ToListAsync(ct)),
             "scheduledtasks" or "scheduledjobs" => Cast(await db.ScheduledTasks.ToListAsync(ct)),
             "tasks" or "taskdefinitions" => Cast(await db.TaskDefinitions.ToListAsync(ct)),
             "botintegrations" => Cast(await db.BotIntegrations.ToListAsync(ct)),

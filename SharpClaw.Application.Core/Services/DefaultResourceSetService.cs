@@ -113,7 +113,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
     private static readonly HashSet<string> ValidKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "dangshell", "safeshell", "container", "website", "search",
-        "localinfo", "externalinfo", "audiodevice", "displaydevice",
+        "internaldb", "externaldb", "audiodevice", "displaydevice",
         "agent", "task", "skill", "transcriptionmodel", "editor"
     };
 
@@ -219,8 +219,8 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             case "container": drs.ContainerResourceId = value; break;
             case "website": drs.WebsiteResourceId = value; break;
             case "search": drs.SearchEngineResourceId = value; break;
-            case "localinfo": drs.LocalInfoStoreResourceId = value; break;
-            case "externalinfo": drs.ExternalInfoStoreResourceId = value; break;
+            case "internaldb": drs.InternalDatabaseResourceId = value; break;
+            case "externaldb": drs.ExternalDatabaseResourceId = value; break;
             case "audiodevice": drs.AudioDeviceResourceId = value; break;
             case "displaydevice": drs.DisplayDeviceResourceId = value; break;
             case "agent": drs.AgentResourceId = value; break;
@@ -243,8 +243,8 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
         drs.ContainerResourceId = r.ContainerResourceId;
         drs.WebsiteResourceId = r.WebsiteResourceId;
         drs.SearchEngineResourceId = r.SearchEngineResourceId;
-        drs.LocalInfoStoreResourceId = r.LocalInfoStoreResourceId;
-        drs.ExternalInfoStoreResourceId = r.ExternalInfoStoreResourceId;
+        drs.InternalDatabaseResourceId = r.InternalDatabaseResourceId;
+        drs.ExternalDatabaseResourceId = r.ExternalDatabaseResourceId;
         drs.AudioDeviceResourceId = r.AudioDeviceResourceId;
         drs.DisplayDeviceResourceId = r.DisplayDeviceResourceId;
         drs.AgentResourceId = r.AgentResourceId;
@@ -263,8 +263,8 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             drs.ContainerResourceId,
             drs.WebsiteResourceId,
             drs.SearchEngineResourceId,
-            drs.LocalInfoStoreResourceId,
-            drs.ExternalInfoStoreResourceId,
+            drs.InternalDatabaseResourceId,
+            drs.ExternalDatabaseResourceId,
             drs.AudioDeviceResourceId,
             drs.DisplayDeviceResourceId,
             drs.AgentResourceId,
@@ -297,8 +297,8 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db)
             ch.ContainerResourceId ?? ctx.ContainerResourceId,
             ch.WebsiteResourceId ?? ctx.WebsiteResourceId,
             ch.SearchEngineResourceId ?? ctx.SearchEngineResourceId,
-            ch.LocalInfoStoreResourceId ?? ctx.LocalInfoStoreResourceId,
-            ch.ExternalInfoStoreResourceId ?? ctx.ExternalInfoStoreResourceId,
+            ch.InternalDatabaseResourceId ?? ctx.InternalDatabaseResourceId,
+            ch.ExternalDatabaseResourceId ?? ctx.ExternalDatabaseResourceId,
             ch.AudioDeviceResourceId ?? ctx.AudioDeviceResourceId,
             ch.DisplayDeviceResourceId ?? ctx.DisplayDeviceResourceId,
             ch.AgentResourceId ?? ctx.AgentResourceId,

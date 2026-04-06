@@ -41,10 +41,10 @@ public class SharpClawDbContext(
     public DbSet<SystemUserDB> SystemUsers => Set<SystemUserDB>();
     public DbSet<DangerousShellAccessDB> DangerousShellAccesses => Set<DangerousShellAccessDB>();
     public DbSet<SafeShellAccessDB> SafeShellAccesses => Set<SafeShellAccessDB>();
-    public DbSet<LocalInformationStoreDB> LocalInformationStores => Set<LocalInformationStoreDB>();
-    public DbSet<ExternalInformationStoreDB> ExternalInformationStores => Set<ExternalInformationStoreDB>();
-    public DbSet<LocalInfoStoreAccessDB> LocalInfoStorePermissions => Set<LocalInfoStoreAccessDB>();
-    public DbSet<ExternalInfoStoreAccessDB> ExternalInfoStorePermissions => Set<ExternalInfoStoreAccessDB>();
+    public DbSet<InternalDatabaseDB> InternalDatabases => Set<InternalDatabaseDB>();
+    public DbSet<ExternalDatabaseDB> ExternalDatabases => Set<ExternalDatabaseDB>();
+    public DbSet<InternalDatabaseAccessDB> InternalDatabaseAccesses => Set<InternalDatabaseAccessDB>();
+    public DbSet<ExternalDatabaseAccessDB> ExternalDatabaseAccesses => Set<ExternalDatabaseAccessDB>();
     public DbSet<WebsiteDB> Websites => Set<WebsiteDB>();
     public DbSet<WebsiteAccessDB> WebsiteAccesses => Set<WebsiteAccessDB>();
     public DbSet<SearchEngineDB> SearchEngines => Set<SearchEngineDB>();
@@ -279,12 +279,12 @@ public class SharpClawDbContext(
                 .HasForeignKey(s => s.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            e.HasMany(p => p.LocalInfoStorePermissions)
+            e.HasMany(p => p.InternalDatabaseAccesses)
                 .WithOne(l => l.PermissionSet)
                 .HasForeignKey(l => l.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            e.HasMany(p => p.ExternalInfoStorePermissions)
+            e.HasMany(p => p.ExternalDatabaseAccesses)
                 .WithOne(x => x.PermissionSet)
                 .HasForeignKey(x => x.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -380,14 +380,14 @@ public class SharpClawDbContext(
                 .HasForeignKey(p => p.DefaultSafeShellAccessId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            e.HasOne(p => p.DefaultLocalInfoStorePermission)
+            e.HasOne(p => p.DefaultInternalDatabaseAccess)
                 .WithMany()
-                .HasForeignKey(p => p.DefaultLocalInfoStorePermissionId)
+                .HasForeignKey(p => p.DefaultInternalDatabaseAccessId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            e.HasOne(p => p.DefaultExternalInfoStorePermission)
+            e.HasOne(p => p.DefaultExternalDatabaseAccess)
                 .WithMany()
-                .HasForeignKey(p => p.DefaultExternalInfoStorePermissionId)
+                .HasForeignKey(p => p.DefaultExternalDatabaseAccessId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             e.HasOne(p => p.DefaultWebsiteAccess)
@@ -485,43 +485,45 @@ public class SharpClawDbContext(
             e.Property(a => a.ShellType).HasConversion<string>();
         });
 
-        // ── Information stores ────────────────────────────────────
-        modelBuilder.Entity<LocalInformationStoreDB>(e =>
+        // ── Databases ─────────────────────────────────────────────
+        modelBuilder.Entity<InternalDatabaseDB>(e =>
         {
             e.HasIndex(s => s.Name).IsUnique();
+            e.Property(s => s.DatabaseType).HasConversion<string>();
             e.HasOne(s => s.Skill)
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
             e.HasMany(s => s.Permissions)
-                .WithOne(p => p.LocalInformationStore)
-                .HasForeignKey(p => p.LocalInformationStoreId)
+                .WithOne(p => p.InternalDatabase)
+                .HasForeignKey(p => p.InternalDatabaseId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<ExternalInformationStoreDB>(e =>
+        modelBuilder.Entity<ExternalDatabaseDB>(e =>
         {
             e.HasIndex(s => s.Name).IsUnique();
+            e.Property(s => s.DatabaseType).HasConversion<string>();
             e.HasOne(s => s.Skill)
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
             e.HasMany(s => s.Permissions)
-                .WithOne(p => p.ExternalInformationStore)
-                .HasForeignKey(p => p.ExternalInformationStoreId)
+                .WithOne(p => p.ExternalDatabase)
+                .HasForeignKey(p => p.ExternalDatabaseId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<LocalInfoStoreAccessDB>(e =>
+        modelBuilder.Entity<InternalDatabaseAccessDB>(e =>
         {
-            e.HasIndex(p => new { p.PermissionSetId, p.LocalInformationStoreId }).IsUnique();
+            e.HasIndex(p => new { p.PermissionSetId, p.InternalDatabaseId }).IsUnique();
             e.Property(p => p.AccessLevel).HasConversion<string>();
             e.Property(p => p.Clearance).HasConversion<string>();
         });
 
-        modelBuilder.Entity<ExternalInfoStoreAccessDB>(e =>
+        modelBuilder.Entity<ExternalDatabaseAccessDB>(e =>
         {
-            e.HasIndex(p => new { p.PermissionSetId, p.ExternalInformationStoreId }).IsUnique();
+            e.HasIndex(p => new { p.PermissionSetId, p.ExternalDatabaseId }).IsUnique();
             e.Property(p => p.AccessLevel).HasConversion<string>();
             e.Property(p => p.Clearance).HasConversion<string>();
         });
@@ -550,6 +552,7 @@ public class SharpClawDbContext(
         modelBuilder.Entity<SearchEngineDB>(e =>
         {
             e.HasIndex(s => s.Name).IsUnique();
+            e.Property(s => s.Type).HasConversion<string>();
             e.HasOne(s => s.Skill)
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
@@ -905,8 +908,8 @@ public class SharpClawDbContext(
     {
         DangerousShellAccessDB      e => e.SystemUserId              == WellKnownIds.AllResources,
         SafeShellAccessDB           e => e.ContainerId              == WellKnownIds.AllResources,
-        LocalInfoStoreAccessDB      e => e.LocalInformationStoreId   == WellKnownIds.AllResources,
-        ExternalInfoStoreAccessDB   e => e.ExternalInformationStoreId == WellKnownIds.AllResources,
+        InternalDatabaseAccessDB     e => e.InternalDatabaseId        == WellKnownIds.AllResources,
+        ExternalDatabaseAccessDB     e => e.ExternalDatabaseId        == WellKnownIds.AllResources,
         WebsiteAccessDB             e => e.WebsiteId                 == WellKnownIds.AllResources,
         SearchEngineAccessDB        e => e.SearchEngineId            == WellKnownIds.AllResources,
         ContainerAccessDB           e => e.ContainerId               == WellKnownIds.AllResources,

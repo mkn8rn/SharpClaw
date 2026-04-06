@@ -31,11 +31,11 @@ public class DefaultResourceSetDB : BaseEntity
     /// <summary>Default SearchEngine for QuerySearchEngine.</summary>
     public Guid? SearchEngineResourceId { get; set; }
 
-    /// <summary>Default LocalInformationStore for AccessLocalInfoStore.</summary>
-    public Guid? LocalInfoStoreResourceId { get; set; }
+    /// <summary>Default InternalDatabase for AccessInternalDatabases.</summary>
+    public Guid? InternalDatabaseResourceId { get; set; }
 
-    /// <summary>Default ExternalInformationStore for AccessExternalInfoStore.</summary>
-    public Guid? ExternalInfoStoreResourceId { get; set; }
+    /// <summary>Default ExternalDatabase for AccessExternalDatabase.</summary>
+    public Guid? ExternalDatabaseResourceId { get; set; }
 
     /// <summary>Default AudioDevice for transcription jobs.</summary>
     public Guid? AudioDeviceResourceId { get; set; }

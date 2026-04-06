@@ -41,12 +41,12 @@ public sealed class AgentActionService(SharpClawDbContext db)
             agentId, caller, p => p.CanCreateContainers, p => p.CreateContainersClearance,
             "create containers", onApproved, ct);
 
-    public Task<AgentActionResult> RegisterInfoStoreAsync(
+    public Task<AgentActionResult> RegisterDatabaseAsync(
         Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanRegisterInfoStores, p => p.RegisterInfoStoresClearance,
-            "register information stores", onApproved, ct);
+            agentId, caller, p => p.CanRegisterDatabases, p => p.RegisterDatabasesClearance,
+            "register databases", onApproved, ct);
 
     public Task<AgentActionResult> AccessLocalhostInBrowserAsync(
         Guid agentId, ActionCaller caller,
@@ -159,21 +159,21 @@ public sealed class AgentActionService(SharpClawDbContext db)
             p => p.SafeShellAccesses, a => a.ContainerId, a => a.Clearance,
             "safe shell access", onApproved, ct);
 
-    public Task<AgentActionResult> AccessLocalInfoStoreAsync(
-        Guid agentId, Guid storeId, ActionCaller caller,
+    public Task<AgentActionResult> AccessInternalDatabaseAsync(
+        Guid agentId, Guid databaseId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateResourceAccessAsync(
-            agentId, storeId, caller,
-            p => p.LocalInfoStorePermissions, a => a.LocalInformationStoreId, a => a.Clearance,
-            "local information store access", onApproved, ct);
+            agentId, databaseId, caller,
+            p => p.InternalDatabaseAccesses, a => a.InternalDatabaseId, a => a.Clearance,
+            "internal database access", onApproved, ct);
 
-    public Task<AgentActionResult> AccessExternalInfoStoreAsync(
-        Guid agentId, Guid storeId, ActionCaller caller,
+    public Task<AgentActionResult> AccessExternalDatabaseAsync(
+        Guid agentId, Guid databaseId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateResourceAccessAsync(
-            agentId, storeId, caller,
-            p => p.ExternalInfoStorePermissions, a => a.ExternalInformationStoreId, a => a.Clearance,
-            "external information store access", onApproved, ct);
+            agentId, databaseId, caller,
+            p => p.ExternalDatabaseAccesses, a => a.ExternalDatabaseId, a => a.Clearance,
+            "external database access", onApproved, ct);
 
     public Task<AgentActionResult> AccessWebsiteAsync(
         Guid agentId, Guid websiteId, ActionCaller caller,
@@ -473,8 +473,8 @@ public sealed class AgentActionService(SharpClawDbContext db)
         return await db.PermissionSets
             .Include(p => p.DangerousShellAccesses)
             .Include(p => p.SafeShellAccesses)
-            .Include(p => p.LocalInfoStorePermissions)
-            .Include(p => p.ExternalInfoStorePermissions)
+            .Include(p => p.InternalDatabaseAccesses)
+            .Include(p => p.ExternalDatabaseAccesses)
             .Include(p => p.WebsiteAccesses)
             .Include(p => p.SearchEngineAccesses)
             .Include(p => p.ContainerAccesses)

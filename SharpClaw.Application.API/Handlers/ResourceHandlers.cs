@@ -7,6 +7,7 @@ using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.DTOs.NativeApplications;
+using SharpClaw.Contracts.DTOs.SearchEngines;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -175,9 +176,9 @@ public static class ResourceHandlers
                 .Select(e => new ResourceItem(e.Id, e.Name)),
             "searchEngineAccesses" => db.SearchEngines
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "localInfoStoreAccesses" => db.LocalInformationStores
+            "internalDatabaseAccesses" => db.InternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "externalInfoStoreAccesses" => db.ExternalInformationStores
+            "externalDatabaseAccesses" => db.ExternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
             "audioDeviceAccesses" => db.AudioDevices
                 .Select(e => new ResourceItem(e.Id, e.Name)),
@@ -256,5 +257,31 @@ public static class ResourceHandlers
 
     [MapDelete("/nativeapplications/{id}")]
     public static async Task<IResult> DeleteNativeApplication(Guid id, NativeApplicationService svc)
+        => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
+
+    // ═══════════════════════════════════════════════════════════════
+    // Search Engines
+    // ═══════════════════════════════════════════════════════════════
+
+    [MapPost("/searchengines")]
+    public static async Task<IResult> CreateSearchEngine(
+        CreateSearchEngineRequest request, SearchEngineService svc)
+        => Results.Ok(await svc.CreateAsync(request));
+
+    [MapGet("/searchengines")]
+    public static async Task<IResult> ListSearchEngines(SearchEngineService svc)
+        => Results.Ok(await svc.ListAsync());
+
+    [MapGet("/searchengines/{id:guid}")]
+    public static async Task<IResult> GetSearchEngine(Guid id, SearchEngineService svc)
+        => await svc.GetByIdAsync(id) is { } r ? Results.Ok(r) : Results.NotFound();
+
+    [MapPut("/searchengines/{id:guid}")]
+    public static async Task<IResult> UpdateSearchEngine(
+        Guid id, UpdateSearchEngineRequest request, SearchEngineService svc)
+        => await svc.UpdateAsync(id, request) is { } r ? Results.Ok(r) : Results.NotFound();
+
+    [MapDelete("/searchengines/{id:guid}")]
+    public static async Task<IResult> DeleteSearchEngine(Guid id, SearchEngineService svc)
         => await svc.DeleteAsync(id) ? Results.NoContent() : Results.NotFound();
 }

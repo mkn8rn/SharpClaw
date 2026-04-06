@@ -152,6 +152,7 @@ try
     builder.Services.AddScoped<SpreadsheetService>();
     builder.Services.AddScoped<ExcelComInteropService>();
     builder.Services.AddScoped<DesktopAwarenessService>();
+    builder.Services.AddScoped<SearchEngineService>();
 
     // Local inference (in-process via LLamaSharp)
     // Configure native library: prefer CUDA > Vulkan > CPU; suppress verbose logs.
