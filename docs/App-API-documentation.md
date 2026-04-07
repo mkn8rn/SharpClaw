@@ -63,6 +63,7 @@ fastest way to make that happen.
 - [Env file management](#env-file-management)
 - [Custom chat header](#custom-chat-header)
 - [Tool awareness sets](#tool-awareness-sets)
+- [Modules](#modules)
 - [Permission Resolution](#permission-resolution)
 
 ---
@@ -110,12 +111,41 @@ Minimax, Custom, Local
 
 | Category | Values |
 |----------|--------|
-| Global flags | `CreateSubAgent`, `CreateContainer`, `RegisterInfoStore`, `AccessLocalhostInBrowser`, `AccessLocalhostCli`, `ClickDesktop`, `TypeOnDesktop`, `ReadCrossThreadHistory`, `CreateDocumentSession`, `EnumerateWindows`, `FocusWindow`, `CloseWindow`, `ResizeWindow`, `SendHotkey`, `ReadClipboard`, `WriteClipboard` |
-| Per-resource | `UnsafeExecuteAsDangerousShell`, `ExecuteAsSafeShell`, `AccessLocalInfoStore`, `AccessExternalInfoStore`, `AccessWebsite`, `QuerySearchEngine`, `AccessContainer`, `ManageAgent`, `EditTask`, `AccessSkill`, `CaptureDisplay`, `CaptureWindow`, `StopProcess` |
+| Global flags | `CreateSubAgent`, `CreateContainer`, `RegisterInfoStore`, `AccessLocalhostInBrowser`, `AccessLocalhostCli`, `ReadCrossThreadHistory` |
+| Per-resource | `UnsafeExecuteAsDangerousShell`, `ExecuteAsSafeShell`, `AccessLocalInfoStore`, `AccessExternalInfoStore`, `AccessWebsite`, `QuerySearchEngine`, `AccessContainer`, `ManageAgent`, `EditTask`, `AccessSkill` |
 | Transcription | `TranscribeFromAudioDevice`, `TranscribeFromAudioStream`, `TranscribeFromAudioFile` |
 | Editor | `EditorReadFile`, `EditorGetOpenFiles`, `EditorGetSelection`, `EditorGetDiagnostics`, `EditorApplyEdit`, `EditorCreateFile`, `EditorDeleteFile`, `EditorShowDiff`, `EditorRunBuild`, `EditorRunTerminal` |
-| Document | `SpreadsheetReadRange`, `SpreadsheetWriteRange`, `SpreadsheetListSheets`, `SpreadsheetCreateSheet`, `SpreadsheetDeleteSheet`, `SpreadsheetGetInfo`, `SpreadsheetCreateWorkbook`, `SpreadsheetLiveReadRange`, `SpreadsheetLiveWriteRange` |
-| Desktop awareness | `LaunchNativeApplication` |
+| Module dispatch | `ModuleAction` (= 100) — dispatches to a loaded module by tool name. See [Modules](#modules). |
+
+The following action types are **deprecated** (`[Obsolete]`) — they are
+still accepted for backward compatibility but new code should use the
+module-dispatched equivalents:
+
+| Legacy action type | Module equivalent |
+|--------------------|-------------------|
+| `ClickDesktop` | `cu_click_desktop` (Computer Use) |
+| `TypeOnDesktop` | `cu_type_on_desktop` (Computer Use) |
+| `CreateDocumentSession` | `oa_register_document` (Office Apps) |
+| `EnumerateWindows` | `cu_enumerate_windows` (Computer Use) |
+| `FocusWindow` | `cu_focus_window` (Computer Use) |
+| `CloseWindow` | `cu_close_window` (Computer Use) |
+| `ResizeWindow` | `cu_resize_window` (Computer Use) |
+| `SendHotkey` | `cu_send_hotkey` (Computer Use) |
+| `ReadClipboard` | `cu_read_clipboard` (Computer Use) |
+| `WriteClipboard` | `cu_write_clipboard` (Computer Use) |
+| `CaptureDisplay` | `cu_capture_display` (Computer Use) |
+| `CaptureWindow` | `cu_capture_window` (Computer Use) |
+| `StopProcess` | `cu_stop_process` (Computer Use) |
+| `LaunchNativeApplication` | `cu_launch_application` (Computer Use) |
+| `SpreadsheetReadRange` | `oa_read_range` (Office Apps) |
+| `SpreadsheetWriteRange` | `oa_write_range` (Office Apps) |
+| `SpreadsheetListSheets` | `oa_list_sheets` (Office Apps) |
+| `SpreadsheetCreateSheet` | `oa_create_sheet` (Office Apps) |
+| `SpreadsheetDeleteSheet` | `oa_delete_sheet` (Office Apps) |
+| `SpreadsheetGetInfo` | `oa_get_info` (Office Apps) |
+| `SpreadsheetCreateWorkbook` | `oa_create_workbook` (Office Apps) |
+| `SpreadsheetLiveReadRange` | `oa_live_read_range` (Office Apps) |
+| `SpreadsheetLiveWriteRange` | `oa_live_write_range` (Office Apps) |
 
 ### PermissionClearance
 
@@ -3756,6 +3786,117 @@ agent add MyAgent #42 --no-tools
 channel add --agent #3 --tools #5 "My Channel"
 channel add --agent #3 --no-tools "My Channel"
 ```
+
+---
+
+## Modules
+
+SharpClaw uses a **module system** to organize tools into loadable,
+self-contained units. Each module provides a set of tool definitions
+that are registered at startup and dispatched via
+`AgentActionType = ModuleAction` (value 100).
+
+### Architecture
+
+- Modules implement the `ISharpClawModule` contract and are loaded at
+  startup by the `ModuleRegistry`.
+- Each module has a **tool prefix** (e.g. `cu`, `oa`) that is prepended
+  to tool names when sent to the model — for example, a module tool
+  named `capture_display` with prefix `cu` becomes `cu_capture_display`.
+- Module tools are dispatched via the `ModuleAction` action type. The
+  module registry resolves the prefixed tool name to the correct module
+  and local tool name.
+- Modules can declare **platform restrictions** (`"platforms"` in
+  `module.json`), **exports** (contract-based services other modules can
+  depend on), and **requires** (contracts the module needs from others).
+- Module manifests are stored at `modules/{module_dir}/module.json` in
+  the published output.
+
+### ModuleManifest
+
+```json
+{
+  "id": "string",
+  "displayName": "string",
+  "version": "string",
+  "toolPrefix": "string",
+  "entryAssembly": "string",
+  "minHostVersion": "string | null",
+  "author": "string | null",
+  "description": "string | null",
+  "license": "string | null",
+  "platforms": ["windows", "linux", "macos"],
+  "enabled": true,
+  "defaultEnabled": true,
+  "executionTimeoutSeconds": "int | null",
+  "exports": [
+    {
+      "contractName": "string",
+      "serviceType": "string"
+    }
+  ],
+  "requires": ["string"]
+}
+```
+
+### Default modules
+
+SharpClaw ships with two default modules:
+
+| Module | ID | Prefix | Tools | Platforms | Description |
+|--------|----|--------|-------|-----------|-------------|
+| [Computer Use](Module-ComputerUse.md) | `sharpclaw.computer-use` | `cu` | 13 | Windows | Desktop awareness, window management, input simulation, clipboard, display capture, process control |
+| [Office Apps](Module-OfficeApps.md) | `sharpclaw.office-apps` | `oa` | 10 | Windows, Linux, macOS | Document sessions, spreadsheet CRUD (ClosedXML / CsvHelper), live Excel COM Interop |
+
+### Tool name resolution
+
+When the model returns a tool call, the name is resolved in order:
+
+1. **Core tools** — built-in tool names (e.g. `execute_mk8_shell`,
+   `editor_read_file`) are matched first.
+2. **Module tools** — prefixed names (e.g. `cu_capture_display`,
+   `oa_read_range`) are resolved via the `ModuleRegistry`. The prefix
+   identifies the module; the suffix identifies the local tool name.
+
+### Module tool names
+
+All module tools are included in the [tool awareness set](#tool-awareness-sets)
+tool name list. The complete set of module tool names:
+
+**Computer Use (`cu_` prefix, 13 tools):**
+`cu_capture_display`, `cu_click_desktop`, `cu_type_on_desktop`,
+`cu_enumerate_windows`, `cu_launch_application`, `cu_focus_window`,
+`cu_close_window`, `cu_resize_window`, `cu_send_hotkey`,
+`cu_capture_window`, `cu_read_clipboard`, `cu_write_clipboard`,
+`cu_stop_process`
+
+**Office Apps (`oa_` prefix, 10 tools):**
+`oa_register_document`, `oa_read_range`, `oa_write_range`,
+`oa_list_sheets`, `oa_create_sheet`, `oa_delete_sheet`,
+`oa_get_info`, `oa_create_workbook`, `oa_live_read_range`,
+`oa_live_write_range`
+
+### Module CLI commands
+
+Modules can register their own CLI commands:
+
+| Command | Aliases | Module | Description |
+|---------|---------|--------|-------------|
+| `cu` | `computer-use` | Computer Use | `cu windows`, `cu displays`, `cu apps` |
+| `docs` | `office`, `oa` | Office Apps | `docs list` |
+
+### Module contracts (exports / requires)
+
+Modules can export named contracts (service interfaces) that other
+modules can depend on. The Computer Use module exports:
+
+| Contract | Interface | Description |
+|----------|-----------|-------------|
+| `window_management` | `IWindowManager` | Window enumeration, focus, capture, close |
+| `desktop_input` | `IDesktopInput` | Mouse click, keyboard input, hotkey simulation |
+
+The dependency graph is resolved via topological sort at startup to
+ensure exports are registered before consumers.
 
 ---
 

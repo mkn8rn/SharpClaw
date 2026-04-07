@@ -15,6 +15,8 @@ using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
 using SharpClaw.Modules.ComputerUse;
+using SharpClaw.Modules.DangerousShell;
+using SharpClaw.Modules.Mk8Shell;
 using SharpClaw.Modules.OfficeApps;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Persistence;
@@ -159,6 +161,12 @@ try
     var officeAppsModule = new OfficeAppsModule();
     officeAppsModule.ConfigureServices(builder.Services);
 
+    var mk8ShellModule = new Mk8ShellModule();
+    mk8ShellModule.ConfigureServices(builder.Services);
+
+    var dangerousShellModule = new DangerousShellModule();
+    dangerousShellModule.ConfigureServices(builder.Services);
+
     // Document & desktop awareness services
     builder.Services.AddScoped<DocumentSessionService>();
     builder.Services.AddScoped<NativeApplicationService>();
@@ -219,6 +227,8 @@ try
     var registry = app.Services.GetRequiredService<ModuleRegistry>();
     registry.Register(computerUseModule);
     registry.Register(officeAppsModule);
+    registry.Register(mk8ShellModule);
+    registry.Register(dangerousShellModule);
 
     // Initialize loaded modules in dependency order (providers before consumers).
     var initOrder = registry.GetInitializationOrder(out var excludedModules);

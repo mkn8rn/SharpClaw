@@ -1,0 +1,11 @@
+{
+  "id": "sharpclaw.mk8shell",
+  "displayName": "mk8.shell",
+  "version": "1.0.0",
+  "toolPrefix": "mk8",
+  "entryAssembly": "SharpClaw.Modules.Mk8Shell",
+  "platforms": ["windows", "linux", "macos"],
+  "executionTimeoutSeconds": 30,
+  "exports": [],
+  "requires": []
+}

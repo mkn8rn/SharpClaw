@@ -7,6 +7,7 @@ public enum AgentActionType
 {
     // ── Global flags ──────────────────────────────────────────────
     CreateSubAgent = 0,
+    [Obsolete("Moved to mk8.shell module. Use ModuleAction + ActionKey.")]
     CreateContainer = 1,
     RegisterDatabase = 2,
     AccessLocalhostInBrowser = 3,
@@ -17,7 +18,9 @@ public enum AgentActionType
     TypeOnDesktop = 6,
 
     // ── Per-resource grants ───────────────────────────────────────
+    [Obsolete("Moved to Dangerous Shell module. Use ModuleAction + ActionKey.")]
     UnsafeExecuteAsDangerousShell = 7,
+    [Obsolete("Moved to mk8.shell module. Use ModuleAction + ActionKey.")]
     ExecuteAsSafeShell = 8,
     AccessInternalDatabases = 9,
     AccessExternalDatabase = 10,

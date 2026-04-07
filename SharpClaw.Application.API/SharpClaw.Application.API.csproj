@@ -28,6 +28,8 @@
     <ProjectReference Include="..\SharpClaw.Application.Infrastructure\SharpClaw.Application.Infrastructure.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
     <ProjectReference Include="..\DefaultModules\ComputerUse\SharpClaw.Modules.ComputerUse.csproj" />
+    <ProjectReference Include="..\DefaultModules\DangerousShell\SharpClaw.Modules.DangerousShell.csproj" />
+    <ProjectReference Include="..\DefaultModules\Mk8Shell\SharpClaw.Modules.Mk8Shell.csproj" />
     <ProjectReference Include="..\DefaultModules\OfficeApps\SharpClaw.Modules.OfficeApps.csproj" />
   </ItemGroup>
 
