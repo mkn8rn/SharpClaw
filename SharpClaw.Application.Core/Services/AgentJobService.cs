@@ -735,10 +735,13 @@ IConfiguration configuration)
             AgentActionType.SendBotMessage
                 => await ExecuteSendBotMessageAsync(job, ct),
 
-            // Module-provided tool calls
+            // Module-provided tool calls — try ActionKey-based dispatch first;
+            // fall back to full envelope deserialization.
             AgentActionType.ModuleAction
-                => await DispatchModuleExecutionAsync(job, ct),
+                => await TryDispatchByActionKeyAsync(job, ct)
+                   ?? await DispatchModuleExecutionAsync(job, ct),
 
+            // Default: try module resolution via ActionKey or enum-name derivation.
             _ => await TryDispatchByActionKeyAsync(job, ct)
                  ?? $"Action '{job.ActionType}' executed successfully " +
                     $"(resource: {job.ResourceId?.ToString() ?? "n/a"})."
@@ -832,17 +835,27 @@ IConfiguration configuration)
     }
 
     /// <summary>
-    /// Attempt to dispatch a job via its <see cref="AgentJobDB.ActionKey"/> to a
-    /// module-provided tool. Returns <c>null</c> if no module owns the tool name,
-    /// so the caller can fall back to the generic "action executed" message.
+    /// Attempts to dispatch a job to a module-provided tool. Uses the explicit
+    /// <see cref="AgentJobDB.ActionKey"/> when available; otherwise derives a
+    /// candidate key from the <see cref="AgentActionType"/> enum name
+    /// (PascalCase → snake_case), so legacy API calls using old enum values
+    /// transparently route to modules that register the matching alias.
+    /// Returns <c>null</c> if no module owns the resolved tool name.
     /// </summary>
     private async Task<string?> TryDispatchByActionKeyAsync(
         AgentJobDB job, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(job.ActionKey))
+        var actionKey = job.ActionKey;
+
+        // Derive a candidate key from the enum name when no explicit key is
+        // set. Excludes ModuleAction itself — that enum name is not a tool.
+        if (string.IsNullOrWhiteSpace(actionKey) && job.ActionType != AgentActionType.ModuleAction)
+            actionKey = PascalToSnakeCase(job.ActionType.ToString());
+
+        if (string.IsNullOrWhiteSpace(actionKey))
             return null;
 
-        if (!moduleRegistry.TryResolve(job.ActionKey, out var moduleId, out var toolName))
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
             return null;
 
         // Parse the raw ScriptJson into a JsonElement for the envelope params.
@@ -865,6 +878,37 @@ IConfiguration configuration)
         {
             job.ScriptJson = original;
         }
+    }
+
+    /// <summary>
+    /// Converts a PascalCase name to snake_case
+    /// (e.g. <c>ClickDesktop</c> → <c>click_desktop</c>).
+    /// Used to derive module tool candidates from legacy
+    /// <see cref="AgentActionType"/> enum names.
+    /// </summary>
+    private static string PascalToSnakeCase(string name)
+    {
+        Span<char> buffer = stackalloc char[name.Length * 2];
+        var pos = 0;
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (i > 0 && char.IsUpper(name[i])
+                       && (char.IsLower(name[i - 1]) || char.IsDigit(name[i - 1])))
+                buffer[pos++] = '_';
+            buffer[pos++] = char.ToLowerInvariant(name[i]);
+        }
+        return new string(buffer[..pos]);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the <paramref name="type"/> enum name
+    /// resolves to a module tool via PascalCase → snake_case derivation.
+    /// </summary>
+    private bool TryResolveModuleByActionType(AgentActionType type)
+    {
+        if (type == AgentActionType.ModuleAction) return false;
+        var derived = PascalToSnakeCase(type.ToString());
+        return moduleRegistry.TryResolve(derived, out _, out _);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1882,18 +1926,12 @@ IConfiguration configuration)
         {
             AgentActionType.CreateSubAgent
                 => actions.CreateSubAgentAsync(agentId, caller, ct: ct),
-            AgentActionType.CreateContainer
-                => actions.CreateContainerAsync(agentId, caller, ct: ct),
             AgentActionType.RegisterDatabase
                 => actions.RegisterDatabaseAsync(agentId, caller, ct: ct),
             AgentActionType.AccessLocalhostInBrowser
                 => actions.AccessLocalhostInBrowserAsync(agentId, caller, ct: ct),
             AgentActionType.AccessLocalhostCli
                 => actions.AccessLocalhostCliAsync(agentId, caller, ct: ct),
-            AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
-                => actions.UnsafeExecuteAsDangerousShellAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
-                => actions.ExecuteAsSafeShellAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.AccessInternalDatabases when resourceId.HasValue
                 => actions.AccessInternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
             AgentActionType.AccessExternalDatabase when resourceId.HasValue
@@ -1933,6 +1971,11 @@ IConfiguration configuration)
             AgentActionType.ModuleAction
                 => DispatchModulePermissionCheckAsync(agentId, resourceId, caller, ct),
 
+            // Module fallback: legacy enum values whose core handler was removed
+            // route to the owning module's permission check via enum-name derivation.
+            _ when TryResolveModuleByActionType(actionType)
+                => DispatchModulePermissionCheckAsync(agentId, resourceId, caller, ct),
+
             _ when IsPerResourceAction(actionType) && !resourceId.HasValue
                 => Task.FromResult(AgentActionResult.Denied($"ResourceId is required for {actionType}.")),
             _ => Task.FromResult(AgentActionResult.Denied($"Unknown action type: {actionType}."))
@@ -1941,21 +1984,14 @@ IConfiguration configuration)
 
     /// <summary>
     /// Determines whether the given action type requires a per-resource grant.
-    /// For <see cref="AgentActionType.ModuleAction"/>, consults the
-    /// <see cref="ModuleRegistry"/> permission descriptor via <paramref name="actionKey"/>.
+    /// Checks the hardcoded core list first, then falls back to module registry
+    /// resolution via explicit <paramref name="actionKey"/> or enum-name derivation.
     /// </summary>
     private bool IsPerResourceAction(AgentActionType type, string? actionKey = null)
     {
-        if (type == AgentActionType.ModuleAction && actionKey is not null
-            && moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
-        {
-            var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
-            return descriptor?.IsPerResource ?? false;
-        }
-
-        return type is AgentActionType.UnsafeExecuteAsDangerousShell
-            or AgentActionType.ExecuteAsSafeShell
-            or AgentActionType.AccessInternalDatabases
+        // Core per-resource actions — checked first so module resolution
+        // cannot override behaviour for actions that still have core handlers.
+        if (type is AgentActionType.AccessInternalDatabases
             or AgentActionType.AccessExternalDatabase
             or AgentActionType.AccessWebsite
             or AgentActionType.QuerySearchEngine
@@ -1976,7 +2012,22 @@ IConfiguration configuration)
             or AgentActionType.EditorShowDiff
             or AgentActionType.EditorRunBuild
             or AgentActionType.EditorRunTerminal
-            or AgentActionType.SendBotMessage;
+            or AgentActionType.SendBotMessage)
+            return true;
+
+        // Module fallback: explicit ActionKey or enum-name derivation.
+        var key = actionKey;
+        if (string.IsNullOrWhiteSpace(key) && type != AgentActionType.ModuleAction)
+            key = PascalToSnakeCase(type.ToString());
+
+        if (!string.IsNullOrWhiteSpace(key)
+            && moduleRegistry.TryResolve(key, out var moduleId, out var toolName))
+        {
+            var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
+            return descriptor?.IsPerResource ?? false;
+        }
+
+        return false;
     }
 
     // ═══════════════════════════════════════════════════════════════
