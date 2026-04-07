@@ -5,7 +5,7 @@ using ClosedXML.Excel;
 using CsvHelper;
 using CsvHelper.Configuration;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.OfficeApps;
 
 /// <summary>
 /// File-based spreadsheet operations using ClosedXML (.xlsx/.xlsm) and

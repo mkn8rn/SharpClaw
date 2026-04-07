@@ -88,4 +88,11 @@ public interface ISharpClawModule
     /// Tags are expanded by <c>HeaderTagProcessor</c> in custom chat headers.
     /// </summary>
     IReadOnlyList<ModuleHeaderTag>? GetHeaderTags() => null;
+
+    /// <summary>
+    /// Optional. Return CLI commands this module provides.
+    /// Commands are registered in the CLI REPL at their declared
+    /// <see cref="ModuleCliScope"/> (top-level verb or resource type).
+    /// </summary>
+    IReadOnlyList<ModuleCliCommand>? GetCliCommands() => null;
 }

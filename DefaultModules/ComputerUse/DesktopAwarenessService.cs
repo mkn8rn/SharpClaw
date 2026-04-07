@@ -5,15 +5,17 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Contracts.Modules.Contracts;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.ComputerUse;
 
 /// <summary>
-/// Desktop awareness tools: window enumeration and application launch.
+/// Desktop awareness tools: window enumeration, application launch,
+/// window management, clipboard, and process control.
+/// Implements <see cref="IWindowManager"/> for cross-module consumption.
 /// Windows only — macOS/Linux return stubs.
 /// </summary>
-public sealed class DesktopAwarenessService(SharpClawDbContext db)
+public sealed class DesktopAwarenessService : IWindowManager
 {
     /// <summary>
     /// Blocklisted executable names that agents are never allowed to launch.

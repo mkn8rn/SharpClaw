@@ -11,7 +11,9 @@ public enum AgentActionType
     RegisterDatabase = 2,
     AccessLocalhostInBrowser = 3,
     AccessLocalhostCli = 4,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     ClickDesktop = 5,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     TypeOnDesktop = 6,
 
     // ── Per-resource grants ───────────────────────────────────────
@@ -32,6 +34,7 @@ public enum AgentActionType
     TranscribeFromAudioFile = 19,
 
     // ── Display capture (per-resource: display device) ────────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     CaptureDisplay = 20,
 
     // ── Editor actions (per-resource: editor session) ─────────────
@@ -57,45 +60,65 @@ public enum AgentActionType
     SendBotMessage = 34,
 
     // ── Document session management (global flag) ─────────────────
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     CreateDocumentSession = 35,
 
     // ── File-based spreadsheet actions (per-resource: document session)
     // Uses ClosedXML for .xlsx/.xlsm, CsvHelper for .csv.
     // Operates on the file directly — fails if file is locked.
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetReadRange = 36,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetWriteRange = 37,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetListSheets = 38,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetCreateSheet = 39,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetDeleteSheet = 40,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetGetInfo = 41,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetCreateWorkbook = 42,
 
     // ── Live spreadsheet actions via COM Interop (per-resource: document session)
     // Operates on the running Excel instance — Windows only.
     // Agent explicitly chooses this when the file is open in Excel.
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetLiveReadRange = 43,
+    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
     SpreadsheetLiveWriteRange = 44,
 
     // ── Desktop awareness (global flags + per-resource) ───────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     EnumerateWindows = 45,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     LaunchNativeApplication = 46,
 
     // ── Window management (global flags) ─────────────────────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     FocusWindow = 47,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     CloseWindow = 48,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     ResizeWindow = 49,
 
     // ── Hotkey (global flag) ─────────────────────────────────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     SendHotkey = 50,
 
     // ── Window capture (per-resource: display device) ────────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     CaptureWindow = 51,
 
     // ── Clipboard (global flags) ─────────────────────────────────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     ReadClipboard = 52,
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     WriteClipboard = 53,
 
     // ── Process control (per-resource: native application) ───────
+    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
     StopProcess = 54,
 
     // ── Module system ─────────────────────────────────────────────

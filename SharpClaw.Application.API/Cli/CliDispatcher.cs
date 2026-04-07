@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API.Handlers;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -29,6 +30,7 @@ using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.API.Cli;
@@ -226,12 +228,22 @@ public static class CliDispatcher
             "me" => await AuthHandlers.Me(
                 sp.GetRequiredService<SessionService>(),
                 sp.GetRequiredService<AuthService>()),
-            "help" or "--help" or "-h" => PrintHelp(),
+            "help" or "--help" or "-h" => PrintHelp(sp),
             _ => null
         };
 
         if (result is null)
+        {
+            // Try module-provided top-level CLI commands.
+            var registry = sp.GetRequiredService<ModuleRegistry>();
+            var moduleCmd = registry.TryResolveTopLevelCommand(command);
+            if (moduleCmd is not null)
+            {
+                await moduleCmd.Handler(args, sp, CancellationToken.None);
+                return true;
+            }
             return false;
+        }
 
         await PrintResultAsync(result);
         return true;
@@ -2686,8 +2698,9 @@ public static class CliDispatcher
             "editorsession" or "editor" or "es" => await HandleResourceEditorSessionCommand(args, sp),
             "document" or "doc" => await HandleResourceDocumentCommand(args, sp),
             "nativeapplication" or "nativeapp" or "app" => await HandleResourceNativeApplicationCommand(args, sp),
-            _ => UsageResult($"Unknown resource type: {type}. " +
-                "Available: container, audiodevice, displaydevice, editorsession, document, nativeapplication")
+            _ => await TryModuleResourceCommandAsync(type, args, sp)
+                ?? UsageResult($"Unknown resource type: {type}. " +
+                    "Available: container, audiodevice, displaydevice, editorsession, document, nativeapplication")
         };
     }
 
@@ -3282,7 +3295,22 @@ public static class CliDispatcher
         return await ToolAwarenessSetHandlers.Update(id, new UpdateToolAwarenessSetRequest(name, tools), svc);
     }
 
-    private static IResult PrintHelp()
+    /// <summary>
+    /// Tries to dispatch a resource sub-command to a module-provided handler.
+    /// Returns null if no module registered the resource type.
+    /// </summary>
+    private static async Task<IResult?> TryModuleResourceCommandAsync(
+        string type, string[] args, IServiceProvider sp)
+    {
+        var registry = sp.GetRequiredService<ModuleRegistry>();
+        var moduleCmd = registry.TryResolveResourceTypeCommand(type);
+        if (moduleCmd is null) return null;
+
+        await moduleCmd.Handler(args, sp, CancellationToken.None);
+        return Results.Ok();
+    }
+
+    private static IResult PrintHelp(IServiceProvider? sp = null)
     {
         Console.WriteLine("""
             SharpClaw - Shell Agent
@@ -3405,6 +3433,28 @@ public static class CliDispatcher
 
               exit / quit
             """);
+
+        // Append module-provided CLI commands dynamically.
+        if (sp is not null)
+        {
+            var registry = sp.GetService<ModuleRegistry>();
+            var commands = registry?.GetAllCliCommands() ?? [];
+            if (commands.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("            Module Commands:");
+                foreach (var (moduleId, cmd) in commands)
+                {
+                    var prefix = cmd.Scope == ModuleCliScope.ResourceType ? "resource " : "";
+                    Console.WriteLine(
+                        $"              {prefix}{cmd.Name,-28} {cmd.Description}  [{moduleId}]");
+                    foreach (var alias in cmd.Aliases)
+                        Console.WriteLine(
+                            $"              {prefix}{alias,-28} (alias)");
+                }
+            }
+        }
+
         return Results.Ok();
     }
 }

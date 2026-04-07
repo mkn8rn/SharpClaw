@@ -14,6 +14,8 @@ using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.ComputerUse;
+using SharpClaw.Modules.OfficeApps;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure;
@@ -150,12 +152,16 @@ try
     // Module system
     builder.Services.AddSingleton<ModuleRegistry>();
 
-    // Document, spreadsheet & desktop awareness services
+    // Default modules — register DI services before Build
+    var computerUseModule = new ComputerUseModule();
+    computerUseModule.ConfigureServices(builder.Services);
+
+    var officeAppsModule = new OfficeAppsModule();
+    officeAppsModule.ConfigureServices(builder.Services);
+
+    // Document & desktop awareness services
     builder.Services.AddScoped<DocumentSessionService>();
     builder.Services.AddScoped<NativeApplicationService>();
-    builder.Services.AddScoped<SpreadsheetService>();
-    builder.Services.AddScoped<ExcelComInteropService>();
-    builder.Services.AddScoped<DesktopAwarenessService>();
     builder.Services.AddScoped<SearchEngineService>();
 
     // Local inference (in-process via LLamaSharp)
@@ -209,8 +215,12 @@ try
     // Initialize infrastructure (loads persisted data into InMemory DB)
     await app.Services.InitializeInfrastructureAsync();
 
-    // Initialize loaded modules in dependency order (providers before consumers).
+    // Register default modules with the registry.
     var registry = app.Services.GetRequiredService<ModuleRegistry>();
+    registry.Register(computerUseModule);
+    registry.Register(officeAppsModule);
+
+    // Initialize loaded modules in dependency order (providers before consumers).
     var initOrder = registry.GetInitializationOrder(out var excludedModules);
 
     // Unregister modules excluded during dependency resolution (missing deps, cycles).

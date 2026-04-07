@@ -22,6 +22,10 @@ public sealed class ModuleRegistry
     // Only one module may export a given contract at a time.
     private readonly Dictionary<string, (string ModuleId, Type ServiceType)> _contractProviders = new(StringComparer.Ordinal);
 
+    // CLI command name/alias → (module ID, command definition).
+    private readonly Dictionary<string, (string ModuleId, ModuleCliCommand Command)> _cliTopLevel = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string ModuleId, ModuleCliCommand Command)> _cliResourceTypes = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly ReaderWriterLockSlim _lock = new();
 
     // Cached aggregated tool definitions — rebuilt on registration changes.
@@ -69,6 +73,7 @@ public sealed class ModuleRegistry
 
             var toolDefs = module.GetToolDefinitions();
             var exports = module.ExportedContracts;
+            var cliCommands = module.GetCliCommands() ?? [];
 
             // Validate tool names.
             foreach (var tool in toolDefs)
@@ -95,6 +100,19 @@ public sealed class ModuleRegistry
                         $"is already provided by module '{existing.ModuleId}'.");
             }
 
+            // Validate CLI commands.
+            foreach (var cmd in cliCommands)
+            {
+                var target = cmd.Scope == ModuleCliScope.TopLevel ? _cliTopLevel : _cliResourceTypes;
+                foreach (var name in new[] { cmd.Name }.Concat(cmd.Aliases))
+                {
+                    if (target.ContainsKey(name))
+                        throw new InvalidOperationException(
+                            $"CLI command '{name}' ({cmd.Scope}) from module '{module.Id}' " +
+                            "collides with an existing module CLI command.");
+                }
+            }
+
             // --- Phase 2: All checks passed — commit all mutations ---
 
             _modules[module.Id] = module;
@@ -104,6 +122,14 @@ public sealed class ModuleRegistry
 
             foreach (var export in exports)
                 _contractProviders[export.ContractName] = (module.Id, export.ServiceType);
+
+            foreach (var cmd in cliCommands)
+            {
+                var target = cmd.Scope == ModuleCliScope.TopLevel ? _cliTopLevel : _cliResourceTypes;
+                target[cmd.Name] = (module.Id, cmd);
+                foreach (var alias in cmd.Aliases)
+                    target[alias] = (module.Id, cmd);
+            }
 
             _toolDefsCache = null; // Invalidate
         }
@@ -127,6 +153,15 @@ public sealed class ModuleRegistry
             // Remove any contracts this module exported.
             foreach (var export in module.ExportedContracts)
                 _contractProviders.Remove(export.ContractName);
+
+            // Remove any CLI commands this module provided.
+            foreach (var cmd in module.GetCliCommands() ?? [])
+            {
+                var target = cmd.Scope == ModuleCliScope.TopLevel ? _cliTopLevel : _cliResourceTypes;
+                target.Remove(cmd.Name);
+                foreach (var alias in cmd.Aliases)
+                    target.Remove(alias);
+            }
 
             _manifestCache.Remove(moduleId);
             _toolDefsCache = null;
@@ -232,6 +267,64 @@ public sealed class ModuleRegistry
             if (!_modules.TryGetValue(moduleId, out var module)) return null;
             return module.GetToolDefinitions()
                 .FirstOrDefault(t => t.Name == toolName)?.Permission;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CLI command resolution
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Try to resolve a top-level CLI command by verb.</summary>
+    public ModuleCliCommand? TryResolveTopLevelCommand(string verb)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            return _cliTopLevel.TryGetValue(verb, out var entry) ? entry.Command : null;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>Try to resolve a module-provided resource-type CLI command.</summary>
+    public ModuleCliCommand? TryResolveResourceTypeCommand(string type)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            return _cliResourceTypes.TryGetValue(type, out var entry) ? entry.Command : null;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>Get all distinct module CLI commands for help output.</summary>
+    public IReadOnlyList<(string ModuleId, ModuleCliCommand Command)> GetAllCliCommands()
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            var seen = new HashSet<ModuleCliCommand>();
+            var result = new List<(string, ModuleCliCommand)>();
+            foreach (var (_, entry) in _cliTopLevel)
+            {
+                if (seen.Add(entry.Command))
+                    result.Add(entry);
+            }
+            foreach (var (_, entry) in _cliResourceTypes)
+            {
+                if (seen.Add(entry.Command))
+                    result.Add(entry);
+            }
+            return result;
         }
         finally
         {

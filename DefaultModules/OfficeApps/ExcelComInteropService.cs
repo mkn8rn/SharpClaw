@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.OfficeApps;
 
 /// <summary>
 /// Windows-only COM Interop service for reading/writing data in a

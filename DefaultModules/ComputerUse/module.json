@@ -1,0 +1,19 @@
+{
+  "id": "sharpclaw.computer-use",
+  "displayName": "Computer Use",
+  "version": "1.0.0",
+  "toolPrefix": "cu",
+  "entryAssembly": "SharpClaw.Modules.ComputerUse",
+  "platforms": [ "windows" ],
+  "exports": [
+    {
+      "contractName": "window_management",
+      "serviceType": "SharpClaw.Contracts.Modules.Contracts.IWindowManager"
+    },
+    {
+      "contractName": "desktop_input",
+      "serviceType": "SharpClaw.Contracts.Modules.Contracts.IDesktopInput"
+    }
+  ],
+  "requires": []
+}
