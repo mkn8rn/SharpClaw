@@ -36,6 +36,8 @@
   </Folder>
   <Folder Name="/DefaultModules/">
     <Project Path="DefaultModules/ComputerUse/SharpClaw.Modules.ComputerUse.csproj" />
+    <Project Path="DefaultModules/DangerousShell/SharpClaw.Modules.DangerousShell.csproj" />
+    <Project Path="DefaultModules/Mk8Shell/SharpClaw.Modules.Mk8Shell.csproj" />
     <Project Path="DefaultModules/OfficeApps/SharpClaw.Modules.OfficeApps.csproj" />
   </Folder>
   <Folder Name="/Tests/">

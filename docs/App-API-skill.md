@@ -302,12 +302,15 @@ Dedup pipeline (non-timestamped API responses):
 Audio is automatically normalised to mono 16 kHz 16-bit PCM (Whisper-optimal).
 
 AgentActionType categories:
-  Global: CreateSubAgent, CreateContainer, RegisterInfoStore, AccessLocalhostInBrowser, AccessLocalhostCli, ClickDesktop, TypeOnDesktop, ReadCrossThreadHistory, CreateDocumentSession, EnumerateWindows, FocusWindow, CloseWindow, ResizeWindow, SendHotkey, ReadClipboard, WriteClipboard
-  Per-resource: UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell, AccessLocalInfoStore, AccessExternalInfoStore, AccessWebsite, QuerySearchEngine, AccessContainer, ManageAgent, EditTask, AccessSkill, CaptureDisplay, CaptureWindow, StopProcess
+  Global: CreateSubAgent, CreateContainer, RegisterInfoStore, AccessLocalhostInBrowser, AccessLocalhostCli, ReadCrossThreadHistory
+  Per-resource: UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell, AccessLocalInfoStore, AccessExternalInfoStore, AccessWebsite, QuerySearchEngine, AccessContainer, ManageAgent, EditTask, AccessSkill
   Transcription: TranscribeFromAudioDevice, TranscribeFromAudioStream, TranscribeFromAudioFile
   Editor: EditorReadFile, EditorGetOpenFiles, EditorGetSelection, EditorGetDiagnostics, EditorApplyEdit, EditorCreateFile, EditorDeleteFile, EditorShowDiff, EditorRunBuild, EditorRunTerminal
-  Document: SpreadsheetReadRange, SpreadsheetWriteRange, SpreadsheetListSheets, SpreadsheetCreateSheet, SpreadsheetDeleteSheet, SpreadsheetGetInfo, SpreadsheetCreateWorkbook, SpreadsheetLiveReadRange, SpreadsheetLiveWriteRange
-  Desktop awareness: LaunchNativeApplication
+  Module dispatch: ModuleAction (=100) — dispatches to a loaded module by tool name. See MODULE SYSTEM section.
+
+Deprecated (still accepted, use module equivalents):
+  Computer Use → cu_* tools: ClickDesktop, TypeOnDesktop, EnumerateWindows, FocusWindow, CloseWindow, ResizeWindow, SendHotkey, ReadClipboard, WriteClipboard, CaptureDisplay, CaptureWindow, StopProcess, LaunchNativeApplication
+  Office Apps → oa_* tools: CreateDocumentSession, SpreadsheetReadRange, SpreadsheetWriteRange, SpreadsheetListSheets, SpreadsheetCreateSheet, SpreadsheetDeleteSheet, SpreadsheetGetInfo, SpreadsheetCreateWorkbook, SpreadsheetLiveReadRange, SpreadsheetLiveWriteRange
 
 Inline tools (no job created, handled in the chat inference loop):
   wait — pause 1–300 seconds. No permissions required.
@@ -351,6 +354,38 @@ WS  /editor/ws         WebSocket for IDE extensions. Registration → request/re
 GET /editor/sessions   List connected editor sessions.
 
 EditorType: VisualStudio2026, VisualStudioCode, Other.
+
+────────────────────────────────────────
+MODULE SYSTEM
+────────────────────────────────────────
+Tools are organized into loadable modules. Each module has an ID, a tool prefix,
+and a set of tool definitions. Module tools are dispatched via AgentActionType = ModuleAction (100).
+
+Module manifests stored at modules/{dir}/module.json in published output.
+Tool names are prefixed: {prefix}_{toolName} (e.g. cu_capture_display, oa_read_range).
+
+Default modules:
+  Computer Use  id=sharpclaw.computer-use  prefix=cu  13 tools  Windows only
+    Desktop awareness, window management, input simulation, clipboard, display capture, process control.
+    Exports: window_management (IWindowManager), desktop_input (IDesktopInput).
+    Tools: cu_capture_display, cu_click_desktop, cu_type_on_desktop, cu_enumerate_windows,
+           cu_launch_application, cu_focus_window, cu_close_window, cu_resize_window,
+           cu_send_hotkey, cu_capture_window, cu_read_clipboard, cu_write_clipboard, cu_stop_process.
+    CLI: cu windows | cu displays | cu apps (aliases: computer-use)
+
+  Office Apps  id=sharpclaw.office-apps  prefix=oa  10 tools  Windows/Linux/macOS
+    Document sessions, spreadsheet CRUD (ClosedXML/CsvHelper), live Excel COM Interop (Windows only).
+    Tools: oa_register_document, oa_read_range, oa_write_range, oa_list_sheets,
+           oa_create_sheet, oa_delete_sheet, oa_get_info, oa_create_workbook,
+           oa_live_read_range, oa_live_write_range.
+    CLI: docs list (aliases: office, oa)
+
+ModuleManifest fields: id, displayName, version, toolPrefix, entryAssembly, minHostVersion?,
+  author?, description?, license?, platforms[], enabled, defaultEnabled, executionTimeoutSeconds?,
+  exports[{contractName, serviceType}], requires[string].
+
+Tool resolution order: core tools first, then module tools (prefix lookup via ModuleRegistry).
+Modules can export/require named contracts; dependency graph resolved via topological sort at startup.
 
 ────────────────────────────────────────
 PERMISSION RESOLUTION
@@ -709,7 +744,7 @@ Examples:
 ────────────────────────────────────────
 TOOL AWARENESS SETS
 ────────────────────────────────────────
-A reusable named configuration controlling which tool-call schemas are sent in API requests. Reduces prompt-token overhead by excluding tools the agent will never use (~3,500–4,500 tokens for the full 46-tool schema set).
+A reusable named configuration controlling which tool-call schemas are sent in API requests. Reduces prompt-token overhead by excluding tools the agent will never use.
 
 POST   /tool-awareness-sets                   { name, tools? }
 GET    /tool-awareness-sets
@@ -717,7 +752,7 @@ GET    /tool-awareness-sets/{id}
 PUT    /tool-awareness-sets/{id}               { name?, tools? }
 DELETE /tool-awareness-sets/{id}
 
-tools: Dictionary<string, bool>. Keys are tool names (e.g. "execute_mk8_shell", "capture_display"). Tools whose key is true or absent are included; only tools explicitly set to false are excluded. Empty dict {} = all tools enabled.
+tools: Dictionary<string, bool>. Keys are tool names (e.g. "execute_mk8_shell", "cu_capture_display"). Tools whose key is true or absent are included; only tools explicitly set to false are excluded. Empty dict {} = all tools enabled.
 
 Override chain: channel.toolAwarenessSetId > agent.toolAwarenessSetId > null (all tools). Assign via toolAwarenessSetId field on POST/PUT agents and channels.
 
@@ -735,7 +770,9 @@ CLI:
   agent update <id> <name> --tools <setId>      Assign on update
   channel add --agent <id> --tools <setId>      Assign on creation
 
-Available tool names (46):
+Available tool names:
+
+Core tools (34):
   wait, list_accessible_threads, read_thread_history,
   execute_mk8_shell, execute_dangerous_shell,
   transcribe_from_audio_device, transcribe_from_audio_stream, transcribe_from_audio_file,
@@ -744,14 +781,20 @@ Available tool names (46):
   access_local_info_store, access_external_info_store,
   access_website, query_search_engine, access_container,
   manage_agent, edit_task, access_skill,
-  capture_display, click_desktop, type_on_desktop,
   editor_read_file, editor_get_open_files, editor_get_selection, editor_get_diagnostics,
   editor_apply_edit, editor_create_file, editor_delete_file,
   editor_show_diff, editor_run_build, editor_run_terminal,
-  register_document, spreadsheet_read_range, spreadsheet_write_range,
-  spreadsheet_list_sheets, spreadsheet_create_sheet, spreadsheet_delete_sheet,
-  spreadsheet_get_info, spreadsheet_create_workbook,
-  spreadsheet_live_read_range, spreadsheet_live_write_range,
-  enumerate_windows, launch_application,
-  focus_window, close_window, resize_window, send_hotkey,
-  capture_window, read_clipboard, write_clipboard, stop_process
+  send_bot_message,
+  task_view_info, task_view_source, task_output
+
+Computer Use module tools (cu_ prefix, 13):
+  cu_capture_display, cu_click_desktop, cu_type_on_desktop,
+  cu_enumerate_windows, cu_launch_application,
+  cu_focus_window, cu_close_window, cu_resize_window, cu_send_hotkey,
+  cu_capture_window, cu_read_clipboard, cu_write_clipboard, cu_stop_process
+
+Office Apps module tools (oa_ prefix, 10):
+  oa_register_document, oa_read_range, oa_write_range,
+  oa_list_sheets, oa_create_sheet, oa_delete_sheet,
+  oa_get_info, oa_create_workbook,
+  oa_live_read_range, oa_live_write_range

@@ -167,6 +167,15 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
         return containers.Select(ToResponse).ToList();
     }
 
+    public async Task<ContainerResponse?> GetBySandboxNameAsync(
+        string sandboxName, CancellationToken ct = default)
+    {
+        var container = await db.Containers
+            .FirstOrDefaultAsync(
+                c => c.Type == ContainerType.Mk8Shell && c.SandboxName == sandboxName, ct);
+        return container is not null ? ToResponse(container) : null;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Update
     // ═══════════════════════════════════════════════════════════════

@@ -75,7 +75,7 @@ public sealed class ModuleRegistry
             var exports = module.ExportedContracts;
             var cliCommands = module.GetCliCommands() ?? [];
 
-            // Validate tool names.
+            // Validate tool names and aliases.
             foreach (var tool in toolDefs)
             {
                 var prefixed = $"{module.ToolPrefix}_{tool.Name}";
@@ -84,6 +84,17 @@ public sealed class ModuleRegistry
                     throw new InvalidOperationException(
                         $"Tool name '{prefixed}' from module '{module.Id}' " +
                         "collides with an existing module tool.");
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                    {
+                        if (_toolIndex.ContainsKey(alias))
+                            throw new InvalidOperationException(
+                                $"Tool alias '{alias}' from module '{module.Id}' " +
+                                "collides with an existing module tool.");
+                    }
+                }
             }
 
             // Validate contract exports.
@@ -118,7 +129,15 @@ public sealed class ModuleRegistry
             _modules[module.Id] = module;
 
             foreach (var tool in toolDefs)
+            {
                 _toolIndex[$"{module.ToolPrefix}_{tool.Name}"] = (module.Id, tool.Name);
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                        _toolIndex[alias] = (module.Id, tool.Name);
+                }
+            }
 
             foreach (var export in exports)
                 _contractProviders[export.ContractName] = (module.Id, export.ServiceType);
@@ -148,7 +167,15 @@ public sealed class ModuleRegistry
             if (!_modules.Remove(moduleId, out var module)) return;
 
             foreach (var tool in module.GetToolDefinitions())
+            {
                 _toolIndex.Remove($"{module.ToolPrefix}_{tool.Name}");
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                        _toolIndex.Remove(alias);
+                }
+            }
 
             // Remove any contracts this module exported.
             foreach (var export in module.ExportedContracts)
@@ -240,10 +267,23 @@ public sealed class ModuleRegistry
             try
             {
                 _toolDefsCache = _modules.Values
-                    .SelectMany(m => m.GetToolDefinitions().Select(t => new ChatToolDefinition(
-                        Name: $"{m.ToolPrefix}_{t.Name}",
-                        Description: t.Description,
-                        ParametersSchema: t.ParametersSchema)))
+                    .SelectMany(m => m.GetToolDefinitions().SelectMany(t =>
+                    {
+                        // When aliases are present, emit one ChatToolDefinition per alias
+                        // instead of the prefixed canonical name.
+                        if (t.Aliases is { Count: > 0 } aliases)
+                        {
+                            return aliases.Select(alias => new ChatToolDefinition(
+                                Name: alias,
+                                Description: t.Description,
+                                ParametersSchema: t.ParametersSchema));
+                        }
+
+                        return [new ChatToolDefinition(
+                            Name: $"{m.ToolPrefix}_{t.Name}",
+                            Description: t.Description,
+                            ParametersSchema: t.ParametersSchema)];
+                    }))
                     .ToList();
                 return _toolDefsCache;
             }
@@ -267,6 +307,25 @@ public sealed class ModuleRegistry
             if (!_modules.TryGetValue(moduleId, out var module)) return null;
             return module.GetToolDefinitions()
                 .FirstOrDefault(t => t.Name == toolName)?.Permission;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>
+    /// Get the per-tool timeout for a specific module tool, or <c>null</c>
+    /// if the tool doesn't define one (caller should fall back to manifest timeout).
+    /// </summary>
+    public int? GetToolTimeout(string moduleId, string toolName)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            if (!_modules.TryGetValue(moduleId, out var module)) return null;
+            return module.GetToolDefinitions()
+                .FirstOrDefault(t => t.Name == toolName)?.TimeoutSeconds;
         }
         finally
         {

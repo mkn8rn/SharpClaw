@@ -1652,42 +1652,15 @@ public sealed class ChatService(
     }
 
     /// <summary>
-    /// Resolves the container GUID from a <see cref="ParsedToolCall"/>.
-    /// If the model provided a valid GUID it is used as-is; otherwise the
-    /// container is looked up by <c>SandboxName</c>.
-    /// </summary>
-    private async Task<Guid?> ResolveContainerIdAsync(
-        ParsedToolCall parsed, CancellationToken ct)
-    {
-        if (parsed.ResourceId.HasValue)
-            return parsed.ResourceId;
-
-        if (parsed.SandboxId is not null)
-        {
-            var container = await db.Containers
-                .FirstOrDefaultAsync(c => c.SandboxName == parsed.SandboxId, ct);
-            return container?.Id;
-        }
-
-        return null;
-    }
-
-    /// <summary>
     /// Builds a <see cref="SubmitAgentJobRequest"/> from a parsed tool call.
-    /// For <see cref="AgentActionType.ExecuteAsSafeShell"/> the container
-    /// is resolved by sandbox name when no GUID is provided.
     /// </summary>
     private async Task<SubmitAgentJobRequest> BuildJobRequestAsync(
         ParsedToolCall parsed, Guid agentId, CancellationToken ct)
     {
-        var resourceId = parsed.ActionType is AgentActionType.ExecuteAsSafeShell
-            ? await ResolveContainerIdAsync(parsed, ct)
-            : parsed.ResourceId;
-
         return new SubmitAgentJobRequest(
             ActionType: parsed.ActionType,
             ActionKey: parsed.ActionKey,
-            ResourceId: resourceId,
+            ResourceId: parsed.ResourceId,
             CallerAgentId: agentId,
             DangerousShellType: parsed.DangerousShellType,
             SafeShellType: parsed.SafeShellType,
@@ -1900,17 +1873,10 @@ public sealed class ChatService(
                 DangerousShellType? dangerousShell = Enum.TryParse<DangerousShellType>(
                     payload.ShellType, ignoreCase: true, out var ds) ? ds : null;
 
-                // For non-shell/non-transcription actions, pass the full
-                // arguments JSON as ScriptJson so DispatchExecutionAsync
-                // can deserialize action-specific fields from it.
-                var scriptJson = actionType switch
-                {
-                    AgentActionType.ExecuteAsSafeShell
-                        => payload.Script is { } script ? script.GetRawText() : null,
-                    AgentActionType.UnsafeExecuteAsDangerousShell
-                        => payload.Command,
-                    _ => toolCall.ArgumentsJson,
-                };
+                // For all core actions, pass the full arguments JSON as
+                // ScriptJson so DispatchExecutionAsync can deserialize
+                // action-specific fields from it.
+                var scriptJson = toolCall.ArgumentsJson;
 
                 return new ParsedToolCall(
                     toolCall.Id,
@@ -1919,7 +1885,7 @@ public sealed class ChatService(
                     payload.SandboxId,
                     scriptJson,
                     dangerousShell,
-                    actionType == AgentActionType.ExecuteAsSafeShell ? SafeShellType.Mk8Shell : null,
+                    null,
                     transcriptionModelId,
                     payload.Language,
                     payload.WorkingDirectory);
@@ -1971,10 +1937,7 @@ public sealed class ChatService(
     /// </summary>
     private static readonly Dictionary<string, AgentActionType> ToolNameToActionType = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["execute_mk8_shell"]              = AgentActionType.ExecuteAsSafeShell,
-        ["execute_dangerous_shell"]        = AgentActionType.UnsafeExecuteAsDangerousShell,
         ["create_sub_agent"]               = AgentActionType.CreateSubAgent,
-        ["create_container"]               = AgentActionType.CreateContainer,
         ["register_database"]               = AgentActionType.RegisterDatabase,
         ["access_localhost_in_browser"]    = AgentActionType.AccessLocalhostInBrowser,
         ["access_localhost_cli"]           = AgentActionType.AccessLocalhostCli,
@@ -2077,20 +2040,14 @@ public sealed class ChatService(
     private static readonly string NativeToolSystemSuffix =
         LoadEmbeddedResource("SharpClaw.Application.Core.tool-instructions-native-suffix.md");
 
-    private static readonly string Mk8ShellToolDescription =
-        LoadEmbeddedResource("SharpClaw.Application.Core.tool-description-native.md");
-
     private static readonly IReadOnlyList<ChatToolDefinition> AllTools = BuildAllToolDefinitions();
 
     private static IReadOnlyList<ChatToolDefinition> BuildAllToolDefinitions()
     {
-        var mk8Schema = BuildMk8ShellToolSchema();
         var resourceOnly = BuildResourceOnlySchema();
         var globalSchema = BuildGlobalActionSchema();
-        var dangerousShellSchema = BuildDangerousShellSchema();
         var transcriptionSchema = BuildTranscriptionSchema();
         var createSubAgentSchema = BuildCreateSubAgentSchema();
-        var createContainerSchema = BuildCreateContainerSchema();
         var manageAgentSchema = BuildManageAgentSchema();
         var editTaskSchema = BuildEditTaskSchema();
         var accessWebsiteSchema = BuildAccessWebsiteSchema();
@@ -2124,13 +2081,7 @@ public sealed class ChatService(
                 "Read cross-channel thread history. Optional maxMessages (1–200, default 50).",
                 readThreadHistorySchema),
 
-            // ── Shell execution ───────────────────────────────
-            new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
-            new("execute_dangerous_shell",
-                "Raw shell command (Bash/PowerShell/Cmd/Git), unsandboxed. Optional workingDirectory.",
-                dangerousShellSchema),
-
-            // ── Transcription ────────────────────────────────
+            // ── Transcription
             new("transcribe_from_audio_device",
                 "Live-transcribe a system audio device.",
                 transcriptionSchema),
@@ -2145,9 +2096,6 @@ public sealed class ChatService(
             new("create_sub_agent",
                 "Create a sub-agent (name, modelId, optional systemPrompt).",
                 createSubAgentSchema),
-            new("create_container",
-                "Create an mk8.shell sandbox container. Alphanumeric name only.",
-                createContainerSchema),
             new("register_database",
                 "Register a new database resource. [Stub.]",
                 globalSchema),
@@ -2268,66 +2216,6 @@ public sealed class ChatService(
         return doc.RootElement.Clone();
     }
 
-    private static JsonElement BuildMk8ShellToolSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "Container GUID."
-                    },
-                    "sandboxId": {
-                        "type": "string",
-                        "description": "Sandbox name."
-                    },
-                    "script": {
-                        "type": "object",
-                        "description": "Script object.",
-                        "properties": {
-                            "operations": {
-                                "type": "array",
-                                "description": "Ordered operations.",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } },
-                                        "workingDirectory": {
-                                            "type": "string",
-                                            "description": "Per-step CWD override (e.g. '$WORKSPACE/subdir')."
-                                        }
-                                    },
-                                    "required": ["verb", "args"]
-                                }
-                            },
-                            "options": { "type": "object" },
-                            "cleanup": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } },
-                                        "workingDirectory": {
-                                            "type": "string",
-                                            "description": "Per-step CWD override."
-                                        }
-                                    },
-                                    "required": ["verb", "args"]
-                                }
-                            }
-                        },
-                        "required": ["operations"]
-                    }
-                },
-                "required": ["resourceId", "sandboxId", "script"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
     private static JsonElement BuildResourceOnlySchema()
     {
         using var doc = JsonDocument.Parse("""
@@ -2352,36 +2240,6 @@ public sealed class ChatService(
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildDangerousShellSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "SystemUser GUID."
-                    },
-                    "shellType": {
-                        "type": "string",
-                        "enum": ["Bash", "PowerShell", "CommandPrompt", "Git"],
-                        "description": "Shell interpreter."
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Raw command string."
-                    },
-                    "workingDirectory": {
-                        "type": "string",
-                        "description": "Optional CWD override."
-                    }
-                },
-                "required": ["resourceId", "shellType", "command"]
             }
             """);
         return doc.RootElement.Clone();
@@ -2457,31 +2315,6 @@ public sealed class ChatService(
                     }
                 },
                 "required": ["name", "modelId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildCreateContainerSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name (alphanumeric)."
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute parent directory."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description."
-                    }
-                },
-                "required": ["name", "path"]
             }
             """);
         return doc.RootElement.Clone();

@@ -5,6 +5,7 @@
 # Module System Design (internal spec)
 docs/Module-System-Design.md
 docs/Module-Migration-Plan.md
+docs/Module-Migration-Plan-Mk8Shell.md
 
 # Copilot
 .github/upgrades
