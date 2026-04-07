@@ -7,20 +7,20 @@ public enum AgentActionType
 {
     // ── Global flags ──────────────────────────────────────────────
     CreateSubAgent = 0,
-    [Obsolete("Moved to mk8.shell module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to mk8.shell module.")]
     CreateContainer = 1,
     RegisterDatabase = 2,
     AccessLocalhostInBrowser = 3,
     AccessLocalhostCli = 4,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     ClickDesktop = 5,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     TypeOnDesktop = 6,
 
     // ── Per-resource grants ───────────────────────────────────────
-    [Obsolete("Moved to Dangerous Shell module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Dangerous Shell module.")]
     UnsafeExecuteAsDangerousShell = 7,
-    [Obsolete("Moved to mk8.shell module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to mk8.shell module.")]
     ExecuteAsSafeShell = 8,
     AccessInternalDatabases = 9,
     AccessExternalDatabase = 10,
@@ -37,7 +37,7 @@ public enum AgentActionType
     TranscribeFromAudioFile = 19,
 
     // ── Display capture (per-resource: display device) ────────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     CaptureDisplay = 20,
 
     // ── Editor actions (per-resource: editor session) ─────────────
@@ -63,76 +63,83 @@ public enum AgentActionType
     SendBotMessage = 34,
 
     // ── Document session management (global flag) ─────────────────
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     CreateDocumentSession = 35,
 
     // ── File-based spreadsheet actions (per-resource: document session)
     // Uses ClosedXML for .xlsx/.xlsm, CsvHelper for .csv.
     // Operates on the file directly — fails if file is locked.
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetReadRange = 36,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetWriteRange = 37,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetListSheets = 38,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetCreateSheet = 39,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetDeleteSheet = 40,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetGetInfo = 41,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetCreateWorkbook = 42,
 
     // ── Live spreadsheet actions via COM Interop (per-resource: document session)
     // Operates on the running Excel instance — Windows only.
     // Agent explicitly chooses this when the file is open in Excel.
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetLiveReadRange = 43,
-    [Obsolete("Moved to Office Apps module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Office Apps module.")]
     SpreadsheetLiveWriteRange = 44,
 
     // ── Desktop awareness (global flags + per-resource) ───────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     EnumerateWindows = 45,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     LaunchNativeApplication = 46,
 
     // ── Window management (global flags) ─────────────────────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     FocusWindow = 47,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     CloseWindow = 48,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     ResizeWindow = 49,
 
     // ── Hotkey (global flag) ─────────────────────────────────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     SendHotkey = 50,
 
     // ── Window capture (per-resource: display device) ────────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     CaptureWindow = 51,
 
     // ── Clipboard (global flags) ─────────────────────────────────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     ReadClipboard = 52,
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     WriteClipboard = 53,
 
     // ── Process control (per-resource: native application) ───────
-    [Obsolete("Moved to Computer Use module. Use ModuleAction + ActionKey.")]
+    [Obsolete("Dispatched to Computer Use module.")]
     StopProcess = 54,
 
     // ── Module system ─────────────────────────────────────────────
     // Values 55–99 are reserved for future built-in actions.
 
     /// <summary>
-    /// Category tag for all module-provided tool calls.
+    /// Category tag for module-provided tool calls.
     /// The specific tool is identified by <c>AgentJobDB.ActionKey</c>,
     /// which holds the prefixed tool name (e.g. "cu_enumerate_windows").
     /// <c>ScriptJson</c> carries the module envelope for parameter extraction:
     /// <c>{ "module": "computer_use", "tool": "enumerate_windows", "params": { ... } }</c>
+    /// <para>
+    /// <b>Note:</b> Callers may also use the original <see cref="AgentActionType"/>
+    /// enum value (e.g. <see cref="ClickDesktop"/>). The dispatch system automatically
+    /// derives a snake_case tool name from the enum name and resolves it through the
+    /// module registry, so explicit use of <c>ModuleAction</c> is not required for
+    /// migrated actions.
+    /// </para>
     /// </summary>
     ModuleAction = 100,
 }
