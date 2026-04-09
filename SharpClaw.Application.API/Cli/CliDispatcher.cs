@@ -28,7 +28,6 @@ using SharpClaw.Contracts.DTOs.NativeApplications;
 using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
-using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
@@ -224,7 +223,6 @@ public static class CliDispatcher
             "task" => await HandleTaskCommand(args, sp),
             "module" => await HandleModuleCommand(args, sp),
             "tools" => await HandleToolAwarenessSetCommand(args, sp),
-            "bot" => await HandleBotCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
             "me" => await AuthHandlers.Me(
                 sp.GetRequiredService<SessionService>(),
@@ -1962,17 +1960,13 @@ public static class CliDispatcher
                 "job cancel <jobId>",
                 "job listen <jobId>                         Stream live transcription segments",
                 "",
-                "Action types (global): CreateSubAgent, CreateContainer,",
-                "  RegisterDatabase, AccessLocalhostInBrowser, AccessLocalhostCli",
-                "Action types (resource): UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell,",
-                "  AccessInternalDatabases,",
-                "  AccessExternalDatabase, AccessWebsite, QuerySearchEngine,",
-                "  AccessContainer, ManageAgent, EditTask, AccessSkill",
-                "Transcription types: TranscribeFromAudioDevice,",
-                "  TranscribeFromAudioStream (API only), TranscribeFromAudioFile (API only)",
+                "Action types (global): CreateSubAgent",
+                "Action types (resource): AccessContainer, ManageAgent, EditTask, AccessSkill",
+                "Bot: SendBotMessage",
+                "Module tools: use ModuleAction with --action-key <tool_name>",
                 "",
-                "Transcription: submit with TranscribeFromAudioDevice and input audio",
-                "  as resourceId.",
+                "Transcription: submit ModuleAction --action-key transcribe_from_audio_device",
+                "  with input audio as resourceId.",
                 "  Optional flags: --model <id>, --lang <code>,",
                 "    --mode <sliding|step|window>, --window <seconds>, --step <seconds>");
             return Results.Ok();
@@ -2109,9 +2103,7 @@ public static class CliDispatcher
             {
                 Console.Error.WriteLine("Job not found.");
             }
-            else if (job.ActionType is not AgentActionType.TranscribeFromAudioDevice
-                     and not AgentActionType.TranscribeFromAudioStream
-                     and not AgentActionType.TranscribeFromAudioFile)
+            else if (job.ActionKey is null || !job.ActionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase))
             {
                 Console.Error.WriteLine("Only transcription jobs support live listening.");
             }
@@ -3209,75 +3201,6 @@ public static class CliDispatcher
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Bot integrations
-    // ═══════════════════════════════════════════════════════════════
-
-    private static async Task<IResult?> HandleBotCommand(string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 2)
-        {
-            PrintUsage(
-                "bot list                                  List all bot integrations",
-                "bot get <id>                              Show a bot integration",
-                "bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]",
-                "                                          Update a bot integration",
-                "bot config <type>                         Show decrypted config (telegram|discord|whatsapp)");
-            return Results.Ok();
-        }
-
-        var svc = sp.GetRequiredService<BotIntegrationService>();
-        var sub = args[1].ToLowerInvariant();
-
-        return sub switch
-        {
-            "list" => await BotHandlers.List(svc),
-
-            "get" when args.Length >= 3
-                => await BotHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
-            "get" => UsageResult("bot get <id>"),
-
-            "update" when args.Length >= 3
-                => await HandleBotUpdate(args, svc),
-            "update" => UsageResult("bot update <id> [--name <name>] [--enabled true|false] [--token <tok>] [--channel <channelId>]"),
-
-            "config" when args.Length >= 3
-                => await BotHandlers.GetConfig(args[2], svc),
-            "config" => UsageResult("bot config <type>  (telegram|discord|whatsapp)"),
-
-            _ => UsageResult($"Unknown sub-command: bot {sub}. Try 'bot list', 'bot get', etc.")
-        };
-    }
-
-    private static async Task<IResult> HandleBotUpdate(string[] args, BotIntegrationService svc)
-    {
-        var id = CliIdMap.Resolve(args[2]);
-        string? name = null;
-        bool? enabled = null;
-        string? token = null;
-        Guid? channelId = null;
-
-        for (var i = 3; i < args.Length - 1; i++)
-        {
-            switch (args[i].ToLowerInvariant())
-            {
-                case "--name":
-                    name = args[++i]; break;
-                case "--enabled" when bool.TryParse(args[i + 1], out var e):
-                    enabled = e; i++; break;
-                case "--token":
-                    token = args[++i]; break;
-                case "--channel" when Guid.TryParse(args[i + 1], out var ch):
-                    channelId = ch; i++; break;
-                case "--channel" when args[i + 1].ToLowerInvariant() is "none" or "clear":
-                    channelId = Guid.Empty; i++; break;
-            }
-        }
-
-        var request = new UpdateBotIntegrationRequest(name, enabled, token, channelId);
-        return await BotHandlers.Update(id, request, svc);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // Bio
     // ═══════════════════════════════════════════════════════════════
 
@@ -3548,12 +3471,6 @@ public static class CliDispatcher
               module get <id>                    Show module details
               module enable <id>                 Enable a module at runtime
               module disable <id>                Disable a module at runtime
-
-            Bot:       bot <sub> [args]
-              bot list                           List all bot integrations
-              bot get <id>                       Show a bot integration
-              bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]
-              bot config <type>                  Show decrypted config (telegram|discord|whatsapp)
 
               exit / quit
             """);

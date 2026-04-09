@@ -289,9 +289,7 @@ public sealed class TranscriptionModule : ISharpClawModule
         var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
 
         var staleJobs = await db.AgentJobs
-            .Where(j => (j.ActionType == AgentActionType.TranscribeFromAudioDevice
-                      || j.ActionType == AgentActionType.TranscribeFromAudioStream
-                      || j.ActionType == AgentActionType.TranscribeFromAudioFile)
+            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio")
                 && (j.Status == AgentJobStatus.Executing || j.Status == AgentJobStatus.Queued))
             .ToListAsync(ct);
 

@@ -7,6 +7,8 @@ using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
+using SharpClaw.Contracts.Modules;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts;
@@ -31,6 +33,7 @@ public sealed class ChatService(
     HeaderTagProcessor headerTagProcessor,
     ThreadActivitySignal threadActivity,
     ModuleRegistry moduleRegistry,
+    IServiceScopeFactory serviceScopeFactory,
     IConfiguration configuration)
 {
     private const int MaxHistoryMessages = 50;
@@ -160,7 +163,7 @@ public sealed class ChatService(
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
-                taskContext: request.TaskContext, toolAwareness: toolAwareness)
+                taskContext: request.TaskContext, toolAwareness: toolAwareness, threadId: threadId)
             : await RunPlainCompletionAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, maxTokens, providerParams, completionParams, ct);
@@ -613,6 +616,61 @@ public sealed class ChatService(
     }
 
     /// <summary>
+    /// Finds threads on other channels that the agent can read via
+    /// cross-thread history.  Used by the chat header to populate the
+    /// <c>accessible-threads</c> section.
+    /// </summary>
+    private async Task<List<(Guid ThreadId, string ThreadName, Guid ChannelId, string ChannelTitle)>>
+        GetAccessibleThreadsAsync(Guid agentId, Guid currentChannelId, CancellationToken ct)
+    {
+        var agentWithRole = await db.Agents
+            .Include(a => a.Role)
+                .ThenInclude(r => r!.PermissionSet)
+            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+        if (agentWithRole?.Role?.PermissionSet is not { CanReadCrossThreadHistory: true } agentPs)
+            return [];
+
+        var isIndependent = agentPs.ReadCrossThreadHistoryClearance == PermissionClearance.Independent;
+
+        var channels = await db.Channels
+            .Include(c => c.AllowedAgents)
+            .Include(c => c.PermissionSet)
+            .Include(c => c.AgentContext)
+                .ThenInclude(ctx => ctx!.PermissionSet)
+            .Where(c => c.Id != currentChannelId)
+            .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
+            .ToListAsync(ct);
+
+        if (!isIndependent)
+        {
+            channels = channels
+                .Where(c =>
+                {
+                    var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
+                    return effectivePs?.CanReadCrossThreadHistory == true;
+                })
+                .ToList();
+        }
+
+        if (channels.Count == 0)
+            return [];
+
+        var channelIds = channels.Select(c => c.Id).ToList();
+        var threads = await db.ChatThreads
+            .Where(t => channelIds.Contains(t.ChannelId))
+            .OrderByDescending(t => t.UpdatedAt)
+            .Select(t => new { t.Id, t.Name, t.ChannelId })
+            .ToListAsync(ct);
+
+        var channelTitles = channels.ToDictionary(c => c.Id, c => c.Title);
+
+        return threads
+            .Select(t => (t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
+            .ToList();
+    }
+
+    /// <summary>
     /// Collects grant names with enumerated resource IDs for the chat
     /// header (both user and agent sections). When a wildcard grant
     /// (<see cref="WellKnownIds.AllResources"/>) is present, all resource
@@ -940,11 +998,12 @@ public sealed class ChatService(
                     continue;
                 }
 
-                // ── Inline tool interception (no permissions) ────
-                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, agent.Id, channelId, ct);
-                if (inlineHandled)
+                // ── Inline module tool interception ──────────────
+                if (moduleRegistry.IsInlineTool(tc.Name))
                 {
-                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    var inlineResult = await HandleInlineModuleToolAsync(
+                        tc, agent.Id, channelId, threadId, ct);
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     var inlineNotation = FormatInlineToolNotation(tc.Name);
                     fullContent.Append(inlineNotation);
                     yield return ChatStreamEvent.TextDelta(inlineNotation);
@@ -1082,29 +1141,20 @@ public sealed class ChatService(
     /// Returns the effective tool list for a chat call.  When a task
     /// context is present, task-specific tools (shared data, output,
     /// introspection, custom hooks) are appended to the standard set.
-    /// Module tools from <see cref="ModuleRegistry"/> are always appended.
+    /// All tool definitions come from <see cref="ModuleRegistry"/>.
     /// When a <paramref name="toolAwareness"/> filter is provided, only
     /// tools whose key is <see langword="true"/> or absent are kept.
     /// </summary>
     private IReadOnlyList<ChatToolDefinition> GetEffectiveTools(
         TaskChatContext? taskContext, Dictionary<string, bool>? toolAwareness = null)
     {
-        List<ChatToolDefinition> baseTools;
+        var baseTools = new List<ChatToolDefinition>(moduleRegistry.GetAllToolDefinitions());
 
-        if (taskContext is null)
-        {
-            baseTools = new List<ChatToolDefinition>(AllTools);
-        }
-        else
+        if (taskContext is not null)
         {
             var store = TaskSharedData.Get(taskContext.InstanceId);
-            if (store is null)
+            if (store is not null)
             {
-                baseTools = new List<ChatToolDefinition>(AllTools);
-            }
-            else
-            {
-                baseTools = new List<ChatToolDefinition>(AllTools);
                 baseTools.AddRange(BuiltInTaskTools);
 
                 // task_output only available when the task declares [AgentOutput]
@@ -1115,12 +1165,6 @@ public sealed class ChatService(
                 baseTools.AddRange(store.CustomToolDefinitions);
             }
         }
-
-        // Append module-provided tools so they participate in
-        // tool-awareness filtering and LLM tool schemas.
-        var moduleTools = moduleRegistry.GetAllToolDefinitions();
-        if (moduleTools.Count > 0)
-            baseTools.AddRange(moduleTools);
 
         if (toolAwareness is null or { Count: 0 })
             return baseTools;
@@ -1249,237 +1293,58 @@ public sealed class ChatService(
     }
 
     /// <summary>
-    /// Try to handle a tool call as a permission-free inline tool (e.g. <c>wait</c>)
-    /// or a cross-thread context tool (e.g. <c>list_accessible_threads</c>,
-    /// <c>read_thread_history</c>).
-    /// Returns <c>true</c> and sets <paramref name="result"/> if handled.
-    /// These tools never enter the job/permission pipeline.
+    /// Dispatches an inline module tool call.  Resolves the owning module
+    /// from <see cref="ModuleRegistry"/>, creates a restricted
+    /// <see cref="ModuleServiceScope"/>, and calls
+    /// <see cref="ISharpClawModule.ExecuteInlineToolAsync"/>.
     /// </summary>
-    private async Task<(bool Handled, string? Result)> TryHandleInlineToolAsync(
-        ChatToolCall toolCall, Guid agentId, Guid channelId, CancellationToken ct)
+    private async Task<string> HandleInlineModuleToolAsync(
+        ChatToolCall toolCall, Guid agentId, Guid channelId, Guid? threadId, CancellationToken ct)
     {
-        switch (toolCall.Name)
-        {
-            case "wait":
-                return await HandleWaitToolAsync(toolCall, ct);
-            case "list_accessible_threads":
-                return await HandleListAccessibleThreadsAsync(agentId, channelId, ct);
-            case "read_thread_history":
-                return await HandleReadThreadHistoryAsync(toolCall, agentId, channelId, ct);
-            default:
-                return (false, null);
-        }
-    }
+        if (!moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var canonicalName))
+            return $"Error: inline tool '{toolCall.Name}' not found in any module.";
 
-    private static async Task<(bool, string?)> HandleWaitToolAsync(
-        ChatToolCall toolCall, CancellationToken ct)
-    {
+        var module = moduleRegistry.GetModule(moduleId)
+            ?? throw new InvalidOperationException(
+                $"Module '{moduleId}' resolved by registry but not loaded.");
+
+        var context = new InlineToolContext(agentId, channelId, threadId, toolCall.Id);
+
+        JsonElement parameters;
         try
         {
-            var seconds = 5; // default
-
-            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
-            {
-                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
-                if (doc.RootElement.TryGetProperty("seconds", out var secEl))
-                    seconds = secEl.GetInt32();
-            }
-
-            seconds = Math.Clamp(seconds, 1, 300);
-
-            await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
-
-            return (true, $"Waited {seconds} second{(seconds == 1 ? "" : "s")}.");
+            using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
+            parameters = doc.RootElement.Clone();
         }
-        catch (OperationCanceledException)
+        catch (JsonException)
         {
-            throw;
+            return "Error: malformed tool arguments JSON.";
         }
-        catch (Exception ex)
-        {
-            return (true, $"Error in wait tool: {ex.Message}");
-        }
-    }
 
-    private async Task<(bool, string?)> HandleListAccessibleThreadsAsync(
-        Guid agentId, Guid channelId, CancellationToken ct)
-    {
+        // External modules use their own DI container.
+        var externalHost = moduleRegistry.GetExternalHost(moduleId);
+        if (externalHost is not null && !externalHost.TryAcquireExecution())
+            return $"Error: module '{moduleId}' is unloading.";
+
         try
         {
-            var threads = await GetAccessibleThreadsAsync(agentId, channelId, ct);
-            if (threads.Count == 0)
-                return (true, "No accessible threads found. Either the agent lacks the ReadCrossThreadHistory permission, or no other channels have opted in.");
+            using var scope = externalHost is not null
+                ? externalHost.CreateScope()
+                : serviceScopeFactory.CreateScope();
+            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
 
-            var result = threads.Select(t => new
-            {
-                threadId = t.ThreadId.ToString("D"),
-                threadName = t.ThreadName,
-                channelId = t.ChannelId.ToString("D"),
-                channelTitle = t.ChannelTitle,
-            });
-
-            return (true, JsonSerializer.Serialize(result));
+            return await module.ExecuteInlineToolAsync(
+                canonicalName, parameters, context, restrictedScope, ct);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return (true, $"Error listing accessible threads: {ex.Message}");
+            return $"Error executing inline tool '{toolCall.Name}': {ex.Message}";
         }
-    }
-
-    private async Task<(bool, string?)> HandleReadThreadHistoryAsync(
-        ChatToolCall toolCall, Guid agentId, Guid channelId, CancellationToken ct)
-    {
-        try
+        finally
         {
-            Guid threadId = Guid.Empty;
-            int maxMessages = 50;
-
-            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
-            {
-                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
-                if (doc.RootElement.TryGetProperty("threadId", out var tidEl))
-                    Guid.TryParse(tidEl.GetString(), out threadId);
-                if (doc.RootElement.TryGetProperty("maxMessages", out var maxEl))
-                    maxMessages = Math.Clamp(maxEl.GetInt32(), 1, 200);
-            }
-
-            if (threadId == Guid.Empty)
-                return (true, "Error: threadId is required.");
-
-            // Load thread with its channel
-            var thread = await db.ChatThreads
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.AllowedAgents)
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.PermissionSet)
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.AgentContext)
-                        .ThenInclude(ctx => ctx!.PermissionSet)
-                .FirstOrDefaultAsync(t => t.Id == threadId, ct);
-
-            if (thread is null)
-                return (true, "Error: thread not found.");
-
-            // Must not be the current channel (use normal history for that)
-            if (thread.ChannelId == channelId)
-                return (true, "Error: use normal chat history to access threads in the current channel.");
-
-            // Check agent has access to the target channel
-            var targetChannel = thread.Channel;
-            var isAgentOnChannel = targetChannel.AgentId == agentId
-                || targetChannel.AllowedAgents.Any(a => a.Id == agentId);
-            if (!isAgentOnChannel)
-                return (true, "Error: agent is not assigned to the target channel.");
-
-            // Check agent has ReadCrossThreadHistory permission
-            var agentWithRole = await db.Agents
-                .Include(a => a.Role)
-                    .ThenInclude(r => r!.PermissionSet)
-                .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-
-            var agentPs = agentWithRole?.Role?.PermissionSet;
-            if (agentPs is not { CanReadCrossThreadHistory: true })
-                return (true, "Error: agent lacks ReadCrossThreadHistory permission.");
-
-            // Check channel opt-in (unless Independent clearance)
-            if (agentPs.ReadCrossThreadHistoryClearance != PermissionClearance.Independent)
-            {
-                var effectivePs = targetChannel.PermissionSet
-                    ?? targetChannel.AgentContext?.PermissionSet;
-                if (effectivePs?.CanReadCrossThreadHistory != true)
-                    return (true, "Error: the target channel has not opted in to cross-thread history sharing.");
-            }
-
-            // Fetch messages
-            var messages = await db.ChatMessages
-                .Where(m => m.ThreadId == threadId)
-                .OrderByDescending(m => m.CreatedAt)
-                .Take(maxMessages)
-                .OrderBy(m => m.CreatedAt)
-                .Select(m => new
-                {
-                    role = m.Role,
-                    content = m.Content,
-                    sender = m.SenderUsername ?? m.SenderAgentName ?? "unknown",
-                    timestamp = m.CreatedAt
-                })
-                .ToListAsync(ct);
-
-            if (messages.Count == 0)
-                return (true, "Thread exists but has no messages.");
-
-            return (true, JsonSerializer.Serialize(messages));
+            externalHost?.ReleaseExecution();
         }
-        catch (Exception ex)
-        {
-            return (true, $"Error reading thread history: {ex.Message}");
-        }
-    }
-
-
-    /// <summary>
-    /// Finds threads accessible to this agent via cross-thread history
-    /// sharing.  A thread is accessible when:
-    /// <list type="number">
-    ///   <item>The agent has <c>CanReadCrossThreadHistory</c>.</item>
-    ///   <item>The agent is primary or allowed on the thread's channel.</item>
-    ///   <item>The channel's effective permission set also has
-    ///         <c>CanReadCrossThreadHistory</c> — unless the agent has
-    ///         <c>Independent</c> clearance for the flag.</item>
-    /// </list>
-    /// The current channel is excluded (the agent already has its own
-    /// history there).
-    /// </summary>
-    private async Task<List<(Guid ThreadId, string ThreadName, Guid ChannelId, string ChannelTitle)>>
-        GetAccessibleThreadsAsync(Guid agentId, Guid currentChannelId, CancellationToken ct)
-    {
-        var agentWithRole = await db.Agents
-            .Include(a => a.Role)
-                .ThenInclude(r => r!.PermissionSet)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-
-        if (agentWithRole?.Role?.PermissionSet is not { CanReadCrossThreadHistory: true } agentPs)
-            return [];
-
-        var isIndependent = agentPs.ReadCrossThreadHistoryClearance == PermissionClearance.Independent;
-
-        // Channels where the agent is primary or allowed, excluding current
-        var channels = await db.Channels
-            .Include(c => c.AllowedAgents)
-            .Include(c => c.PermissionSet)
-            .Include(c => c.AgentContext)
-                .ThenInclude(ctx => ctx!.PermissionSet)
-            .Where(c => c.Id != currentChannelId)
-            .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
-            .ToListAsync(ct);
-
-        // Filter by channel opt-in unless Independent
-        if (!isIndependent)
-        {
-            channels = channels
-                .Where(c =>
-                {
-                    var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
-                    return effectivePs?.CanReadCrossThreadHistory == true;
-                })
-                .ToList();
-        }
-
-        if (channels.Count == 0)
-            return [];
-
-        var channelIds = channels.Select(c => c.Id).ToList();
-        var threads = await db.ChatThreads
-            .Where(t => channelIds.Contains(t.ChannelId))
-            .OrderByDescending(t => t.UpdatedAt)
-            .Select(t => new { t.Id, t.Name, t.ChannelId })
-            .ToListAsync(ct);
-
-        var channelTitles = channels.ToDictionary(c => c.Id, c => c.Title);
-
-        return threads
-            .Select(t => (t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
-            .ToList();
     }
 
     // ── Built-in task tool definitions ────────────────────────────
@@ -1696,7 +1561,8 @@ public sealed class ChatService(
         Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct,
         TaskChatContext? taskContext = null,
-        Dictionary<string, bool>? toolAwareness = null)
+        Dictionary<string, bool>? toolAwareness = null,
+        Guid? threadId = null)
     {
         var messages = new List<ToolAwareMessage>(dbHistory.Count);
         foreach (var msg in dbHistory)
@@ -1746,11 +1612,12 @@ public sealed class ChatService(
                     continue;
                 }
 
-                // ── Inline tool interception (no permissions) ────
-                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, agentId, channelId, ct);
-                if (inlineHandled)
+                // ── Inline module tool interception ──────────────
+                if (moduleRegistry.IsInlineTool(tc.Name))
                 {
-                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    var inlineResult = await HandleInlineModuleToolAsync(
+                        tc, agentId, channelId, threadId, ct);
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     toolNotation.Append(FormatInlineToolNotation(tc.Name));
                     continue;
                 }
@@ -1847,58 +1714,10 @@ public sealed class ChatService(
     /// Parses a native <see cref="ChatToolCall"/> into the internal
     /// <see cref="ParsedToolCall"/> representation. Returns <see langword="null"/>
     /// if the tool name is unrecognized or the arguments are malformed.
-    /// Falls back to <see cref="ModuleRegistry"/> for module-provided tools.
+    /// All tool definitions are resolved via <see cref="ModuleRegistry"/>.
     /// </summary>
     private ParsedToolCall? ParseNativeToolCall(ChatToolCall toolCall)
     {
-        if (ToolNameToActionType.TryGetValue(toolCall.Name, out var actionType))
-        {
-            try
-            {
-                Debug.WriteLine(
-                    $"[ParseToolCall] {toolCall.Name} (id={toolCall.Id}) args: {toolCall.ArgumentsJson}",
-                    "SharpClaw.CLI");
-
-                var payload = JsonSerializer.Deserialize<ToolCallPayload>(toolCall.ArgumentsJson, JsonOptions);
-                if (payload is null) return null;
-
-                Guid? resourceId = Guid.TryParse(payload.ResourceId, out var rid) ? rid : null;
-                // TargetId is the generic "resourceId" alias for non-shell tools
-                resourceId ??= Guid.TryParse(payload.TargetId, out var tid) ? tid : null;
-
-                Debug.WriteLine(
-                    $"[ParseToolCall] {toolCall.Name} → resourceId={resourceId}, targetId={payload.TargetId}",
-                    "SharpClaw.CLI");
-
-                Guid? transcriptionModelId = Guid.TryParse(payload.TranscriptionModelId, out var tmid) ? tmid : null;
-
-                DangerousShellType? dangerousShell = Enum.TryParse<DangerousShellType>(
-                    payload.ShellType, ignoreCase: true, out var ds) ? ds : null;
-
-                // For all core actions, pass the full arguments JSON as
-                // ScriptJson so DispatchExecutionAsync can deserialize
-                // action-specific fields from it.
-                var scriptJson = toolCall.ArgumentsJson;
-
-                return new ParsedToolCall(
-                    toolCall.Id,
-                    actionType,
-                    resourceId,
-                    payload.SandboxId,
-                    scriptJson,
-                    dangerousShell,
-                    null,
-                    transcriptionModelId,
-                    payload.Language,
-                    payload.WorkingDirectory);
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
-        }
-
-        // ── Module tool fallback ────────────────────────────────
         if (moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var toolName))
         {
             Debug.WriteLine(
@@ -1933,23 +1752,6 @@ public sealed class ChatService(
 
         return null;
     }
-
-    /// <summary>
-    /// Maps native tool function names to their <see cref="AgentActionType"/>.
-    /// </summary>
-    private static readonly Dictionary<string, AgentActionType> ToolNameToActionType = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["create_sub_agent"]               = AgentActionType.CreateSubAgent,
-        ["access_container"]               = AgentActionType.AccessContainer,
-        ["manage_agent"]                   = AgentActionType.ManageAgent,
-        ["edit_task"]                       = AgentActionType.EditTask,
-        ["access_skill"]                   = AgentActionType.AccessSkill,
-        ["transcribe_from_audio_device"]   = AgentActionType.TranscribeFromAudioDevice,
-        ["transcribe_from_audio_stream"]   = AgentActionType.TranscribeFromAudioStream,
-        ["transcribe_from_audio_file"]     = AgentActionType.TranscribeFromAudioFile,
-        ["send_bot_message"]               = AgentActionType.SendBotMessage,
-
-        };
 
     // ═══════════════════════════════════════════════════════════════
     // Screenshot extraction & vision-aware tool results
@@ -2025,269 +1827,6 @@ public sealed class ChatService(
     private static readonly string NativeToolSystemSuffix =
         LoadEmbeddedResource("SharpClaw.Application.Core.tool-instructions-native-suffix.md");
 
-    private static readonly IReadOnlyList<ChatToolDefinition> AllTools = BuildAllToolDefinitions();
-
-    private static IReadOnlyList<ChatToolDefinition> BuildAllToolDefinitions()
-    {
-        var resourceOnly = BuildResourceOnlySchema();
-        var globalSchema = BuildGlobalActionSchema();
-        var transcriptionSchema = BuildTranscriptionSchema();
-        var createSubAgentSchema = BuildCreateSubAgentSchema();
-        var manageAgentSchema = BuildManageAgentSchema();
-        var editTaskSchema = BuildEditTaskSchema();
-        var waitSchema = BuildWaitSchema();
-        var readThreadHistorySchema = BuildReadThreadHistorySchema();
-        var sendBotMessageSchema = BuildSendBotMessageSchema();
-
-        return
-        [
-            // ── Inline tools (no permissions) ─────────────────
-            new("wait",
-                "Pause for 1–300 seconds. No tokens consumed while waiting.",
-                waitSchema),
-
-            // ── Cross-thread context tools ────────────────────
-            new("list_accessible_threads",
-                "List readable threads from other channels (IDs, names, parent channel).",
-                globalSchema),
-            new("read_thread_history",
-                "Read cross-channel thread history. Optional maxMessages (1–200, default 50).",
-                readThreadHistorySchema),
-
-            // ── Transcription
-            new("transcribe_from_audio_device",
-                "Live-transcribe a system audio device.",
-                transcriptionSchema),
-            new("transcribe_from_audio_stream",
-                "Transcribe audio stream. [Stub.]",
-                transcriptionSchema),
-            new("transcribe_from_audio_file",
-                "Transcribe audio file. [Stub.]",
-                transcriptionSchema),
-
-            // ── Global flags ─────────────────────────────────────
-            new("create_sub_agent",
-                "Create a sub-agent (name, modelId, optional systemPrompt).",
-                createSubAgentSchema),
-
-            // ── Per-resource ─────────────────────────────────────
-            new("access_container", "Access container resource. [Stub.]", resourceOnly),
-            new("manage_agent", "Update agent name, systemPrompt, or modelId.", manageAgentSchema),
-            new("edit_task", "Edit task name, interval, or retries.", editTaskSchema),
-            new("access_skill", "Retrieve a skill's instruction text.", resourceOnly),
-
-            // ── Bot messaging ─────────────────────────────────────────
-            new("send_bot_message",
-                "Send DM via bot (Telegram/Discord/WhatsApp/Slack/Matrix/Signal/Email/Teams). recipientId is platform-specific; subject for email only.",
-                sendBotMessageSchema),
-
-                ];
-            }
-
-    private static JsonElement BuildWaitSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "seconds": {
-                        "type": "integer",
-                        "description": "Seconds (1–300)."
-                    }
-                },
-                "required": ["seconds"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildReadThreadHistorySchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "threadId": {
-                        "type": "string",
-                        "description": "Thread GUID (from list_accessible_threads)."
-                    },
-                    "maxMessages": {
-                        "type": "integer",
-                        "description": "Max messages (1–200, default 50)."
-                    }
-                },
-                "required": ["threadId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSendBotMessageSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "Bot integration GUID."
-                    },
-                    "recipientId": {
-                        "type": "string",
-                        "description": "Platform-specific recipient: Telegram chat ID, Discord user ID, WhatsApp phone (E.164), Slack user ID, Matrix user ID (@user:server), Signal phone (E.164), email address, or Teams user ID."
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Message text to send."
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line (email only, optional)."
-                    }
-                },
-                "required": ["resourceId", "recipientId", "message"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildResourceOnlySchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Resource GUID."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildGlobalActionSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildTranscriptionSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Audio device GUID."
-                    },
-                    "transcriptionModelId": {
-                        "type": "string",
-                        "description": "Transcription model GUID."
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "BCP-47 code (e.g. 'en')."
-                    }
-                },
-                "required": ["targetId", "transcriptionModelId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildCreateSubAgentSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Agent name."
-                    },
-                    "modelId": {
-                        "type": "string",
-                        "description": "Model GUID."
-                    },
-                    "systemPrompt": {
-                        "type": "string",
-                        "description": "System prompt."
-                    }
-                },
-                "required": ["name", "modelId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildManageAgentSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Agent GUID."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "New name."
-                    },
-                    "systemPrompt": {
-                        "type": "string",
-                        "description": "New system prompt."
-                    },
-                    "modelId": {
-                        "type": "string",
-                        "description": "New model GUID."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditTaskSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Task GUID."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "New name."
-                    },
-                    "repeatIntervalMinutes": {
-                        "type": "integer",
-                        "description": "Minutes. 0=remove."
-                    },
-                    "maxRetries": {
-                        "type": "integer",
-                        "description": "Max retries."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Embedded resource loader
     // ═══════════════════════════════════════════════════════════════
@@ -2305,11 +1844,6 @@ public sealed class ChatService(
     // Internal types
     // ═══════════════════════════════════════════════════════════════
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private sealed record ParsedToolCall(
         string CallId,
         AgentActionType ActionType,
@@ -2323,28 +1857,6 @@ public sealed class ChatService(
         string? WorkingDirectory = null,
         string? RawJson = null,
         string? ActionKey = null);
-
-    private sealed class ToolCallPayload
-    {
-        public string? ResourceId { get; set; }
-        public string? SandboxId { get; set; }
-        public JsonElement? Script { get; set; }
-        public string? Command { get; set; }
-        public string? ShellType { get; set; }
-        public string? TranscriptionModelId { get; set; }
-        public string? Language { get; set; }
-        public string? TargetId { get; set; }
-        public string? Query { get; set; }
-        public string? Url { get; set; }
-        public string? WorkingDirectory { get; set; }
-        public string? Name { get; set; }
-        public string? ModelId { get; set; }
-        public string? SystemPrompt { get; set; }
-        public string? Path { get; set; }
-        public string? Description { get; set; }
-        public int? RepeatIntervalMinutes { get; set; }
-        public int? MaxRetries { get; set; }
-    }
 
     private readonly record struct ToolLoopResult(
         string AssistantContent,

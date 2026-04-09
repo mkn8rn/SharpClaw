@@ -4,9 +4,10 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Application.Services;
 using SharpClaw.Utils.Security;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.BotIntegration.Services;
 
 /// <summary>
 /// Sends outbound messages through bot integrations on behalf of agents.

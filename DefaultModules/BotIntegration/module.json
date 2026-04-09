@@ -1,0 +1,12 @@
+{
+  "id": "sharpclaw_bot_integration",
+  "displayName": "Bot Integration",
+  "version": "1.0.0",
+  "toolPrefix": "bi",
+  "entryAssembly": "SharpClaw.Modules.BotIntegration",
+  "minHostVersion": "1.0.0",
+  "platforms": null,
+  "executionTimeoutSeconds": 30,
+  "exports": [],
+  "requires": []
+}

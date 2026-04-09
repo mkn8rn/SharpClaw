@@ -26,10 +26,20 @@ public interface ISharpClawModule
     void ConfigureServices(IServiceCollection services);
 
     /// <summary>
-    /// Return all tool definitions this module exposes.
+    /// Return all job-pipeline tool definitions this module exposes.
     /// Each definition includes the schema sent to the LLM.
+    /// These tools flow through the full AgentJobService lifecycle.
     /// </summary>
     IReadOnlyList<ModuleToolDefinition> GetToolDefinitions();
+
+    /// <summary>
+    /// Return inline tool definitions — lightweight tools that execute directly
+    /// within the ChatService streaming loop without creating a job record.
+    /// Use for fast, stateless operations (e.g. wait, list threads, read history).
+    /// The host evaluates permissions from each tool's Permission descriptor
+    /// before calling <see cref="ExecuteInlineToolAsync"/>.
+    /// </summary>
+    IReadOnlyList<ModuleInlineToolDefinition> GetInlineToolDefinitions() => [];
 
     /// <summary>
     /// Contracts (service interfaces) this module provides to other modules.
@@ -73,7 +83,7 @@ public interface ISharpClawModule
         Task.CompletedTask;
 
     /// <summary>
-    /// Execute a tool by name. Called from <c>DispatchExecutionAsync</c>
+    /// Execute a job-pipeline tool by name. Called from <c>DispatchExecutionAsync</c>
     /// when <c>ActionType</c> is <c>ModuleAction</c> and the envelope targets this module.
     /// </summary>
     Task<string> ExecuteToolAsync(
@@ -82,6 +92,22 @@ public interface ISharpClawModule
         AgentJobContext job,
         IServiceProvider scopedServices,
         CancellationToken ct);
+
+    /// <summary>
+    /// Execute an inline tool by name. Called directly from the ChatService
+    /// streaming loop for tools declared in <see cref="GetInlineToolDefinitions"/>.
+    /// Must be fast and lightweight — no job record is created.
+    /// The host has already evaluated the tool's Permission descriptor
+    /// before this call.
+    /// </summary>
+    Task<string> ExecuteInlineToolAsync(
+        string toolName,
+        JsonElement parameters,
+        InlineToolContext context,
+        IServiceProvider scopedServices,
+        CancellationToken ct) =>
+        throw new NotImplementedException(
+            $"Module '{Id}' does not implement ExecuteInlineToolAsync for tool '{toolName}'.");
 
     /// <summary>
     /// Optional. Return header tag definitions this module provides.

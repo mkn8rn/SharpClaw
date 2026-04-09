@@ -271,6 +271,22 @@ public sealed class AgentActionService(SharpClawDbContext db)
             p => p.NativeApplicationAccesses, a => a.NativeApplicationId, a => a.Clearance,
             "native application launch", onApproved, ct);
 
+    public Task<AgentActionResult> EditAgentHeaderAsync(
+        Guid agentId, Guid targetAgentId, ActionCaller caller,
+        Func<Task>? onApproved = null, CancellationToken ct = default)
+        => EvaluateResourceAccessAsync(
+            agentId, targetAgentId, caller,
+            p => p.AgentHeaderAccesses, a => a.AgentId, a => a.Clearance,
+            "agent header edit", onApproved, ct);
+
+    public Task<AgentActionResult> EditChannelHeaderAsync(
+        Guid agentId, Guid targetChannelId, ActionCaller caller,
+        Func<Task>? onApproved = null, CancellationToken ct = default)
+        => EvaluateResourceAccessAsync(
+            agentId, targetChannelId, caller,
+            p => p.ChannelHeaderAccesses, a => a.ChannelId, a => a.Clearance,
+            "channel header edit", onApproved, ct);
+
     // ═══════════════════════════════════════════════════════════════
     // Core evaluation engine
     // ═══════════════════════════════════════════════════════════════
@@ -540,6 +556,8 @@ public sealed class AgentActionService(SharpClawDbContext db)
         ["AccessBotIntegrationAsync"] = (svc, agentId, resId, caller, ct) => svc.AccessBotIntegrationAsync(agentId, resId!.Value, caller, ct: ct),
         ["AccessDocumentSessionAsync"] = (svc, agentId, resId, caller, ct) => svc.AccessDocumentSessionAsync(agentId, resId!.Value, caller, ct: ct),
         ["LaunchNativeApplicationAsync"] = (svc, agentId, resId, caller, ct) => svc.LaunchNativeApplicationAsync(agentId, resId!.Value, caller, ct: ct),
+        ["EditAgentHeaderAsync"] = (svc, agentId, resId, caller, ct) => svc.EditAgentHeaderAsync(agentId, resId!.Value, caller, ct: ct),
+        ["EditChannelHeaderAsync"] = (svc, agentId, resId, caller, ct) => svc.EditChannelHeaderAsync(agentId, resId!.Value, caller, ct: ct),
     };
 
     /// <summary>
@@ -585,6 +603,8 @@ public sealed class AgentActionService(SharpClawDbContext db)
         ["AccessBotIntegrationAsync"] = (ps, rid) => ps.BotIntegrationAccesses.Any(a => a.BotIntegrationId == rid || a.BotIntegrationId == WellKnownIds.AllResources),
         ["AccessDocumentSessionAsync"] = (ps, rid) => ps.DocumentSessionAccesses.Any(a => a.DocumentSessionId == rid || a.DocumentSessionId == WellKnownIds.AllResources),
         ["LaunchNativeApplicationAsync"] = (ps, rid) => ps.NativeApplicationAccesses.Any(a => a.NativeApplicationId == rid || a.NativeApplicationId == WellKnownIds.AllResources),
+        ["EditAgentHeaderAsync"] = (ps, rid) => ps.AgentHeaderAccesses.Any(a => a.AgentId == rid || a.AgentId == WellKnownIds.AllResources),
+        ["EditChannelHeaderAsync"] = (ps, rid) => ps.ChannelHeaderAccesses.Any(a => a.ChannelId == rid || a.ChannelId == WellKnownIds.AllResources),
     };
 
     /// <summary>

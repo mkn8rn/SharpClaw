@@ -34,7 +34,6 @@ SharpClawDbContext db,
 AgentActionService actions,
 ILiveTranscriptionOrchestrator orchestrator,
 SessionService session,
-BotMessageSenderService botMessageSender,
 DocumentSessionService documentSessionService,
 ModuleRegistry moduleRegistry,
 IServiceScopeFactory serviceScopeFactory,
@@ -105,7 +104,7 @@ IConfiguration configuration)
 
         // Resolve default transcription model when not specified.
         var effectiveTranscriptionModelId = request.TranscriptionModelId;
-        if (!effectiveTranscriptionModelId.HasValue && IsTranscriptionAction(request.ActionType))
+        if (!effectiveTranscriptionModelId.HasValue && IsTranscriptionActionKey(request.ActionKey))
         {
             effectiveTranscriptionModelId = await ResolveDefaultTranscriptionModelAsync(
                 channelId, ct);
@@ -245,7 +244,7 @@ IConfiguration configuration)
             return ToResponse(job);
         }
 
-        if (IsTranscriptionAction(job.ActionType)
+        if (IsTranscriptionActionKey(job.ActionKey)
             && job.Status is AgentJobStatus.Executing or AgentJobStatus.Paused)
         {
             if (job.Status == AgentJobStatus.Executing)
@@ -268,7 +267,7 @@ IConfiguration configuration)
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (!IsTranscriptionAction(job.ActionType))
+        if (!IsTranscriptionActionKey(job.ActionKey))
         {
             AddLog(job, "Stop rejected: not a transcription job.", "Warning");
             await db.SaveChangesAsync(ct);
@@ -314,7 +313,7 @@ IConfiguration configuration)
             return ToResponse(job);
         }
 
-        if (IsTranscriptionAction(job.ActionType))
+        if (IsTranscriptionActionKey(job.ActionKey))
             orchestrator.Stop(jobId);
 
         job.Status = AgentJobStatus.Paused;
@@ -346,7 +345,7 @@ IConfiguration configuration)
         AddLog(job, "Job resumed.");
         await db.SaveChangesAsync(ct);
 
-        if (IsTranscriptionAction(job.ActionType))
+        if (IsTranscriptionActionKey(job.ActionKey))
             await RestartTranscriptionAsync(job, ct);
 
         return ToResponse(job);
@@ -399,11 +398,7 @@ IConfiguration configuration)
         var query = db.AgentJobs
             .Include(j => j.LogEntries)
             .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-#pragma warning disable CS0612 // Transcription actions dispatched to module but kept here for job queries
-            .Where(j => j.ActionType == AgentActionType.TranscribeFromAudioDevice
-                      || j.ActionType == AgentActionType.TranscribeFromAudioStream
-                      || j.ActionType == AgentActionType.TranscribeFromAudioFile);
-#pragma warning restore CS0612
+            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio"));
 
         if (inputAudioId is not null)
             query = query.Where(j => j.ResourceId == inputAudioId);
@@ -592,7 +587,7 @@ IConfiguration configuration)
 
         try
         {
-            if (IsTranscriptionAction(job.ActionType))
+            if (IsTranscriptionActionKey(job.ActionKey))
             {
                 await StartTranscriptionAsync(job, ct);
                 return;
@@ -691,25 +686,7 @@ IConfiguration configuration)
     {
         return job.ActionType switch
         {
-            // Agent lifecycle
-            AgentActionType.CreateSubAgent
-                => await ExecuteCreateSubAgentAsync(job, ct),
-            AgentActionType.ManageAgent
-                => await ExecuteManageAgentAsync(job, ct),
-
-            // Task management
-            AgentActionType.EditTask
-                => await ExecuteEditTaskAsync(job, ct),
-
-            // Knowledge / skills
-            AgentActionType.AccessSkill
-                => await ExecuteAccessSkillAsync(job, ct),
-
-            // Bot messaging
-            AgentActionType.SendBotMessage
-                => await ExecuteSendBotMessageAsync(job, ct),
-
-            // Module-provided tool calls — try ActionKey-based dispatch first;
+            // Module-provided tool calls — try ActionKey first,
             // fall back to full envelope deserialization.
             AgentActionType.ModuleAction
                 => await TryDispatchByActionKeyAsync(job, ct)
@@ -931,297 +908,6 @@ IConfiguration configuration)
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // CREATE SUB-AGENT
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class CreateSubAgentPayload
-    {
-        public string? Name { get; set; }
-        public string? ModelId { get; set; }
-        public string? SystemPrompt { get; set; }
-    }
-
-    private async Task<string?> ExecuteCreateSubAgentAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "CreateSubAgent requires a JSON payload in ScriptJson.");
-
-        var payload = JsonSerializer.Deserialize<CreateSubAgentPayload>(
-            job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to deserialise CreateSubAgent payload.");
-
-        if (string.IsNullOrWhiteSpace(payload.Name))
-            throw new InvalidOperationException(
-                "CreateSubAgent payload requires a 'name' field.");
-
-        if (!Guid.TryParse(payload.ModelId, out var modelId))
-            throw new InvalidOperationException(
-                "CreateSubAgent payload requires a valid 'modelId' GUID.");
-
-        var model = await db.Models
-            .Include(m => m.Provider)
-            .FirstOrDefaultAsync(m => m.Id == modelId, ct)
-            ?? throw new InvalidOperationException(
-                $"Model {modelId} not found.");
-
-        var agent = new AgentDB
-        {
-            Name = payload.Name,
-            SystemPrompt = payload.SystemPrompt,
-            ModelId = model.Id,
-        };
-
-        db.Agents.Add(agent);
-        await db.SaveChangesAsync(ct);
-
-        AddLog(job, $"Sub-agent '{agent.Name}' created (id={agent.Id}).");
-        return $"Created sub-agent '{agent.Name}' (id={agent.Id}, model={model.Name}).";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // MANAGE AGENT
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class ManageAgentPayload
-    {
-        public string? TargetId { get; set; }
-        public string? Name { get; set; }
-        public string? SystemPrompt { get; set; }
-        public string? ModelId { get; set; }
-    }
-
-    private async Task<string?> ExecuteManageAgentAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "ManageAgent requires a ResourceId (target agent).");
-
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .FirstOrDefaultAsync(a => a.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Agent {job.ResourceId} not found.");
-
-        ManageAgentPayload? payload = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            payload = JsonSerializer.Deserialize<ManageAgentPayload>(
-                job.ScriptJson, _payloadJsonOptions);
-        }
-
-        var changes = new List<string>();
-
-        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
-        {
-            agent.Name = newName;
-            changes.Add($"name='{newName}'");
-        }
-
-        if (payload?.SystemPrompt is not null)
-        {
-            agent.SystemPrompt = payload.SystemPrompt;
-            changes.Add("systemPrompt updated");
-        }
-
-        if (payload?.ModelId is { } modelIdStr && Guid.TryParse(modelIdStr, out var newModelId))
-        {
-            var model = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == newModelId, ct)
-                ?? throw new InvalidOperationException($"Model {newModelId} not found.");
-            agent.ModelId = model.Id;
-            agent.Model = model;
-            changes.Add($"model='{model.Name}'");
-        }
-
-        if (changes.Count == 0)
-            return $"Agent '{agent.Name}' (id={agent.Id}) — no changes applied.";
-
-        await db.SaveChangesAsync(ct);
-
-        var summary = string.Join(", ", changes);
-        AddLog(job, $"Agent '{agent.Name}' updated: {summary}.");
-        return $"Updated agent '{agent.Name}' (id={agent.Id}): {summary}.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // EDIT TASK
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class EditTaskPayload
-    {
-        public string? TargetId { get; set; }
-        public string? Name { get; set; }
-        public int? RepeatIntervalMinutes { get; set; }
-        public int? MaxRetries { get; set; }
-    }
-
-    private async Task<string?> ExecuteEditTaskAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "EditTask requires a ResourceId (target task).");
-
-        var task = await db.ScheduledTasks
-            .FirstOrDefaultAsync(t => t.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"ScheduledTask {job.ResourceId} not found.");
-
-        EditTaskPayload? payload = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            payload = JsonSerializer.Deserialize<EditTaskPayload>(
-                job.ScriptJson, _payloadJsonOptions);
-        }
-
-        var changes = new List<string>();
-
-        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
-        {
-            task.Name = newName;
-            changes.Add($"name='{newName}'");
-        }
-
-        if (payload?.RepeatIntervalMinutes is { } intervalMinutes)
-        {
-            task.RepeatInterval = intervalMinutes > 0
-                ? TimeSpan.FromMinutes(intervalMinutes)
-                : null;
-            changes.Add($"repeatInterval={task.RepeatInterval?.ToString() ?? "none"}");
-        }
-
-        if (payload?.MaxRetries is { } retries)
-        {
-            task.MaxRetries = retries;
-            changes.Add($"maxRetries={retries}");
-        }
-
-        if (changes.Count == 0)
-            return $"Task '{task.Name}' (id={task.Id}) — no changes applied.";
-
-        await db.SaveChangesAsync(ct);
-
-        var summary = string.Join(", ", changes);
-        AddLog(job, $"Task '{task.Name}' updated: {summary}.");
-        return $"Updated task '{task.Name}' (id={task.Id}): {summary}.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ACCESS SKILL
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task<string?> ExecuteAccessSkillAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "AccessSkill requires a ResourceId (target skill).");
-
-        var skill = await db.Skills
-            .FirstOrDefaultAsync(s => s.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Skill {job.ResourceId} not found.");
-
-        AddLog(job, $"Skill '{skill.Name}' accessed.");
-        return $"Skill: {skill.Name}\n\n{skill.SkillText}";
-    }
-
-    // Removed: ACCESS LOCALHOST IN BROWSER — now in WebAccess module
-    // Removed: ACCESS LOCALHOST CLI — now in WebAccess module
-    // Removed: QUERY SEARCH ENGINE — now in WebAccess module
-    // Removed: ACCESS WEBSITE — now in WebAccess module
-
-    private static readonly JsonSerializerOptions _payloadJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    // ═══════════════════════════════════════════════════════════════
-    // BOT MESSAGING
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class SendBotMessagePayload
-    {
-        public string? ResourceId { get; set; }
-        public string? RecipientId { get; set; }
-        public string? Message { get; set; }
-        public string? Subject { get; set; }
-    }
-
-    private async Task<string?> ExecuteSendBotMessageAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "SendBotMessage requires a JSON payload in ScriptJson.");
-
-        var payload = JsonSerializer.Deserialize<SendBotMessagePayload>(
-            job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to deserialise SendBotMessage payload.");
-
-        if (string.IsNullOrWhiteSpace(payload.RecipientId))
-            throw new InvalidOperationException(
-                "SendBotMessage payload requires a 'recipientId' field.");
-
-        if (string.IsNullOrWhiteSpace(payload.Message))
-            throw new InvalidOperationException(
-                "SendBotMessage payload requires a 'message' field.");
-
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "SendBotMessage requires a ResourceId (bot integration ID).");
-
-        AddLog(job, $"Sending bot message via integration {job.ResourceId}");
-        await db.SaveChangesAsync(ct);
-
-        await botMessageSender.SendMessageAsync(
-            job.ResourceId.Value, payload.RecipientId, payload.Message,
-            payload.Subject, ct);
-
-        return $"Message sent successfully via bot integration {job.ResourceId} to recipient '{payload.RecipientId}'.";
-    }
-
-    private Dictionary<string, object?>? ParsePayload(AgentJobDB job)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            return null;
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(
-            job.ScriptJson, _payloadJsonOptions);
-    }
-
-    private static string? GetString(Dictionary<string, object?>? p, string key) =>
-        p?.GetValueOrDefault(key)?.ToString();
-
-    private static int? GetInt(Dictionary<string, object?>? p, string key)
-    {
-        var val = p?.GetValueOrDefault(key);
-        return val switch
-        {
-            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32(),
-            _ when val is not null && int.TryParse(val.ToString(), out var i) => i,
-            _ => null,
-        };
-    }
-
-    private static bool? GetBool(Dictionary<string, object?>? p, string key)
-    {
-        var val = p?.GetValueOrDefault(key);
-        return val switch
-        {
-            JsonElement je when je.ValueKind == JsonValueKind.True => true,
-            JsonElement je when je.ValueKind == JsonValueKind.False => false,
-            _ when val is not null && bool.TryParse(val.ToString(), out var b) => b,
-            _ => null,
-        };
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // Permission dispatch
     // ═══════════════════════════════════════════════════════════════
 
@@ -1232,30 +918,12 @@ IConfiguration configuration)
     {
         return actionType switch
         {
-            AgentActionType.CreateSubAgent
-                => actions.CreateSubAgentAsync(agentId, caller, ct: ct),
-            AgentActionType.RegisterDatabase
-                => actions.RegisterDatabaseAsync(agentId, caller, ct: ct),
-            AgentActionType.AccessInternalDatabases when resourceId.HasValue
-                => actions.AccessInternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessExternalDatabase when resourceId.HasValue
-                => actions.AccessExternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessContainer when resourceId.HasValue
-                => actions.AccessContainerAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.ManageAgent when resourceId.HasValue
-                => actions.ManageAgentAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.EditTask when resourceId.HasValue
-                => actions.EditTaskAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessSkill when resourceId.HasValue
-                => actions.AccessSkillAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.SendBotMessage when resourceId.HasValue
-                => actions.AccessBotIntegrationAsync(agentId, resourceId.Value, caller, ct: ct),
             // Module-provided tool calls: delegate to the module's permission descriptor.
             AgentActionType.ModuleAction
                 => DispatchModulePermissionCheckAsync(agentId, resourceId, caller, actionKey, ct),
 
-            // Module fallback: legacy enum values whose core handler was removed
-            // route to the owning module's permission check via enum-name derivation.
+            // All other action types: try module resolution via explicit ActionKey
+            // or enum-name derivation (PascalCase → snake_case).
             _ when TryResolveModuleByActionType(actionType)
                 => DispatchModulePermissionCheckAsync(agentId, resourceId, caller,
                     actionKey ?? PascalToSnakeCase(actionType.ToString()), ct),
@@ -1273,24 +941,6 @@ IConfiguration configuration)
     /// </summary>
     private bool IsPerResourceAction(AgentActionType type, string? actionKey = null)
     {
-        // Core per-resource actions — checked first so module resolution
-        // cannot override behaviour for actions that still have core handlers.
-        #pragma warning disable CS0612 // Module-dispatched actions kept for resource resolution
-                if (type is AgentActionType.AccessInternalDatabases
-                    or AgentActionType.AccessExternalDatabase
-                    or AgentActionType.AccessWebsite
-                    or AgentActionType.QuerySearchEngine
-                    or AgentActionType.AccessContainer
-                    or AgentActionType.ManageAgent
-                    or AgentActionType.EditTask
-                    or AgentActionType.AccessSkill
-                    or AgentActionType.TranscribeFromAudioDevice
-                    or AgentActionType.TranscribeFromAudioStream
-                    or AgentActionType.TranscribeFromAudioFile
-                    or AgentActionType.SendBotMessage)
-        #pragma warning restore CS0612
-                    return true;
-
         // Module fallback: explicit ActionKey or enum-name derivation.
         var key = actionKey;
         if (string.IsNullOrWhiteSpace(key) && type != AgentActionType.ModuleAction)
@@ -1414,26 +1064,9 @@ IConfiguration configuration)
     private static Guid? ExtractFromDefaultResourceSet(
         DefaultResourceSetDB drs, AgentActionType actionType) => actionType switch
     {
-#pragma warning disable CS0612 // Module-dispatched actions kept for resource resolution
-        AgentActionType.AccessInternalDatabases => drs.InternalDatabaseResourceId,
-        AgentActionType.AccessExternalDatabase => drs.ExternalDatabaseResourceId,
-        AgentActionType.AccessWebsite => drs.WebsiteResourceId,
-        AgentActionType.QuerySearchEngine => drs.SearchEngineResourceId,
-#pragma warning restore CS0612
-        AgentActionType.AccessContainer => drs.ContainerResourceId,
         AgentActionType.ManageAgent => drs.AgentResourceId,
         AgentActionType.EditTask => drs.TaskResourceId,
         AgentActionType.AccessSkill => drs.SkillResourceId,
-#pragma warning disable CS0612 // Transcription actions dispatched to module but kept for resource resolution
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile => drs.InputAudioResourceId,
-#pragma warning restore CS0612
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop => drs.DisplayDeviceResourceId,
-        AgentActionType.SendBotMessage => drs.BotIntegrationResourceId,
-        AgentActionType.LaunchNativeApplication => drs.NativeApplicationResourceId,
         _ => null,
     };
 
@@ -1444,38 +1077,12 @@ IConfiguration configuration)
     private static Guid? ExtractDefaultResourceId(
         PermissionSetDB permissionSet, AgentActionType actionType) => actionType switch
     {
-#pragma warning disable CS0612 // Module-dispatched actions kept for resource resolution
-        AgentActionType.AccessInternalDatabases
-            => permissionSet.DefaultInternalDatabaseAccess?.InternalDatabaseId,
-        AgentActionType.AccessExternalDatabase
-            => permissionSet.DefaultExternalDatabaseAccess?.ExternalDatabaseId,
-        AgentActionType.AccessWebsite
-            => permissionSet.DefaultWebsiteAccess?.WebsiteId,
-        AgentActionType.QuerySearchEngine
-            => permissionSet.DefaultSearchEngineAccess?.SearchEngineId,
-#pragma warning restore CS0612
-        AgentActionType.AccessContainer
-            => permissionSet.DefaultContainerAccess?.ContainerId,
         AgentActionType.ManageAgent
             => permissionSet.DefaultAgentPermission?.AgentId,
         AgentActionType.EditTask
             => permissionSet.DefaultTaskPermission?.ScheduledTaskId,
         AgentActionType.AccessSkill
             => permissionSet.DefaultSkillPermission?.SkillId,
-#pragma warning disable CS0612 // Transcription actions dispatched to module but kept for resource resolution
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile
-            => permissionSet.DefaultInputAudioAccess?.InputAudioId,
-#pragma warning restore CS0612
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop
-            => permissionSet.DefaultDisplayDeviceAccess?.DisplayDeviceId,
-        AgentActionType.SendBotMessage
-            => permissionSet.DefaultBotIntegrationAccess?.BotIntegrationId,
-        AgentActionType.LaunchNativeApplication
-            => permissionSet.DefaultNativeApplicationAccess?.NativeApplicationId,
         _ => null,
     };
 
@@ -1582,21 +1189,8 @@ IConfiguration configuration)
     {
         // ── Global flags ──────────────────────────────────────────
         AgentActionType.CreateSubAgent    => ps.CanCreateSubAgents,
-        AgentActionType.RegisterDatabase => ps.CanRegisterDatabases,
 
         // ── Per-resource grants ───────────────────────────────────
-        AgentActionType.AccessInternalDatabases when resourceId.HasValue
-            => ps.InternalDatabaseAccesses.Any(a =>
-                a.InternalDatabaseId == resourceId || a.InternalDatabaseId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessExternalDatabase when resourceId.HasValue
-            => ps.ExternalDatabaseAccesses.Any(a =>
-                a.ExternalDatabaseId == resourceId || a.ExternalDatabaseId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessContainer when resourceId.HasValue
-            => ps.ContainerAccesses.Any(a =>
-                a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
-
         AgentActionType.ManageAgent when resourceId.HasValue
             => ps.AgentPermissions.Any(a =>
                 a.AgentId == resourceId || a.AgentId == WellKnownIds.AllResources),
@@ -1608,22 +1202,6 @@ IConfiguration configuration)
         AgentActionType.AccessSkill when resourceId.HasValue
             => ps.SkillPermissions.Any(a =>
                 a.SkillId == resourceId || a.SkillId == WellKnownIds.AllResources),
-
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
-            => ps.InputAudioAccesses.Any(a =>
-                a.InputAudioId == resourceId || a.InputAudioId == WellKnownIds.AllResources),
-
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop when resourceId.HasValue
-            => ps.DisplayDeviceAccesses.Any(a =>
-                a.DisplayDeviceId == resourceId || a.DisplayDeviceId == WellKnownIds.AllResources),
-
-        AgentActionType.SendBotMessage when resourceId.HasValue
-            => ps.BotIntegrationAccesses.Any(a =>
-                a.BotIntegrationId == resourceId || a.BotIntegrationId == WellKnownIds.AllResources),
 
         // Module-provided tool calls: resolve the tool's DelegateTo and
         // check the corresponding grant collection.
@@ -1682,12 +1260,12 @@ IConfiguration configuration)
             channel.Writer.TryComplete();
     }
 
-    #pragma warning disable CS0612 // Transcription actions dispatched to module but kept for job lifecycle
-        private static bool IsTranscriptionAction(AgentActionType type) =>
-            type is AgentActionType.TranscribeFromAudioDevice
-                or AgentActionType.TranscribeFromAudioStream
-                or AgentActionType.TranscribeFromAudioFile;
-    #pragma warning restore CS0612
+    /// <summary>
+    /// Returns <c>true</c> when the <paramref name="actionKey"/> corresponds
+    /// to a transcription tool (e.g. "transcribe_from_audio_device").
+    /// </summary>
+    private static bool IsTranscriptionActionKey(string? actionKey) =>
+        actionKey is not null && actionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase);
 
     private static AgentJobResponse ToResponse(AgentJobDB job) =>
         new(
@@ -1717,7 +1295,7 @@ IConfiguration configuration)
             TranscriptionMode: job.TranscriptionMode,
             WindowSeconds: job.WindowSeconds,
             StepSeconds: job.StepSeconds,
-            Segments: IsTranscriptionAction(job.ActionType)
+            Segments: IsTranscriptionActionKey(job.ActionKey)
                 ? job.TranscriptionSegments
                     .OrderBy(s => s.StartTime)
                     .Select(s => new TranscriptionSegmentResponse(

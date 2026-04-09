@@ -34,6 +34,9 @@
     <ProjectReference Include="..\DefaultModules\DatabaseAccess\SharpClaw.Modules.DatabaseAccess.csproj" />
     <ProjectReference Include="..\DefaultModules\Transcription\SharpClaw.Modules.Transcription.csproj" />
     <ProjectReference Include="..\DefaultModules\WebAccess\SharpClaw.Modules.WebAccess.csproj" />
+    <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj" />
+    <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
+    <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj" />
   </ItemGroup>
 
 </Project>

@@ -7,7 +7,7 @@ namespace SharpClaw.Contracts.DTOs.AgentActions;
 // ── Requests ──────────────────────────────────────────────────────
 
 public sealed record SubmitAgentJobRequest(
-AgentActionType ActionType,
+AgentActionType ActionType = AgentActionType.ModuleAction,
 string? ActionKey = null,
 Guid? ResourceId = null,
 Guid? AgentId = null,

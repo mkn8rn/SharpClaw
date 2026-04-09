@@ -16,6 +16,7 @@ public sealed class ModuleRegistry
 {
     private readonly Dictionary<string, ISharpClawModule> _modules = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string ModuleId, string ToolName)> _toolIndex = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _inlineToolIndex = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ModuleManifest> _manifestCache = new(StringComparer.Ordinal);
 
     // Contract name → (providing module ID, service type).
@@ -75,10 +76,11 @@ public sealed class ModuleRegistry
             // --- Phase 1: Validate everything before mutating state ---
 
             var toolDefs = module.GetToolDefinitions();
+            var inlineDefs = module.GetInlineToolDefinitions();
             var exports = module.ExportedContracts;
             var cliCommands = module.GetCliCommands() ?? [];
 
-            // Validate tool names and aliases.
+            // Validate job-pipeline tool names and aliases.
             foreach (var tool in toolDefs)
             {
                 if (_toolIndex.ContainsKey(tool.Name))
@@ -93,6 +95,26 @@ public sealed class ModuleRegistry
                         if (_toolIndex.ContainsKey(alias))
                             throw new InvalidOperationException(
                                 $"Tool alias '{alias}' from module '{module.Id}' " +
+                                "collides with an existing module tool.");
+                    }
+                }
+            }
+
+            // Validate inline tool names and aliases.
+            foreach (var tool in inlineDefs)
+            {
+                if (_toolIndex.ContainsKey(tool.Name))
+                    throw new InvalidOperationException(
+                        $"Inline tool '{tool.Name}' from module '{module.Id}' " +
+                        "collides with an existing module tool.");
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                    {
+                        if (_toolIndex.ContainsKey(alias))
+                            throw new InvalidOperationException(
+                                $"Inline tool alias '{alias}' from module '{module.Id}' " +
                                 "collides with an existing module tool.");
                     }
                 }
@@ -140,6 +162,21 @@ public sealed class ModuleRegistry
                 }
             }
 
+            foreach (var tool in inlineDefs)
+            {
+                _toolIndex[tool.Name] = (module.Id, tool.Name);
+                _inlineToolIndex.Add(tool.Name);
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                    {
+                        _toolIndex[alias] = (module.Id, tool.Name);
+                        _inlineToolIndex.Add(alias);
+                    }
+                }
+            }
+
             foreach (var export in exports)
                 _contractProviders[export.ContractName] = (module.Id, export.ServiceType);
 
@@ -178,6 +215,21 @@ public sealed class ModuleRegistry
                 {
                     foreach (var alias in aliases)
                         _toolIndex.Remove(alias);
+                }
+            }
+
+            foreach (var tool in module.GetInlineToolDefinitions())
+            {
+                _toolIndex.Remove(tool.Name);
+                _inlineToolIndex.Remove(tool.Name);
+
+                if (tool.Aliases is { Count: > 0 } aliases)
+                {
+                    foreach (var alias in aliases)
+                    {
+                        _toolIndex.Remove(alias);
+                        _inlineToolIndex.Remove(alias);
+                    }
                 }
             }
 
@@ -272,23 +324,44 @@ public sealed class ModuleRegistry
             try
             {
                 _toolDefsCache = _modules.Values
-                    .SelectMany(m => m.GetToolDefinitions().SelectMany(t =>
+                    .SelectMany(m =>
                     {
-                        // When aliases are present, emit one ChatToolDefinition per alias
-                        // instead of the prefixed canonical name.
-                        if (t.Aliases is { Count: > 0 } aliases)
+                        // Job-pipeline tools
+                        var jobTools = m.GetToolDefinitions().SelectMany(t =>
                         {
-                            return aliases.Select(alias => new ChatToolDefinition(
-                                Name: alias,
-                                Description: t.Description,
-                                ParametersSchema: t.ParametersSchema));
-                        }
+                            if (t.Aliases is { Count: > 0 } aliases)
+                            {
+                                return aliases.Select(alias => new ChatToolDefinition(
+                                    Name: alias,
+                                    Description: t.Description,
+                                    ParametersSchema: t.ParametersSchema));
+                            }
 
-                        return [new ChatToolDefinition(
-                            Name: t.Name,
-                            Description: t.Description,
-                            ParametersSchema: t.ParametersSchema)];
-                    }))
+                            return [new ChatToolDefinition(
+                                Name: t.Name,
+                                Description: t.Description,
+                                ParametersSchema: t.ParametersSchema)];
+                        });
+
+                        // Inline tools
+                        var inlineTools = m.GetInlineToolDefinitions().SelectMany(t =>
+                        {
+                            if (t.Aliases is { Count: > 0 } aliases)
+                            {
+                                return aliases.Select(alias => new ChatToolDefinition(
+                                    Name: alias,
+                                    Description: t.Description,
+                                    ParametersSchema: t.ParametersSchema));
+                            }
+
+                            return [new ChatToolDefinition(
+                                Name: t.Name,
+                                Description: t.Description,
+                                ParametersSchema: t.ParametersSchema)];
+                        });
+
+                        return jobTools.Concat(inlineTools);
+                    })
                     .ToList();
                 return _toolDefsCache;
             }
@@ -303,15 +376,27 @@ public sealed class ModuleRegistry
         }
     }
 
-    /// <summary>Get a permission descriptor for a specific module tool.</summary>
+    /// <summary>Check if a tool name is an inline tool.</summary>
+    public bool IsInlineTool(string toolName)
+    {
+        _lock.EnterReadLock();
+        try { return _inlineToolIndex.Contains(toolName); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>Get a permission descriptor for a specific module tool (job-pipeline or inline).</summary>
     public ModuleToolPermission? GetPermissionDescriptor(string moduleId, string toolName)
     {
         _lock.EnterReadLock();
         try
         {
             if (!_modules.TryGetValue(moduleId, out var module)) return null;
+
+            // Check job-pipeline tools first, then inline tools.
             return module.GetToolDefinitions()
-                .FirstOrDefault(t => t.Name == toolName)?.Permission;
+                       .FirstOrDefault(t => t.Name == toolName)?.Permission
+                ?? module.GetInlineToolDefinitions()
+                       .FirstOrDefault(t => t.Name == toolName)?.Permission;
         }
         finally
         {

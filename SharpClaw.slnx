@@ -10,9 +10,6 @@
       <Deploy />
     </Project>
   </Folder>
-  <Folder Name="/DefaultModules/WebAccess/">
-    <Project Path="DefaultModules/WebAccess/SharpClaw.Modules.WebAccess.csproj" />
-  </Folder>
   <Folder Name="/Gateway/">
     <Project Path="SharpClaw.Gateway/SharpClaw.Gateway.csproj" />
   </Folder>
@@ -22,29 +19,47 @@
     <Project Path="SharpClaw.Contracts/SharpClaw.Contracts.csproj" />
     <Project Path="SharpClaw.Utils/SharpClaw.Utils.csproj" />
   </Folder>
-  <Folder Name="/Solution Items/">
-    <File Path=".gitignore" />
-    <File Path="CONTRIBUTING" />
-    <File Path="Directory.Build.props" />
-    <File Path="Directory.Build.targets" />
-    <File Path="Directory.Packages.props" />
-    <File Path="docs/App-API-documentation.md" />
-    <File Path="docs/App-API-skill.md" />
-    <File Path="docs/Gateway-documentation.md" />
-    <File Path="docs/Provider-Parameters.md" />
-    <File Path="global.json" />
-    <File Path="LICENSE" />
-    <File Path="publish-release.ps1" />
-    <File Path="README.md" />
-  </Folder>
+  <Folder Name="/Solution Items/" />
   <Folder Name="/DefaultModules/">
+    <Project Path="DefaultModules/AgentOrchestration/SharpClaw.Modules.AgentOrchestration.csproj" />
+    <Project Path="DefaultModules/BotIntegration/SharpClaw.Modules.BotIntegration.csproj" />
     <Project Path="DefaultModules/ComputerUse/SharpClaw.Modules.ComputerUse.csproj" />
+    <Project Path="DefaultModules/ContextTools/SharpClaw.Modules.ContextTools.csproj" />
     <Project Path="DefaultModules/DangerousShell/SharpClaw.Modules.DangerousShell.csproj" />
+    <Project Path="DefaultModules/DatabaseAccess/SharpClaw.Modules.DatabaseAccess.csproj" />
     <Project Path="DefaultModules/Mk8Shell/SharpClaw.Modules.Mk8Shell.csproj" />
     <Project Path="DefaultModules/OfficeApps/SharpClaw.Modules.OfficeApps.csproj" />
     <Project Path="DefaultModules/Transcription/SharpClaw.Modules.Transcription.csproj" />
     <Project Path="DefaultModules/VS2026Editor/SharpClaw.Modules.VS2026Editor.csproj" />
     <Project Path="DefaultModules/VSCodeEditor/SharpClaw.Modules.VSCodeEditor.csproj" />
+    <Project Path="DefaultModules/WebAccess/SharpClaw.Modules.WebAccess.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/Build/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+  </Folder>
+  <Folder Name="/Solution Items/Docs/">
+    <File Path="docs/App-API-documentation.md" />
+    <File Path="docs/App-API-skill.md" />
+    <File Path="docs/Gateway-documentation.md" />
+    <File Path="docs/Provider-Parameters.md" />
+  </Folder>
+  <Folder Name="/Solution Items/Docs/Modules/" />
+  <Folder Name="/Solution Items/Git/">
+    <File Path=".gitignore" />
+  </Folder>
+  <Folder Name="/Solution Items/Notices/">
+    <File Path="CONTRIBUTING.md" />
+    <File Path="LICENSE.md" />
+    <File Path="README.md" />
+    <File Path="SECURITY.md" />
+  </Folder>
+  <Folder Name="/Solution Items/Scripts/">
+    <File Path="publish-msix.ps1" />
+    <File Path="publish-release.ps1" />
+    <File Path="publish.ps1" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="SharpClaw.Tests/SharpClaw.Tests.csproj">

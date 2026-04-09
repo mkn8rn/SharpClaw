@@ -46,14 +46,8 @@ public class AgentJobDB : BaseEntity
     public SafeShellType? SafeShellType { get; set; }
 
     /// <summary>
-    /// Payload submitted with shell jobs.  The format depends on the
-    /// action type:
-    /// <list type="bullet">
-    ///   <item><b>Safe shell</b> (<see cref="AgentActionType.ExecuteAsSafeShell"/>):
-    ///     serialised <see cref="Mk8.Shell.Engine.Mk8ShellScript"/> JSON.</item>
-    ///   <item><b>Dangerous shell</b> (<see cref="AgentActionType.UnsafeExecuteAsDangerousShell"/>):
-    ///     raw command text passed directly to the real shell interpreter.</item>
-    /// </list>
+    /// Payload submitted with the job.  The format depends on the
+    /// action type or module envelope.
     /// </summary>
     public string? ScriptJson { get; set; }
 

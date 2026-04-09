@@ -5,7 +5,7 @@ namespace SharpClaw.Application.Infrastructure.Models.Resources;
 
 /// <summary>
 /// A registered display / monitor that agents can capture screenshots
-/// from via the <see cref="Contracts.Enums.AgentActionType.CaptureDisplay"/> action.
+/// from via the Computer Use module.
 /// </summary>
 public class DisplayDeviceDB : BaseEntity
 {

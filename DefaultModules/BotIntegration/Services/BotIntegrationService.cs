@@ -4,9 +4,10 @@ using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Application.Services;
 using SharpClaw.Utils.Security;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.BotIntegration.Services;
 
 public sealed class BotIntegrationService(
     SharpClawDbContext db,

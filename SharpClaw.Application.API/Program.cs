@@ -23,6 +23,10 @@ using SharpClaw.Modules.Transcription;
 using SharpClaw.Modules.Transcription.Handlers;
 using SharpClaw.Modules.WebAccess;
 using SharpClaw.Modules.WebAccess.Handlers;
+using SharpClaw.Modules.BotIntegration;
+using SharpClaw.Modules.BotIntegration.Handlers;
+using SharpClaw.Modules.AgentOrchestration;
+using SharpClaw.Modules.ContextTools;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
@@ -135,9 +139,6 @@ try
     builder.Services.AddScoped<TaskService>();
     builder.Services.AddScoped<EnvFileService>();
     builder.Services.AddScoped<TaskOrchestrator>();
-    builder.Services.AddScoped<BotIntegrationService>();
-    builder.Services.AddScoped<BotMessageSenderService>();
-
     // Module system
     builder.Services.AddSingleton<ModuleRegistry>();
 
@@ -150,7 +151,10 @@ try
         new DangerousShellModule(),
         new DatabaseAccessModule(),
         new TranscriptionModule(),
-        new WebAccessModule());
+        new WebAccessModule(),
+        new BotIntegrationModule(),
+        new AgentOrchestrationModule(),
+        new ContextToolsModule());
 
     foreach (var bundledModule in moduleLoader.GetAllBundled())
         bundledModule.ConfigureServices(builder.Services);
@@ -344,6 +348,7 @@ try
     app.MapInputAudioEndpoints();
     app.MapWebsiteEndpoints();
     app.MapSearchEngineEndpoints();
+    app.MapBotEndpoints();
 
     app.Lifetime.ApplicationStopping.Register(apiKeyProvider.Cleanup);
 
