@@ -160,23 +160,23 @@ public sealed class RoleService(SharpClawDbContext db)
         ps.WriteClipboardClearance = request.WriteClipboardClearance;
 
         // Apply per-resource grants.
-        AddResourceGrants(ps, ResourceTypes.DsShell, request.DangerousShellAccesses);
-        AddResourceGrants(ps, ResourceTypes.Mk8Shell, request.SafeShellAccesses);
-        AddResourceGrants(ps, ResourceTypes.Container, request.ContainerAccesses);
-        AddResourceGrants(ps, ResourceTypes.WaWebsite, request.WebsiteAccesses);
-        AddResourceGrants(ps, ResourceTypes.WaSearch, request.SearchEngineAccesses);
-        AddResourceGrants(ps, ResourceTypes.DbInternal, request.InternalDatabaseAccesses);
-        AddResourceGrants(ps, ResourceTypes.DbExternal, request.ExternalDatabaseAccesses);
-        AddResourceGrants(ps, ResourceTypes.TrAudio, request.InputAudioAccesses);
-        AddResourceGrants(ps, ResourceTypes.CuDisplay, request.DisplayDeviceAccesses);
-        AddResourceGrants(ps, ResourceTypes.EditorSession, request.EditorSessionAccesses);
-        AddResourceGrants(ps, ResourceTypes.AoAgent, request.AgentAccesses);
-        AddResourceGrants(ps, ResourceTypes.AoTask, request.TaskAccesses);
-        AddResourceGrants(ps, ResourceTypes.AoSkill, request.SkillAccesses);
-        AddResourceGrants(ps, ResourceTypes.AoAgentHeader, request.AgentHeaderAccesses);
-        AddResourceGrants(ps, ResourceTypes.AoChannelHeader, request.ChannelHeaderAccesses);
-        AddResourceGrants(ps, ResourceTypes.OaDocument, request.DocumentSessionAccesses);
-        AddResourceGrants(ps, ResourceTypes.CuNativeApp, request.NativeApplicationAccesses);
+        AddResourceGrants(ps, "DsShell", request.DangerousShellAccesses);
+        AddResourceGrants(ps, "Mk8Shell", request.SafeShellAccesses);
+        AddResourceGrants(ps, "Container", request.ContainerAccesses);
+        AddResourceGrants(ps, "WaWebsite", request.WebsiteAccesses);
+        AddResourceGrants(ps, "WaSearch", request.SearchEngineAccesses);
+        AddResourceGrants(ps, "DbInternal", request.InternalDatabaseAccesses);
+        AddResourceGrants(ps, "DbExternal", request.ExternalDatabaseAccesses);
+        AddResourceGrants(ps, "TrAudio", request.InputAudioAccesses);
+        AddResourceGrants(ps, "CuDisplay", request.DisplayDeviceAccesses);
+        AddResourceGrants(ps, "EditorSession", request.EditorSessionAccesses);
+        AddResourceGrants(ps, "AoAgent", request.AgentAccesses);
+        AddResourceGrants(ps, "AoTask", request.TaskAccesses);
+        AddResourceGrants(ps, "AoSkill", request.SkillAccesses);
+        AddResourceGrants(ps, "AoAgentHeader", request.AgentHeaderAccesses);
+        AddResourceGrants(ps, "AoChannelHeader", request.ChannelHeaderAccesses);
+        AddResourceGrants(ps, "OaDocument", request.DocumentSessionAccesses);
+        AddResourceGrants(ps, "CuNativeApp", request.NativeApplicationAccesses);
 
         await db.SaveChangesAsync(ct);
 
@@ -295,23 +295,23 @@ public sealed class RoleService(SharpClawDbContext db)
     private static void ValidateResourceGrants(
         SetRolePermissionsRequest request, PermissionSetDB? callerPs)
     {
-        ValidateGrants("DangerousShellAccesses", ResourceTypes.DsShell, request.DangerousShellAccesses, callerPs);
-        ValidateGrants("SafeShellAccesses", ResourceTypes.Mk8Shell, request.SafeShellAccesses, callerPs);
-        ValidateGrants("ContainerAccesses", ResourceTypes.Container, request.ContainerAccesses, callerPs);
-        ValidateGrants("WebsiteAccesses", ResourceTypes.WaWebsite, request.WebsiteAccesses, callerPs);
-        ValidateGrants("SearchEngineAccesses", ResourceTypes.WaSearch, request.SearchEngineAccesses, callerPs);
-        ValidateGrants("InternalDatabaseAccesses", ResourceTypes.DbInternal, request.InternalDatabaseAccesses, callerPs);
-        ValidateGrants("ExternalDatabaseAccesses", ResourceTypes.DbExternal, request.ExternalDatabaseAccesses, callerPs);
-        ValidateGrants("InputAudioAccesses", ResourceTypes.TrAudio, request.InputAudioAccesses, callerPs);
-        ValidateGrants("DisplayDeviceAccesses", ResourceTypes.CuDisplay, request.DisplayDeviceAccesses, callerPs);
-        ValidateGrants("EditorSessionAccesses", ResourceTypes.EditorSession, request.EditorSessionAccesses, callerPs);
-        ValidateGrants("AgentAccesses", ResourceTypes.AoAgent, request.AgentAccesses, callerPs);
-        ValidateGrants("TaskAccesses", ResourceTypes.AoTask, request.TaskAccesses, callerPs);
-        ValidateGrants("SkillAccesses", ResourceTypes.AoSkill, request.SkillAccesses, callerPs);
-        ValidateGrants("AgentHeaderAccesses", ResourceTypes.AoAgentHeader, request.AgentHeaderAccesses, callerPs);
-        ValidateGrants("ChannelHeaderAccesses", ResourceTypes.AoChannelHeader, request.ChannelHeaderAccesses, callerPs);
-        ValidateGrants("DocumentSessionAccesses", ResourceTypes.OaDocument, request.DocumentSessionAccesses, callerPs);
-        ValidateGrants("NativeApplicationAccesses", ResourceTypes.CuNativeApp, request.NativeApplicationAccesses, callerPs);
+        ValidateGrants("DangerousShellAccesses", "DsShell", request.DangerousShellAccesses, callerPs);
+        ValidateGrants("SafeShellAccesses", "Mk8Shell", request.SafeShellAccesses, callerPs);
+        ValidateGrants("ContainerAccesses", "Container", request.ContainerAccesses, callerPs);
+        ValidateGrants("WebsiteAccesses", "WaWebsite", request.WebsiteAccesses, callerPs);
+        ValidateGrants("SearchEngineAccesses", "WaSearch", request.SearchEngineAccesses, callerPs);
+        ValidateGrants("InternalDatabaseAccesses", "DbInternal", request.InternalDatabaseAccesses, callerPs);
+        ValidateGrants("ExternalDatabaseAccesses", "DbExternal", request.ExternalDatabaseAccesses, callerPs);
+        ValidateGrants("InputAudioAccesses", "TrAudio", request.InputAudioAccesses, callerPs);
+        ValidateGrants("DisplayDeviceAccesses", "CuDisplay", request.DisplayDeviceAccesses, callerPs);
+        ValidateGrants("EditorSessionAccesses", "EditorSession", request.EditorSessionAccesses, callerPs);
+        ValidateGrants("AgentAccesses", "AoAgent", request.AgentAccesses, callerPs);
+        ValidateGrants("TaskAccesses", "AoTask", request.TaskAccesses, callerPs);
+        ValidateGrants("SkillAccesses", "AoSkill", request.SkillAccesses, callerPs);
+        ValidateGrants("AgentHeaderAccesses", "AoAgentHeader", request.AgentHeaderAccesses, callerPs);
+        ValidateGrants("ChannelHeaderAccesses", "AoChannelHeader", request.ChannelHeaderAccesses, callerPs);
+        ValidateGrants("DocumentSessionAccesses", "OaDocument", request.DocumentSessionAccesses, callerPs);
+        ValidateGrants("NativeApplicationAccesses", "CuNativeApp", request.NativeApplicationAccesses, callerPs);
     }
 
     /// <summary>
@@ -436,23 +436,23 @@ public sealed class RoleService(SharpClawDbContext db)
             ReadClipboardClearance: ps?.ReadClipboardClearance ?? PermissionClearance.Unset,
             CanWriteClipboard: ps?.CanWriteClipboard ?? false,
             WriteClipboardClearance: ps?.WriteClipboardClearance ?? PermissionClearance.Unset,
-            DangerousShellAccesses: MapResourceGrants(ps, ResourceTypes.DsShell),
-            SafeShellAccesses: MapResourceGrants(ps, ResourceTypes.Mk8Shell),
-            ContainerAccesses: MapResourceGrants(ps, ResourceTypes.Container),
-            WebsiteAccesses: MapResourceGrants(ps, ResourceTypes.WaWebsite),
-            SearchEngineAccesses: MapResourceGrants(ps, ResourceTypes.WaSearch),
-            InternalDatabaseAccesses: MapResourceGrants(ps, ResourceTypes.DbInternal),
-            ExternalDatabaseAccesses: MapResourceGrants(ps, ResourceTypes.DbExternal),
-            InputAudioAccesses: MapResourceGrants(ps, ResourceTypes.TrAudio),
-            DisplayDeviceAccesses: MapResourceGrants(ps, ResourceTypes.CuDisplay),
-            EditorSessionAccesses: MapResourceGrants(ps, ResourceTypes.EditorSession),
-            AgentAccesses: MapResourceGrants(ps, ResourceTypes.AoAgent),
-            TaskAccesses: MapResourceGrants(ps, ResourceTypes.AoTask),
-            SkillAccesses: MapResourceGrants(ps, ResourceTypes.AoSkill),
-            AgentHeaderAccesses: MapResourceGrants(ps, ResourceTypes.AoAgentHeader),
-            ChannelHeaderAccesses: MapResourceGrants(ps, ResourceTypes.AoChannelHeader),
-            DocumentSessionAccesses: MapResourceGrants(ps, ResourceTypes.OaDocument),
-            NativeApplicationAccesses: MapResourceGrants(ps, ResourceTypes.CuNativeApp));
+            DangerousShellAccesses: MapResourceGrants(ps, "DsShell"),
+            SafeShellAccesses: MapResourceGrants(ps, "Mk8Shell"),
+            ContainerAccesses: MapResourceGrants(ps, "Container"),
+            WebsiteAccesses: MapResourceGrants(ps, "WaWebsite"),
+            SearchEngineAccesses: MapResourceGrants(ps, "WaSearch"),
+            InternalDatabaseAccesses: MapResourceGrants(ps, "DbInternal"),
+            ExternalDatabaseAccesses: MapResourceGrants(ps, "DbExternal"),
+            InputAudioAccesses: MapResourceGrants(ps, "TrAudio"),
+            DisplayDeviceAccesses: MapResourceGrants(ps, "CuDisplay"),
+            EditorSessionAccesses: MapResourceGrants(ps, "EditorSession"),
+            AgentAccesses: MapResourceGrants(ps, "AoAgent"),
+            TaskAccesses: MapResourceGrants(ps, "AoTask"),
+            SkillAccesses: MapResourceGrants(ps, "AoSkill"),
+            AgentHeaderAccesses: MapResourceGrants(ps, "AoAgentHeader"),
+            ChannelHeaderAccesses: MapResourceGrants(ps, "AoChannelHeader"),
+            DocumentSessionAccesses: MapResourceGrants(ps, "OaDocument"),
+            NativeApplicationAccesses: MapResourceGrants(ps, "CuNativeApp"));
 
     private static IReadOnlyList<ResourceGrant> MapResourceGrants(
         PermissionSetDB? ps, string resourceType)

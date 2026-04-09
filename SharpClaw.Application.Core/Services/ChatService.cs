@@ -36,6 +36,7 @@ public sealed class ChatService(
     ModuleRegistry moduleRegistry,
     ModuleMetricsCollector metricsCollector,
     IServiceScopeFactory serviceScopeFactory,
+    IServiceProvider serviceProvider,
     IConfiguration configuration)
 {
     private const int MaxHistoryMessages = 50;
@@ -51,30 +52,10 @@ public sealed class ChatService(
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
 
-    // ── Resource type → (label, wildcard ID loader) ──────────────
-    private static readonly (string ResourceType, string Label,
-        Func<SharpClawDbContext, CancellationToken, Task<List<Guid>>> LoadAllIds)[] ResourceGrantExpanders =
-    [
-        (ResourceTypes.DsShell,         "DangerousShell",        (d, ct) => d.SystemUsers.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.Mk8Shell,        "SafeShell",             (d, ct) => d.Containers.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.Container,       "ContainerAccess",       (d, ct) => d.Containers.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.WaWebsite,       "WebsiteAccess",         (d, ct) => d.Websites.Select(w => w.Id).ToListAsync(ct)),
-        (ResourceTypes.WaSearch,        "SearchEngineAccess",    (d, ct) => d.SearchEngines.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.DbInternal,      "InternalDatabase",      (d, ct) => d.InternalDatabases.Select(l => l.Id).ToListAsync(ct)),
-        (ResourceTypes.DbExternal,      "ExternalDatabase",      (d, ct) => d.ExternalDatabases.Select(e => e.Id).ToListAsync(ct)),
-        (ResourceTypes.TrAudio,         "InputAudio",            (d, ct) => d.InputAudios.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.CuDisplay,       "DisplayDevice",         (d, ct) => d.DisplayDevices.Select(d2 => d2.Id).ToListAsync(ct)),
-        (ResourceTypes.EditorSession,   "EditorSession",         (d, ct) => d.EditorSessions.Select(e => e.Id).ToListAsync(ct)),
-        (ResourceTypes.AoAgent,         "ManageAgent",           (d, ct) => d.Agents.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.AoTask,          "EditTask",              (d, ct) => d.ScheduledTasks.Select(t => t.Id).ToListAsync(ct)),
-        (ResourceTypes.AoSkill,         "AccessSkill",           (d, ct) => d.Skills.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.AoAgentHeader,   "EditAgentHeader",       (d, ct) => d.Agents.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.AoChannelHeader, "EditChannelHeader",     (d, ct) => d.Channels.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.BiChannel,       "BotIntegration",        (d, ct) => d.BotIntegrations.Select(b => b.Id).ToListAsync(ct)),
-        (ResourceTypes.OaDocument,      "DocumentSession",       (d, ct) => d.DocumentSessions.Select(d2 => d2.Id).ToListAsync(ct)),
-        (ResourceTypes.CuNativeApp,     "NativeApplication",     (d, ct) => d.NativeApplications.Select(n => n.Id).ToListAsync(ct)),
-    ];
-
+    /// <summary>
+    /// Sends a chat message through the specified channel, optionally
+    /// within a thread, executing tool calls as needed.
+    /// </summary>
     public async Task<ChatResponse> SendMessageAsync(
         Guid channelId, ChatRequest request,
         Guid? threadId = null,
@@ -699,14 +680,15 @@ public sealed class ChatService(
         if (ps.CanReadClipboard) grants.Add("ReadClipboard");
         if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
 
-        foreach (var (rt, label, loadAllIds) in ResourceGrantExpanders)
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {
             var grantedIds = ps.ResourceAccesses
-                .Where(a => a.ResourceType == rt)
+                .Where(a => a.ResourceType == desc.ResourceType)
                 .Select(a => a.ResourceId)
                 .ToList();
 
-            await AppendResourceGrantAsync(grants, label, grantedIds, () => loadAllIds(db, ct));
+            await AppendResourceGrantAsync(grants, desc.GrantLabel, grantedIds,
+                () => desc.LoadAllIds(serviceProvider, ct));
         }
 
         return grants;

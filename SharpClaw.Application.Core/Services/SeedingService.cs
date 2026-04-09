@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Resources;
@@ -21,7 +22,8 @@ namespace SharpClaw.Application.Services;
 public sealed class SeedingService(
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
-    ILogger<SeedingService> logger) : IHostedLifecycleService
+    ILogger<SeedingService> logger,
+    ModuleRegistry moduleRegistry) : IHostedLifecycleService
 {
     private const string AdminRoleName = "Admin";
 
@@ -84,7 +86,7 @@ public sealed class SeedingService(
         return role;
     }
 
-    private static PermissionSetDB CreateAdminPermissions() => new()
+    private PermissionSetDB CreateAdminPermissions() => new()
     {
         DefaultClearance = PermissionClearance.Independent,
         CanCreateSubAgents = true,
@@ -101,27 +103,12 @@ public sealed class SeedingService(
         // Wildcard grants — access to ALL resources of each type.
         // WellKnownIds.AllResources is recognised as a universal match
         // by AgentActionService and is immutable at runtime.
-        ResourceAccesses =
-        [
-            new() { ResourceType = ResourceTypes.DsShell,         ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.Mk8Shell,        ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.DbInternal,      ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.DbExternal,      ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.WaWebsite,       ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.WaSearch,        ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.Container,       ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.TrAudio,         ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.CuDisplay,       ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.EditorSession,   ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.AoAgent,         ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.AoTask,          ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.AoSkill,         ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.AoAgentHeader,   ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.AoChannelHeader, ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.BiChannel,       ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.OaDocument,      ResourceId = WellKnownIds.AllResources },
-            new() { ResourceType = ResourceTypes.CuNativeApp,     ResourceId = WellKnownIds.AllResources },
-        ],
+        ResourceAccesses = [.. moduleRegistry.GetAllRegisteredResourceTypes()
+            .Select(rt => new ResourceAccessDB
+            {
+                ResourceType = rt,
+                ResourceId = WellKnownIds.AllResources,
+            })],
     };
 
     /// <summary>
@@ -160,18 +147,7 @@ public sealed class SeedingService(
         changed |= ReconcileFlag(v => ps.CanEditChannelHeader = v, ps.CanEditChannelHeader);
 
         // ── Wildcard resource grants ──────────────────────────────
-        string[] allResourceTypes =
-        [
-            ResourceTypes.DsShell,      ResourceTypes.Mk8Shell,
-            ResourceTypes.DbInternal,   ResourceTypes.DbExternal,
-            ResourceTypes.WaWebsite,    ResourceTypes.WaSearch,
-            ResourceTypes.Container,    ResourceTypes.TrAudio,
-            ResourceTypes.CuDisplay,    ResourceTypes.EditorSession,
-            ResourceTypes.AoAgent,      ResourceTypes.AoTask,
-            ResourceTypes.AoSkill,      ResourceTypes.AoAgentHeader,
-            ResourceTypes.AoChannelHeader, ResourceTypes.BiChannel,
-            ResourceTypes.OaDocument,   ResourceTypes.CuNativeApp,
-        ];
+        var allResourceTypes = moduleRegistry.GetAllRegisteredResourceTypes();
 
         foreach (var rt in allResourceTypes)
         {

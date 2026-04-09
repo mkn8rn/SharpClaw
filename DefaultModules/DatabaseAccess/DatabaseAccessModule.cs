@@ -42,6 +42,24 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
 
     // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("DbInternal", "InternalDatabase", "AccessInternalDatabaseAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.InternalDatabases.Select(d => d.Id).ToListAsync(ct);
+        }),
+        new("DbExternal", "ExternalDatabase", "AccessExternalDatabaseAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.ExternalDatabases.Select(d => d.Id).ToListAsync(ct);
+        }),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // CLI Commands
     // ═══════════════════════════════════════════════════════════════
 

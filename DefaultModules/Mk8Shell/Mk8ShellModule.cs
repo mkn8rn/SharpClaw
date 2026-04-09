@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 using Mk8.Shell.Engine;
@@ -14,6 +15,7 @@ using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Application.Services;
+using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.Mk8Shell;
 
@@ -32,6 +34,24 @@ public sealed class Mk8ShellModule : ISharpClawModule
     }
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("Mk8Shell", "SafeShell", "ExecuteAsSafeShellAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Containers.Select(c => c.Id).ToListAsync(ct);
+        }),
+        new("Container", "ContainerAccess", "AccessContainerAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Containers.Select(c => c.Id).ToListAsync(ct);
+        }),
+    ];
 
     public IReadOnlyList<ModuleCliCommand>? GetCliCommands() => null;
 

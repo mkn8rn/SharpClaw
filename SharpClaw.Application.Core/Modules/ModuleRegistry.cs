@@ -27,6 +27,15 @@ public sealed class ModuleRegistry
     private readonly Dictionary<string, (string ModuleId, ModuleCliCommand Command)> _cliTopLevel = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string ModuleId, ModuleCliCommand Command)> _cliResourceTypes = new(StringComparer.OrdinalIgnoreCase);
 
+    // Resource type string → descriptor provided by a module.
+    // Only one module may own a given resource type at a time.
+    private readonly Dictionary<string, ModuleResourceTypeDescriptor> _resourceTypeDescriptors = new(StringComparer.Ordinal);
+
+    // DelegateMethodName → resource type string. Reverse index for fast
+    // permission evaluation: AgentActionService resolves DelegateTo strings
+    // to resource types through this registry instead of a static class.
+    private readonly Dictionary<string, string> _delegateToResourceType = new(StringComparer.Ordinal);
+
     // External (hot-loaded) module hosts keyed by module ID.
     private readonly Dictionary<string, ExternalModuleHost> _externalHosts = new(StringComparer.Ordinal);
 
@@ -147,6 +156,21 @@ public sealed class ModuleRegistry
                 }
             }
 
+            // Validate resource type descriptors.
+            var resourceDescriptors = module.GetResourceTypeDescriptors();
+            foreach (var desc in resourceDescriptors)
+            {
+                if (_resourceTypeDescriptors.ContainsKey(desc.ResourceType))
+                    throw new InvalidOperationException(
+                        $"Resource type '{desc.ResourceType}' from module '{module.Id}' " +
+                        "is already owned by another module.");
+
+                if (_delegateToResourceType.ContainsKey(desc.DelegateMethodName))
+                    throw new InvalidOperationException(
+                        $"Delegate method '{desc.DelegateMethodName}' from module '{module.Id}' " +
+                        "is already mapped by another module.");
+            }
+
             // --- Phase 2: All checks passed — commit all mutations ---
 
             _modules[module.Id] = module;
@@ -186,6 +210,12 @@ public sealed class ModuleRegistry
                 target[cmd.Name] = (module.Id, cmd);
                 foreach (var alias in cmd.Aliases)
                     target[alias] = (module.Id, cmd);
+            }
+
+            foreach (var desc in resourceDescriptors)
+            {
+                _resourceTypeDescriptors[desc.ResourceType] = desc;
+                _delegateToResourceType[desc.DelegateMethodName] = desc.ResourceType;
             }
 
             if (externalHost is not null)
@@ -244,6 +274,13 @@ public sealed class ModuleRegistry
                 target.Remove(cmd.Name);
                 foreach (var alias in cmd.Aliases)
                     target.Remove(alias);
+            }
+
+            // Remove any resource type descriptors this module provided.
+            foreach (var desc in module.GetResourceTypeDescriptors())
+            {
+                _resourceTypeDescriptors.Remove(desc.ResourceType);
+                _delegateToResourceType.Remove(desc.DelegateMethodName);
             }
 
             _manifestCache.Remove(moduleId);
@@ -479,6 +516,48 @@ public sealed class ModuleRegistry
         {
             _lock.ExitReadLock();
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource type descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Get all registered resource type descriptors from all modules.</summary>
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetAllResourceTypeDescriptors()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _resourceTypeDescriptors.Values]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>Get a resource type descriptor by its resource type string, or <c>null</c>.</summary>
+    public ModuleResourceTypeDescriptor? GetResourceTypeDescriptor(string resourceType)
+    {
+        _lock.EnterReadLock();
+        try { return _resourceTypeDescriptors.GetValueOrDefault(resourceType); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Resolve a <c>DelegateTo</c> method name to its resource type string.
+    /// Returns <c>null</c> when the delegate name is not registered by any
+    /// module (i.e. it is a global-flag delegate with no per-resource type).
+    /// </summary>
+    public string? ResolveResourceType(string delegateMethodName)
+    {
+        _lock.EnterReadLock();
+        try { return _delegateToResourceType.GetValueOrDefault(delegateMethodName); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Get all registered resource type strings as a dynamic, module-driven set.
+    /// </summary>
+    public IReadOnlyList<string> GetAllRegisteredResourceTypes()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _resourceTypeDescriptors.Keys]; }
+        finally { _lock.ExitReadLock(); }
     }
 
     /// <summary>

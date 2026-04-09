@@ -1,11 +1,13 @@
 using System.Text.Json;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.BotIntegration.Services;
 
 namespace SharpClaw.Modules.BotIntegration;
@@ -36,6 +38,19 @@ public sealed class BotIntegrationModule : ISharpClawModule
     // ═══════════════════════════════════════════════════════════════
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("BiChannel", "BotIntegration", "AccessBotIntegrationAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.BotIntegrations.Select(b => b.Id).ToListAsync(ct);
+        }),
+    ];
 
     // ═══════════════════════════════════════════════════════════════
     // Tool Definitions

@@ -116,6 +116,13 @@ public interface ISharpClawModule
     IReadOnlyList<ModuleHeaderTag>? GetHeaderTags() => null;
 
     /// <summary>
+    /// Optional. Return resource type descriptors this module owns.
+    /// Used by the host to build grant labels for chat headers and to
+    /// resolve wildcard grants (AllResources) into concrete resource IDs.
+    /// </summary>
+    IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() => [];
+
+    /// <summary>
     /// Optional. Return CLI commands this module provides.
     /// Commands are registered in the CLI REPL at their declared
     /// <see cref="ModuleCliScope"/> (top-level verb or resource type).

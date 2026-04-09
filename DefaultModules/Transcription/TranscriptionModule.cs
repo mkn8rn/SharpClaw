@@ -70,6 +70,19 @@ public sealed class TranscriptionModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("TrAudio", "InputAudio", "AccessInputAudioAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.InputAudios.Select(a => a.Id).ToListAsync(ct);
+        }),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // Tool Definitions
     // ═══════════════════════════════════════════════════════════════
 

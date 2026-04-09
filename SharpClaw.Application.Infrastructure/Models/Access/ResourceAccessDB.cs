@@ -19,7 +19,8 @@ public class ResourceAccessDB : BaseEntity
 {
     /// <summary>
     /// Discriminator that identifies the resource category.
-    /// Must be one of the constants in <see cref="ResourceTypes"/>.
+    /// Must match a resource type registered by a module via
+    /// <see cref="Contracts.Modules.ModuleResourceTypeDescriptor.ResourceType"/>.
     /// </summary>
     public required string ResourceType { get; set; }
 

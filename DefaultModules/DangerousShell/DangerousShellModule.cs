@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.Text.Json;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.DangerousShell;
 
@@ -32,6 +34,19 @@ public sealed class DangerousShellModule : ISharpClawModule
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
     public IReadOnlyList<ModuleContractRequirement> RequiredContracts => [];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("DsShell", "DangerousShell", "UnsafeExecuteAsDangerousShellAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.SystemUsers.Select(s => s.Id).ToListAsync(ct);
+        }),
+    ];
 
     // ═══════════════════════════════════════════════════════════════
     // CLI Commands

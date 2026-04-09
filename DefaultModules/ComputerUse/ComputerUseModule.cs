@@ -3,10 +3,13 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using Microsoft.EntityFrameworkCore;
+
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Contracts.Modules.Contracts;
 
 namespace SharpClaw.Modules.ComputerUse;
@@ -50,6 +53,24 @@ public sealed class ComputerUseModule : ISharpClawModule
             "Window enumeration, focus, capture, close"),
         new("desktop_input", typeof(IDesktopInput),
             "Mouse click, keyboard input, hotkey simulation"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("CuDisplay", "DisplayDevice", "AccessDisplayDeviceAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.DisplayDevices.Select(d => d.Id).ToListAsync(ct);
+        }),
+        new("CuNativeApp", "NativeApplication", "LaunchNativeApplicationAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.NativeApplications.Select(n => n.Id).ToListAsync(ct);
+        }),
     ];
 
     // ═══════════════════════════════════════════════════════════════

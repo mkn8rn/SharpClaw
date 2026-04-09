@@ -1039,12 +1039,13 @@ IConfiguration configuration)
     /// Returns the resource ID from the matching default access entry on
     /// a permission set, or <c>null</c> if no default is configured.
     /// </summary>
-    private static Guid? ExtractDefaultResourceId(
+    private Guid? ExtractDefaultResourceId(
         PermissionSetDB permissionSet, string? delegateTo)
     {
-        if (delegateTo is null || !ResourceTypes.ByDelegateName.TryGetValue(delegateTo, out var resourceType))
+        if (delegateTo is null)
             return null;
 
+        var resourceType = moduleRegistry.ResolveResourceType(delegateTo);
         if (resourceType is null)
             return null;
 
@@ -1169,7 +1170,7 @@ IConfiguration configuration)
         if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.DelegateTo))
             return false;
 
-        return AgentActionService.HasGrantByDelegateName(ps, descriptor.DelegateTo, resourceId);
+        return actions.HasGrantByDelegateName(ps, descriptor.DelegateTo, resourceId);
     }
 
     // ═══════════════════════════════════════════════════════════════

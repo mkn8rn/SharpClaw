@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
@@ -12,7 +13,7 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class AgentService(SharpClawDbContext db, SessionService session)
+public sealed class AgentService(SharpClawDbContext db, SessionService session, ModuleRegistry moduleRegistry)
 {
     public async Task<AgentResponse> CreateAsync(CreateAgentRequest request, CancellationToken ct = default)
     {
@@ -194,7 +195,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
     /// Verifies that <paramref name="callerPs"/> covers every permission in
     /// <paramref name="targetPs"/> at the same or higher clearance level.
     /// </summary>
-    private static void ValidateCallerCoversTargetRole(
+    private void ValidateCallerCoversTargetRole(
         PermissionSetDB? callerPs, PermissionSetDB? targetPs, string roleName)
     {
         // Target role has no permissions → anyone can assign it.
@@ -228,7 +229,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
             Deny(roleName, "CanTypeOnDesktop");
 
         // Per-resource grant collections — unified validation via ResourceAccesses.
-        foreach (var resourceType in ResourceTypes.AllTypes)
+        foreach (var resourceType in moduleRegistry.GetAllRegisteredResourceTypes())
         {
             ValidateResourceCoverageGeneric(roleName, resourceType,
                 targetPs.ResourceAccesses, callerPs.ResourceAccesses,

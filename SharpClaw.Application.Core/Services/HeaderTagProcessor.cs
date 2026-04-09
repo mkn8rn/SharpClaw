@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts;
@@ -34,7 +35,10 @@ namespace SharpClaw.Application.Services;
 /// blocked from template expansion (replaced with <c>[redacted]</c>).
 /// </para>
 /// </summary>
-public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
+public sealed partial class HeaderTagProcessor(
+    SharpClawDbContext db,
+    ModuleRegistry moduleRegistry,
+    IServiceProvider serviceProvider)
 {
     // ── Tag regex ────────────────────────────────────────────────
     // Matches {{TagName}} or {{TagName:{template with {Field} placeholders}}}
@@ -49,53 +53,6 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
 
     // ── Sensitive-field cache (thread-safe, lives for app lifetime) ─
     private static readonly ConcurrentDictionary<Type, HashSet<string>> SensitiveFieldCache = new();
-
-    // ── Resource type → human label (used by CollectGrantNames) ───
-    private static readonly (string ResourceType, string Label)[] ResourceGrantLabels =
-    [
-        (ResourceTypes.DsShell,         "DangerousShell"),
-        (ResourceTypes.Mk8Shell,        "SafeShell"),
-        (ResourceTypes.Container,       "ContainerAccess"),
-        (ResourceTypes.WaWebsite,       "WebsiteAccess"),
-        (ResourceTypes.WaSearch,        "SearchEngineAccess"),
-        (ResourceTypes.DbInternal,      "InternalDatabase"),
-        (ResourceTypes.DbExternal,      "ExternalDatabase"),
-        (ResourceTypes.TrAudio,         "InputAudio"),
-        (ResourceTypes.CuDisplay,       "DisplayDevice"),
-        (ResourceTypes.EditorSession,   "EditorSession"),
-        (ResourceTypes.AoAgent,         "ManageAgent"),
-        (ResourceTypes.AoTask,          "EditTask"),
-        (ResourceTypes.AoSkill,         "AccessSkill"),
-        (ResourceTypes.AoAgentHeader,   "EditAgentHeader[res]"),
-        (ResourceTypes.AoChannelHeader, "EditChannelHeader[res]"),
-        (ResourceTypes.BiChannel,       "BotIntegration"),
-        (ResourceTypes.OaDocument,      "DocumentSession"),
-        (ResourceTypes.CuNativeApp,     "NativeApplication"),
-    ];
-
-    // ── Resource type → (label, wildcard ID loader) ──────────────
-    private static readonly (string ResourceType, string Label,
-        Func<SharpClawDbContext, CancellationToken, Task<List<Guid>>> LoadAllIds)[] ResourceGrantExpanders =
-    [
-        (ResourceTypes.DsShell,         "DangerousShell",        (d, ct) => d.SystemUsers.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.Mk8Shell,        "SafeShell",             (d, ct) => d.Containers.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.Container,       "ContainerAccess",       (d, ct) => d.Containers.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.WaWebsite,       "WebsiteAccess",         (d, ct) => d.Websites.Select(w => w.Id).ToListAsync(ct)),
-        (ResourceTypes.WaSearch,        "SearchEngineAccess",    (d, ct) => d.SearchEngines.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.DbInternal,      "InternalDatabase",      (d, ct) => d.InternalDatabases.Select(l => l.Id).ToListAsync(ct)),
-        (ResourceTypes.DbExternal,      "ExternalDatabase",      (d, ct) => d.ExternalDatabases.Select(e => e.Id).ToListAsync(ct)),
-        (ResourceTypes.TrAudio,         "InputAudio",            (d, ct) => d.InputAudios.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.CuDisplay,       "DisplayDevice",         (d, ct) => d.DisplayDevices.Select(d2 => d2.Id).ToListAsync(ct)),
-        (ResourceTypes.EditorSession,   "EditorSession",         (d, ct) => d.EditorSessions.Select(e => e.Id).ToListAsync(ct)),
-        (ResourceTypes.AoAgent,         "ManageAgent",           (d, ct) => d.Agents.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.AoTask,          "EditTask",              (d, ct) => d.ScheduledTasks.Select(t => t.Id).ToListAsync(ct)),
-        (ResourceTypes.AoSkill,         "AccessSkill",           (d, ct) => d.Skills.Select(s => s.Id).ToListAsync(ct)),
-        (ResourceTypes.AoAgentHeader,   "EditAgentHeader",       (d, ct) => d.Agents.Select(a => a.Id).ToListAsync(ct)),
-        (ResourceTypes.AoChannelHeader, "EditChannelHeader",     (d, ct) => d.Channels.Select(c => c.Id).ToListAsync(ct)),
-        (ResourceTypes.BiChannel,       "BotIntegration",        (d, ct) => d.BotIntegrations.Select(b => b.Id).ToListAsync(ct)),
-        (ResourceTypes.OaDocument,      "DocumentSession",       (d, ct) => d.DocumentSessions.Select(d2 => d2.Id).ToListAsync(ct)),
-        (ResourceTypes.CuNativeApp,     "NativeApplication",     (d, ct) => d.NativeApplications.Select(n => n.Id).ToListAsync(ct)),
-    ];
 
     /// <summary>
     /// Expands all <c>{{tag}}</c> placeholders in <paramref name="template"/>
@@ -211,7 +168,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
     // Context tag formatters
     // ═══════════════════════════════════════════════════════════════
 
-    private static string FormatUserRole(HeaderContext ctx)
+    private string FormatUserRole(HeaderContext ctx)
     {
         if (ctx.User?.Role is null || ctx.UserPs is null)
             return "(none)";
@@ -250,14 +207,14 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         return grants.Count > 0 ? string.Join(", ", grants) : "(none)";
     }
 
-    private static string FormatGrants(PermissionSetDB? ps)
+    private string FormatGrants(PermissionSetDB? ps)
     {
         if (ps is null) return "(none)";
         var grants = CollectGrantNames(ps);
         return grants.Count > 0 ? string.Join(", ", grants) : "(none)";
     }
 
-    private static List<string> CollectGrantNames(PermissionSetDB ps)
+    private List<string> CollectGrantNames(PermissionSetDB ps)
     {
         var grants = new List<string>();
         if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
@@ -279,10 +236,10 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         if (ps.CanReadClipboard) grants.Add("ReadClipboard");
         if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
 
-        foreach (var (rt, label) in ResourceGrantLabels)
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {
-            if (ps.ResourceAccesses.Any(a => a.ResourceType == rt))
-                grants.Add(label);
+            if (ps.ResourceAccesses.Any(a => a.ResourceType == desc.ResourceType))
+                grants.Add(desc.GrantLabel);
         }
 
         return grants;
@@ -317,14 +274,15 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         if (ps.CanReadClipboard) grants.Add("ReadClipboard");
         if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
 
-        foreach (var (rt, label, loadAllIds) in ResourceGrantExpanders)
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {
             var grantedIds = ps.ResourceAccesses
-                .Where(a => a.ResourceType == rt)
+                .Where(a => a.ResourceType == desc.ResourceType)
                 .Select(a => a.ResourceId)
                 .ToList();
 
-            await AppendResourceGrantAsync(grants, label, grantedIds, () => loadAllIds(db, ct));
+            await AppendResourceGrantAsync(grants, desc.GrantLabel, grantedIds,
+                () => desc.LoadAllIds(serviceProvider, ct));
         }
 
         return grants;

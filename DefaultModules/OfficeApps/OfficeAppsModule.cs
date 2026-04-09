@@ -33,6 +33,19 @@ public sealed class OfficeAppsModule : ISharpClawModule
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("OaDocument", "DocumentSession", "AccessDocumentSessionAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.DocumentSessions.Select(d => d.Id).ToListAsync(ct);
+        }),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // CLI Commands
     // ═══════════════════════════════════════════════════════════════
 

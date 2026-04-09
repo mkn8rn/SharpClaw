@@ -3,7 +3,10 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using Microsoft.EntityFrameworkCore;
+
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.WebAccess.Services;
 
 namespace SharpClaw.Modules.WebAccess;
@@ -36,6 +39,24 @@ public sealed class WebAccessModule : ISharpClawModule
     // ═══════════════════════════════════════════════════════════════
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("WaWebsite", "WebsiteAccess", "AccessWebsiteAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Websites.Select(w => w.Id).ToListAsync(ct);
+        }),
+        new("WaSearch", "SearchEngineAccess", "QuerySearchEngineAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.SearchEngines.Select(s => s.Id).ToListAsync(ct);
+        }),
+    ];
 
     // ═══════════════════════════════════════════════════════════════
     // Tool Definitions

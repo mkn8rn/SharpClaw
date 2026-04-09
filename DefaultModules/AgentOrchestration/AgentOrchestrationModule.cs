@@ -1,9 +1,11 @@
 using System.Text.Json;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.AgentOrchestration.Services;
 
 namespace SharpClaw.Modules.AgentOrchestration;
@@ -32,6 +34,39 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
     // ═══════════════════════════════════════════════════════════════
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("AoAgent", "ManageAgent", "ManageAgentAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Agents.Select(a => a.Id).ToListAsync(ct);
+        }),
+        new("AoTask", "EditTask", "EditTaskAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.ScheduledTasks.Select(t => t.Id).ToListAsync(ct);
+        }),
+        new("AoSkill", "AccessSkill", "AccessSkillAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Skills.Select(s => s.Id).ToListAsync(ct);
+        }),
+        new("AoAgentHeader", "EditAgentHeader", "EditAgentHeaderAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Agents.Select(a => a.Id).ToListAsync(ct);
+        }),
+        new("AoChannelHeader", "EditChannelHeader", "EditChannelHeaderAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.Channels.Select(c => c.Id).ToListAsync(ct);
+        }),
+    ];
 
     // ═══════════════════════════════════════════════════════════════
     // Tool Definitions

@@ -3,9 +3,12 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using Microsoft.EntityFrameworkCore;
+
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.VS2026Editor;
 
@@ -29,6 +32,19 @@ public sealed class VS2026EditorModule : ISharpClawModule
         services.TryAddSingleton<EditorBridgeService>();
         services.TryAddScoped<EditorSessionService>();
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource Type Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new("EditorSession", "EditorSession", "AccessEditorSessionAsync", static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<SharpClawDbContext>();
+            return await db.EditorSessions.Select(e => e.Id).ToListAsync(ct);
+        }),
+    ];
 
     // ═══════════════════════════════════════════════════════════════
     // Tool Definitions

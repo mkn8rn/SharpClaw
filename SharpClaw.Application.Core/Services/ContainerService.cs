@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Mk8.Shell.Models;
 using Mk8.Shell.Startup;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Resources;
@@ -15,7 +16,7 @@ namespace SharpClaw.Application.Services;
 /// <see cref="Mk8SandboxRegistrar"/>, and local sync from
 /// <c>%APPDATA%/mk8.shell/sandboxes.json</c>.
 /// </summary>
-public sealed class ContainerService(SharpClawDbContext db, SessionService session)
+public sealed class ContainerService(SharpClawDbContext db, SessionService session, ModuleRegistry moduleRegistry)
 {
     // ═══════════════════════════════════════════════════════════════
     // Create
@@ -103,13 +104,13 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
             [
                 new ResourceAccessDB
                 {
-                    ResourceType = ResourceTypes.Container,
+                    ResourceType = moduleRegistry.ResolveResourceType("AccessContainerAsync")!,
                     ResourceId = container.Id,
                     Clearance = PermissionClearance.Independent,
                 },
                 new ResourceAccessDB
                 {
-                    ResourceType = ResourceTypes.Mk8Shell,
+                    ResourceType = moduleRegistry.ResolveResourceType("ExecuteAsSafeShellAsync")!,
                     ResourceId = container.Id,
                     Clearance = PermissionClearance.Independent,
                     SubType = SafeShellType.Mk8Shell.ToString(),
