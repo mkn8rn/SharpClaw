@@ -3,7 +3,7 @@ using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.NativeApplications;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.ComputerUse.Services;
 
 /// <summary>
 /// CRUD for <see cref="NativeApplicationDB"/> resources.

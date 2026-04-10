@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.EditorCommon.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
@@ -24,13 +25,23 @@ public sealed class VS2026EditorModule : ISharpClawModule
     public string ToolPrefix => "vs26";
 
     // ═══════════════════════════════════════════════════════════════
+    // Contract Dependencies
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleContractRequirement> RequiredContracts =>
+    [
+        new("editor_bridge", typeof(EditorBridgeService),
+            Description: "WebSocket bridge for IDE communication"),
+        new("editor_session", typeof(EditorSessionService),
+            Description: "Editor session management"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // DI Registration
     // ═══════════════════════════════════════════════════════════════
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.TryAddSingleton<EditorBridgeService>();
-        services.TryAddScoped<EditorSessionService>();
     }
 
     // ═══════════════════════════════════════════════════════════════

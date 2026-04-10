@@ -37,6 +37,7 @@
     <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj" />
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
     <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj" />
+    <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj" />
   </ItemGroup>
 
 </Project>

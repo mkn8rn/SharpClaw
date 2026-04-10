@@ -2,17 +2,17 @@ using System.Net.WebSockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Application.Services;
+using SharpClaw.Modules.EditorCommon.Services;
 
-namespace SharpClaw.Application.API.Handlers;
+namespace SharpClaw.Modules.EditorCommon.Handlers;
 
 /// <summary>
 /// WebSocket endpoint for IDE extension connections and REST
 /// endpoints for querying connected editor sessions.
 /// </summary>
-public static class EditorHandlers
+internal static class EditorHandlers
 {
-    public static void MapEditorEndpoints(this IEndpointRouteBuilder routes)
+    internal static void MapEditorEndpoints(this IEndpointRouteBuilder routes)
     {
         var group = routes.MapGroup("/editor");
 

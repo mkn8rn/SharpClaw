@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.EditorCommon.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 
@@ -21,13 +22,23 @@ public sealed class VSCodeEditorModule : ISharpClawModule
     public string ToolPrefix => "vsc";
 
     // ═══════════════════════════════════════════════════════════════
+    // Contract Dependencies
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleContractRequirement> RequiredContracts =>
+    [
+        new("editor_bridge", typeof(EditorBridgeService),
+            Description: "WebSocket bridge for IDE communication"),
+        new("editor_session", typeof(EditorSessionService),
+            Description: "Editor session management"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // DI Registration
     // ═══════════════════════════════════════════════════════════════
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.TryAddSingleton<EditorBridgeService>();
-        services.TryAddScoped<EditorSessionService>();
     }
 
     // ═══════════════════════════════════════════════════════════════

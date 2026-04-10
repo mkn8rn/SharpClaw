@@ -3,11 +3,15 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.ComputerUse.Services;
+using SharpClaw.Modules.ComputerUse.Handlers;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
+using SharpClaw.Contracts.DTOs.NativeApplications;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Contracts.Modules.Contracts;
@@ -41,6 +45,13 @@ public sealed class ComputerUseModule : ISharpClawModule
             sp.GetRequiredService<DesktopAwarenessService>());
         services.AddSingleton<IDesktopInput>(sp =>
             sp.GetRequiredService<DesktopInputService>());
+    }
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (IEndpointRouteBuilder)app;
+        endpoints.MapDisplayDeviceResourceEndpoints();
+        endpoints.MapNativeApplicationResourceEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -108,6 +119,35 @@ public sealed class ComputerUseModule : ISharpClawModule
                 "cu apps                        List registered native applications",
             ],
             Handler: HandleCuCommandAsync),
+        new(
+            Name: "displaydevice",
+            Aliases: ["display", "dd"],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Display device CRUD",
+            UsageLines:
+            [
+                "resource displaydevice add <name> [identifier] [description]",
+                "resource displaydevice get <id>",
+                "resource displaydevice list",
+                "resource displaydevice update <id> [name] [identifier]",
+                "resource displaydevice delete <id>",
+                "resource displaydevice sync     Import system displays",
+            ],
+            Handler: HandleDisplayDeviceResourceCliAsync),
+        new(
+            Name: "nativeapplication",
+            Aliases: ["nativeapp", "app"],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Native application CRUD",
+            UsageLines:
+            [
+                "resource nativeapp add <name> <exePath> [alias] [description]",
+                "resource nativeapp get <id>",
+                "resource nativeapp list",
+                "resource nativeapp update <id> [name] [exe] [alias] [desc]",
+                "resource nativeapp delete <id>",
+            ],
+            Handler: HandleNativeApplicationResourceCliAsync),
     ];
 
     private static readonly JsonSerializerOptions CliJsonPrint = new()
@@ -161,6 +201,161 @@ public sealed class ComputerUseModule : ISharpClawModule
         Console.WriteLine("  cu windows    List visible desktop windows");
         Console.WriteLine("  cu displays   List registered display devices");
         Console.WriteLine("  cu apps       List registered native applications");
+    }
+
+    private static async Task HandleDisplayDeviceResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource displaydevice add <name> [identifier] [description]");
+            Console.Error.WriteLine("  resource displaydevice get <id>");
+            Console.Error.WriteLine("  resource displaydevice list");
+            Console.Error.WriteLine("  resource displaydevice update <id> [name] [identifier]");
+            Console.Error.WriteLine("  resource displaydevice delete <id>");
+            Console.Error.WriteLine("  resource displaydevice sync     Import system displays");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<DisplayDeviceService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 4:
+                ids.PrintJson(await svc.CreateAsync(
+                    new CreateDisplayDeviceRequest(
+                        args[3],
+                        args.Length >= 5 ? args[4] : null,
+                        0,
+                        args.Length >= 6 ? string.Join(' ', args[5..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource displaydevice add <name> [deviceIdentifier] [description]");
+                break;
+
+            case "get" when args.Length >= 4:
+                var device = await svc.GetByIdAsync(ids.Resolve(args[3]), ct);
+                if (device is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(device);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource displaydevice get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateDisplayDeviceRequest(
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? args[5] : null));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource displaydevice update <id> [name] [deviceIdentifier]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource displaydevice delete <id>");
+                break;
+
+            case "sync":
+                ids.PrintJson(await svc.SyncAsync(ct));
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource displaydevice {sub}");
+                break;
+        }
+    }
+
+    private static async Task HandleNativeApplicationResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource nativeapp add <name> <exePath> [alias] [description]");
+            Console.Error.WriteLine("  resource nativeapp get <id>");
+            Console.Error.WriteLine("  resource nativeapp list");
+            Console.Error.WriteLine("  resource nativeapp update <id> [name] [exe] [alias] [desc]");
+            Console.Error.WriteLine("  resource nativeapp delete <id>");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<NativeApplicationService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 5:
+                ids.PrintJson(await svc.CreateAsync(
+                    new CreateNativeApplicationRequest(
+                        args[3],
+                        args[4],
+                        args.Length >= 6 ? args[5] : null,
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource nativeapp add <name> <executablePath> [alias] [description]");
+                break;
+
+            case "get" when args.Length >= 4:
+                var app = await svc.GetByIdAsync(ids.Resolve(args[3]), ct);
+                if (app is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(app);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource nativeapp get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateNativeApplicationRequest(
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? args[5] : null,
+                        args.Length >= 7 ? args[6] : null,
+                        args.Length >= 8 ? string.Join(' ', args[7..]) : null));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource nativeapp update <id> [name] [exePath] [alias] [description]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource nativeapp delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource nativeapplication {sub}");
+                break;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

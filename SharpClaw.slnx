@@ -10,6 +10,9 @@
       <Deploy />
     </Project>
   </Folder>
+  <Folder Name="/DefaultModules/EditorCommon/">
+    <Project Path="DefaultModules/EditorCommon/SharpClaw.Modules.EditorCommon.csproj" />
+  </Folder>
   <Folder Name="/Gateway/">
     <Project Path="SharpClaw.Gateway/SharpClaw.Gateway.csproj" />
   </Folder>
@@ -46,7 +49,6 @@
     <File Path="docs/Gateway-documentation.md" />
     <File Path="docs/Provider-Parameters.md" />
   </Folder>
-  <Folder Name="/Solution Items/Docs/Modules/" />
   <Folder Name="/Solution Items/Git/">
     <File Path=".gitignore" />
   </Folder>

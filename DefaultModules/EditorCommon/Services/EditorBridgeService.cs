@@ -8,7 +8,7 @@ using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.EditorCommon.Services;
 
 /// <summary>
 /// Manages WebSocket connections to IDE extensions (VS 2026, VS Code).

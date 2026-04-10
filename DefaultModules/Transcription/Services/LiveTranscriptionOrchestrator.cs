@@ -5,8 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NAudio.Wave;
 
-using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
+using SharpClaw.Modules.Transcription.Audio;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;

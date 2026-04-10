@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Mk8.Shell.Models;
 using Mk8.Shell.Startup;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Services;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Resources;
@@ -9,7 +10,7 @@ using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.Mk8Shell.Services;
 
 /// <summary>
 /// Manages container CRUD, mk8.shell sandbox provisioning via

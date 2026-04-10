@@ -4,7 +4,7 @@ using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.OfficeApps.Services;
 
 /// <summary>
 /// CRUD for <see cref="DocumentSessionDB"/> resources.

@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Resources;
+using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Databases;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.DatabaseAccess.Services;
 
 /// <summary>
 /// CRUD service for <see cref="InternalDatabaseDB"/> and

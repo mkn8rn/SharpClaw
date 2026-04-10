@@ -2,11 +2,14 @@ using System.Data.Common;
 using System.Text;
 using System.Text.Json;
 
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.DatabaseAccess.Services;
+using SharpClaw.Modules.DatabaseAccess.Handlers;
 using SharpClaw.Contracts.DTOs.Databases;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
@@ -33,6 +36,12 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     public void ConfigureServices(IServiceCollection services)
     {
         services.AddScoped<DatabaseResourceService>();
+    }
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (IEndpointRouteBuilder)app;
+        endpoints.MapDatabaseResourceEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -85,6 +94,34 @@ public sealed class DatabaseAccessModule : ISharpClawModule
                 "db list-external                List registered external databases",
             ],
             Handler: HandleDbCommandAsync),
+        new(
+            Name: "internaldb",
+            Aliases: [],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Internal database CRUD",
+            UsageLines:
+            [
+                "resource internaldb add <name> <dbType> <path> [description]",
+                "resource internaldb get <id>",
+                "resource internaldb list",
+                "resource internaldb update <id> [name] [dbType] [path] [desc]",
+                "resource internaldb delete <id>",
+            ],
+            Handler: HandleInternalDatabaseResourceCliAsync),
+        new(
+            Name: "externaldb",
+            Aliases: [],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "External database CRUD",
+            UsageLines:
+            [
+                "resource externaldb add <name> <dbType> <connectionString> [description]",
+                "resource externaldb get <id>",
+                "resource externaldb list",
+                "resource externaldb update <id> [name] [dbType] [connStr] [desc]",
+                "resource externaldb delete <id>",
+            ],
+            Handler: HandleExternalDatabaseResourceCliAsync),
     ];
 
     private static readonly JsonSerializerOptions CliJsonPrint = new()
@@ -131,6 +168,166 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         Console.WriteLine("Usage:");
         Console.WriteLine("  db list-internal    List registered internal databases");
         Console.WriteLine("  db list-external    List registered external databases");
+    }
+
+    private static async Task HandleInternalDatabaseResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource internaldb add <name> <dbType> <path> [description]");
+            Console.Error.WriteLine("  resource internaldb get <id>");
+            Console.Error.WriteLine("  resource internaldb list");
+            Console.Error.WriteLine("  resource internaldb update <id> [name] [dbType] [path] [desc]");
+            Console.Error.WriteLine("  resource internaldb delete <id>");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Database types: MySQL, PostgreSQL, SQLite, MSSQL, MongoDB, Redis,");
+            Console.Error.WriteLine("  CosmosDB, MariaDB, Oracle, CockroachDB, Firebird, Custom");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<DatabaseResourceService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 6:
+                ids.PrintJson(await svc.CreateInternalAsync(
+                    new CreateInternalDatabaseRequest(
+                        args[3],
+                        Enum.Parse<DatabaseType>(args[4], ignoreCase: true),
+                        args[5],
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource internaldb add <name> <dbType> <path> [description]");
+                break;
+
+            case "get" when args.Length >= 4:
+                var item = await svc.GetInternalByIdAsync(ids.Resolve(args[3]), ct);
+                if (item is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(item);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource internaldb get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListInternalAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateInternalAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateInternalDatabaseRequest(
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? Enum.Parse<DatabaseType>(args[5], ignoreCase: true) : null,
+                        args.Length >= 7 ? args[6] : null,
+                        args.Length >= 8 ? string.Join(' ', args[7..]) : null));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource internaldb update <id> [name] [dbType] [path] [description]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteInternalAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource internaldb delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource internaldb {sub}");
+                break;
+        }
+    }
+
+    private static async Task HandleExternalDatabaseResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource externaldb add <name> <dbType> <connectionString> [description]");
+            Console.Error.WriteLine("  resource externaldb get <id>");
+            Console.Error.WriteLine("  resource externaldb list");
+            Console.Error.WriteLine("  resource externaldb update <id> [name] [dbType] [connStr] [desc]");
+            Console.Error.WriteLine("  resource externaldb delete <id>");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Database types: MySQL, PostgreSQL, SQLite, MSSQL, MongoDB, Redis,");
+            Console.Error.WriteLine("  CosmosDB, MariaDB, Oracle, CockroachDB, Firebird, Custom");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("The connection string is encrypted before storage.");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<DatabaseResourceService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 6:
+                ids.PrintJson(await svc.CreateExternalAsync(
+                    new CreateExternalDatabaseRequest(
+                        args[3],
+                        Enum.Parse<DatabaseType>(args[4], ignoreCase: true),
+                        args[5],
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource externaldb add <name> <dbType> <connectionString> [description]");
+                break;
+
+            case "get" when args.Length >= 4:
+                var item = await svc.GetExternalByIdAsync(ids.Resolve(args[3]), ct);
+                if (item is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(item);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource externaldb get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListExternalAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateExternalAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateExternalDatabaseRequest(
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? Enum.Parse<DatabaseType>(args[5], ignoreCase: true) : null,
+                        args.Length >= 7 ? args[6] : null,
+                        args.Length >= 8 ? string.Join(' ', args[7..]) : null));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource externaldb update <id> [name] [dbType] [connectionString] [description]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteExternalAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource externaldb delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource externaldb {sub}");
+                break;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

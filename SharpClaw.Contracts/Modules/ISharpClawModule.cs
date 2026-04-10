@@ -137,6 +137,26 @@ public interface ISharpClawModule
     IReadOnlyList<ModuleCliCommand>? GetCliCommands() => null;
 
     /// <summary>
+    /// Optional. Map HTTP endpoints owned by this module.
+    /// Called during endpoint mapping in <c>Program.cs</c> for all enabled modules.
+    /// <para>
+    /// The <paramref name="app"/> parameter is always an
+    /// <c>IEndpointRouteBuilder</c>. It is typed as <see cref="object"/> because
+    /// <c>SharpClaw.Contracts</c> cannot reference ASP.NET Core (it is consumed
+    /// by mobile/wasm client targets). Module implementations should cast:
+    /// <code>var endpoints = (IEndpointRouteBuilder)app;</code>
+    /// </para>
+    /// <para>
+    /// Module endpoints should use a route group filter that checks
+    /// <c>ModuleRegistry.GetModule(Id)</c> and returns <c>503 Service Unavailable</c>
+    /// when the module is disabled at runtime (routes cannot be removed after
+    /// <c>app.Build()</c>).
+    /// </para>
+    /// </summary>
+    /// <param name="app">An <c>IEndpointRouteBuilder</c> instance for registering routes.</param>
+    void MapEndpoints(object app) { }
+
+    /// <summary>
     /// Optional periodic health check. Called by the host on a configurable
     /// interval (default: every 60 seconds). Return a healthy status if the
     /// module's dependencies (external APIs, COM objects, file handles,

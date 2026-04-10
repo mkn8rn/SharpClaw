@@ -4,11 +4,11 @@ using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.ComputerUse.Services;
 
 /// <summary>
 /// Manages display device CRUD and auto-detection. Screen capture
-/// execution is handled by <see cref="AgentJobService"/> via the
+/// execution is handled by the Computer Use module via the
 /// job/permission system.
 /// </summary>
 public sealed class DisplayDeviceService(SharpClawDbContext db)

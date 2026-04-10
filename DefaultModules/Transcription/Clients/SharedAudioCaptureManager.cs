@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Modules.Transcription.Audio;
 
 namespace SharpClaw.Modules.Transcription.Clients;
 

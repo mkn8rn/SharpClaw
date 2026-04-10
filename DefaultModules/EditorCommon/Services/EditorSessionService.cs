@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Editor;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
-namespace SharpClaw.Application.Services;
+namespace SharpClaw.Modules.EditorCommon.Services;
 
 /// <summary>
 /// CRUD for <see cref="EditorSessionDB"/> resources. Sessions are
@@ -77,7 +78,7 @@ public sealed class EditorSessionService(SharpClawDbContext db)
     /// </summary>
     public async Task<EditorSessionDB> GetOrCreateAsync(
         string name,
-        Contracts.Enums.EditorType editorType,
+        EditorType editorType,
         string? editorVersion,
         string? workspacePath,
         CancellationToken ct = default)

@@ -1,4 +1,4 @@
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Transcription.Audio;
 
 /// <summary>
 /// Simple energy-based Voice Activity Detection (VAD). Computes RMS

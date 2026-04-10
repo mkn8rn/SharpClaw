@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,6 +16,8 @@ using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.Mk8Shell.Services;
+using SharpClaw.Modules.Mk8Shell.Handlers;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.Mk8Shell;
@@ -31,6 +34,12 @@ public sealed class Mk8ShellModule : ISharpClawModule
     public void ConfigureServices(IServiceCollection services)
     {
         services.AddScoped<ContainerService>();
+    }
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (IEndpointRouteBuilder)app;
+        endpoints.MapContainerResourceEndpoints();
     }
 
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
@@ -62,7 +71,104 @@ public sealed class Mk8ShellModule : ISharpClawModule
         new("CanCreateContainers", "Create Containers", "Create new sandbox / VM / container environments.", "CreateContainerAsync"),
     ];
 
-    public IReadOnlyList<ModuleCliCommand>? GetCliCommands() => null;
+    public IReadOnlyList<ModuleCliCommand> GetCliCommands() =>
+    [
+        new(
+            Name: "container",
+            Aliases: [],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Sandbox container CRUD",
+            UsageLines:
+            [
+                "resource container add mk8shell <name> <path>  Create an mk8shell sandbox",
+                "resource container get <id>                    Show a container",
+                "resource container list                        List all containers",
+                "resource container update <id> [description]   Update a container",
+                "resource container delete <id>                 Delete a container",
+                "resource container sync                        Import from mk8.shell registry",
+            ],
+            Handler: HandleContainerResourceCliAsync),
+    ];
+
+    private static async Task HandleContainerResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource container add mk8shell <name> <path>  Create an mk8shell sandbox");
+            Console.Error.WriteLine("  resource container get <id>                    Show a container");
+            Console.Error.WriteLine("  resource container list                        List all containers");
+            Console.Error.WriteLine("  resource container update <id> [description]   Update a container");
+            Console.Error.WriteLine("  resource container delete <id>                 Delete a container");
+            Console.Error.WriteLine("  resource container sync                        Import from mk8.shell registry");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<ContainerService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 6
+                && args[3].Equals("mk8shell", StringComparison.OrdinalIgnoreCase):
+                ids.PrintJson(await svc.CreateAsync(
+                    new CreateContainerRequest(
+                        ContainerType.Mk8Shell,
+                        args[4],
+                        args[5],
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource container add mk8shell <name> <parentPath>");
+                Console.Error.WriteLine("  Example: resource container add mk8shell Banana D:/");
+                break;
+
+            case "get" when args.Length >= 4:
+                var container = await svc.GetByIdAsync(ids.Resolve(args[3]), ct);
+                if (container is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(container);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource container get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateContainerRequest(
+                        Description: string.Join(' ', args[4..])));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource container update <id> [description]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource container delete <id>");
+                break;
+
+            case "sync":
+                ids.PrintJson(await svc.SyncLocalMk8ShellAsync(ct));
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource container {sub}");
+                break;
+        }
+    }
 
     public IReadOnlyList<ModuleToolDefinition> GetToolDefinitions() =>
     [

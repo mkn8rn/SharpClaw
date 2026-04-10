@@ -7,12 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
-    <ProjectReference Include="..\EditorCommon\SharpClaw.Modules.EditorCommon.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="module.json" Link="modules\vs2026_editor\module.json" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="..\..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="module.json" Link="modules\sharpclaw_editor_common\module.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -1,10 +1,13 @@
 using System.Text.Json;
 
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Application.Services;
+using SharpClaw.Modules.OfficeApps.Services;
+using SharpClaw.Modules.OfficeApps.Handlers;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
@@ -30,6 +33,12 @@ public sealed class OfficeAppsModule : ISharpClawModule
         services.AddScoped<DocumentSessionService>();
         services.AddSingleton<SpreadsheetService>();
         services.AddSingleton<ExcelComInteropService>();
+    }
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (IEndpointRouteBuilder)app;
+        endpoints.MapDocumentSessionResourceEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -70,6 +79,20 @@ public sealed class OfficeAppsModule : ISharpClawModule
                 "docs list                      List registered document sessions",
             ],
             Handler: HandleDocsCommandAsync),
+        new(
+            Name: "document",
+            Aliases: ["doc"],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Document session CRUD",
+            UsageLines:
+            [
+                "resource document add <filePath> [name] [description]",
+                "resource document get <id>",
+                "resource document list",
+                "resource document update <id> [name] [description]",
+                "resource document delete <id>",
+            ],
+            Handler: HandleDocumentResourceCliAsync),
     ];
 
     private static readonly JsonSerializerOptions CliJsonPrint = new()
@@ -108,6 +131,79 @@ public sealed class OfficeAppsModule : ISharpClawModule
     {
         Console.WriteLine("Usage:");
         Console.WriteLine("  docs list     List registered document sessions");
+    }
+
+    private static async Task HandleDocumentResourceCliAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  resource document add <filePath> [name] [description]");
+            Console.Error.WriteLine("  resource document get <id>");
+            Console.Error.WriteLine("  resource document list");
+            Console.Error.WriteLine("  resource document update <id> [name] [description]");
+            Console.Error.WriteLine("  resource document delete <id>");
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<DocumentSessionService>();
+
+        switch (sub)
+        {
+            case "add" when args.Length >= 4:
+                ids.PrintJson(await svc.CreateAsync(
+                    new CreateDocumentSessionRequest(
+                        args[3],
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? string.Join(' ', args[5..]) : null)));
+                break;
+            case "add":
+                Console.Error.WriteLine("resource document add <filePath> [name] [description]");
+                break;
+
+            case "get" when args.Length >= 4:
+                var doc = await svc.GetByIdAsync(ids.Resolve(args[3]), ct);
+                if (doc is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(doc);
+                break;
+            case "get":
+                Console.Error.WriteLine("resource document get <id>");
+                break;
+
+            case "list":
+                ids.PrintJson(await svc.ListAsync(ct));
+                break;
+
+            case "update" when args.Length >= 5:
+                var updated = await svc.UpdateAsync(
+                    ids.Resolve(args[3]),
+                    new UpdateDocumentSessionRequest(
+                        args.Length >= 5 ? args[4] : null,
+                        args.Length >= 6 ? string.Join(' ', args[5..]) : null));
+                if (updated is null) { Console.Error.WriteLine("Not found."); return; }
+                ids.PrintJson(updated);
+                break;
+            case "update":
+                Console.Error.WriteLine("resource document update <id> [name] [description]");
+                break;
+
+            case "delete" when args.Length >= 4:
+                Console.WriteLine(
+                    await svc.DeleteAsync(ids.Resolve(args[3]))
+                        ? "Done." : "Not found.");
+                break;
+            case "delete":
+                Console.Error.WriteLine("resource document delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource document {sub}");
+                break;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Transcription.Audio;
 
 /// <summary>
 /// Normalises audio to the optimal format for Whisper / ASR models:
