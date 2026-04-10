@@ -12,6 +12,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.Transcription.Clients;
+using SharpClaw.Modules.Transcription.Handlers;
 using SharpClaw.Modules.Transcription.LocalInference;
 using SharpClaw.Modules.Transcription.Services;
 
@@ -228,6 +229,17 @@ public sealed class TranscriptionModule : ISharpClawModule
         Console.Error.WriteLine("  resource inputaudio update <id> [name] [id]    Update an input audio");
         Console.Error.WriteLine("  resource inputaudio delete <id>                Delete an input audio");
         Console.Error.WriteLine("  resource inputaudio sync                       Import system input audios");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Endpoint Mapping
+    // ═══════════════════════════════════════════════════════════════
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)app;
+        endpoints.MapTranscriptionStreaming();
+        endpoints.MapInputAudioEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════
