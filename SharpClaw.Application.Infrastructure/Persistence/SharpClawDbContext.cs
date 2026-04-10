@@ -68,6 +68,9 @@ public class SharpClawDbContext(
     // ── Generic resource access (§3.10) ───────────────────────────
     public DbSet<ResourceAccessDB> ResourceAccesses => Set<ResourceAccessDB>();
 
+    // ── Generic global flags (§12.4.2) ────────────────────────────
+    public DbSet<GlobalFlagDB> GlobalFlags => Set<GlobalFlagDB>();
+
     // ── Module state & config ─────────────────────────────────────
     public DbSet<ModuleStateDB> ModuleStates => Set<ModuleStateDB>();
     public DbSet<ModuleConfigEntryDB> ModuleConfigEntries => Set<ModuleConfigEntryDB>();
@@ -267,6 +270,21 @@ public class SharpClawDbContext(
                 .WithOne(w => w.PermissionSet)
                 .HasForeignKey(w => w.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── GlobalFlags (§12.4.2) ────────────────────────────────
+        modelBuilder.Entity<GlobalFlagDB>(e =>
+        {
+            e.ToTable("GlobalFlags");
+
+            e.HasIndex(f => new { f.PermissionSetId, f.FlagKey }).IsUnique();
+
+            e.HasOne(f => f.PermissionSet)
+                .WithMany(p => p.GlobalFlags)
+                .HasForeignKey(f => f.PermissionSetId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.Property(f => f.Clearance).HasConversion<string>();
         });
         // ── Skills ───────────────────────────────────────────────
         modelBuilder.Entity<SkillDB>(e =>

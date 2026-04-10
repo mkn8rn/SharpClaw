@@ -1792,40 +1792,15 @@ public static class CliDispatcher
         }
 
         // role permissions <id> set [flags...]
+        // Syntax: --clearance <value>
+        //         --flag FlagKey[:clearance]
+        //         --grant ResourceType id[:clearance]
         if (_currentUserId is null)
             return UsageResult("You must be logged in to set permissions.");
 
         var clearance = PermissionClearance.Unset;
-        var createSubAgents = false;
-        var createContainers = false;
-        var registerDatabases = false;
-        var localhostBrowser = false;
-        var localhostCli = false;
-        var clickDesktop = false;
-        var typeOnDesktop = false;
-        var readCrossThreadHistory = false;
-        var editAgentHeader = false;
-        var editChannelHeader = false;
-        var createDocumentSessions = false;
-        var enumerateWindows = false;
-        var focusWindow = false;
-        var closeWindow = false;
-        var resizeWindow = false;
-        var sendHotkey = false;
-        var readClipboard = false;
-        var writeClipboard = false;
-
-        var dangerousShell = new List<ResourceGrant>();
-        var safeShell = new List<ResourceGrant>();
-        var container = new List<ResourceGrant>();
-        var website = new List<ResourceGrant>();
-        var searchEngine = new List<ResourceGrant>();
-        var internalDb = new List<ResourceGrant>();
-        var externalDb = new List<ResourceGrant>();
-        var inputAudio = new List<ResourceGrant>();
-        var agent = new List<ResourceGrant>();
-        var task = new List<ResourceGrant>();
-        var skill = new List<ResourceGrant>();
+        var globalFlags = new Dictionary<string, PermissionClearance>();
+        var resourceGrants = new Dictionary<string, List<ResourceGrant>>();
 
         for (var i = 4; i < args.Length; i++)
         {
@@ -1835,80 +1810,37 @@ public static class CliDispatcher
                     if (Enum.TryParse<PermissionClearance>(args[++i], true, out var cl))
                         clearance = cl;
                     break;
-                case "--create-sub-agents": createSubAgents = true; break;
-                case "--create-containers": createContainers = true; break;
-                case "--register-databases": registerDatabases = true; break;
-                case "--localhost-browser": localhostBrowser = true; break;
-                case "--localhost-cli": localhostCli = true; break;
-                case "--click-desktop": clickDesktop = true; break;
-                case "--type-on-desktop": typeOnDesktop = true; break;
-                case "--read-cross-thread-history": readCrossThreadHistory = true; break;
-                case "--edit-agent-header": editAgentHeader = true; break;
-                case "--edit-channel-header": editChannelHeader = true; break;
-                case "--create-document-sessions": createDocumentSessions = true; break;
-                case "--enumerate-windows": enumerateWindows = true; break;
-                case "--focus-window": focusWindow = true; break;
-                case "--close-window": closeWindow = true; break;
-                case "--resize-window": resizeWindow = true; break;
-                case "--send-hotkey": sendHotkey = true; break;
-                case "--read-clipboard": readClipboard = true; break;
-                case "--write-clipboard": writeClipboard = true; break;
-                case "--dangerous-shell" when i + 1 < args.Length:
-                    dangerousShell.Add(ParseResourceGrant(args[++i])); break;
-                case "--safe-shell" when i + 1 < args.Length:
-                    safeShell.Add(ParseResourceGrant(args[++i])); break;
-                case "--container" when i + 1 < args.Length:
-                    container.Add(ParseResourceGrant(args[++i])); break;
-                case "--website" when i + 1 < args.Length:
-                    website.Add(ParseResourceGrant(args[++i])); break;
-                case "--search-engine" when i + 1 < args.Length:
-                    searchEngine.Add(ParseResourceGrant(args[++i])); break;
-                case "--internal-db" when i + 1 < args.Length:
-                    internalDb.Add(ParseResourceGrant(args[++i])); break;
-                case "--external-db" when i + 1 < args.Length:
-                    externalDb.Add(ParseResourceGrant(args[++i])); break;
-                case "--input-audio" when i + 1 < args.Length:
-                    inputAudio.Add(ParseResourceGrant(args[++i])); break;
-                case "--agent" when i + 1 < args.Length:
-                    agent.Add(ParseResourceGrant(args[++i])); break;
-                case "--task" when i + 1 < args.Length:
-                    task.Add(ParseResourceGrant(args[++i])); break;
-                case "--skill" when i + 1 < args.Length:
-                    skill.Add(ParseResourceGrant(args[++i])); break;
+
+                case "--flag" when i + 1 < args.Length:
+                {
+                    var (flagKey, flagClearance) = ParseFlagArg(args[++i]);
+                    globalFlags[flagKey] = flagClearance;
+                    break;
+                }
+
+                case "--grant" when i + 2 < args.Length:
+                {
+                    var resourceType = args[++i];
+                    var grant = ParseResourceGrant(args[++i]);
+                    if (!resourceGrants.TryGetValue(resourceType, out var list))
+                    {
+                        list = [];
+                        resourceGrants[resourceType] = list;
+                    }
+                    list.Add(grant);
+                    break;
+                }
             }
         }
 
         var request = new SetRolePermissionsRequest(
             DefaultClearance: clearance,
-            CanCreateSubAgents: createSubAgents,
-            CanCreateContainers: createContainers,
-            CanRegisterDatabases: registerDatabases,
-            CanAccessLocalhostInBrowser: localhostBrowser,
-            CanAccessLocalhostCli: localhostCli,
-            CanClickDesktop: clickDesktop,
-            CanTypeOnDesktop: typeOnDesktop,
-            CanReadCrossThreadHistory: readCrossThreadHistory,
-            CanEditAgentHeader: editAgentHeader,
-            CanEditChannelHeader: editChannelHeader,
-            CanCreateDocumentSessions: createDocumentSessions,
-            CanEnumerateWindows: enumerateWindows,
-            CanFocusWindow: focusWindow,
-            CanCloseWindow: closeWindow,
-            CanResizeWindow: resizeWindow,
-            CanSendHotkey: sendHotkey,
-            CanReadClipboard: readClipboard,
-            CanWriteClipboard: writeClipboard,
-            DangerousShellAccesses: dangerousShell.Count > 0 ? dangerousShell : null,
-            SafeShellAccesses: safeShell.Count > 0 ? safeShell : null,
-            ContainerAccesses: container.Count > 0 ? container : null,
-            WebsiteAccesses: website.Count > 0 ? website : null,
-            SearchEngineAccesses: searchEngine.Count > 0 ? searchEngine : null,
-            InternalDatabaseAccesses: internalDb.Count > 0 ? internalDb : null,
-            ExternalDatabaseAccesses: externalDb.Count > 0 ? externalDb : null,
-            InputAudioAccesses: inputAudio.Count > 0 ? inputAudio : null,
-            AgentAccesses: agent.Count > 0 ? agent : null,
-            TaskAccesses: task.Count > 0 ? task : null,
-            SkillAccesses: skill.Count > 0 ? skill : null);
+            GlobalFlags: globalFlags.Count > 0 ? globalFlags : null,
+            ResourceGrants: resourceGrants.Count > 0
+                ? resourceGrants.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => (IReadOnlyList<ResourceGrant>)kvp.Value)
+                : null);
 
         try
         {
@@ -1923,6 +1855,21 @@ public static class CliDispatcher
             Console.Error.WriteLine(ex.Message);
             return Results.Ok();
         }
+    }
+
+    /// <summary>
+    /// Parses a global-flag argument: <c>FlagKey[:clearance]</c>.
+    /// If no clearance suffix is given, defaults to <see cref="PermissionClearance.Independent"/>.
+    /// </summary>
+    private static (string FlagKey, PermissionClearance Clearance) ParseFlagArg(string arg)
+    {
+        var parts = arg.Split(':', 2);
+        var clearance = parts.Length > 1
+            && Enum.TryParse<PermissionClearance>(parts[1], true, out var cl)
+                ? cl
+                : PermissionClearance.Independent;
+
+        return (parts[0], clearance);
     }
 
     /// <summary>

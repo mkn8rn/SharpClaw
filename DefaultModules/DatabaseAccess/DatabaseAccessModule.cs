@@ -60,6 +60,15 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanRegisterDatabases", "Register Databases", "Register new internal or external databases.", "RegisterDatabaseAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // CLI Commands
     // ═══════════════════════════════════════════════════════════════
 

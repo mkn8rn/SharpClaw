@@ -25,120 +25,24 @@ namespace SharpClaw.Application.Services;
 public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry registry)
 {
     // ═══════════════════════════════════════════════════════════════
-    // Global-flag actions
+    // Global-flag evaluation (generic — all flags resolved by key)
     // ═══════════════════════════════════════════════════════════════
 
-    public Task<AgentActionResult> CreateSubAgentAsync(
-        Guid agentId, ActionCaller caller,
+    /// <summary>
+    /// Evaluate a global-flag permission by its canonical key
+    /// (e.g. "CanClickDesktop"). The flag must exist in the agent's
+    /// <see cref="PermissionSetDB.GlobalFlags"/> collection.
+    /// Replaces the 16 typed wrapper methods — see Module-System-Design §12.4.4.
+    /// </summary>
+    public Task<AgentActionResult> EvaluateGlobalFlagByKeyAsync(
+        string flagKey, Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateSubAgents, p => p.CreateSubAgentsClearance,
-            "create sub-agents", onApproved, ct);
-
-    public Task<AgentActionResult> CreateContainerAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateContainers, p => p.CreateContainersClearance,
-            "create containers", onApproved, ct);
-
-    public Task<AgentActionResult> RegisterDatabaseAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanRegisterDatabases, p => p.RegisterDatabasesClearance,
-            "register databases", onApproved, ct);
-
-    public Task<AgentActionResult> AccessLocalhostInBrowserAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostInBrowser, p => p.AccessLocalhostInBrowserClearance,
-            "access localhost in browser", onApproved, ct);
-
-    public Task<AgentActionResult> AccessLocalhostCliAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostCli, p => p.AccessLocalhostCliClearance,
-            "access localhost via CLI", onApproved, ct);
-
-    public Task<AgentActionResult> ClickDesktopAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanClickDesktop, p => p.ClickDesktopClearance,
-            "click desktop", onApproved, ct);
-
-    public Task<AgentActionResult> TypeOnDesktopAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanTypeOnDesktop, p => p.TypeOnDesktopClearance,
-            "type on desktop", onApproved, ct);
-
-    public Task<AgentActionResult> ReadCrossThreadHistoryAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanReadCrossThreadHistory, p => p.ReadCrossThreadHistoryClearance,
-            "read cross-thread history", onApproved, ct);
-
-    public Task<AgentActionResult> CreateDocumentSessionAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateDocumentSessions, p => p.CreateDocumentSessionsClearance,
-            "create document sessions", onApproved, ct);
-
-    public Task<AgentActionResult> EnumerateWindowsAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanEnumerateWindows, p => p.EnumerateWindowsClearance,
-            "enumerate windows", onApproved, ct);
-
-    public Task<AgentActionResult> FocusWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanFocusWindow, p => p.FocusWindowClearance,
-            "focus window", onApproved, ct);
-
-    public Task<AgentActionResult> CloseWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCloseWindow, p => p.CloseWindowClearance,
-            "close window", onApproved, ct);
-
-    public Task<AgentActionResult> ResizeWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanResizeWindow, p => p.ResizeWindowClearance,
-            "resize window", onApproved, ct);
-
-    public Task<AgentActionResult> SendHotkeyAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanSendHotkey, p => p.SendHotkeyClearance,
-            "send hotkey", onApproved, ct);
-
-    public Task<AgentActionResult> ReadClipboardAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanReadClipboard, p => p.ReadClipboardClearance,
-            "read clipboard", onApproved, ct);
-
-    public Task<AgentActionResult> WriteClipboardAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanWriteClipboard, p => p.WriteClipboardClearance,
-            "write clipboard", onApproved, ct);
+            agentId, caller,
+            ps => ps.GlobalFlags.Any(f => f.FlagKey == flagKey),
+            ps => ps.GlobalFlags.FirstOrDefault(f => f.FlagKey == flagKey)
+                    ?.Clearance ?? PermissionClearance.Unset,
+            flagKey, onApproved, ct);
 
     // ═══════════════════════════════════════════════════════════════
     // Core evaluation engine
@@ -351,6 +255,7 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
         Guid permissionSetId, CancellationToken ct)
     {
         return await db.PermissionSets
+            .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .Include(p => p.ClearanceUserWhitelist)
             .Include(p => p.ClearanceAgentWhitelist)
@@ -362,70 +267,19 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Maps global-flag <see cref="Contracts.Modules.ModuleToolPermission.DelegateTo"/>
-    /// method-name strings to the corresponding permission evaluation.
-    /// Per-resource delegates are resolved dynamically via <see cref="ModuleRegistry"/>.
-    /// </summary>
-    private static readonly Dictionary<string, Func<AgentActionService, Guid, Guid?, ActionCaller, CancellationToken, Task<AgentActionResult>>>
-        GlobalFlagDelegationMap = new(StringComparer.Ordinal)
-    {
-        ["CreateSubAgentAsync"] = (svc, agentId, _, caller, ct) => svc.CreateSubAgentAsync(agentId, caller, ct: ct),
-        ["CreateContainerAsync"] = (svc, agentId, _, caller, ct) => svc.CreateContainerAsync(agentId, caller, ct: ct),
-        ["RegisterDatabaseAsync"] = (svc, agentId, _, caller, ct) => svc.RegisterDatabaseAsync(agentId, caller, ct: ct),
-        ["AccessLocalhostInBrowserAsync"] = (svc, agentId, _, caller, ct) => svc.AccessLocalhostInBrowserAsync(agentId, caller, ct: ct),
-        ["AccessLocalhostCliAsync"] = (svc, agentId, _, caller, ct) => svc.AccessLocalhostCliAsync(agentId, caller, ct: ct),
-        ["ClickDesktopAsync"] = (svc, agentId, _, caller, ct) => svc.ClickDesktopAsync(agentId, caller, ct: ct),
-        ["TypeOnDesktopAsync"] = (svc, agentId, _, caller, ct) => svc.TypeOnDesktopAsync(agentId, caller, ct: ct),
-        ["ReadCrossThreadHistoryAsync"] = (svc, agentId, _, caller, ct) => svc.ReadCrossThreadHistoryAsync(agentId, caller, ct: ct),
-        ["CreateDocumentSessionAsync"] = (svc, agentId, _, caller, ct) => svc.CreateDocumentSessionAsync(agentId, caller, ct: ct),
-        ["EnumerateWindowsAsync"] = (svc, agentId, _, caller, ct) => svc.EnumerateWindowsAsync(agentId, caller, ct: ct),
-        ["FocusWindowAsync"] = (svc, agentId, _, caller, ct) => svc.FocusWindowAsync(agentId, caller, ct: ct),
-        ["CloseWindowAsync"] = (svc, agentId, _, caller, ct) => svc.CloseWindowAsync(agentId, caller, ct: ct),
-        ["ResizeWindowAsync"] = (svc, agentId, _, caller, ct) => svc.ResizeWindowAsync(agentId, caller, ct: ct),
-        ["SendHotkeyAsync"] = (svc, agentId, _, caller, ct) => svc.SendHotkeyAsync(agentId, caller, ct: ct),
-        ["ReadClipboardAsync"] = (svc, agentId, _, caller, ct) => svc.ReadClipboardAsync(agentId, caller, ct: ct),
-        ["WriteClipboardAsync"] = (svc, agentId, _, caller, ct) => svc.WriteClipboardAsync(agentId, caller, ct: ct),
-    };
-
-    /// <summary>
-    /// Maps global-flag <see cref="Contracts.Modules.ModuleToolPermission.DelegateTo"/>
-    /// method-name strings to grant-existence checks against a
-    /// <see cref="PermissionSetDB"/>. Per-resource delegates are resolved
-    /// dynamically via <see cref="ModuleRegistry"/>.
-    /// </summary>
-    private static readonly Dictionary<string, Func<PermissionSetDB, Guid?, bool>>
-        GlobalFlagGrantCheckMap = new(StringComparer.Ordinal)
-    {
-        ["CreateSubAgentAsync"] = (ps, _) => ps.CanCreateSubAgents,
-        ["CreateContainerAsync"] = (ps, _) => ps.CanCreateContainers,
-        ["RegisterDatabaseAsync"] = (ps, _) => ps.CanRegisterDatabases,
-        ["AccessLocalhostInBrowserAsync"] = (ps, _) => ps.CanAccessLocalhostInBrowser,
-        ["AccessLocalhostCliAsync"] = (ps, _) => ps.CanAccessLocalhostCli,
-        ["ClickDesktopAsync"] = (ps, _) => ps.CanClickDesktop,
-        ["TypeOnDesktopAsync"] = (ps, _) => ps.CanTypeOnDesktop,
-        ["ReadCrossThreadHistoryAsync"] = (ps, _) => ps.CanReadCrossThreadHistory,
-        ["CreateDocumentSessionAsync"] = (ps, _) => ps.CanCreateDocumentSessions,
-        ["EnumerateWindowsAsync"] = (ps, _) => ps.CanEnumerateWindows,
-        ["FocusWindowAsync"] = (ps, _) => ps.CanFocusWindow,
-        ["CloseWindowAsync"] = (ps, _) => ps.CanCloseWindow,
-        ["ResizeWindowAsync"] = (ps, _) => ps.CanResizeWindow,
-        ["SendHotkeyAsync"] = (ps, _) => ps.CanSendHotkey,
-        ["ReadClipboardAsync"] = (ps, _) => ps.CanReadClipboard,
-        ["WriteClipboardAsync"] = (ps, _) => ps.CanWriteClipboard,
-    };
-
-    /// <summary>
     /// Evaluates a permission check by delegate-method name.
-    /// Global flags are resolved from the static map; per-resource delegates
-    /// are resolved dynamically via <see cref="ModuleRegistry"/>.
+    /// Global flags are resolved dynamically via <see cref="ModuleRegistry.ResolveGlobalFlag"/>;
+    /// per-resource delegates via <see cref="ModuleRegistry.ResolveResourceType"/>.
     /// Returns <c>null</c> if <paramref name="delegateName"/> is not recognised.
+    /// See Module-System-Design §12.4.4.
     /// </summary>
     public Task<AgentActionResult>? TryEvaluateByDelegateNameAsync(
         string delegateName, Guid agentId, Guid? resourceId,
         ActionCaller caller, CancellationToken ct = default)
     {
-        if (GlobalFlagDelegationMap.TryGetValue(delegateName, out var factory))
-            return factory(this, agentId, resourceId, caller, ct);
+        var flagKey = registry.ResolveGlobalFlag(delegateName);
+        if (flagKey is not null)
+            return EvaluateGlobalFlagByKeyAsync(flagKey, agentId, caller, ct: ct);
 
         var resourceType = registry.ResolveResourceType(delegateName);
         if (resourceType is not null && resourceId.HasValue)
@@ -439,15 +293,17 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     /// <summary>
     /// Checks whether a <see cref="PermissionSetDB"/> contains a grant
     /// that matches the given delegate-method name and optional resource ID.
-    /// Global flags are resolved from the static map; per-resource delegates
-    /// are resolved dynamically via <see cref="ModuleRegistry"/>.
+    /// Global flags are resolved dynamically via <see cref="ModuleRegistry.ResolveGlobalFlag"/>;
+    /// per-resource delegates via <see cref="ModuleRegistry.ResolveResourceType"/>.
     /// Used by channel pre-authorization for module actions.
+    /// See Module-System-Design §12.4.4.
     /// </summary>
     public bool HasGrantByDelegateName(
         PermissionSetDB ps, string delegateName, Guid? resourceId)
     {
-        if (GlobalFlagGrantCheckMap.TryGetValue(delegateName, out var check))
-            return check(ps, resourceId);
+        var flagKey = registry.ResolveGlobalFlag(delegateName);
+        if (flagKey is not null)
+            return ps.GlobalFlags.Any(f => f.FlagKey == flagKey);
 
         var resourceType = registry.ResolveResourceType(delegateName);
         return resourceType is not null && HasResourceGrant(ps, resourceType, resourceId);

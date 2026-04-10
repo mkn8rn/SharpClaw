@@ -2,6 +2,7 @@ using System.Text.Json;
 
 using Microsoft.EntityFrameworkCore;
 
+using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -103,18 +104,20 @@ internal sealed class ContextToolsService(SharpClawDbContext db)
         var agentWithRole = await db.Agents
             .Include(a => a.Role)
                 .ThenInclude(r => r!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
             .FirstOrDefaultAsync(a => a.Id == agentId, ct);
 
         var agentPs = agentWithRole?.Role?.PermissionSet;
-        if (agentPs is not { CanReadCrossThreadHistory: true })
+        if (agentPs is null || !HasGlobalFlag(agentPs, "CanReadCrossThreadHistory"))
             return "Error: agent lacks ReadCrossThreadHistory permission.";
 
         // Check channel opt-in (unless Independent clearance)
-        if (agentPs.ReadCrossThreadHistoryClearance != PermissionClearance.Independent)
+        var flagClearance = GetFlagClearance(agentPs, "CanReadCrossThreadHistory");
+        if (flagClearance != PermissionClearance.Independent)
         {
             var effectivePs = targetChannel.PermissionSet
                 ?? targetChannel.AgentContext?.PermissionSet;
-            if (effectivePs?.CanReadCrossThreadHistory != true)
+            if (effectivePs is null || !HasGlobalFlag(effectivePs, "CanReadCrossThreadHistory"))
                 return "Error: the target channel has not opted in to cross-thread history sharing.";
         }
 
@@ -149,19 +152,24 @@ internal sealed class ContextToolsService(SharpClawDbContext db)
         var agentWithRole = await db.Agents
             .Include(a => a.Role)
                 .ThenInclude(r => r!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
             .FirstOrDefaultAsync(a => a.Id == agentId, ct);
 
-        if (agentWithRole?.Role?.PermissionSet is not { CanReadCrossThreadHistory: true } agentPs)
+        var agentPs = agentWithRole?.Role?.PermissionSet;
+        if (agentPs is null || !HasGlobalFlag(agentPs, "CanReadCrossThreadHistory"))
             return [];
 
-        var isIndependent = agentPs.ReadCrossThreadHistoryClearance == PermissionClearance.Independent;
+        var isIndependent = GetFlagClearance(agentPs, "CanReadCrossThreadHistory")
+            == PermissionClearance.Independent;
 
         // Channels where the agent is primary or allowed, excluding current
         var channels = await db.Channels
             .Include(c => c.AllowedAgents)
             .Include(c => c.PermissionSet)
+                .ThenInclude(ps => ps!.GlobalFlags)
             .Include(c => c.AgentContext)
                 .ThenInclude(ctx => ctx!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
             .Where(c => c.Id != currentChannelId)
             .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
             .ToListAsync(ct);
@@ -173,7 +181,7 @@ internal sealed class ContextToolsService(SharpClawDbContext db)
                 .Where(c =>
                 {
                     var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
-                    return effectivePs?.CanReadCrossThreadHistory == true;
+                    return effectivePs is not null && HasGlobalFlag(effectivePs, "CanReadCrossThreadHistory");
                 })
                 .ToList();
         }
@@ -194,4 +202,11 @@ internal sealed class ContextToolsService(SharpClawDbContext db)
             .Select(t => (t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
             .ToList();
     }
+
+    private static bool HasGlobalFlag(PermissionSetDB ps, string flagKey)
+        => ps.GlobalFlags.Any(f => f.FlagKey == flagKey);
+
+    private static PermissionClearance GetFlagClearance(PermissionSetDB ps, string flagKey)
+        => ps.GlobalFlags.FirstOrDefault(f => f.FlagKey == flagKey)
+            ?.Clearance ?? PermissionClearance.Unset;
 }

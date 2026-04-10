@@ -55,84 +55,77 @@ internal static class TerminalUI
 
     public static readonly (string ApiName, string DisplayName)[] ResourceAccessTypes =
     [
-        ("dangerousShellAccesses", "Dangerous Shell"),
-        ("safeShellAccesses", "Safe Shell"),
-        ("containerAccesses", "Containers"),
-        ("websiteAccesses", "Websites"),
-        ("searchEngineAccesses", "Search Engines"),
-        ("internalDatabaseAccesses", "Internal Databases"),
-        ("externalDatabaseAccesses", "External Databases"),
-        ("inputAudioAccesses", "Input Audios"),
-        ("displayDeviceAccesses", "Display Devices"),
-        ("editorSessionAccesses", "Editor Sessions"),
-        ("agentAccesses", "Agent Management"),
-        ("taskAccesses", "Task Management"),
-        ("skillAccesses", "Skill Management"),
-        ("agentHeaderAccesses", "Agent Header Editing"),
-        ("channelHeaderAccesses", "Channel Header Editing"),
-        ("documentSessionAccesses", "Document Sessions"),
-        ("nativeApplicationAccesses", "Native Applications"),
+        ("DangerousShell", "Dangerous Shell"),
+        ("SafeShell", "Safe Shell"),
+        ("ContainerAccess", "Containers"),
+        ("WebsiteAccess", "Websites"),
+        ("SearchEngineAccess", "Search Engines"),
+        ("InternalDatabase", "Internal Databases"),
+        ("ExternalDatabase", "External Databases"),
+        ("InputAudio", "Input Audios"),
+        ("DisplayDevice", "Display Devices"),
+        ("EditorSession", "Editor Sessions"),
+        ("ManageAgent", "Agent Management"),
+        ("EditTask", "Task Management"),
+        ("AccessSkill", "Skill Management"),
+        ("EditAgentHeader", "Agent Header Editing"),
+        ("EditChannelHeader", "Channel Header Editing"),
+        ("DocumentSession", "Document Sessions"),
+        ("NativeApplication", "Native Applications"),
+        ("BotIntegration", "Bot Integrations"),
     ];
 
     public static readonly string[] GlobalFlagNames =
-        ["canCreateSubAgents", "canCreateContainers", "canRegisterDatabases",
-         "canAccessLocalhostInBrowser", "canAccessLocalhostCli",
-         "canClickDesktop", "canTypeOnDesktop", "canReadCrossThreadHistory",
-         "canEditAgentHeader", "canEditChannelHeader",
-         "canCreateDocumentSessions", "canEnumerateWindows",
-         "canFocusWindow", "canCloseWindow", "canResizeWindow",
-         "canSendHotkey", "canReadClipboard", "canWriteClipboard"];
-
-    public static readonly string[] GlobalFlagClearanceNames =
-        ["createSubAgentsClearance", "createContainersClearance", "registerDatabasesClearance",
-         "accessLocalhostInBrowserClearance", "accessLocalhostCliClearance",
-         "clickDesktopClearance", "typeOnDesktopClearance", "readCrossThreadHistoryClearance",
-         "editAgentHeaderClearance", "editChannelHeaderClearance",
-         "createDocumentSessionsClearance", "enumerateWindowsClearance",
-         "focusWindowClearance", "closeWindowClearance", "resizeWindowClearance",
-         "sendHotkeyClearance", "readClipboardClearance", "writeClipboardClearance"];
+        ["CanCreateSubAgents", "CanCreateContainers", "CanRegisterDatabases",
+         "CanAccessLocalhostInBrowser", "CanAccessLocalhostCli",
+         "CanClickDesktop", "CanTypeOnDesktop", "CanReadCrossThreadHistory",
+         "CanEditAgentHeader", "CanEditChannelHeader",
+         "CanCreateDocumentSessions", "CanEnumerateWindows",
+         "CanFocusWindow", "CanCloseWindow", "CanResizeWindow",
+         "CanSendHotkey", "CanReadClipboard", "CanWriteClipboard"];
 
     public static readonly Dictionary<string, string> GlobalFlagTooltips = new()
     {
-        ["canCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
-        ["canCreateContainers"] = "Allow the agent to create sandboxed execution containers",
-        ["canRegisterDatabases"] = "Allow the agent to register internal or external databases",
-        ["canAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
-        ["canAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
-        ["canClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
-        ["canTypeOnDesktop"] = "Allow the agent to simulate keyboard input on the desktop",
-        ["canReadCrossThreadHistory"] = "Allow the agent to read conversation history from other threads and channels",
-        ["canEditAgentHeader"] = "Allow editing the custom chat header of specific agents",
-        ["canEditChannelHeader"] = "Allow editing the custom chat header of specific channels",
-        ["canCreateDocumentSessions"] = "Allow the agent to register document files (spreadsheets, CSV) as sessions",
-        ["canEnumerateWindows"] = "Allow the agent to list visible desktop windows (title, process, path)",
-        ["canFocusWindow"] = "Allow the agent to bring windows to the foreground",
-        ["canCloseWindow"] = "Allow the agent to send close signals to windows (graceful)",
-        ["canResizeWindow"] = "Allow the agent to move, resize, minimize, or maximize windows",
-        ["canSendHotkey"] = "Allow the agent to send keyboard shortcuts (Ctrl+S, Alt+Tab, etc.)",
-        ["canReadClipboard"] = "Allow the agent to read clipboard contents (text, files, images)",
-        ["canWriteClipboard"] = "Allow the agent to set clipboard contents (text or file paths)",
+        ["CanCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
+        ["CanCreateContainers"] = "Allow the agent to create sandboxed execution containers",
+        ["CanRegisterDatabases"] = "Allow the agent to register internal or external databases",
+        ["CanAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
+        ["CanAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
+        ["CanClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
+        ["CanTypeOnDesktop"] = "Allow the agent to simulate keyboard input on the desktop",
+        ["CanReadCrossThreadHistory"] = "Allow the agent to read conversation history from other threads and channels",
+        ["CanEditAgentHeader"] = "Allow editing the custom chat header of specific agents",
+        ["CanEditChannelHeader"] = "Allow editing the custom chat header of specific channels",
+        ["CanCreateDocumentSessions"] = "Allow the agent to register document files (spreadsheets, CSV) as sessions",
+        ["CanEnumerateWindows"] = "Allow the agent to list visible desktop windows (title, process, path)",
+        ["CanFocusWindow"] = "Allow the agent to bring windows to the foreground",
+        ["CanCloseWindow"] = "Allow the agent to send close signals to windows (graceful)",
+        ["CanResizeWindow"] = "Allow the agent to move, resize, minimize, or maximize windows",
+        ["CanSendHotkey"] = "Allow the agent to send keyboard shortcuts (Ctrl+S, Alt+Tab, etc.)",
+        ["CanReadClipboard"] = "Allow the agent to read clipboard contents (text, files, images)",
+        ["CanWriteClipboard"] = "Allow the agent to set clipboard contents (text or file paths)",
     };
 
     public static readonly Dictionary<string, string> ResourceAccessTooltips = new()
     {
-        ["dangerousShellAccesses"] = "Unrestricted shell commands \u2014 use with extreme caution",
-        ["safeShellAccesses"] = "Shell commands restricted to the mk8.shell allowlist",
-        ["containerAccesses"] = "Access to sandboxed execution containers",
-        ["websiteAccesses"] = "Access to registered website resources",
-        ["searchEngineAccesses"] = "Access to registered search engine resources",
-        ["internalDatabaseAccesses"] = "Access to SharpClaw-managed internal databases",
-        ["externalDatabaseAccesses"] = "Access to registered external database endpoints",
-        ["inputAudioAccesses"] = "Access to audio capture devices for transcription",
-        ["displayDeviceAccesses"] = "Access to display devices for screen capture",
-        ["editorSessionAccesses"] = "Access to IDE editor sessions via the editor bridge",
-        ["agentAccesses"] = "Manage other agents (create, update, delete)",
-        ["taskAccesses"] = "Manage scheduled tasks and jobs",
-        ["skillAccesses"] = "Access registered skills and their definitions",
-        ["agentHeaderAccesses"] = "Edit the custom chat header of specific agents",
-        ["channelHeaderAccesses"] = "Edit the custom chat header of specific channels",
-        ["documentSessionAccesses"] = "Access to registered document files for spreadsheet operations",
-        ["nativeApplicationAccesses"] = "Access to registered desktop applications for launch and process control",
+        ["DangerousShell"] = "Unrestricted shell commands \u2014 use with extreme caution",
+        ["SafeShell"] = "Shell commands restricted to the mk8.shell allowlist",
+        ["ContainerAccess"] = "Access to sandboxed execution containers",
+        ["WebsiteAccess"] = "Access to registered website resources",
+        ["SearchEngineAccess"] = "Access to registered search engine resources",
+        ["InternalDatabase"] = "Access to SharpClaw-managed internal databases",
+        ["ExternalDatabase"] = "Access to registered external database endpoints",
+        ["InputAudio"] = "Access to audio capture devices for transcription",
+        ["DisplayDevice"] = "Access to display devices for screen capture",
+        ["EditorSession"] = "Access to IDE editor sessions via the editor bridge",
+        ["ManageAgent"] = "Manage other agents (create, update, delete)",
+        ["EditTask"] = "Manage scheduled tasks and jobs",
+        ["AccessSkill"] = "Access registered skills and their definitions",
+        ["EditAgentHeader"] = "Edit the custom chat header of specific agents",
+        ["EditChannelHeader"] = "Edit the custom chat header of specific channels",
+        ["DocumentSession"] = "Access to registered document files for spreadsheet operations",
+        ["NativeApplication"] = "Access to registered desktop applications for launch and process control",
+        ["BotIntegration"] = "Access to registered bot platform integrations",
     };
 
     public static readonly (string Tag, string Label)[] ClearanceOptions =
@@ -146,10 +139,10 @@ internal static class TerminalUI
 
     // ── Helpers ──────────────────────────────────────────────────
 
-    public static string FormatFlagName(string camelCase)
+    public static string FormatFlagName(string flagKey)
     {
-        var s = camelCase.AsSpan();
-        if (s.StartsWith("can")) s = s[3..];
+        var s = flagKey.AsSpan();
+        if (s.StartsWith("Can")) s = s[3..];
         var sb = new System.Text.StringBuilder(s.Length + 4);
         for (var i = 0; i < s.Length; i++)
         {

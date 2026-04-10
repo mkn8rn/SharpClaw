@@ -53,6 +53,15 @@ public sealed class Mk8ShellModule : ISharpClawModule
         }),
     ];
 
+    // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanCreateContainers", "Create Containers", "Create new sandbox / VM / container environments.", "CreateContainerAsync"),
+    ];
+
     public IReadOnlyList<ModuleCliCommand>? GetCliCommands() => null;
 
     public IReadOnlyList<ModuleToolDefinition> GetToolDefinitions() =>

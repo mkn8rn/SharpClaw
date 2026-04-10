@@ -111,6 +111,7 @@ public sealed class RoleService(SharpClawDbContext db)
 
             // Clear existing grant collections.
             ps.ResourceAccesses.Clear();
+            ps.GlobalFlags.Clear();
         }
         else
         {
@@ -120,63 +121,36 @@ public sealed class RoleService(SharpClawDbContext db)
             role.PermissionSetId = ps.Id;
         }
 
-        // Apply global flags.
+        // Apply global flags — generic loop over dictionary.
         ps.DefaultClearance = request.DefaultClearance;
-        ps.CanCreateSubAgents = request.CanCreateSubAgents;
-        ps.CreateSubAgentsClearance = request.CreateSubAgentsClearance;
-        ps.CanCreateContainers = request.CanCreateContainers;
-        ps.CreateContainersClearance = request.CreateContainersClearance;
-        ps.CanRegisterDatabases = request.CanRegisterDatabases;
-        ps.RegisterDatabasesClearance = request.RegisterDatabasesClearance;
-        ps.CanAccessLocalhostInBrowser = request.CanAccessLocalhostInBrowser;
-        ps.AccessLocalhostInBrowserClearance = request.AccessLocalhostInBrowserClearance;
-        ps.CanAccessLocalhostCli = request.CanAccessLocalhostCli;
-        ps.AccessLocalhostCliClearance = request.AccessLocalhostCliClearance;
-        ps.CanClickDesktop = request.CanClickDesktop;
-        ps.ClickDesktopClearance = request.ClickDesktopClearance;
-        ps.CanTypeOnDesktop = request.CanTypeOnDesktop;
-        ps.TypeOnDesktopClearance = request.TypeOnDesktopClearance;
-        ps.CanReadCrossThreadHistory = request.CanReadCrossThreadHistory;
-        ps.ReadCrossThreadHistoryClearance = request.ReadCrossThreadHistoryClearance;
-        ps.CanEditAgentHeader = request.CanEditAgentHeader;
-        ps.EditAgentHeaderClearance = request.EditAgentHeaderClearance;
-        ps.CanEditChannelHeader = request.CanEditChannelHeader;
-        ps.EditChannelHeaderClearance = request.EditChannelHeaderClearance;
-        ps.CanCreateDocumentSessions = request.CanCreateDocumentSessions;
-        ps.CreateDocumentSessionsClearance = request.CreateDocumentSessionsClearance;
-        ps.CanEnumerateWindows = request.CanEnumerateWindows;
-        ps.EnumerateWindowsClearance = request.EnumerateWindowsClearance;
-        ps.CanFocusWindow = request.CanFocusWindow;
-        ps.FocusWindowClearance = request.FocusWindowClearance;
-        ps.CanCloseWindow = request.CanCloseWindow;
-        ps.CloseWindowClearance = request.CloseWindowClearance;
-        ps.CanResizeWindow = request.CanResizeWindow;
-        ps.ResizeWindowClearance = request.ResizeWindowClearance;
-        ps.CanSendHotkey = request.CanSendHotkey;
-        ps.SendHotkeyClearance = request.SendHotkeyClearance;
-        ps.CanReadClipboard = request.CanReadClipboard;
-        ps.ReadClipboardClearance = request.ReadClipboardClearance;
-        ps.CanWriteClipboard = request.CanWriteClipboard;
-        ps.WriteClipboardClearance = request.WriteClipboardClearance;
+        if (request.GlobalFlags is not null)
+        {
+            foreach (var (key, clearance) in request.GlobalFlags)
+            {
+                ps.GlobalFlags.Add(new GlobalFlagDB
+                {
+                    FlagKey = key,
+                    Clearance = clearance,
+                });
+            }
+        }
 
-        // Apply per-resource grants.
-        AddResourceGrants(ps, "DsShell", request.DangerousShellAccesses);
-        AddResourceGrants(ps, "Mk8Shell", request.SafeShellAccesses);
-        AddResourceGrants(ps, "Container", request.ContainerAccesses);
-        AddResourceGrants(ps, "WaWebsite", request.WebsiteAccesses);
-        AddResourceGrants(ps, "WaSearch", request.SearchEngineAccesses);
-        AddResourceGrants(ps, "DbInternal", request.InternalDatabaseAccesses);
-        AddResourceGrants(ps, "DbExternal", request.ExternalDatabaseAccesses);
-        AddResourceGrants(ps, "TrAudio", request.InputAudioAccesses);
-        AddResourceGrants(ps, "CuDisplay", request.DisplayDeviceAccesses);
-        AddResourceGrants(ps, "EditorSession", request.EditorSessionAccesses);
-        AddResourceGrants(ps, "AoAgent", request.AgentAccesses);
-        AddResourceGrants(ps, "AoTask", request.TaskAccesses);
-        AddResourceGrants(ps, "AoSkill", request.SkillAccesses);
-        AddResourceGrants(ps, "AoAgentHeader", request.AgentHeaderAccesses);
-        AddResourceGrants(ps, "AoChannelHeader", request.ChannelHeaderAccesses);
-        AddResourceGrants(ps, "OaDocument", request.DocumentSessionAccesses);
-        AddResourceGrants(ps, "CuNativeApp", request.NativeApplicationAccesses);
+        // Apply per-resource grants — generic loop over dictionary.
+        if (request.ResourceGrants is not null)
+        {
+            foreach (var (resourceType, grants) in request.ResourceGrants)
+            {
+                foreach (var g in grants)
+                {
+                    ps.ResourceAccesses.Add(new ResourceAccessDB
+                    {
+                        ResourceType = resourceType,
+                        ResourceId = g.ResourceId,
+                        Clearance = g.Clearance,
+                    });
+                }
+            }
+        }
 
         await db.SaveChangesAsync(ct);
 
@@ -190,128 +164,29 @@ public sealed class RoleService(SharpClawDbContext db)
     private static void ValidateGlobalFlags(
         SetRolePermissionsRequest request, PermissionSetDB? callerPs)
     {
-        if (callerPs is null)
-        {
-            if (request is
-                {
-                    CanCreateSubAgents: false,
-                    CanCreateContainers: false,
-                    CanRegisterDatabases: false,
-                    CanAccessLocalhostInBrowser: false,
-                    CanAccessLocalhostCli: false,
-                    CanClickDesktop: false,
-                    CanTypeOnDesktop: false,
-                    CanReadCrossThreadHistory: false,
-                    CanEditAgentHeader: false,
-                    CanEditChannelHeader: false,
-                    CanCreateDocumentSessions: false,
-                    CanEnumerateWindows: false,
-                    CanFocusWindow: false,
-                    CanCloseWindow: false,
-                    CanResizeWindow: false,
-                    CanSendHotkey: false,
-                    CanReadClipboard: false,
-                    CanWriteClipboard: false
-                })
-                return;
+        if (request.GlobalFlags is null or { Count: 0 })
+            return;
 
+        if (callerPs is null)
             throw new UnauthorizedAccessException(
                 "You have no permissions — cannot grant any global flags.");
+
+        foreach (var (flagKey, _) in request.GlobalFlags)
+        {
+            if (!callerPs.GlobalFlags.Any(f => f.FlagKey == flagKey))
+                throw new UnauthorizedAccessException(
+                    $"Cannot grant {flagKey} — you do not hold this permission.");
         }
-
-        if (request.CanCreateSubAgents && !callerPs.CanCreateSubAgents)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanCreateSubAgents — you do not hold this permission.");
-
-        if (request.CanCreateContainers && !callerPs.CanCreateContainers)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanCreateContainers — you do not hold this permission.");
-
-        if (request.CanRegisterDatabases && !callerPs.CanRegisterDatabases)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanRegisterDatabases — you do not hold this permission.");
-
-        if (request.CanAccessLocalhostInBrowser && !callerPs.CanAccessLocalhostInBrowser)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanAccessLocalhostInBrowser — you do not hold this permission.");
-
-        if (request.CanAccessLocalhostCli && !callerPs.CanAccessLocalhostCli)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanAccessLocalhostCli — you do not hold this permission.");
-
-        if (request.CanClickDesktop && !callerPs.CanClickDesktop)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanClickDesktop — you do not hold this permission.");
-
-        if (request.CanTypeOnDesktop && !callerPs.CanTypeOnDesktop)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanTypeOnDesktop — you do not hold this permission.");
-
-        if (request.CanReadCrossThreadHistory && !callerPs.CanReadCrossThreadHistory)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanReadCrossThreadHistory — you do not hold this permission.");
-
-        if (request.CanEditAgentHeader && !callerPs.CanEditAgentHeader)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanEditAgentHeader — you do not hold this permission.");
-
-        if (request.CanEditChannelHeader && !callerPs.CanEditChannelHeader)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanEditChannelHeader — you do not hold this permission.");
-
-        if (request.CanCreateDocumentSessions && !callerPs.CanCreateDocumentSessions)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanCreateDocumentSessions — you do not hold this permission.");
-
-        if (request.CanEnumerateWindows && !callerPs.CanEnumerateWindows)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanEnumerateWindows — you do not hold this permission.");
-
-        if (request.CanFocusWindow && !callerPs.CanFocusWindow)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanFocusWindow — you do not hold this permission.");
-
-        if (request.CanCloseWindow && !callerPs.CanCloseWindow)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanCloseWindow — you do not hold this permission.");
-
-        if (request.CanResizeWindow && !callerPs.CanResizeWindow)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanResizeWindow — you do not hold this permission.");
-
-        if (request.CanSendHotkey && !callerPs.CanSendHotkey)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanSendHotkey — you do not hold this permission.");
-
-        if (request.CanReadClipboard && !callerPs.CanReadClipboard)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanReadClipboard — you do not hold this permission.");
-
-        if (request.CanWriteClipboard && !callerPs.CanWriteClipboard)
-            throw new UnauthorizedAccessException(
-                "Cannot grant CanWriteClipboard — you do not hold this permission.");
     }
 
     private static void ValidateResourceGrants(
         SetRolePermissionsRequest request, PermissionSetDB? callerPs)
     {
-        ValidateGrants("DangerousShellAccesses", "DsShell", request.DangerousShellAccesses, callerPs);
-        ValidateGrants("SafeShellAccesses", "Mk8Shell", request.SafeShellAccesses, callerPs);
-        ValidateGrants("ContainerAccesses", "Container", request.ContainerAccesses, callerPs);
-        ValidateGrants("WebsiteAccesses", "WaWebsite", request.WebsiteAccesses, callerPs);
-        ValidateGrants("SearchEngineAccesses", "WaSearch", request.SearchEngineAccesses, callerPs);
-        ValidateGrants("InternalDatabaseAccesses", "DbInternal", request.InternalDatabaseAccesses, callerPs);
-        ValidateGrants("ExternalDatabaseAccesses", "DbExternal", request.ExternalDatabaseAccesses, callerPs);
-        ValidateGrants("InputAudioAccesses", "TrAudio", request.InputAudioAccesses, callerPs);
-        ValidateGrants("DisplayDeviceAccesses", "CuDisplay", request.DisplayDeviceAccesses, callerPs);
-        ValidateGrants("EditorSessionAccesses", "EditorSession", request.EditorSessionAccesses, callerPs);
-        ValidateGrants("AgentAccesses", "AoAgent", request.AgentAccesses, callerPs);
-        ValidateGrants("TaskAccesses", "AoTask", request.TaskAccesses, callerPs);
-        ValidateGrants("SkillAccesses", "AoSkill", request.SkillAccesses, callerPs);
-        ValidateGrants("AgentHeaderAccesses", "AoAgentHeader", request.AgentHeaderAccesses, callerPs);
-        ValidateGrants("ChannelHeaderAccesses", "AoChannelHeader", request.ChannelHeaderAccesses, callerPs);
-        ValidateGrants("DocumentSessionAccesses", "OaDocument", request.DocumentSessionAccesses, callerPs);
-        ValidateGrants("NativeApplicationAccesses", "CuNativeApp", request.NativeApplicationAccesses, callerPs);
+        if (request.ResourceGrants is null or { Count: 0 })
+            return;
+
+        foreach (var (resourceType, grants) in request.ResourceGrants)
+            ValidateGrants(resourceType, resourceType, grants, callerPs);
     }
 
     /// <summary>
@@ -354,25 +229,6 @@ public sealed class RoleService(SharpClawDbContext db)
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private static void AddResourceGrants(
-        PermissionSetDB ps,
-        string resourceType,
-        IReadOnlyList<ResourceGrant>? grants)
-    {
-        if (grants is null)
-            return;
-
-        foreach (var g in grants)
-        {
-            ps.ResourceAccesses.Add(new ResourceAccessDB
-            {
-                ResourceType = resourceType,
-                ResourceId = g.ResourceId,
-                Clearance = g.Clearance,
-            });
-        }
-    }
-
     private async Task<PermissionSetDB?> LoadCallerPermissionSetAsync(
         Guid userId, CancellationToken ct)
     {
@@ -390,6 +246,7 @@ public sealed class RoleService(SharpClawDbContext db)
         Guid psId, CancellationToken ct)
     {
         return await db.PermissionSets
+            .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == psId, ct);
@@ -400,69 +257,17 @@ public sealed class RoleService(SharpClawDbContext db)
             RoleId: role.Id,
             RoleName: role.Name,
             DefaultClearance: ps?.DefaultClearance ?? PermissionClearance.Unset,
-            CanCreateSubAgents: ps?.CanCreateSubAgents ?? false,
-            CreateSubAgentsClearance: ps?.CreateSubAgentsClearance ?? PermissionClearance.Unset,
-            CanCreateContainers: ps?.CanCreateContainers ?? false,
-            CreateContainersClearance: ps?.CreateContainersClearance ?? PermissionClearance.Unset,
-            CanRegisterDatabases: ps?.CanRegisterDatabases ?? false,
-            RegisterDatabasesClearance: ps?.RegisterDatabasesClearance ?? PermissionClearance.Unset,
-            CanAccessLocalhostInBrowser: ps?.CanAccessLocalhostInBrowser ?? false,
-            AccessLocalhostInBrowserClearance: ps?.AccessLocalhostInBrowserClearance ?? PermissionClearance.Unset,
-            CanAccessLocalhostCli: ps?.CanAccessLocalhostCli ?? false,
-            AccessLocalhostCliClearance: ps?.AccessLocalhostCliClearance ?? PermissionClearance.Unset,
-            CanClickDesktop: ps?.CanClickDesktop ?? false,
-            ClickDesktopClearance: ps?.ClickDesktopClearance ?? PermissionClearance.Unset,
-            CanTypeOnDesktop: ps?.CanTypeOnDesktop ?? false,
-            TypeOnDesktopClearance: ps?.TypeOnDesktopClearance ?? PermissionClearance.Unset,
-            CanReadCrossThreadHistory: ps?.CanReadCrossThreadHistory ?? false,
-            ReadCrossThreadHistoryClearance: ps?.ReadCrossThreadHistoryClearance ?? PermissionClearance.Unset,
-            CanEditAgentHeader: ps?.CanEditAgentHeader ?? false,
-            EditAgentHeaderClearance: ps?.EditAgentHeaderClearance ?? PermissionClearance.Unset,
-            CanEditChannelHeader: ps?.CanEditChannelHeader ?? false,
-            EditChannelHeaderClearance: ps?.EditChannelHeaderClearance ?? PermissionClearance.Unset,
-            CanCreateDocumentSessions: ps?.CanCreateDocumentSessions ?? false,
-            CreateDocumentSessionsClearance: ps?.CreateDocumentSessionsClearance ?? PermissionClearance.Unset,
-            CanEnumerateWindows: ps?.CanEnumerateWindows ?? false,
-            EnumerateWindowsClearance: ps?.EnumerateWindowsClearance ?? PermissionClearance.Unset,
-            CanFocusWindow: ps?.CanFocusWindow ?? false,
-            FocusWindowClearance: ps?.FocusWindowClearance ?? PermissionClearance.Unset,
-            CanCloseWindow: ps?.CanCloseWindow ?? false,
-            CloseWindowClearance: ps?.CloseWindowClearance ?? PermissionClearance.Unset,
-            CanResizeWindow: ps?.CanResizeWindow ?? false,
-            ResizeWindowClearance: ps?.ResizeWindowClearance ?? PermissionClearance.Unset,
-            CanSendHotkey: ps?.CanSendHotkey ?? false,
-            SendHotkeyClearance: ps?.SendHotkeyClearance ?? PermissionClearance.Unset,
-            CanReadClipboard: ps?.CanReadClipboard ?? false,
-            ReadClipboardClearance: ps?.ReadClipboardClearance ?? PermissionClearance.Unset,
-            CanWriteClipboard: ps?.CanWriteClipboard ?? false,
-            WriteClipboardClearance: ps?.WriteClipboardClearance ?? PermissionClearance.Unset,
-            DangerousShellAccesses: MapResourceGrants(ps, "DsShell"),
-            SafeShellAccesses: MapResourceGrants(ps, "Mk8Shell"),
-            ContainerAccesses: MapResourceGrants(ps, "Container"),
-            WebsiteAccesses: MapResourceGrants(ps, "WaWebsite"),
-            SearchEngineAccesses: MapResourceGrants(ps, "WaSearch"),
-            InternalDatabaseAccesses: MapResourceGrants(ps, "DbInternal"),
-            ExternalDatabaseAccesses: MapResourceGrants(ps, "DbExternal"),
-            InputAudioAccesses: MapResourceGrants(ps, "TrAudio"),
-            DisplayDeviceAccesses: MapResourceGrants(ps, "CuDisplay"),
-            EditorSessionAccesses: MapResourceGrants(ps, "EditorSession"),
-            AgentAccesses: MapResourceGrants(ps, "AoAgent"),
-            TaskAccesses: MapResourceGrants(ps, "AoTask"),
-            SkillAccesses: MapResourceGrants(ps, "AoSkill"),
-            AgentHeaderAccesses: MapResourceGrants(ps, "AoAgentHeader"),
-            ChannelHeaderAccesses: MapResourceGrants(ps, "AoChannelHeader"),
-            DocumentSessionAccesses: MapResourceGrants(ps, "OaDocument"),
-            NativeApplicationAccesses: MapResourceGrants(ps, "CuNativeApp"));
+            GlobalFlags: ps?.GlobalFlags
+                .ToDictionary(f => f.FlagKey, f => f.Clearance)
+                ?? new Dictionary<string, PermissionClearance>(),
+            ResourceGrants: ps is null
+                ? new Dictionary<string, IReadOnlyList<ResourceGrant>>()
+                : ps.ResourceAccesses
+                    .GroupBy(a => a.ResourceType)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => (IReadOnlyList<ResourceGrant>)g
+                            .Select(a => new ResourceGrant(a.ResourceId, a.Clearance))
+                            .ToList()));
 
-    private static IReadOnlyList<ResourceGrant> MapResourceGrants(
-        PermissionSetDB? ps, string resourceType)
-    {
-        if (ps?.ResourceAccesses is null or { Count: 0 })
-            return [];
-
-        return ps.ResourceAccesses
-            .Where(a => a.ResourceType == resourceType)
-            .Select(a => new ResourceGrant(a.ResourceId, a.Clearance))
-            .ToList();
     }
-}

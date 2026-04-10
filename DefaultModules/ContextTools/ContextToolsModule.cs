@@ -35,6 +35,15 @@ public sealed class ContextToolsModule : ISharpClawModule
     public IReadOnlyList<ModuleContractExport> ExportedContracts => [];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanReadCrossThreadHistory", "Read Cross-Thread History", "Read conversation history from other threads/channels.", "ReadCrossThreadHistoryAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // Job-pipeline Tool Definitions (none — all tools are inline)
     // ═══════════════════════════════════════════════════════════════
 

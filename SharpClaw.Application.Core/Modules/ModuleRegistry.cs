@@ -36,6 +36,14 @@ public sealed class ModuleRegistry
     // to resource types through this registry instead of a static class.
     private readonly Dictionary<string, string> _delegateToResourceType = new(StringComparer.Ordinal);
 
+    // FlagKey → descriptor provided by a module (e.g. "CanClickDesktop" → descriptor).
+    // Only one module may own a given global flag at a time.
+    private readonly Dictionary<string, ModuleGlobalFlagDescriptor> _globalFlagDescriptors = new(StringComparer.Ordinal);
+
+    // DelegateMethodName → FlagKey. Reverse index for fast permission evaluation:
+    // AgentActionService resolves DelegateTo strings to flag keys through this registry.
+    private readonly Dictionary<string, string> _delegateToFlagKey = new(StringComparer.Ordinal);
+
     // External (hot-loaded) module hosts keyed by module ID.
     private readonly Dictionary<string, ExternalModuleHost> _externalHosts = new(StringComparer.Ordinal);
 
@@ -171,6 +179,27 @@ public sealed class ModuleRegistry
                         "is already mapped by another module.");
             }
 
+            // Validate global flag descriptors.
+            var flagDescriptors = module.GetGlobalFlagDescriptors();
+            foreach (var flag in flagDescriptors)
+            {
+                if (_globalFlagDescriptors.ContainsKey(flag.FlagKey))
+                    throw new InvalidOperationException(
+                        $"Global flag '{flag.FlagKey}' from module '{module.Id}' " +
+                        "collides with an existing flag.");
+
+                if (_delegateToFlagKey.ContainsKey(flag.DelegateMethodName))
+                    throw new InvalidOperationException(
+                        $"Global flag delegate '{flag.DelegateMethodName}' from module '{module.Id}' " +
+                        "is already mapped by another module.");
+
+                // Also verify no collision with resource type delegates.
+                if (_delegateToResourceType.ContainsKey(flag.DelegateMethodName))
+                    throw new InvalidOperationException(
+                        $"Global flag delegate '{flag.DelegateMethodName}' from module '{module.Id}' " +
+                        "collides with a resource type delegate from another module.");
+            }
+
             // --- Phase 2: All checks passed — commit all mutations ---
 
             _modules[module.Id] = module;
@@ -216,6 +245,12 @@ public sealed class ModuleRegistry
             {
                 _resourceTypeDescriptors[desc.ResourceType] = desc;
                 _delegateToResourceType[desc.DelegateMethodName] = desc.ResourceType;
+            }
+
+            foreach (var flag in flagDescriptors)
+            {
+                _globalFlagDescriptors[flag.FlagKey] = flag;
+                _delegateToFlagKey[flag.DelegateMethodName] = flag.FlagKey;
             }
 
             if (externalHost is not null)
@@ -281,6 +316,13 @@ public sealed class ModuleRegistry
             {
                 _resourceTypeDescriptors.Remove(desc.ResourceType);
                 _delegateToResourceType.Remove(desc.DelegateMethodName);
+            }
+
+            // Remove any global flag descriptors this module provided.
+            foreach (var flag in module.GetGlobalFlagDescriptors())
+            {
+                _globalFlagDescriptors.Remove(flag.FlagKey);
+                _delegateToFlagKey.Remove(flag.DelegateMethodName);
             }
 
             _manifestCache.Remove(moduleId);
@@ -557,6 +599,46 @@ public sealed class ModuleRegistry
     {
         _lock.EnterReadLock();
         try { return [.. _resourceTypeDescriptors.Keys]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Global flag descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Get all registered global flag descriptors from all modules.</summary>
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetAllGlobalFlagDescriptors()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _globalFlagDescriptors.Values]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>Get all registered global flag keys.</summary>
+    public IReadOnlyList<string> GetAllRegisteredGlobalFlags()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _globalFlagDescriptors.Keys]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Resolve a <c>DelegateTo</c> method name to its global flag key.
+    /// Returns <c>null</c> when the delegate name is not a global flag
+    /// (i.e. it is a per-resource delegate).
+    /// </summary>
+    public string? ResolveGlobalFlag(string delegateMethodName)
+    {
+        _lock.EnterReadLock();
+        try { return _delegateToFlagKey.GetValueOrDefault(delegateMethodName); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>Get a global flag descriptor by its flag key, or <c>null</c>.</summary>
+    public ModuleGlobalFlagDescriptor? GetGlobalFlagDescriptor(string flagKey)
+    {
+        _lock.EnterReadLock();
+        try { return _globalFlagDescriptors.GetValueOrDefault(flagKey); }
         finally { _lock.ExitReadLock(); }
     }
 

@@ -600,18 +600,24 @@ public sealed class ChatService(
         var agentWithRole = await db.Agents
             .Include(a => a.Role)
                 .ThenInclude(r => r!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
             .FirstOrDefaultAsync(a => a.Id == agentId, ct);
 
-        if (agentWithRole?.Role?.PermissionSet is not { CanReadCrossThreadHistory: true } agentPs)
+        var agentPs = agentWithRole?.Role?.PermissionSet;
+        if (agentPs is null || !agentPs.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory"))
             return [];
 
-        var isIndependent = agentPs.ReadCrossThreadHistoryClearance == PermissionClearance.Independent;
+        var isIndependent = (agentPs.GlobalFlags
+            .FirstOrDefault(f => f.FlagKey == "CanReadCrossThreadHistory")
+            ?.Clearance ?? PermissionClearance.Unset) == PermissionClearance.Independent;
 
         var channels = await db.Channels
             .Include(c => c.AllowedAgents)
             .Include(c => c.PermissionSet)
+                .ThenInclude(ps => ps!.GlobalFlags)
             .Include(c => c.AgentContext)
                 .ThenInclude(ctx => ctx!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
             .Where(c => c.Id != currentChannelId)
             .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
             .ToListAsync(ct);
@@ -622,7 +628,7 @@ public sealed class ChatService(
                 .Where(c =>
                 {
                     var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
-                    return effectivePs?.CanReadCrossThreadHistory == true;
+                    return effectivePs?.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory") == true;
                 })
                 .ToList();
         }
@@ -661,24 +667,12 @@ public sealed class ChatService(
         PermissionSetDB ps, CancellationToken ct)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
+
+        // Global flags — generic iteration over the GlobalFlags collection.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
 
         foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {

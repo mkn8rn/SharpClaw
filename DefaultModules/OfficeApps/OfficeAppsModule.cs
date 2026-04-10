@@ -46,6 +46,15 @@ public sealed class OfficeAppsModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanCreateDocumentSessions", "Create Document Sessions", "Register new document sessions.", "CreateDocumentSessionAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // CLI Commands
     // ═══════════════════════════════════════════════════════════════
 
