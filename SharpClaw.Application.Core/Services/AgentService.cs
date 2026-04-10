@@ -212,21 +212,13 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
                 $"Cannot assign '{roleName}': target default clearance " +
                 $"{targetPs.DefaultClearance} exceeds your {callerPs.DefaultClearance}.");
 
-        // Global flags.
-        if (targetPs.CanCreateSubAgents && !callerPs.CanCreateSubAgents)
-            Deny(roleName, "CanCreateSubAgents");
-        if (targetPs.CanCreateContainers && !callerPs.CanCreateContainers)
-            Deny(roleName, "CanCreateContainers");
-        if (targetPs.CanRegisterDatabases && !callerPs.CanRegisterDatabases)
-            Deny(roleName, "CanRegisterDatabases");
-        if (targetPs.CanAccessLocalhostInBrowser && !callerPs.CanAccessLocalhostInBrowser)
-            Deny(roleName, "CanAccessLocalhostInBrowser");
-        if (targetPs.CanAccessLocalhostCli && !callerPs.CanAccessLocalhostCli)
-            Deny(roleName, "CanAccessLocalhostCli");
-        if (targetPs.CanClickDesktop && !callerPs.CanClickDesktop)
-            Deny(roleName, "CanClickDesktop");
-        if (targetPs.CanTypeOnDesktop && !callerPs.CanTypeOnDesktop)
-            Deny(roleName, "CanTypeOnDesktop");
+        // Global flags — generic loop covers all registered flags.
+        // Fixes the historical 7-of-18 incomplete check (see §12.3).
+        foreach (var targetFlag in targetPs.GlobalFlags)
+        {
+            if (!callerPs.GlobalFlags.Any(f => f.FlagKey == targetFlag.FlagKey))
+                Deny(roleName, targetFlag.FlagKey);
+        }
 
         // Per-resource grant collections — unified validation via ResourceAccesses.
         foreach (var resourceType in moduleRegistry.GetAllRegisteredResourceTypes())
@@ -302,6 +294,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
     private async Task<PermissionSetDB?> LoadFullPermissionSetAsync(
         Guid psId, CancellationToken ct) =>
         await db.PermissionSets
+            .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == psId, ct);

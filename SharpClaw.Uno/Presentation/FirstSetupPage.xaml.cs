@@ -840,29 +840,28 @@ public sealed partial class FirstSetupPage : Page
                 $"Failed to assign role ({(int)assignResp.StatusCode}). {await ExtractErrorAsync(assignResp)}");
 
         // 3. Build the permission set from the UI
+        var globalFlags = new Dictionary<string, object?>();
+        void AddFlag(CheckBox chk, ComboBox clr, string flagKey)
+        {
+            if (chk.IsChecked == true)
+                globalFlags[flagKey] = GetClearanceTag(clr);
+        }
+        AddFlag(ChkCreateSubAgents, ClrCreateSubAgents, "CanCreateSubAgents");
+        AddFlag(ChkCreateContainers, ClrCreateContainers, "CanCreateContainers");
+        AddFlag(ChkRegisterInfoStores, ClrRegisterInfoStores, "CanRegisterDatabases");
+        AddFlag(ChkLocalhostBrowser, ClrLocalhostBrowser, "CanAccessLocalhostInBrowser");
+        AddFlag(ChkLocalhostCli, ClrLocalhostCli, "CanAccessLocalhostCli");
+        AddFlag(ChkClickDesktop, ClrClickDesktop, "CanClickDesktop");
+        AddFlag(ChkTypeOnDesktop, ClrTypeOnDesktop, "CanTypeOnDesktop");
+
         var req = new Dictionary<string, object?>
         {
-            // Global flags with per-flag clearance
-            ["canCreateSubAgents"] = ChkCreateSubAgents.IsChecked == true,
-            ["createSubAgentsClearance"] = GetClearanceTag(ClrCreateSubAgents),
-            ["canCreateContainers"] = ChkCreateContainers.IsChecked == true,
-            ["createContainersClearance"] = GetClearanceTag(ClrCreateContainers),
-            ["canRegisterInfoStores"] = ChkRegisterInfoStores.IsChecked == true,
-            ["registerInfoStoresClearance"] = GetClearanceTag(ClrRegisterInfoStores),
-            ["canAccessLocalhostInBrowser"] = ChkLocalhostBrowser.IsChecked == true,
-            ["accessLocalhostInBrowserClearance"] = GetClearanceTag(ClrLocalhostBrowser),
-            ["canAccessLocalhostCli"] = ChkLocalhostCli.IsChecked == true,
-            ["accessLocalhostCliClearance"] = GetClearanceTag(ClrLocalhostCli),
-            ["canClickDesktop"] = ChkClickDesktop.IsChecked == true,
-            ["clickDesktopClearance"] = GetClearanceTag(ClrClickDesktop),
-            ["canTypeOnDesktop"] = ChkTypeOnDesktop.IsChecked == true,
-            ["typeOnDesktopClearance"] = GetClearanceTag(ClrTypeOnDesktop),
+            ["globalFlags"] = globalFlags,
         };
 
         // Per-resource grants from shared builder
         if (_permEditor is not null)
-            foreach (var (k, v) in _permEditor.CollectGrants())
-                req[k] = v;
+            req["resourceGrants"] = _permEditor.CollectGrants();
 
         var permBody = JsonSerializer.Serialize(req, Json);
 

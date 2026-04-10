@@ -59,6 +59,16 @@ public sealed class WebAccessModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanAccessLocalhostInBrowser", "Access Localhost (Browser)", "Access localhost URLs through a headless browser.", "AccessLocalhostInBrowserAsync"),
+        new("CanAccessLocalhostCli", "Access Localhost (CLI)", "Access localhost URLs via direct HTTP (no browser).", "AccessLocalhostCliAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // Tool Definitions
     // ═══════════════════════════════════════════════════════════════
 

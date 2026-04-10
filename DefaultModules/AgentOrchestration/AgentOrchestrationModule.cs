@@ -69,6 +69,17 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanCreateSubAgents", "Create Sub-Agents", "Create sub-agents with permissions ≤ the creator's.", "CreateSubAgentAsync"),
+        new("CanEditAgentHeader", "Edit Agent Header", "Edit the custom chat header of specific agents.", "CanEditAgentHeaderAsync"),
+        new("CanEditChannelHeader", "Edit Channel Header", "Edit the custom chat header of specific channels.", "CanEditChannelHeaderAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // Tool Definitions
     // ═══════════════════════════════════════════════════════════════
 

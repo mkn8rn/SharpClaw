@@ -187,41 +187,47 @@ public static class ResourceHandlers
     /// <summary>
     /// Returns lightweight <c>[{id, name}]</c> items for the resource type
     /// that backs a given permission access category.  The <paramref name="type"/>
-    /// value matches the JSON property names used in the permissions API
-    /// (e.g. <c>inputAudioAccesses</c>, <c>containerAccesses</c>).
+    /// value matches the <see cref="ResourceAccessDB.ResourceType"/> discriminator
+    /// (e.g. <c>InputAudio</c>, <c>ContainerAccess</c>).
     /// </summary>
     [MapGet("/lookup/{type}")]
     public static async Task<IResult> LookupByAccessType(string type, SharpClawDbContext db)
     {
         IQueryable<ResourceItem>? query = type switch
         {
-            "dangerousShellAccesses" => db.SystemUsers
+            "DangerousShell" => db.SystemUsers
                 .Select(e => new ResourceItem(e.Id, e.Username)),
-            "safeShellAccesses" or "containerAccesses" => db.Containers
+            "SafeShell" or "ContainerAccess" => db.Containers
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "websiteAccesses" => db.Websites
+            "WebsiteAccess" => db.Websites
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "searchEngineAccesses" => db.SearchEngines
+            "SearchEngineAccess" => db.SearchEngines
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "internalDatabaseAccesses" => db.InternalDatabases
+            "InternalDatabase" => db.InternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "externalDatabaseAccesses" => db.ExternalDatabases
+            "ExternalDatabase" => db.ExternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "inputAudioAccesses" => db.InputAudios
+            "InputAudio" => db.InputAudios
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "displayDeviceAccesses" => db.DisplayDevices
+            "DisplayDevice" => db.DisplayDevices
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "editorSessionAccesses" => db.EditorSessions
+            "EditorSession" => db.EditorSessions
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "agentAccesses" => db.Agents
+            "ManageAgent" => db.Agents
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "taskAccesses" => db.ScheduledTasks
+            "EditTask" => db.ScheduledTasks
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "skillAccesses" => db.Skills
+            "AccessSkill" => db.Skills
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "documentSessionAccesses" => db.DocumentSessions
+            "EditAgentHeader" => db.Agents
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "nativeApplicationAccesses" => db.NativeApplications
+            "EditChannelHeader" => db.Channels
+                .Select(e => new ResourceItem(e.Id, e.Title ?? e.Id.ToString())),
+            "DocumentSession" => db.DocumentSessions
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "NativeApplication" => db.NativeApplications
+                .Select(e => new ResourceItem(e.Id, e.Name)),
+            "BotIntegration" => db.BotIntegrations
                 .Select(e => new ResourceItem(e.Id, e.Name)),
             _ => null,
         };

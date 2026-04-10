@@ -74,6 +74,23 @@ public sealed class ComputerUseModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // Global Flag Descriptors
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+    [
+        new("CanClickDesktop", "Click Desktop", "Simulate mouse clicks on desktop displays.", "ClickDesktopAsync"),
+        new("CanTypeOnDesktop", "Type on Desktop", "Simulate keyboard input on desktop displays.", "TypeOnDesktopAsync"),
+        new("CanEnumerateWindows", "Enumerate Windows", "Enumerate visible desktop windows (title, process, handle).", "EnumerateWindowsAsync"),
+        new("CanFocusWindow", "Focus Window", "Bring a window to the foreground.", "FocusWindowAsync"),
+        new("CanCloseWindow", "Close Window", "Send WM_CLOSE to a window (graceful close).", "CloseWindowAsync"),
+        new("CanResizeWindow", "Resize Window", "Move, resize, minimize, or maximize a window.", "ResizeWindowAsync"),
+        new("CanSendHotkey", "Send Hotkey", "Send keyboard shortcuts (Ctrl+S, Alt+Tab, etc.).", "SendHotkeyAsync"),
+        new("CanReadClipboard", "Read Clipboard", "Read clipboard contents (text, files, images).", "ReadClipboardAsync"),
+        new("CanWriteClipboard", "Write Clipboard", "Set clipboard contents (text or file paths).", "WriteClipboardAsync"),
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // CLI Commands
     // ═══════════════════════════════════════════════════════════════
 

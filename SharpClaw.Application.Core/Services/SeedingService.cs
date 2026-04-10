@@ -89,16 +89,13 @@ public sealed class SeedingService(
     private PermissionSetDB CreateAdminPermissions() => new()
     {
         DefaultClearance = PermissionClearance.Independent,
-        CanCreateSubAgents = true,
-        CanCreateContainers = true,
-        CanRegisterDatabases = true,
-        CanAccessLocalhostInBrowser = true,
-        CanAccessLocalhostCli = true,
-        CanClickDesktop = true,
-        CanTypeOnDesktop = true,
-        CanReadCrossThreadHistory = true,
-        CanEditAgentHeader = true,
-        CanEditChannelHeader = true,
+
+        // Global flags — all registered flag keys enabled for admin.
+        GlobalFlags = [.. moduleRegistry.GetAllRegisteredGlobalFlags()
+            .Select(fk => new GlobalFlagDB
+            {
+                FlagKey = fk,
+            })],
 
         // Wildcard grants — access to ALL resources of each type.
         // WellKnownIds.AllResources is recognised as a universal match
@@ -121,6 +118,7 @@ public sealed class SeedingService(
     {
         var ps = await db.PermissionSets
             .Include(p => p.ResourceAccesses)
+            .Include(p => p.GlobalFlags)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == psId, ct);
 
@@ -135,16 +133,21 @@ public sealed class SeedingService(
             ps.DefaultClearance = PermissionClearance.Independent;
             changed = true;
         }
-        changed |= ReconcileFlag(v => ps.CanCreateSubAgents = v, ps.CanCreateSubAgents);
-        changed |= ReconcileFlag(v => ps.CanCreateContainers = v, ps.CanCreateContainers);
-        changed |= ReconcileFlag(v => ps.CanRegisterDatabases = v, ps.CanRegisterDatabases);
-        changed |= ReconcileFlag(v => ps.CanAccessLocalhostInBrowser = v, ps.CanAccessLocalhostInBrowser);
-        changed |= ReconcileFlag(v => ps.CanAccessLocalhostCli = v, ps.CanAccessLocalhostCli);
-        changed |= ReconcileFlag(v => ps.CanClickDesktop = v, ps.CanClickDesktop);
-        changed |= ReconcileFlag(v => ps.CanTypeOnDesktop = v, ps.CanTypeOnDesktop);
-        changed |= ReconcileFlag(v => ps.CanReadCrossThreadHistory = v, ps.CanReadCrossThreadHistory);
-        changed |= ReconcileFlag(v => ps.CanEditAgentHeader = v, ps.CanEditAgentHeader);
-        changed |= ReconcileFlag(v => ps.CanEditChannelHeader = v, ps.CanEditChannelHeader);
+
+        // ── Global flag grants ─────────────────────────────────────
+        var allFlagKeys = moduleRegistry.GetAllRegisteredGlobalFlags();
+        foreach (var flagKey in allFlagKeys)
+        {
+            if (!ps.GlobalFlags.Any(f => f.FlagKey == flagKey))
+            {
+                ps.GlobalFlags.Add(new GlobalFlagDB
+                {
+                    PermissionSetId = psId,
+                    FlagKey = flagKey,
+                });
+                changed = true;
+            }
+        }
 
         // ── Wildcard resource grants ──────────────────────────────
         var allResourceTypes = moduleRegistry.GetAllRegisteredResourceTypes();
@@ -168,16 +171,6 @@ public sealed class SeedingService(
         {
             logger.LogInformation("Reconciled admin permissions — added missing grants.");
             await db.SaveChangesAsync(ct);
-        }
-
-        return;
-
-        // Local helpers ────────────────────────────────────────────
-        static bool ReconcileFlag(Action<bool> setter, bool current)
-        {
-            if (current) return false;
-            setter(true);
-            return true;
         }
     }
 
@@ -313,4 +306,4 @@ public sealed class SeedingService(
         await db.SaveChangesAsync(ct);
     }
 
-    }
+}

@@ -123,6 +123,13 @@ public interface ISharpClawModule
     IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() => [];
 
     /// <summary>
+    /// Optional. Return global flag descriptors this module owns.
+    /// These replace the hardcoded boolean properties on <c>PermissionSetDB</c>.
+    /// See Module-System-Design §12.4.1.
+    /// </summary>
+    IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() => [];
+
+    /// <summary>
     /// Optional. Return CLI commands this module provides.
     /// Commands are registered in the CLI REPL at their declared
     /// <see cref="ModuleCliScope"/> (top-level verb or resource type).

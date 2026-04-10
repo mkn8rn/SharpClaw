@@ -217,24 +217,12 @@ public sealed partial class HeaderTagProcessor(
     private List<string> CollectGrantNames(PermissionSetDB ps)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
+
+        // Global flags — generic iteration.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
 
         foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {
@@ -255,24 +243,12 @@ public sealed partial class HeaderTagProcessor(
         PermissionSetDB ps, CancellationToken ct)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
+
+        // Global flags — generic iteration.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
 
         foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
         {
@@ -332,7 +308,7 @@ public sealed partial class HeaderTagProcessor(
     {
         // Reuse the same logic as ChatService — find threads from channels
         // where the agent is primary or allowed, that opt-in with ReadCrossThreadHistory.
-        if (ctx.AgentPs is null || !ctx.AgentPs.CanReadCrossThreadHistory)
+        if (ctx.AgentPs is null || !ctx.AgentPs.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory"))
             return "(none)";
 
         var agentId = ctx.Agent.Id;

@@ -234,12 +234,12 @@ public sealed partial class MainPage
         // ── Default Document Session ──
         BuildDefaultResourceSection(api, channelId, "Default Document",
             "Document session used when spreadsheet tools omit resourceId",
-            "documentSessionAccesses", "document", defaultDocSessionId);
+            "DocumentSession", "document", defaultDocSessionId);
 
         // ── Default Native Application ──
         BuildDefaultResourceSection(api, channelId, "Default Application",
             "Native application used when launch_application or stop_process omit resourceId",
-            "nativeApplicationAccesses", "nativeapp", defaultNativeAppId);
+            "NativeApplication", "nativeapp", defaultNativeAppId);
 
         // ── Channel Permissions ──
         AddSettingsSection("Channel Permissions", "Pre-authorization overrides that let the agent act without requiring user approval");
