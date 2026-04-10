@@ -8,6 +8,7 @@ using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.BotIntegration.Handlers;
 using SharpClaw.Modules.BotIntegration.Services;
 
 namespace SharpClaw.Modules.BotIntegration;
@@ -203,6 +204,16 @@ public sealed class BotIntegrationModule : ISharpClawModule
         Console.Error.WriteLine("  bot update <id> [--name] [--enabled] [--token] [--channel]");
         Console.Error.WriteLine("                                            Update a bot integration");
         Console.Error.WriteLine("  bot config <type>                         Show decrypted config");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Endpoint Mapping
+    // ═══════════════════════════════════════════════════════════════
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)app;
+        endpoints.MapBotEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -14,20 +14,6 @@ using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
-using SharpClaw.Modules.ComputerUse;
-using SharpClaw.Modules.DatabaseAccess;
-using SharpClaw.Modules.DangerousShell;
-using SharpClaw.Modules.Mk8Shell;
-using SharpClaw.Modules.OfficeApps;
-using SharpClaw.Modules.Transcription;
-using SharpClaw.Modules.Transcription.Handlers;
-using SharpClaw.Modules.WebAccess;
-using SharpClaw.Modules.WebAccess.Handlers;
-using SharpClaw.Modules.BotIntegration;
-using SharpClaw.Modules.BotIntegration.Handlers;
-using SharpClaw.Modules.AgentOrchestration;
-using SharpClaw.Modules.ContextTools;
-using SharpClaw.Modules.EditorCommon;
 using SharpClaw.Application.Infrastructure.Logging;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Modules;
@@ -161,20 +147,9 @@ try
     builder.Services.AddSingleton<ModuleHealthCheckService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ModuleHealthCheckService>());
 
-    // Default modules — all bundled, but only enabled ones get registered.
+    // Default modules — discovered from loaded assemblies.
     // DI services must be registered for ALL modules before Build (container is immutable after).
-    var moduleLoader = new ModuleLoader(
-        new ComputerUseModule(),
-        new OfficeAppsModule(),
-        new Mk8ShellModule(),
-        new DangerousShellModule(),
-        new DatabaseAccessModule(),
-        new TranscriptionModule(),
-        new WebAccessModule(),
-        new BotIntegrationModule(),
-        new AgentOrchestrationModule(),
-        new ContextToolsModule(),
-        new EditorCommonModule());
+    var moduleLoader = ModuleLoader.DiscoverBundled();
 
     foreach (var bundledModule in moduleLoader.GetAllBundled())
         bundledModule.ConfigureServices(builder.Services);
@@ -363,11 +338,6 @@ try
     app.MapGet("/ping", () => Results.Ok(new { status = "authenticated" }));
 
     app.MapHandlers();
-    app.MapTranscriptionStreaming();
-    app.MapInputAudioEndpoints();
-    app.MapWebsiteEndpoints();
-    app.MapSearchEngineEndpoints();
-    app.MapBotEndpoints();
 
     // Module-registered endpoints: each module maps its own REST routes.
     foreach (var module in registry.GetAllModules())

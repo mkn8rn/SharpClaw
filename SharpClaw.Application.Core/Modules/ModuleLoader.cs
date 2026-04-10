@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 
 using SharpClaw.Contracts.Modules;
@@ -18,6 +19,30 @@ public sealed class ModuleLoader
     public ModuleLoader(params ISharpClawModule[] modules)
     {
         _bundled = modules.ToDictionary(m => m.Id, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Scan all loaded assemblies for concrete <see cref="ISharpClawModule"/>
+    /// implementations with a public parameterless constructor. Returns a new
+    /// <see cref="ModuleLoader"/> populated with one instance of each discovered module.
+    /// </summary>
+    public static ModuleLoader DiscoverBundled()
+    {
+        var moduleType = typeof(ISharpClawModule);
+        var modules = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => !a.IsDynamic)
+            .SelectMany(a =>
+            {
+                try { return a.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { return ex.Types.Where(t => t is not null)!; }
+            })
+            .Where(t => t is { IsClass: true, IsAbstract: false }
+                        && moduleType.IsAssignableFrom(t)
+                        && t.GetConstructor(Type.EmptyTypes) is not null)
+            .Select(t => (ISharpClawModule)Activator.CreateInstance(t)!)
+            .ToArray();
+
+        return new ModuleLoader(modules);
     }
 
     /// <summary>

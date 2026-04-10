@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.WebAccess.Handlers;
 using SharpClaw.Modules.WebAccess.Services;
 
 namespace SharpClaw.Modules.WebAccess;
@@ -365,6 +366,17 @@ public sealed class WebAccessModule : ISharpClawModule
         Console.Error.WriteLine("  resource searchengine add <name> <type> <endpoint>      Add a search engine");
         Console.Error.WriteLine("  resource searchengine update <id> [name=X] [type=X]     Update a search engine");
         Console.Error.WriteLine("  resource searchengine delete <id>                       Delete a search engine");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Endpoint Mapping
+    // ═══════════════════════════════════════════════════════════════
+
+    public void MapEndpoints(object app)
+    {
+        var endpoints = (Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)app;
+        endpoints.MapWebsiteEndpoints();
+        endpoints.MapSearchEngineEndpoints();
     }
 
     // ═══════════════════════════════════════════════════════════════
