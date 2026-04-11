@@ -5,7 +5,11 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Clients;
+using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
+using SharpClaw.Contracts.Modules;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts;
@@ -29,6 +33,10 @@ public sealed class ChatService(
     LocalModelService localModelService,
     HeaderTagProcessor headerTagProcessor,
     ThreadActivitySignal threadActivity,
+    ModuleRegistry moduleRegistry,
+    ModuleMetricsCollector metricsCollector,
+    IServiceScopeFactory serviceScopeFactory,
+    IServiceProvider serviceProvider,
     IConfiguration configuration)
 {
     private const int MaxHistoryMessages = 50;
@@ -44,6 +52,10 @@ public sealed class ChatService(
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
 
+    /// <summary>
+    /// Sends a chat message through the specified channel, optionally
+    /// within a thread, executing tool calls as needed.
+    /// </summary>
     public async Task<ChatResponse> SendMessageAsync(
         Guid channelId, ChatRequest request,
         Guid? threadId = null,
@@ -158,7 +170,7 @@ public sealed class ChatService(
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
-                taskContext: request.TaskContext, toolAwareness: toolAwareness)
+                taskContext: request.TaskContext, toolAwareness: toolAwareness, threadId: threadId)
             : await RunPlainCompletionAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
                 history, maxTokens, providerParams, completionParams, ct);
@@ -190,13 +202,15 @@ public sealed class ChatService(
         var threadCost = threadId is not null
             ? await GetThreadCostAsync(channelId, threadId.Value, ct)
             : null;
+        var agentCost = await GetAgentCostAsync(agent.Id, ct);
 
         return new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
             loopResult.JobResults.Count > 0 ? loopResult.JobResults : null,
             channelCost,
-            threadCost);
+            threadCost,
+            agentCost);
 
         } // try
         finally
@@ -308,6 +322,45 @@ public sealed class ChatService(
         return new ThreadCostResponse(
             threadId, channelId, totalPrompt, totalCompletion,
             totalPrompt + totalCompletion, breakdown);
+    }
+
+    /// <summary>
+    /// Aggregated token usage for a single agent across all channels,
+    /// with per-channel breakdown.
+    /// </summary>
+    public async Task<AgentCostResponse?> GetAgentCostAsync(
+        Guid agentId, CancellationToken ct = default)
+    {
+        var agent = await db.Agents.FindAsync([agentId], ct);
+        if (agent is null) return null;
+
+        var rows = await db.ChatMessages
+            .Where(m => m.SenderAgentId == agentId && m.PromptTokens != null)
+            .GroupBy(m => m.ChannelId)
+            .Select(g => new
+            {
+                ChannelId = g.Key,
+                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
+                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
+            })
+            .ToListAsync(ct);
+
+        var channelBreakdown = rows
+            .Select(r => new AgentChannelTokenBreakdown(
+                r.ChannelId,
+                r.PromptTokens,
+                r.CompletionTokens,
+                r.PromptTokens + r.CompletionTokens))
+            .OrderByDescending(b => b.TotalTokens)
+            .ToList();
+
+        var totalPrompt = channelBreakdown.Sum(b => b.PromptTokens);
+        var totalCompletion = channelBreakdown.Sum(b => b.CompletionTokens);
+
+        return new AgentCostResponse(
+            agentId, agent.Name,
+            totalPrompt, totalCompletion,
+            totalPrompt + totalCompletion, channelBreakdown);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -469,35 +522,19 @@ public sealed class ChatService(
         var user = await db.Users
             .Include(u => u.Role)
             .ThenInclude(r => r!.PermissionSet)
-            .ThenInclude(ps => ps!.DangerousShellAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(u => u.Id == userId, ct);
 
         if (user is null)
             return null;
 
-        // Load remaining grant collections if the user has a permission set
+        // Load resource grants if the user has a permission set
         PermissionSetDB? ps = null;
         if (user.Role?.PermissionSetId is { } psId)
         {
             ps = await db.PermissionSets
-                .Include(p => p.SafeShellAccesses)
-                .Include(p => p.ContainerAccesses)
-                .Include(p => p.WebsiteAccesses)
-                .Include(p => p.SearchEngineAccesses)
-                .Include(p => p.InternalDatabaseAccesses)
-                .Include(p => p.ExternalDatabaseAccesses)
-                .Include(p => p.AudioDeviceAccesses)
-                .Include(p => p.DisplayDeviceAccesses)
-                .Include(p => p.EditorSessionAccesses)
-                .Include(p => p.AgentPermissions)
-                .Include(p => p.TaskPermissions)
-                .Include(p => p.SkillPermissions)
-                .Include(p => p.AgentHeaderAccesses)
-                .Include(p => p.ChannelHeaderAccesses)
-                .Include(p => p.BotIntegrationAccesses)
-                .Include(p => p.DocumentSessionAccesses)
-                .Include(p => p.NativeApplicationAccesses)
+                .Include(p => p.GlobalFlags)
+                .Include(p => p.ResourceAccesses)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == psId, ct);
         }
@@ -545,25 +582,10 @@ public sealed class ChatService(
             if (agentRole.PermissionSetId is { } agentPsId)
             {
                 agentPs = await db.PermissionSets
-                    .Include(p => p.SafeShellAccesses)
-                    .Include(p => p.ContainerAccesses)
-                    .Include(p => p.WebsiteAccesses)
-                    .Include(p => p.SearchEngineAccesses)
-                    .Include(p => p.InternalDatabaseAccesses)
-                    .Include(p => p.ExternalDatabaseAccesses)
-                    .Include(p => p.AudioDeviceAccesses)
-                    .Include(p => p.DisplayDeviceAccesses)
-                    .Include(p => p.EditorSessionAccesses)
-                    .Include(p => p.AgentPermissions)
-                    .Include(p => p.TaskPermissions)
-                    .Include(p => p.SkillPermissions)
-                    .Include(p => p.AgentHeaderAccesses)
-                    .Include(p => p.ChannelHeaderAccesses)
-                    .Include(p => p.BotIntegrationAccesses)
-                    .Include(p => p.DocumentSessionAccesses)
-                    .Include(p => p.NativeApplicationAccesses)
-                    .AsSplitQuery()
-                    .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+                        .Include(p => p.GlobalFlags)
+                        .Include(p => p.ResourceAccesses)
+                        .AsSplitQuery()
+                        .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
             }
 
             // NOTE: DefaultClearance is intentionally NOT included in the header.
@@ -611,106 +633,100 @@ public sealed class ChatService(
     }
 
     /// <summary>
+    /// Finds threads on other channels that the agent can read via
+    /// cross-thread history.  Used by the chat header to populate the
+    /// <c>accessible-threads</c> section.
+    /// </summary>
+    private async Task<List<(Guid ThreadId, string ThreadName, Guid ChannelId, string ChannelTitle)>>
+        GetAccessibleThreadsAsync(Guid agentId, Guid currentChannelId, CancellationToken ct)
+    {
+        var agentWithRole = await db.Agents
+            .Include(a => a.Role)
+                .ThenInclude(r => r!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
+            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+        var agentPs = agentWithRole?.Role?.PermissionSet;
+        if (agentPs is null || !agentPs.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory"))
+            return [];
+
+        var isIndependent = (agentPs.GlobalFlags
+            .FirstOrDefault(f => f.FlagKey == "CanReadCrossThreadHistory")
+            ?.Clearance ?? PermissionClearance.Unset) == PermissionClearance.Independent;
+
+        var channels = await db.Channels
+            .Include(c => c.AllowedAgents)
+            .Include(c => c.PermissionSet)
+                .ThenInclude(ps => ps!.GlobalFlags)
+            .Include(c => c.AgentContext)
+                .ThenInclude(ctx => ctx!.PermissionSet)
+                    .ThenInclude(ps => ps!.GlobalFlags)
+            .Where(c => c.Id != currentChannelId)
+            .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
+            .ToListAsync(ct);
+
+        if (!isIndependent)
+        {
+            channels = channels
+                .Where(c =>
+                {
+                    var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
+                    return effectivePs?.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory") == true;
+                })
+                .ToList();
+        }
+
+        if (channels.Count == 0)
+            return [];
+
+        var channelIds = channels.Select(c => c.Id).ToList();
+        var threads = await db.ChatThreads
+            .Where(t => channelIds.Contains(t.ChannelId))
+            .OrderByDescending(t => t.UpdatedAt)
+            .Select(t => new { t.Id, t.Name, t.ChannelId })
+            .ToListAsync(ct);
+
+        var channelTitles = channels.ToDictionary(c => c.Id, c => c.Title);
+
+        return threads
+            .Select(t => (t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
+            .ToList();
+    }
+
+    /// <summary>
     /// Collects grant names with enumerated resource IDs for the chat
     /// header (both user and agent sections). When a wildcard grant
     /// (<see cref="WellKnownIds.AllResources"/>) is present, all resource
     /// IDs of that type are resolved from the database so the reader
     /// knows exactly which resources the permission set covers.
     /// </summary>
+    /// <summary>
+    /// Collects grant names with enumerated resource IDs for the chat
+    /// header (both user and agent sections). Uses the unified
+    /// <see cref="ResourceAccessDB"/> collection and the same expander
+    /// table as <see cref="HeaderTagProcessor"/>.
+    /// </summary>
     private async Task<List<string>> CollectGrantsWithResourcesAsync(
         PermissionSetDB ps, CancellationToken ct)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
 
-        await AppendResourceGrantAsync(grants, "DangerousShell",
-            ps.DangerousShellAccesses.Select(a => a.SystemUserId),
-            () => db.SystemUsers.Select(s => s.Id).ToListAsync(ct), ct);
+        // Global flags — generic iteration over the GlobalFlags collection.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
 
-        await AppendResourceGrantAsync(grants, "SafeShell",
-            ps.SafeShellAccesses.Select(a => a.ContainerId),
-            () => db.Containers.Select(c => c.Id).ToListAsync(ct), ct);
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
+        {
+            var grantedIds = ps.ResourceAccesses
+                .Where(a => a.ResourceType == desc.ResourceType)
+                .Select(a => a.ResourceId)
+                .ToList();
 
-        await AppendResourceGrantAsync(grants, "ContainerAccess",
-            ps.ContainerAccesses.Select(a => a.ContainerId),
-            () => db.Containers.Select(c => c.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "WebsiteAccess",
-            ps.WebsiteAccesses.Select(a => a.WebsiteId),
-            () => db.Websites.Select(w => w.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "SearchEngineAccess",
-            ps.SearchEngineAccesses.Select(a => a.SearchEngineId),
-            () => db.SearchEngines.Select(s => s.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "InternalDatabase",
-            ps.InternalDatabaseAccesses.Select(a => a.InternalDatabaseId),
-            () => db.InternalDatabases.Select(l => l.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "ExternalDatabase",
-            ps.ExternalDatabaseAccesses.Select(a => a.ExternalDatabaseId),
-            () => db.ExternalDatabases.Select(e => e.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "AudioDevice",
-            ps.AudioDeviceAccesses.Select(a => a.AudioDeviceId),
-            () => db.AudioDevices.Select(a => a.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "DisplayDevice",
-            ps.DisplayDeviceAccesses.Select(a => a.DisplayDeviceId),
-            () => db.DisplayDevices.Select(d => d.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "EditorSession",
-            ps.EditorSessionAccesses.Select(a => a.EditorSessionId),
-            () => db.EditorSessions.Select(e => e.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "ManageAgent",
-            ps.AgentPermissions.Select(a => a.AgentId),
-            () => db.Agents.Select(a => a.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "EditTask",
-            ps.TaskPermissions.Select(a => a.ScheduledTaskId),
-            () => db.ScheduledTasks.Select(t => t.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "AccessSkill",
-            ps.SkillPermissions.Select(a => a.SkillId),
-            () => db.Skills.Select(s => s.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "BotIntegration",
-            ps.BotIntegrationAccesses.Select(a => a.BotIntegrationId),
-            () => db.BotIntegrations.Select(b => b.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "EditAgentHeader",
-            ps.AgentHeaderAccesses.Select(a => a.AgentId),
-            () => db.Agents.Select(a => a.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "EditChannelHeader",
-            ps.ChannelHeaderAccesses.Select(a => a.ChannelId),
-            () => db.Channels.Select(c => c.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "DocumentSession",
-            ps.DocumentSessionAccesses.Select(a => a.DocumentSessionId),
-            () => db.DocumentSessions.Select(d => d.Id).ToListAsync(ct), ct);
-
-        await AppendResourceGrantAsync(grants, "NativeApplication",
-            ps.NativeApplicationAccesses.Select(a => a.NativeApplicationId),
-            () => db.NativeApplications.Select(n => n.Id).ToListAsync(ct), ct);
+            await AppendResourceGrantAsync(grants, desc.GrantLabel, grantedIds,
+                () => desc.LoadAllIds(serviceProvider, ct));
+        }
 
         return grants;
     }
@@ -721,13 +737,9 @@ public sealed class ChatService(
     /// type are loaded from the database so the agent sees the resolved
     /// list instead of the wildcard.
     /// </summary>
-
     private static async Task AppendResourceGrantAsync(
-        List<string> grants,
-        string grantName,
-        IEnumerable<Guid> grantedIds,
-        Func<Task<List<Guid>>> loadAllIdsAsync,
-        CancellationToken ct)
+        List<string> grants, string grantName,
+        IEnumerable<Guid> grantedIds, Func<Task<List<Guid>>> loadAllIdsAsync)
     {
         var ids = grantedIds.ToList();
         if (ids.Count == 0)
@@ -735,13 +747,9 @@ public sealed class ChatService(
 
         List<Guid> resolved;
         if (ids.Any(id => id == WellKnownIds.AllResources))
-        {
             resolved = await loadAllIdsAsync();
-        }
         else
-        {
             resolved = ids;
-        }
 
         if (resolved.Count == 0)
         {
@@ -888,6 +896,7 @@ public sealed class ChatService(
         var rounds = 0;
         var totalPromptTokens = 0;
         var totalCompletionTokens = 0;
+        var roundJobIds = new List<Guid>();
 
         while (true)
         {
@@ -924,6 +933,7 @@ public sealed class ChatService(
 
             // Reset content for next round (tool results will produce new text)
             fullContent.Clear();
+            roundJobIds.Clear();
 
             foreach (var tc in roundResult.ToolCalls)
             {
@@ -938,11 +948,12 @@ public sealed class ChatService(
                     continue;
                 }
 
-                // ── Inline tool interception (no permissions) ────
-                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, agent.Id, channelId, ct);
-                if (inlineHandled)
+                // ── Inline module tool interception ──────────────
+                if (moduleRegistry.IsInlineTool(tc.Name))
                 {
-                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    var inlineResult = await HandleInlineModuleToolAsync(
+                        tc, agent.Id, channelId, threadId, ct);
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     var inlineNotation = FormatInlineToolNotation(tc.Name);
                     fullContent.Append(inlineNotation);
                     yield return ChatStreamEvent.TextDelta(inlineNotation);
@@ -959,13 +970,15 @@ public sealed class ChatService(
 
                 var jobRequest = await BuildJobRequestAsync(parsed, agent.Id, ct);
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+                roundJobIds.Add(jobResponse.Id);
 
                 // ── Inline approval ───────────────────────────────
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
                 {
                     // Check if the session user CAN approve
                     var canApprove = await CanSessionUserApproveAsync(
-                        agent.Id, jobRequest.ActionType, jobRequest.ResourceId, ct);
+                        agent.Id, jobRequest.ResourceId, ct,
+                        jobRequest.ActionKey);
 
                     if (canApprove)
                     {
@@ -1006,6 +1019,13 @@ public sealed class ChatService(
 
                 messages.Add(BuildToolResultMessage(tc.Id, jobResponse, supportsVision));
             }
+
+            // Distribute this round's token usage across jobs submitted in the round
+            if (roundJobIds.Count > 0 && roundResult.Usage is { } ru)
+            {
+                await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
+                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
+            }
         }
 
         // Persist assistant message after LLM completes
@@ -1035,13 +1055,15 @@ public sealed class ChatService(
         var threadCost = threadId is not null
             ? await GetThreadCostAsync(channelId, threadId.Value, ct)
             : null;
+        var agentCost = await GetAgentCostAsync(agent.Id, ct);
 
         yield return ChatStreamEvent.Complete(new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
             jobResults.Count > 0 ? jobResults : null,
             channelCost,
-            threadCost));
+            threadCost,
+            agentCost));
 
         } // try
         finally
@@ -1058,15 +1080,15 @@ public sealed class ChatService(
     /// would return <see cref="ClearanceVerdict.Approved"/>.
     /// </summary>
     private async Task<bool> CanSessionUserApproveAsync(
-        Guid agentId, AgentActionType actionType, Guid? resourceId,
-        CancellationToken ct)
+        Guid agentId, Guid? resourceId,
+        CancellationToken ct, string? actionKey = null)
     {
         var userId = jobService.GetSessionUserId();
         if (userId is null) return false;
 
         var caller = new ActionCaller(UserId: userId);
         var result = await jobService.CheckPermissionAsync(
-            agentId, actionType, resourceId, caller, ct);
+            agentId, resourceId, caller, ct, actionKey);
 
         return result.Verdict == ClearanceVerdict.Approved;
     }
@@ -1079,38 +1101,28 @@ public sealed class ChatService(
     /// Returns the effective tool list for a chat call.  When a task
     /// context is present, task-specific tools (shared data, output,
     /// introspection, custom hooks) are appended to the standard set.
+    /// All tool definitions come from <see cref="ModuleRegistry"/>.
     /// When a <paramref name="toolAwareness"/> filter is provided, only
     /// tools whose key is <see langword="true"/> or absent are kept.
     /// </summary>
-    private static IReadOnlyList<ChatToolDefinition> GetEffectiveTools(
+    private IReadOnlyList<ChatToolDefinition> GetEffectiveTools(
         TaskChatContext? taskContext, Dictionary<string, bool>? toolAwareness = null)
     {
-        IReadOnlyList<ChatToolDefinition> baseTools;
+        var baseTools = new List<ChatToolDefinition>(moduleRegistry.GetAllToolDefinitions());
 
-        if (taskContext is null)
-        {
-            baseTools = AllTools;
-        }
-        else
+        if (taskContext is not null)
         {
             var store = TaskSharedData.Get(taskContext.InstanceId);
-            if (store is null)
+            if (store is not null)
             {
-                baseTools = AllTools;
-            }
-            else
-            {
-                var tools = new List<ChatToolDefinition>(AllTools);
-                tools.AddRange(BuiltInTaskTools);
+                baseTools.AddRange(BuiltInTaskTools);
 
                 // task_output only available when the task declares [AgentOutput]
                 if (store.AllowedOutputFormat is not null)
-                    tools.Add(TaskOutputToolDef);
+                    baseTools.Add(TaskOutputToolDef);
 
                 // Custom [ToolCall] hooks
-                tools.AddRange(store.CustomToolDefinitions);
-
-                baseTools = tools;
+                baseTools.AddRange(store.CustomToolDefinitions);
             }
         }
 
@@ -1241,237 +1253,72 @@ public sealed class ChatService(
     }
 
     /// <summary>
-    /// Try to handle a tool call as a permission-free inline tool (e.g. <c>wait</c>)
-    /// or a cross-thread context tool (e.g. <c>list_accessible_threads</c>,
-    /// <c>read_thread_history</c>).
-    /// Returns <c>true</c> and sets <paramref name="result"/> if handled.
-    /// These tools never enter the job/permission pipeline.
+    /// Dispatches an inline module tool call.  Resolves the owning module
+    /// from <see cref="ModuleRegistry"/>, creates a restricted
+    /// <see cref="ModuleServiceScope"/>, and calls
+    /// <see cref="ISharpClawModule.ExecuteInlineToolAsync"/>.
     /// </summary>
-    private async Task<(bool Handled, string? Result)> TryHandleInlineToolAsync(
-        ChatToolCall toolCall, Guid agentId, Guid channelId, CancellationToken ct)
+    private async Task<string> HandleInlineModuleToolAsync(
+        ChatToolCall toolCall, Guid agentId, Guid channelId, Guid? threadId, CancellationToken ct)
     {
-        switch (toolCall.Name)
-        {
-            case "wait":
-                return await HandleWaitToolAsync(toolCall, ct);
-            case "list_accessible_threads":
-                return await HandleListAccessibleThreadsAsync(agentId, channelId, ct);
-            case "read_thread_history":
-                return await HandleReadThreadHistoryAsync(toolCall, agentId, channelId, ct);
-            default:
-                return (false, null);
-        }
-    }
+        if (!moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var canonicalName))
+            return $"Error: inline tool '{toolCall.Name}' not found in any module.";
 
-    private static async Task<(bool, string?)> HandleWaitToolAsync(
-        ChatToolCall toolCall, CancellationToken ct)
-    {
+        var module = moduleRegistry.GetModule(moduleId)
+            ?? throw new InvalidOperationException(
+                $"Module '{moduleId}' resolved by registry but not loaded.");
+
+        var prefixedToolName = $"{module.ToolPrefix}_{canonicalName}";
+
+        var context = new InlineToolContext(agentId, channelId, threadId, toolCall.Id);
+
+        JsonElement parameters;
         try
         {
-            var seconds = 5; // default
-
-            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
-            {
-                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
-                if (doc.RootElement.TryGetProperty("seconds", out var secEl))
-                    seconds = secEl.GetInt32();
-            }
-
-            seconds = Math.Clamp(seconds, 1, 300);
-
-            await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
-
-            return (true, $"Waited {seconds} second{(seconds == 1 ? "" : "s")}.");
+            using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
+            parameters = doc.RootElement.Clone();
         }
-        catch (OperationCanceledException)
+        catch (JsonException)
         {
-            throw;
+            return "Error: malformed tool arguments JSON.";
         }
-        catch (Exception ex)
-        {
-            return (true, $"Error in wait tool: {ex.Message}");
-        }
-    }
 
-    private async Task<(bool, string?)> HandleListAccessibleThreadsAsync(
-        Guid agentId, Guid channelId, CancellationToken ct)
-    {
+        // External modules use their own DI container.
+        var externalHost = moduleRegistry.GetExternalHost(moduleId);
+        if (externalHost is not null && !externalHost.TryAcquireExecution())
+            return $"Error: module '{moduleId}' is unloading.";
+
+        var sw = Stopwatch.StartNew();
         try
         {
-            var threads = await GetAccessibleThreadsAsync(agentId, channelId, ct);
-            if (threads.Count == 0)
-                return (true, "No accessible threads found. Either the agent lacks the ReadCrossThreadHistory permission, or no other channels have opted in.");
+            using var scope = externalHost is not null
+                ? externalHost.CreateScope()
+                : serviceScopeFactory.CreateScope();
 
-            var result = threads.Select(t => new
-            {
-                threadId = t.ThreadId.ToString("D"),
-                threadName = t.ThreadName,
-                channelId = t.ChannelId.ToString("D"),
-                channelTitle = t.ChannelTitle,
-            });
+            // Set ModuleExecutionContext so IModuleConfigStore resolves correctly.
+            var execCtx = scope.ServiceProvider.GetService<ModuleExecutionContext>();
+            if (execCtx is not null) execCtx.ModuleId = module.Id;
 
-            return (true, JsonSerializer.Serialize(result));
+            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
+
+            var result = await module.ExecuteInlineToolAsync(
+                canonicalName, parameters, context, restrictedScope, ct);
+
+            sw.Stop();
+            metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
+            return result;
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return (true, $"Error listing accessible threads: {ex.Message}");
+            sw.Stop();
+            metricsCollector.RecordFailure(prefixedToolName);
+            return $"Error executing inline tool '{toolCall.Name}': {ex.Message}";
         }
-    }
-
-    private async Task<(bool, string?)> HandleReadThreadHistoryAsync(
-        ChatToolCall toolCall, Guid agentId, Guid channelId, CancellationToken ct)
-    {
-        try
+        finally
         {
-            Guid threadId = Guid.Empty;
-            int maxMessages = 50;
-
-            if (!string.IsNullOrEmpty(toolCall.ArgumentsJson))
-            {
-                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson);
-                if (doc.RootElement.TryGetProperty("threadId", out var tidEl))
-                    Guid.TryParse(tidEl.GetString(), out threadId);
-                if (doc.RootElement.TryGetProperty("maxMessages", out var maxEl))
-                    maxMessages = Math.Clamp(maxEl.GetInt32(), 1, 200);
-            }
-
-            if (threadId == Guid.Empty)
-                return (true, "Error: threadId is required.");
-
-            // Load thread with its channel
-            var thread = await db.ChatThreads
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.AllowedAgents)
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.PermissionSet)
-                .Include(t => t.Channel)
-                    .ThenInclude(c => c.AgentContext)
-                        .ThenInclude(ctx => ctx!.PermissionSet)
-                .FirstOrDefaultAsync(t => t.Id == threadId, ct);
-
-            if (thread is null)
-                return (true, "Error: thread not found.");
-
-            // Must not be the current channel (use normal history for that)
-            if (thread.ChannelId == channelId)
-                return (true, "Error: use normal chat history to access threads in the current channel.");
-
-            // Check agent has access to the target channel
-            var targetChannel = thread.Channel;
-            var isAgentOnChannel = targetChannel.AgentId == agentId
-                || targetChannel.AllowedAgents.Any(a => a.Id == agentId);
-            if (!isAgentOnChannel)
-                return (true, "Error: agent is not assigned to the target channel.");
-
-            // Check agent has ReadCrossThreadHistory permission
-            var agentWithRole = await db.Agents
-                .Include(a => a.Role)
-                    .ThenInclude(r => r!.PermissionSet)
-                .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-
-            var agentPs = agentWithRole?.Role?.PermissionSet;
-            if (agentPs is not { CanReadCrossThreadHistory: true })
-                return (true, "Error: agent lacks ReadCrossThreadHistory permission.");
-
-            // Check channel opt-in (unless Independent clearance)
-            if (agentPs.ReadCrossThreadHistoryClearance != PermissionClearance.Independent)
-            {
-                var effectivePs = targetChannel.PermissionSet
-                    ?? targetChannel.AgentContext?.PermissionSet;
-                if (effectivePs?.CanReadCrossThreadHistory != true)
-                    return (true, "Error: the target channel has not opted in to cross-thread history sharing.");
-            }
-
-            // Fetch messages
-            var messages = await db.ChatMessages
-                .Where(m => m.ThreadId == threadId)
-                .OrderByDescending(m => m.CreatedAt)
-                .Take(maxMessages)
-                .OrderBy(m => m.CreatedAt)
-                .Select(m => new
-                {
-                    role = m.Role,
-                    content = m.Content,
-                    sender = m.SenderUsername ?? m.SenderAgentName ?? "unknown",
-                    timestamp = m.CreatedAt
-                })
-                .ToListAsync(ct);
-
-            if (messages.Count == 0)
-                return (true, "Thread exists but has no messages.");
-
-            return (true, JsonSerializer.Serialize(messages));
+            externalHost?.ReleaseExecution();
         }
-        catch (Exception ex)
-        {
-            return (true, $"Error reading thread history: {ex.Message}");
-        }
-    }
-
-
-    /// <summary>
-    /// Finds threads accessible to this agent via cross-thread history
-    /// sharing.  A thread is accessible when:
-    /// <list type="number">
-    ///   <item>The agent has <c>CanReadCrossThreadHistory</c>.</item>
-    ///   <item>The agent is primary or allowed on the thread's channel.</item>
-    ///   <item>The channel's effective permission set also has
-    ///         <c>CanReadCrossThreadHistory</c> — unless the agent has
-    ///         <c>Independent</c> clearance for the flag.</item>
-    /// </list>
-    /// The current channel is excluded (the agent already has its own
-    /// history there).
-    /// </summary>
-    private async Task<List<(Guid ThreadId, string ThreadName, Guid ChannelId, string ChannelTitle)>>
-        GetAccessibleThreadsAsync(Guid agentId, Guid currentChannelId, CancellationToken ct)
-    {
-        var agentWithRole = await db.Agents
-            .Include(a => a.Role)
-                .ThenInclude(r => r!.PermissionSet)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-
-        if (agentWithRole?.Role?.PermissionSet is not { CanReadCrossThreadHistory: true } agentPs)
-            return [];
-
-        var isIndependent = agentPs.ReadCrossThreadHistoryClearance == PermissionClearance.Independent;
-
-        // Channels where the agent is primary or allowed, excluding current
-        var channels = await db.Channels
-            .Include(c => c.AllowedAgents)
-            .Include(c => c.PermissionSet)
-            .Include(c => c.AgentContext)
-                .ThenInclude(ctx => ctx!.PermissionSet)
-            .Where(c => c.Id != currentChannelId)
-            .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
-            .ToListAsync(ct);
-
-        // Filter by channel opt-in unless Independent
-        if (!isIndependent)
-        {
-            channels = channels
-                .Where(c =>
-                {
-                    var effectivePs = c.PermissionSet ?? c.AgentContext?.PermissionSet;
-                    return effectivePs?.CanReadCrossThreadHistory == true;
-                })
-                .ToList();
-        }
-
-        if (channels.Count == 0)
-            return [];
-
-        var channelIds = channels.Select(c => c.Id).ToList();
-        var threads = await db.ChatThreads
-            .Where(t => channelIds.Contains(t.ChannelId))
-            .OrderByDescending(t => t.UpdatedAt)
-            .Select(t => new { t.Id, t.Name, t.ChannelId })
-            .ToListAsync(ct);
-
-        var channelTitles = channels.ToDictionary(c => c.Id, c => c.Title);
-
-        return threads
-            .Select(t => (t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
-            .ToList();
     }
 
     // ── Built-in task tool definitions ────────────────────────────
@@ -1645,41 +1492,59 @@ public sealed class ChatService(
     }
 
     /// <summary>
-    /// Resolves the container GUID from a <see cref="ParsedToolCall"/>.
-    /// If the model provided a valid GUID it is used as-is; otherwise the
-    /// container is looked up by <c>SandboxName</c>.
+    /// Patches <paramref name="jobResults"/> entries whose IDs appear in
+    /// <paramref name="roundJobIds"/> with the correct <see cref="TokenUsageResponse"/>
+    /// computed from the same even-split logic used by
+    /// <see cref="AgentJobService.RecordTokensAsync"/>.
+    /// This fixes the timing gap where job snapshots are captured at submit
+    /// time, before the tokens have been written to the database.
     /// </summary>
-    private async Task<Guid?> ResolveContainerIdAsync(
-        ParsedToolCall parsed, CancellationToken ct)
+    private static void PatchJobCosts(
+        List<AgentJobResponse> jobResults, IReadOnlyList<Guid> roundJobIds,
+        int promptTokens, int completionTokens)
     {
-        if (parsed.ResourceId.HasValue)
-            return parsed.ResourceId;
+        if (roundJobIds.Count == 0) return;
 
-        if (parsed.SandboxId is not null)
+        var count = roundJobIds.Count;
+        var promptPer = promptTokens / count;
+        var completionPer = completionTokens / count;
+        var promptRemainder = promptTokens % count;
+        var completionRemainder = completionTokens % count;
+
+        // Walk the round IDs in order; the first gets the remainder (mirrors RecordTokensAsync).
+        for (var ri = 0; ri < roundJobIds.Count; ri++)
         {
-            var container = await db.Containers
-                .FirstOrDefaultAsync(c => c.SandboxName == parsed.SandboxId, ct);
-            return container?.Id;
-        }
+            var id = roundJobIds[ri];
+            var p = promptPer + (ri == 0 ? promptRemainder : 0);
+            var c = completionPer + (ri == 0 ? completionRemainder : 0);
 
-        return null;
+            for (var ji = jobResults.Count - 1; ji >= 0; ji--)
+            {
+                if (jobResults[ji].Id != id) continue;
+
+                // Accumulate: the snapshot may already carry tokens from a previous round.
+                var existing = jobResults[ji].JobCost;
+                var newP = (existing?.TotalPromptTokens ?? 0) + p;
+                var newC = (existing?.TotalCompletionTokens ?? 0) + c;
+
+                jobResults[ji] = jobResults[ji] with
+                {
+                    JobCost = new TokenUsageResponse(newP, newC, newP + newC)
+                };
+                break;
+            }
+        }
     }
 
     /// <summary>
     /// Builds a <see cref="SubmitAgentJobRequest"/> from a parsed tool call.
-    /// For <see cref="AgentActionType.ExecuteAsSafeShell"/> the container
-    /// is resolved by sandbox name when no GUID is provided.
     /// </summary>
     private async Task<SubmitAgentJobRequest> BuildJobRequestAsync(
         ParsedToolCall parsed, Guid agentId, CancellationToken ct)
     {
-        var resourceId = parsed.ActionType is AgentActionType.ExecuteAsSafeShell
-            ? await ResolveContainerIdAsync(parsed, ct)
-            : parsed.ResourceId;
-
         return new SubmitAgentJobRequest(
-            ActionType: parsed.ActionType,
-            ResourceId: resourceId,
+            ActionKey: parsed.ActionKey,
+            ResourceId: parsed.ResourceId,
             CallerAgentId: agentId,
             DangerousShellType: parsed.DangerousShellType,
             SafeShellType: parsed.SafeShellType,
@@ -1714,7 +1579,8 @@ public sealed class ChatService(
         Func<AgentJobResponse, CancellationToken, Task<bool>>? approvalCallback,
         CancellationToken ct,
         TaskChatContext? taskContext = null,
-        Dictionary<string, bool>? toolAwareness = null)
+        Dictionary<string, bool>? toolAwareness = null,
+        Guid? threadId = null)
     {
         var messages = new List<ToolAwareMessage>(dbHistory.Count);
         foreach (var msg in dbHistory)
@@ -1727,6 +1593,7 @@ public sealed class ChatService(
         var effectiveTools = GetEffectiveTools(taskContext, toolAwareness);
         var totalPromptTokens = 0;
         var totalCompletionTokens = 0;
+        var roundJobIds = new List<Guid>();
 
         while (true)
         {
@@ -1752,6 +1619,7 @@ public sealed class ChatService(
             messages.Add(ToolAwareMessage.AssistantWithToolCalls(result.ToolCalls, result.Content));
 
             var anyUnresolvableApproval = false;
+            roundJobIds.Clear();
 
             foreach (var tc in result.ToolCalls)
             {
@@ -1764,11 +1632,12 @@ public sealed class ChatService(
                     continue;
                 }
 
-                // ── Inline tool interception (no permissions) ────
-                var (inlineHandled, inlineResult) = await TryHandleInlineToolAsync(tc, agentId, channelId, ct);
-                if (inlineHandled)
+                // ── Inline module tool interception ──────────────
+                if (moduleRegistry.IsInlineTool(tc.Name))
                 {
-                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult ?? ""));
+                    var inlineResult = await HandleInlineModuleToolAsync(
+                        tc, agentId, channelId, threadId, ct);
+                    messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     toolNotation.Append(FormatInlineToolNotation(tc.Name));
                     continue;
                 }
@@ -1784,13 +1653,15 @@ public sealed class ChatService(
                 var jobRequest = await BuildJobRequestAsync(parsed, agentId, ct);
 
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+                roundJobIds.Add(jobResponse.Id);
 
                 // ── Inline approval (when callback available) ────
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval
                     && approvalCallback is not null)
                 {
                     var canApprove = await CanSessionUserApproveAsync(
-                        agentId, jobRequest.ActionType, jobRequest.ResourceId, ct);
+                        agentId, jobRequest.ResourceId, ct,
+                        jobRequest.ActionKey);
 
                     if (canApprove)
                     {
@@ -1814,6 +1685,13 @@ public sealed class ChatService(
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
                     anyUnresolvableApproval = true;
+            }
+
+            // Distribute this round's token usage across jobs submitted in the round
+            if (roundJobIds.Count > 0 && result.Usage is { } ru)
+            {
+                await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
+                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
             }
 
             if (anyUnresolvableApproval)
@@ -1864,138 +1742,49 @@ public sealed class ChatService(
     /// Parses a native <see cref="ChatToolCall"/> into the internal
     /// <see cref="ParsedToolCall"/> representation. Returns <see langword="null"/>
     /// if the tool name is unrecognized or the arguments are malformed.
+    /// All tool definitions are resolved via <see cref="ModuleRegistry"/>.
     /// </summary>
-    private static ParsedToolCall? ParseNativeToolCall(ChatToolCall toolCall)
+    private ParsedToolCall? ParseNativeToolCall(ChatToolCall toolCall)
     {
-        if (!ToolNameToActionType.TryGetValue(toolCall.Name, out var actionType))
-            return null;
-
-        try
+        if (moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var toolName))
         {
             Debug.WriteLine(
-                $"[ParseToolCall] {toolCall.Name} (id={toolCall.Id}) args: {toolCall.ArgumentsJson}",
+                $"[ParseToolCall] Module tool: {toolCall.Name} → {moduleId}.{toolName}",
                 "SharpClaw.CLI");
 
-            var payload = JsonSerializer.Deserialize<ToolCallPayload>(toolCall.ArgumentsJson, JsonOptions);
-            if (payload is null) return null;
+            // Build the module envelope as ScriptJson so DispatchModuleExecutionAsync
+            // can deserialize it on the job pipeline side.
+            var envelope = JsonSerializer.Serialize(
+                new { module = moduleId, tool = toolName, @params = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}").RootElement },
+                SecureJsonOptions.Envelope);
 
-            Guid? resourceId = Guid.TryParse(payload.ResourceId, out var rid) ? rid : null;
-            // TargetId is the generic "resourceId" alias for non-shell tools
-            resourceId ??= Guid.TryParse(payload.TargetId, out var tid) ? tid : null;
+            // Attempt to extract resourceId from the arguments.
+            // Modules use either "resource_id" or "targetId" as the parameter name.
+            Guid? modResourceId = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
+                if ((doc.RootElement.TryGetProperty("resource_id", out var rp)
+                     || doc.RootElement.TryGetProperty("targetId", out rp))
+                    && Guid.TryParse(rp.GetString(), out var mrid))
+                    modResourceId = mrid;
+            }
+            catch (JsonException) { /* non-critical */ }
 
             Debug.WriteLine(
-                $"[ParseToolCall] {toolCall.Name} → resourceId={resourceId}, targetId={payload.TargetId}",
+                $"[ParseToolCall] ResourceId={modResourceId?.ToString() ?? "(null)"} from args: {toolCall.ArgumentsJson}",
                 "SharpClaw.CLI");
-
-            Guid? transcriptionModelId = Guid.TryParse(payload.TranscriptionModelId, out var tmid) ? tmid : null;
-
-            DangerousShellType? dangerousShell = Enum.TryParse<DangerousShellType>(
-                payload.ShellType, ignoreCase: true, out var ds) ? ds : null;
-
-            // For non-shell/non-transcription actions, pass the full
-            // arguments JSON as ScriptJson so DispatchExecutionAsync
-            // can deserialize action-specific fields from it.
-            var scriptJson = actionType switch
-            {
-                AgentActionType.ExecuteAsSafeShell
-                    => payload.Script is { } script ? script.GetRawText() : null,
-                AgentActionType.UnsafeExecuteAsDangerousShell
-                    => payload.Command,
-                _ => toolCall.ArgumentsJson,
-            };
 
             return new ParsedToolCall(
                 toolCall.Id,
-                actionType,
-                resourceId,
-                payload.SandboxId,
-                scriptJson,
-                dangerousShell,
-                actionType == AgentActionType.ExecuteAsSafeShell ? SafeShellType.Mk8Shell : null,
-                transcriptionModelId,
-                payload.Language,
-                payload.WorkingDirectory);
+                modResourceId,
+                SandboxId: null,
+                ScriptJson: envelope,
+                ActionKey: toolCall.Name);
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+
+        return null;
     }
-
-    /// <summary>
-    /// Maps native tool function names to their <see cref="AgentActionType"/>.
-    /// </summary>
-    private static readonly Dictionary<string, AgentActionType> ToolNameToActionType = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["execute_mk8_shell"]              = AgentActionType.ExecuteAsSafeShell,
-        ["execute_dangerous_shell"]        = AgentActionType.UnsafeExecuteAsDangerousShell,
-        ["create_sub_agent"]               = AgentActionType.CreateSubAgent,
-        ["create_container"]               = AgentActionType.CreateContainer,
-        ["register_database"]               = AgentActionType.RegisterDatabase,
-        ["access_localhost_in_browser"]    = AgentActionType.AccessLocalhostInBrowser,
-        ["access_localhost_cli"]           = AgentActionType.AccessLocalhostCli,
-        ["access_internal_databases"]      = AgentActionType.AccessInternalDatabases,
-        ["access_external_database"]        = AgentActionType.AccessExternalDatabase,
-        ["access_website"]                 = AgentActionType.AccessWebsite,
-        ["query_search_engine"]            = AgentActionType.QuerySearchEngine,
-        ["access_container"]               = AgentActionType.AccessContainer,
-        ["manage_agent"]                   = AgentActionType.ManageAgent,
-        ["edit_task"]                       = AgentActionType.EditTask,
-        ["access_skill"]                   = AgentActionType.AccessSkill,
-        ["transcribe_from_audio_device"]   = AgentActionType.TranscribeFromAudioDevice,
-        ["transcribe_from_audio_stream"]   = AgentActionType.TranscribeFromAudioStream,
-        ["transcribe_from_audio_file"]     = AgentActionType.TranscribeFromAudioFile,
-        ["capture_display"]                = AgentActionType.CaptureDisplay,
-        ["click_desktop"]                  = AgentActionType.ClickDesktop,
-        ["type_on_desktop"]                = AgentActionType.TypeOnDesktop,
-        ["editor_read_file"]               = AgentActionType.EditorReadFile,
-        ["editor_get_open_files"]          = AgentActionType.EditorGetOpenFiles,
-        ["editor_get_selection"]            = AgentActionType.EditorGetSelection,
-        ["editor_get_diagnostics"]         = AgentActionType.EditorGetDiagnostics,
-        ["editor_apply_edit"]              = AgentActionType.EditorApplyEdit,
-        ["editor_create_file"]             = AgentActionType.EditorCreateFile,
-        ["editor_delete_file"]             = AgentActionType.EditorDeleteFile,
-        ["editor_show_diff"]               = AgentActionType.EditorShowDiff,
-        ["editor_run_build"]               = AgentActionType.EditorRunBuild,
-        ["editor_run_terminal"]            = AgentActionType.EditorRunTerminal,
-        ["send_bot_message"]               = AgentActionType.SendBotMessage,
-
-        // Document session & spreadsheet tools
-        ["register_document"]              = AgentActionType.CreateDocumentSession,
-        ["spreadsheet_read_range"]         = AgentActionType.SpreadsheetReadRange,
-        ["spreadsheet_write_range"]        = AgentActionType.SpreadsheetWriteRange,
-        ["spreadsheet_list_sheets"]        = AgentActionType.SpreadsheetListSheets,
-        ["spreadsheet_create_sheet"]       = AgentActionType.SpreadsheetCreateSheet,
-        ["spreadsheet_delete_sheet"]       = AgentActionType.SpreadsheetDeleteSheet,
-        ["spreadsheet_get_info"]           = AgentActionType.SpreadsheetGetInfo,
-        ["spreadsheet_create_workbook"]    = AgentActionType.SpreadsheetCreateWorkbook,
-
-        // Live Excel COM Interop tools
-        ["spreadsheet_live_read_range"]    = AgentActionType.SpreadsheetLiveReadRange,
-        ["spreadsheet_live_write_range"]   = AgentActionType.SpreadsheetLiveWriteRange,
-
-        // Desktop awareness tools
-        ["enumerate_windows"]              = AgentActionType.EnumerateWindows,
-        ["launch_application"]             = AgentActionType.LaunchNativeApplication,
-
-        // Window management tools
-        ["focus_window"]                   = AgentActionType.FocusWindow,
-        ["close_window"]                   = AgentActionType.CloseWindow,
-        ["resize_window"]                  = AgentActionType.ResizeWindow,
-
-        // Hotkey
-        ["send_hotkey"]                    = AgentActionType.SendHotkey,
-
-        // Window capture
-        ["capture_window"]                 = AgentActionType.CaptureWindow,
-
-        // Clipboard
-        ["read_clipboard"]                 = AgentActionType.ReadClipboard,
-        ["write_clipboard"]                = AgentActionType.WriteClipboard,
-
-        // Process control
-        ["stop_process"]                   = AgentActionType.StopProcess,
-    };
 
     // ═══════════════════════════════════════════════════════════════
     // Screenshot extraction & vision-aware tool results
@@ -2071,1179 +1860,6 @@ public sealed class ChatService(
     private static readonly string NativeToolSystemSuffix =
         LoadEmbeddedResource("SharpClaw.Application.Core.tool-instructions-native-suffix.md");
 
-    private static readonly string Mk8ShellToolDescription =
-        LoadEmbeddedResource("SharpClaw.Application.Core.tool-description-native.md");
-
-    private static readonly IReadOnlyList<ChatToolDefinition> AllTools = BuildAllToolDefinitions();
-
-    private static IReadOnlyList<ChatToolDefinition> BuildAllToolDefinitions()
-    {
-        var mk8Schema = BuildMk8ShellToolSchema();
-        var resourceOnly = BuildResourceOnlySchema();
-        var globalSchema = BuildGlobalActionSchema();
-        var dangerousShellSchema = BuildDangerousShellSchema();
-        var transcriptionSchema = BuildTranscriptionSchema();
-        var createSubAgentSchema = BuildCreateSubAgentSchema();
-        var createContainerSchema = BuildCreateContainerSchema();
-        var manageAgentSchema = BuildManageAgentSchema();
-        var editTaskSchema = BuildEditTaskSchema();
-        var accessWebsiteSchema = BuildAccessWebsiteSchema();
-        var accessExternalDatabaseSchema = BuildAccessExternalDatabaseSchema();
-        var querySearchEngineSchema = BuildQuerySearchEngineSchema();
-        var localhostBrowserSchema = BuildLocalhostBrowserSchema();
-        var localhostCliSchema = BuildLocalhostCliSchema();
-        var clickDesktopSchema = BuildClickDesktopSchema();
-        var typeOnDesktopSchema = BuildTypeOnDesktopSchema();
-        var editorReadFileSchema = BuildEditorReadFileSchema();
-        var editorFileOptionalSchema = BuildEditorFileOptionalSchema();
-        var editorFileRequiredSchema = BuildEditorFileRequiredSchema();
-        var editorApplyEditSchema = BuildEditorApplyEditSchema();
-        var editorCreateFileSchema = BuildEditorCreateFileSchema();
-        var editorShowDiffSchema = BuildEditorShowDiffSchema();
-        var editorRunTerminalSchema = BuildEditorRunTerminalSchema();
-        var waitSchema = BuildWaitSchema();
-        var readThreadHistorySchema = BuildReadThreadHistorySchema();
-        var sendBotMessageSchema = BuildSendBotMessageSchema();
-        var registerDocumentSchema = BuildRegisterDocumentSchema();
-        var spreadsheetReadRangeSchema = BuildSpreadsheetReadRangeSchema();
-        var spreadsheetWriteRangeSchema = BuildSpreadsheetWriteRangeSchema();
-        var spreadsheetSheetNameSchema = BuildSpreadsheetSheetNameSchema();
-        var spreadsheetCreateWorkbookSchema = BuildSpreadsheetCreateWorkbookSchema();
-        var launchApplicationSchema = BuildLaunchApplicationSchema();
-        var windowTargetSchema = BuildWindowTargetSchema();
-        var resizeWindowSchema = BuildResizeWindowSchema();
-        var sendHotkeySchema = BuildSendHotkeySchema();
-        var captureWindowSchema = BuildWindowTargetSchema(); // same as windowTarget
-        var readClipboardSchema = BuildReadClipboardSchema();
-        var writeClipboardSchema = BuildWriteClipboardSchema();
-        var stopProcessSchema = BuildStopProcessSchema();
-
-        return
-        [
-            // ── Inline tools (no permissions) ─────────────────
-            new("wait",
-                "Pause for 1–300 seconds. No tokens consumed while waiting.",
-                waitSchema),
-
-            // ── Cross-thread context tools ────────────────────
-            new("list_accessible_threads",
-                "List readable threads from other channels (IDs, names, parent channel).",
-                globalSchema),
-            new("read_thread_history",
-                "Read cross-channel thread history. Optional maxMessages (1–200, default 50).",
-                readThreadHistorySchema),
-
-            // ── Shell execution ───────────────────────────────
-            new("execute_mk8_shell", Mk8ShellToolDescription, mk8Schema),
-            new("execute_dangerous_shell",
-                "Raw shell command (Bash/PowerShell/Cmd/Git), unsandboxed. Optional workingDirectory.",
-                dangerousShellSchema),
-
-            // ── Transcription ────────────────────────────────
-            new("transcribe_from_audio_device",
-                "Live-transcribe a system audio device.",
-                transcriptionSchema),
-            new("transcribe_from_audio_stream",
-                "Transcribe audio stream. [Stub.]",
-                transcriptionSchema),
-            new("transcribe_from_audio_file",
-                "Transcribe audio file. [Stub.]",
-                transcriptionSchema),
-
-            // ── Global flags ─────────────────────────────────────
-            new("create_sub_agent",
-                "Create a sub-agent (name, modelId, optional systemPrompt).",
-                createSubAgentSchema),
-            new("create_container",
-                "Create an mk8.shell sandbox container. Alphanumeric name only.",
-                createContainerSchema),
-            new("register_database",
-                "Register a new database resource. [Stub.]",
-                globalSchema),
-            new("access_localhost_in_browser",
-                "Headless GET localhost. html=DOM (default), screenshot=PNG (vision). localhost/127.0.0.1 only.",
-                localhostBrowserSchema),
-            new("access_localhost_cli",
-                "HTTP GET localhost; returns status+headers+body. localhost/127.0.0.1 only.",
-                localhostCliSchema),
-
-            // ── Per-resource ─────────────────────────────────────
-            new("access_internal_databases", "Query an internal (SharpClaw-managed) database. [Stub.]", resourceOnly),
-            new("access_external_database",
-                "Execute a query against a registered external database. " +
-                "The query language must match the database type (e.g. SQL for MySQL/PostgreSQL/MSSQL, " +
-                "MongoDB query JSON for MongoDB, Redis commands for Redis). " +
-                "Provide the targetId of the registered database and the raw query string.",
-                accessExternalDatabaseSchema),
-            new("access_website",
-                "Fetch a registered external website. cli=HTTP GET (default), html=headless DOM, screenshot=PNG. " +
-                "Optional path appends to the registered base URL. " +
-                "Downloads are blocked; binary content types are rejected; redirects are pinned to the registered origin.",
-                accessWebsiteSchema),
-            new("query_search_engine",
-                "Query a registered search engine. Parameters vary by engine type — " +
-                "Google supports dateRestrict/siteRestrict/fileType/exactTerms/excludeTerms/searchType/sortBy; " +
-                "Bing supports siteRestrict; SearXNG supports category; Tavily supports topic/searchType(basic|advanced); " +
-                "all support query, count, offset, language, region, safeSearch.",
-                querySearchEngineSchema),
-            new("access_container", "Access container resource. [Stub.]", resourceOnly),
-            new("manage_agent", "Update agent name, systemPrompt, or modelId.", manageAgentSchema),
-            new("edit_task", "Edit task name, interval, or retries.", editTaskSchema),
-            new("access_skill", "Retrieve a skill's instruction text.", resourceOnly),
-            new("capture_display", "Screenshot a display; base64 PNG (vision) or text fallback.", resourceOnly),
-            new("click_desktop", "Click (x,y) on display. Returns screenshot.", clickDesktopSchema),
-            new("type_on_desktop", "Type text; optional (x,y) to focus first. Returns screenshot.", typeOnDesktopSchema),
-
-            // ── Editor actions ────────────────────────────────────
-            new("editor_read_file", "Read file; optional line range.", editorReadFileSchema),
-            new("editor_get_open_files", "List open files/tabs.", resourceOnly),
-            new("editor_get_selection", "Active file, cursor, and selection.", resourceOnly),
-            new("editor_get_diagnostics", "Errors/warnings; optional filePath scope.", editorFileOptionalSchema),
-            new("editor_apply_edit", "Replace line range with newText.", editorApplyEditSchema),
-            new("editor_create_file", "Create file in workspace.", editorCreateFileSchema),
-            new("editor_delete_file", "Delete file from workspace.", editorFileRequiredSchema),
-            new("editor_show_diff", "Show diff; user accepts/rejects.", editorShowDiffSchema),
-            new("editor_run_build", "Trigger build; return output/errors.", resourceOnly),
-            new("editor_run_terminal", "Run command in IDE terminal.", editorRunTerminalSchema),
-
-            // ── Bot messaging ─────────────────────────────────────────
-            new("send_bot_message",
-                "Send DM via bot (Telegram/Discord/WhatsApp/Slack/Matrix/Signal/Email/Teams). recipientId is platform-specific; subject for email only.",
-                sendBotMessageSchema),
-
-            // ── Document session & spreadsheet tools ──────────────────
-            new("register_document",
-                "Register a file as a document session. Auto-detects type from extension (.xlsx/.xlsm → Spreadsheet, .csv → Csv). Returns session ID for use with spreadsheet tools.",
-                registerDocumentSchema),
-            new("spreadsheet_read_range",
-                "Read cells from a registered document as JSON grid. Supports A1:C10 notation, whole column (A:A), or omit range for entire sheet. Works on .xlsx, .xlsm, .csv.",
-                spreadsheetReadRangeSchema),
-            new("spreadsheet_write_range",
-                "Write JSON grid or single value to a range in a registered document. Supports formulas (strings starting with '='). CSV files are rewritten atomically.",
-                spreadsheetWriteRangeSchema),
-            new("spreadsheet_list_sheets",
-                "List all sheets with row/column counts. CSV returns single sheet.",
-                resourceOnly),
-            new("spreadsheet_create_sheet",
-                "Add a new sheet to an .xlsx/.xlsm workbook. Not supported for CSV.",
-                spreadsheetSheetNameSchema),
-            new("spreadsheet_delete_sheet",
-                "Remove a sheet from an .xlsx/.xlsm workbook. Not supported for CSV.",
-                spreadsheetSheetNameSchema),
-            new("spreadsheet_get_info",
-                "Workbook metadata: sheets, named ranges, file size, last modified.",
-                resourceOnly),
-            new("spreadsheet_create_workbook",
-                "Create a new .xlsx or .csv file with optional initial data. Auto-registers a document session.",
-                spreadsheetCreateWorkbookSchema),
-
-            // ── Live Excel COM Interop tools (Windows only) ───────────
-            new("spreadsheet_live_read_range",
-                "Read cells from a workbook currently open in Excel (COM Interop, Windows only). Use when the file is open in Excel and you want to read live data.",
-                spreadsheetReadRangeSchema),
-            new("spreadsheet_live_write_range",
-                "Write to a workbook currently open in Excel (COM Interop, Windows only). Use when you need changes to appear immediately in the running Excel instance.",
-                spreadsheetWriteRangeSchema),
-
-            // ── Desktop awareness tools ───────────────────────────────
-            new("enumerate_windows",
-                "List visible desktop windows across all displays. Returns JSON array with title, processName, processId, executablePath. Windows only.",
-                globalSchema),
-            new("launch_application",
-                "Start a registered native application. Optionally open a file with it. Returns PID and window title.",
-                launchApplicationSchema),
-
-            // ── Window management tools ────────────────────────────────
-            new("focus_window",
-                "Bring window to foreground by PID, process name, or title substring. Windows only.",
-                windowTargetSchema),
-            new("close_window",
-                "Send graceful close (WM_CLOSE) to a window. App may prompt to save. Windows only.",
-                windowTargetSchema),
-            new("resize_window",
-                "Move/resize/minimize/maximize a window. Windows only.",
-                resizeWindowSchema),
-
-            // ── Hotkey ────────────────────────────────────────────────
-            new("send_hotkey",
-                "Send keyboard shortcut (e.g. 'ctrl+s', 'alt+tab'). Optional focus-first by PID/title. Windows only.",
-                sendHotkeySchema),
-
-            // ── Window capture ────────────────────────────────────────
-            new("capture_window",
-                "Screenshot a single window by PID/title. Smaller than capture_display. Returns base64 PNG (vision) or dims.",
-                captureWindowSchema),
-
-            // ── Clipboard ─────────────────────────────────────────────
-            new("read_clipboard",
-                "Read clipboard: text, file list, or image. Auto-detect or specify format.",
-                readClipboardSchema),
-            new("write_clipboard",
-                "Set clipboard to text or file paths. Pair with send_hotkey('ctrl+v') for paste.",
-                writeClipboardSchema),
-
-            // ── Process control ───────────────────────────────────────
-            new("stop_process",
-                "Stop a process launched via launch_application. Must match a registered native app.",
-                stopProcessSchema),
-        ];
-    }
-
-    private static JsonElement BuildWaitSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "seconds": {
-                        "type": "integer",
-                        "description": "Seconds (1–300)."
-                    }
-                },
-                "required": ["seconds"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildReadThreadHistorySchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "threadId": {
-                        "type": "string",
-                        "description": "Thread GUID (from list_accessible_threads)."
-                    },
-                    "maxMessages": {
-                        "type": "integer",
-                        "description": "Max messages (1–200, default 50)."
-                    }
-                },
-                "required": ["threadId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSendBotMessageSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "Bot integration GUID."
-                    },
-                    "recipientId": {
-                        "type": "string",
-                        "description": "Platform-specific recipient: Telegram chat ID, Discord user ID, WhatsApp phone (E.164), Slack user ID, Matrix user ID (@user:server), Signal phone (E.164), email address, or Teams user ID."
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Message text to send."
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line (email only, optional)."
-                    }
-                },
-                "required": ["resourceId", "recipientId", "message"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildRegisterDocumentSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "filePath": {
-                        "type": "string",
-                        "description": "Absolute path to the document file."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Display name (optional, defaults to file name)."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional description."
-                    }
-                },
-                "required": ["filePath"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSpreadsheetReadRangeSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Document session GUID."
-                    },
-                    "sheetName": {
-                        "type": "string",
-                        "description": "Sheet name (optional, defaults to first/active sheet)."
-                    },
-                    "range": {
-                        "type": "string",
-                        "description": "Cell range (A1:C10, A:A, or omit for entire sheet)."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSpreadsheetWriteRangeSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Document session GUID."
-                    },
-                    "sheetName": {
-                        "type": "string",
-                        "description": "Sheet name (optional, defaults to first/active sheet)."
-                    },
-                    "range": {
-                        "type": "string",
-                        "description": "Starting cell or range (e.g. A1, B2:C10)."
-                    },
-                    "data": {
-                        "description": "JSON grid (array of arrays) or single value. Strings starting with '=' are formulas."
-                    }
-                },
-                "required": ["targetId", "range", "data"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSpreadsheetSheetNameSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Document session GUID."
-                    },
-                    "sheetName": {
-                        "type": "string",
-                        "description": "Name of the sheet."
-                    }
-                },
-                "required": ["targetId", "sheetName"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSpreadsheetCreateWorkbookSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "filePath": {
-                        "type": "string",
-                        "description": "Absolute path for the new file (.xlsx or .csv)."
-                    },
-                    "sheetName": {
-                        "type": "string",
-                        "description": "Initial sheet name (optional, defaults to Sheet1)."
-                    },
-                    "data": {
-                        "description": "Optional initial data as JSON grid."
-                    }
-                },
-                "required": ["filePath"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildLaunchApplicationSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Native application GUID."
-                    },
-                    "alias": {
-                        "type": "string",
-                        "description": "Short alias (e.g. 'excel'). Use targetId or alias."
-                    },
-                    "arguments": {
-                        "type": "string",
-                        "description": "Optional command-line arguments."
-                    },
-                    "filePath": {
-                        "type": "string",
-                        "description": "Optional file to open with the application."
-                    }
-                },
-                "required": []
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildWindowTargetSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "processId": {
-                        "type": "integer",
-                        "description": "Window's process ID."
-                    },
-                    "processName": {
-                        "type": "string",
-                        "description": "Process name (case-insensitive)."
-                    },
-                    "titleContains": {
-                        "type": "string",
-                        "description": "Title substring match (case-insensitive)."
-                    }
-                }
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildResizeWindowSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "processId": {
-                        "type": "integer",
-                        "description": "Window's process ID."
-                    },
-                    "titleContains": {
-                        "type": "string",
-                        "description": "Title substring match."
-                    },
-                    "x": { "type": "integer", "description": "New X position." },
-                    "y": { "type": "integer", "description": "New Y position." },
-                    "width": { "type": "integer", "description": "New width." },
-                    "height": { "type": "integer", "description": "New height." },
-                    "state": {
-                        "type": "string",
-                        "enum": ["normal", "minimized", "maximized"],
-                        "description": "Window state."
-                    }
-                }
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildSendHotkeySchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "keys": {
-                        "type": "string",
-                        "description": "Shortcut, e.g. 'ctrl+s', 'alt+tab', 'ctrl+shift+p'."
-                    },
-                    "processId": {
-                        "type": "integer",
-                        "description": "Optional: focus window by PID first."
-                    },
-                    "titleContains": {
-                        "type": "string",
-                        "description": "Optional: focus window by title first."
-                    }
-                },
-                "required": ["keys"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildReadClipboardSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "format": {
-                        "type": "string",
-                        "enum": ["text", "files", "image"],
-                        "description": "Clipboard format. Omit for auto-detect."
-                    }
-                }
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildWriteClipboardSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "Text to write to clipboard."
-                    },
-                    "filePaths": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "File paths to put on clipboard."
-                    }
-                }
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildStopProcessSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "processId": {
-                        "type": "integer",
-                        "description": "PID of the process to stop."
-                    },
-                    "force": {
-                        "type": "boolean",
-                        "description": "Skip graceful close; kill immediately."
-                    }
-                },
-                "required": ["processId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildMk8ShellToolSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "Container GUID."
-                    },
-                    "sandboxId": {
-                        "type": "string",
-                        "description": "Sandbox name."
-                    },
-                    "script": {
-                        "type": "object",
-                        "description": "Script object.",
-                        "properties": {
-                            "operations": {
-                                "type": "array",
-                                "description": "Ordered operations.",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } },
-                                        "workingDirectory": {
-                                            "type": "string",
-                                            "description": "Per-step CWD override (e.g. '$WORKSPACE/subdir')."
-                                        }
-                                    },
-                                    "required": ["verb", "args"]
-                                }
-                            },
-                            "options": { "type": "object" },
-                            "cleanup": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "verb": { "type": "string" },
-                                        "args": { "type": "array", "items": { "type": "string" } },
-                                        "workingDirectory": {
-                                            "type": "string",
-                                            "description": "Per-step CWD override."
-                                        }
-                                    },
-                                    "required": ["verb", "args"]
-                                }
-                            }
-                        },
-                        "required": ["operations"]
-                    }
-                },
-                "required": ["resourceId", "sandboxId", "script"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildResourceOnlySchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Resource GUID."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildGlobalActionSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildDangerousShellSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "resourceId": {
-                        "type": "string",
-                        "description": "SystemUser GUID."
-                    },
-                    "shellType": {
-                        "type": "string",
-                        "enum": ["Bash", "PowerShell", "CommandPrompt", "Git"],
-                        "description": "Shell interpreter."
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Raw command string."
-                    },
-                    "workingDirectory": {
-                        "type": "string",
-                        "description": "Optional CWD override."
-                    }
-                },
-                "required": ["resourceId", "shellType", "command"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildTranscriptionSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Audio device GUID."
-                    },
-                    "transcriptionModelId": {
-                        "type": "string",
-                        "description": "Transcription model GUID."
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "BCP-47 code (e.g. 'en')."
-                    }
-                },
-                "required": ["targetId", "transcriptionModelId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildAccessExternalDatabaseSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "External database GUID."
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Raw query in the database's native language. Must match the database type: SQL for MySQL/PostgreSQL/MSSQL/SQLite/MariaDB/CockroachDB/Oracle/Firebird, MongoDB query JSON for MongoDB, Redis commands for Redis, SQL for CosmosDB."
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Query timeout in seconds (default 30, max 120)."
-                    }
-                },
-                "required": ["targetId", "query"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildCreateSubAgentSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Agent name."
-                    },
-                    "modelId": {
-                        "type": "string",
-                        "description": "Model GUID."
-                    },
-                    "systemPrompt": {
-                        "type": "string",
-                        "description": "System prompt."
-                    }
-                },
-                "required": ["name", "modelId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildCreateContainerSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name (alphanumeric)."
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute parent directory."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description."
-                    }
-                },
-                "required": ["name", "path"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildManageAgentSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Agent GUID."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "New name."
-                    },
-                    "systemPrompt": {
-                        "type": "string",
-                        "description": "New system prompt."
-                    },
-                    "modelId": {
-                        "type": "string",
-                        "description": "New model GUID."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditTaskSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Task GUID."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "New name."
-                    },
-                    "repeatIntervalMinutes": {
-                        "type": "integer",
-                        "description": "Minutes. 0=remove."
-                    },
-                    "maxRetries": {
-                        "type": "integer",
-                        "description": "Max retries."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildLocalhostBrowserSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Localhost URL."
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["html", "screenshot"],
-                        "description": "'html' (default)=DOM, 'screenshot'=PNG."
-                    }
-                },
-                "required": ["url"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildLocalhostCliSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Localhost URL."
-                    }
-                },
-                "required": ["url"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildAccessWebsiteSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Website resource GUID."
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["cli", "html", "screenshot"],
-                        "description": "'cli' (default)=HTTP GET with headers+body, 'html'=headless browser DOM, 'screenshot'=headless browser PNG."
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Optional path appended to the registered base URL (e.g. '/api/v1/status')."
-                    }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildQuerySearchEngineSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Search engine resource GUID."
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Search query text."
-                    },
-                    "count": {
-                        "type": "integer",
-                        "description": "Max results to return (default 10)."
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Result offset for pagination (default 0)."
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language code (e.g. 'en', 'lang_en' for Google, BCP-47 for others)."
-                    },
-                    "region": {
-                        "type": "string",
-                        "description": "Region/market code (e.g. 'us', 'en-US' for Bing)."
-                    },
-                    "safeSearch": {
-                        "type": "string",
-                        "description": "Safe search level. Google: off/medium/high. Bing: Off/Moderate/Strict. Brave: off/moderate/strict. SearXNG: 0/1/2."
-                    },
-                    "dateRestrict": {
-                        "type": "string",
-                        "description": "Google only. Restrict by date: d[N], w[N], m[N], y[N]."
-                    },
-                    "siteRestrict": {
-                        "type": "string",
-                        "description": "Google/Bing: restrict to a specific site domain."
-                    },
-                    "fileType": {
-                        "type": "string",
-                        "description": "Google only. Filter by file type (e.g. 'pdf', 'doc')."
-                    },
-                    "exactTerms": {
-                        "type": "string",
-                        "description": "Google only. Phrase that must appear in results."
-                    },
-                    "excludeTerms": {
-                        "type": "string",
-                        "description": "Google only. Terms to exclude from results."
-                    },
-                    "searchType": {
-                        "type": "string",
-                        "description": "Google: 'image' for image search. Tavily: 'basic' or 'advanced'."
-                    },
-                    "sortBy": {
-                        "type": "string",
-                        "description": "Google only. Sort order (e.g. 'date')."
-                    },
-                    "topic": {
-                        "type": "string",
-                        "description": "Tavily only. Topic filter: 'general' or 'news'."
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "SearXNG only. Category: general, images, news, etc."
-                    }
-                },
-                "required": ["targetId", "query"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildClickDesktopSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Display GUID."
-                    },
-                    "x": {
-                        "type": "integer",
-                        "description": "X coordinate."
-                    },
-                    "y": {
-                        "type": "integer",
-                        "description": "Y coordinate."
-                    },
-                    "button": {
-                        "type": "string",
-                        "enum": ["left", "right", "middle"],
-                        "description": "Default 'left'."
-                    },
-                    "clickType": {
-                        "type": "string",
-                        "enum": ["single", "double"],
-                        "description": "Default 'single'."
-                    }
-                },
-                "required": ["targetId", "x", "y"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildTypeOnDesktopSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": {
-                        "type": "string",
-                        "description": "Display GUID."
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Text to type."
-                    },
-                    "x": {
-                        "type": "integer",
-                        "description": "X click-to-focus."
-                    },
-                    "y": {
-                        "type": "integer",
-                        "description": "Y click-to-focus."
-                    }
-                },
-                "required": ["targetId", "text"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    // ── Editor action schemas ─────────────────────────────────────
-
-    private static JsonElement BuildEditorReadFileSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "startLine": { "type": "integer", "description": "Optional start line (1-based)." },
-                    "endLine": { "type": "integer", "description": "Optional end line (1-based, inclusive)." }
-                },
-                "required": ["targetId", "filePath"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorFileOptionalSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "Optional file path to scope results." }
-                },
-                "required": ["targetId"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorFileRequiredSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "File path relative to workspace root." }
-                },
-                "required": ["targetId", "filePath"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorApplyEditSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "startLine": { "type": "integer", "description": "Start line (1-based)." },
-                    "endLine": { "type": "integer", "description": "End line (1-based, inclusive)." },
-                    "newText": { "type": "string", "description": "Replacement text." }
-                },
-                "required": ["targetId", "filePath", "startLine", "endLine", "newText"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorCreateFileSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "content": { "type": "string", "description": "Initial file content." }
-                },
-                "required": ["targetId", "filePath"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorShowDiffSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "filePath": { "type": "string", "description": "File path relative to workspace root." },
-                    "proposedContent": { "type": "string", "description": "Proposed file content." },
-                    "diffTitle": { "type": "string", "description": "Diff view title." }
-                },
-                "required": ["targetId", "filePath", "proposedContent"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
-    private static JsonElement BuildEditorRunTerminalSchema()
-    {
-        using var doc = JsonDocument.Parse("""
-            {
-                "type": "object",
-                "properties": {
-                    "targetId": { "type": "string", "description": "EditorSession GUID." },
-                    "command": { "type": "string", "description": "Command to run." },
-                    "workingDirectory": { "type": "string", "description": "Working directory." }
-                },
-                "required": ["targetId", "command"]
-            }
-            """);
-        return doc.RootElement.Clone();
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Embedded resource loader
     // ═══════════════════════════════════════════════════════════════
@@ -3261,14 +1877,8 @@ public sealed class ChatService(
     // Internal types
     // ═══════════════════════════════════════════════════════════════
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private sealed record ParsedToolCall(
         string CallId,
-        AgentActionType ActionType,
         Guid? ResourceId,
         string? SandboxId,
         string? ScriptJson,
@@ -3277,29 +1887,8 @@ public sealed class ChatService(
         Guid? TranscriptionModelId = null,
         string? Language = null,
         string? WorkingDirectory = null,
-        string? RawJson = null);
-
-    private sealed class ToolCallPayload
-    {
-        public string? ResourceId { get; set; }
-        public string? SandboxId { get; set; }
-        public JsonElement? Script { get; set; }
-        public string? Command { get; set; }
-        public string? ShellType { get; set; }
-        public string? TranscriptionModelId { get; set; }
-        public string? Language { get; set; }
-        public string? TargetId { get; set; }
-        public string? Query { get; set; }
-        public string? Url { get; set; }
-        public string? WorkingDirectory { get; set; }
-        public string? Name { get; set; }
-        public string? ModelId { get; set; }
-        public string? SystemPrompt { get; set; }
-        public string? Path { get; set; }
-        public string? Description { get; set; }
-        public int? RepeatIntervalMinutes { get; set; }
-        public int? MaxRetries { get; set; }
-    }
+        string? RawJson = null,
+        string? ActionKey = null);
 
     private readonly record struct ToolLoopResult(
         string AssistantContent,
@@ -3314,18 +1903,18 @@ public sealed class ChatService(
     /// <summary>
     /// Formats a standardized tool call notation line for a job that
     /// was submitted and executed (no approval flow).
-    /// Format: <c>\n⚙ [ActionType] → Status</c>
+    /// Format: <c>\n⚙ [ActionKey] → Status</c>
     /// </summary>
     private static string FormatToolNotation(AgentJobResponse job)
-        => $"\n⚙ [{job.ActionType}] → {job.Status}";
+        => $"\n⚙ [{job.ActionKey ?? "unknown"}] → {job.Status}";
 
     /// <summary>
     /// Formats a tool call notation line for a job that required
     /// approval, showing the final outcome.
-    /// Format: <c>\n⏳ [ActionType] awaiting approval → Status</c>
+    /// Format: <c>\n⏳ [ActionKey] awaiting approval → Status</c>
     /// </summary>
     private static string FormatApprovalNotation(AgentJobResponse job)
-        => $"\n⏳ [{job.ActionType}] awaiting approval → {job.Status}";
+        => $"\n⏳ [{job.ActionKey ?? "unknown"}] awaiting approval → {job.Status}";
 
     /// <summary>
     /// Formats a tool call notation line for an inline tool (wait,

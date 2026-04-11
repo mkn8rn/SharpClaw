@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
@@ -21,255 +24,27 @@ namespace SharpClaw.Application.Services;
 /// The service never implements the action logic itself; execution is
 /// delegated through the <c>onApproved</c> callback.
 /// </summary>
-public sealed class AgentActionService(SharpClawDbContext db)
+public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry registry)
 {
     // ═══════════════════════════════════════════════════════════════
-    // Global-flag actions
+    // Global-flag evaluation (generic — all flags resolved by key)
     // ═══════════════════════════════════════════════════════════════
 
-    public Task<AgentActionResult> CreateSubAgentAsync(
-        Guid agentId, ActionCaller caller,
+    /// <summary>
+    /// Evaluate a global-flag permission by its canonical key
+    /// (e.g. "CanClickDesktop"). The flag must exist in the agent's
+    /// <see cref="PermissionSetDB.GlobalFlags"/> collection.
+    /// Replaces the 16 typed wrapper methods — see Module-System-Design §12.4.4.
+    /// </summary>
+    public Task<AgentActionResult> EvaluateGlobalFlagByKeyAsync(
+        string flagKey, Guid agentId, ActionCaller caller,
         Func<Task>? onApproved = null, CancellationToken ct = default)
         => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateSubAgents, p => p.CreateSubAgentsClearance,
-            "create sub-agents", onApproved, ct);
-
-    public Task<AgentActionResult> CreateContainerAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateContainers, p => p.CreateContainersClearance,
-            "create containers", onApproved, ct);
-
-    public Task<AgentActionResult> RegisterDatabaseAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanRegisterDatabases, p => p.RegisterDatabasesClearance,
-            "register databases", onApproved, ct);
-
-    public Task<AgentActionResult> AccessLocalhostInBrowserAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostInBrowser, p => p.AccessLocalhostInBrowserClearance,
-            "access localhost in browser", onApproved, ct);
-
-    public Task<AgentActionResult> AccessLocalhostCliAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanAccessLocalhostCli, p => p.AccessLocalhostCliClearance,
-            "access localhost via CLI", onApproved, ct);
-
-    public Task<AgentActionResult> ClickDesktopAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanClickDesktop, p => p.ClickDesktopClearance,
-            "click desktop", onApproved, ct);
-
-    public Task<AgentActionResult> TypeOnDesktopAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanTypeOnDesktop, p => p.TypeOnDesktopClearance,
-            "type on desktop", onApproved, ct);
-
-    public Task<AgentActionResult> ReadCrossThreadHistoryAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanReadCrossThreadHistory, p => p.ReadCrossThreadHistoryClearance,
-            "read cross-thread history", onApproved, ct);
-
-    public Task<AgentActionResult> CreateDocumentSessionAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCreateDocumentSessions, p => p.CreateDocumentSessionsClearance,
-            "create document sessions", onApproved, ct);
-
-    public Task<AgentActionResult> EnumerateWindowsAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanEnumerateWindows, p => p.EnumerateWindowsClearance,
-            "enumerate windows", onApproved, ct);
-
-    public Task<AgentActionResult> FocusWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanFocusWindow, p => p.FocusWindowClearance,
-            "focus window", onApproved, ct);
-
-    public Task<AgentActionResult> CloseWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanCloseWindow, p => p.CloseWindowClearance,
-            "close window", onApproved, ct);
-
-    public Task<AgentActionResult> ResizeWindowAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanResizeWindow, p => p.ResizeWindowClearance,
-            "resize window", onApproved, ct);
-
-    public Task<AgentActionResult> SendHotkeyAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanSendHotkey, p => p.SendHotkeyClearance,
-            "send hotkey", onApproved, ct);
-
-    public Task<AgentActionResult> ReadClipboardAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanReadClipboard, p => p.ReadClipboardClearance,
-            "read clipboard", onApproved, ct);
-
-    public Task<AgentActionResult> WriteClipboardAsync(
-        Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateGlobalFlagAsync(
-            agentId, caller, p => p.CanWriteClipboard, p => p.WriteClipboardClearance,
-            "write clipboard", onApproved, ct);
-
-    // ═══════════════════════════════════════════════════════════════
-    // Per-resource actions
-    // ═══════════════════════════════════════════════════════════════
-
-    public Task<AgentActionResult> UnsafeExecuteAsDangerousShellAsync(
-        Guid agentId, Guid systemUserId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, systemUserId, caller,
-            p => p.DangerousShellAccesses, a => a.SystemUserId, a => a.Clearance,
-            "dangerous shell access", onApproved, ct);
-
-    public Task<AgentActionResult> ExecuteAsSafeShellAsync(
-        Guid agentId, Guid containerId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, containerId, caller,
-            p => p.SafeShellAccesses, a => a.ContainerId, a => a.Clearance,
-            "safe shell access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessInternalDatabaseAsync(
-        Guid agentId, Guid databaseId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, databaseId, caller,
-            p => p.InternalDatabaseAccesses, a => a.InternalDatabaseId, a => a.Clearance,
-            "internal database access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessExternalDatabaseAsync(
-        Guid agentId, Guid databaseId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, databaseId, caller,
-            p => p.ExternalDatabaseAccesses, a => a.ExternalDatabaseId, a => a.Clearance,
-            "external database access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessWebsiteAsync(
-        Guid agentId, Guid websiteId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, websiteId, caller,
-            p => p.WebsiteAccesses, a => a.WebsiteId, a => a.Clearance,
-            "website access", onApproved, ct);
-
-    public Task<AgentActionResult> QuerySearchEngineAsync(
-        Guid agentId, Guid searchEngineId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, searchEngineId, caller,
-            p => p.SearchEngineAccesses, a => a.SearchEngineId, a => a.Clearance,
-            "search engine access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessContainerAsync(
-        Guid agentId, Guid containerId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, containerId, caller,
-            p => p.ContainerAccesses, a => a.ContainerId, a => a.Clearance,
-            "container access", onApproved, ct);
-
-    public Task<AgentActionResult> ManageAgentAsync(
-        Guid agentId, Guid targetAgentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, targetAgentId, caller,
-            p => p.AgentPermissions, a => a.AgentId, a => a.Clearance,
-            "agent management", onApproved, ct);
-
-    public Task<AgentActionResult> EditTaskAsync(
-        Guid agentId, Guid taskId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, taskId, caller,
-            p => p.TaskPermissions, a => a.ScheduledTaskId, a => a.Clearance,
-            "task edit", onApproved, ct);
-
-    public Task<AgentActionResult> AccessSkillAsync(
-        Guid agentId, Guid skillId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, skillId, caller,
-            p => p.SkillPermissions, a => a.SkillId, a => a.Clearance,
-            "skill access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessAudioDeviceAsync(
-        Guid agentId, Guid audioDeviceId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, audioDeviceId, caller,
-            p => p.AudioDeviceAccesses, a => a.AudioDeviceId, a => a.Clearance,
-            "audio device access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessDisplayDeviceAsync(
-        Guid agentId, Guid displayDeviceId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, displayDeviceId, caller,
-            p => p.DisplayDeviceAccesses, a => a.DisplayDeviceId, a => a.Clearance,
-            "display device access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessEditorSessionAsync(
-        Guid agentId, Guid editorSessionId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, editorSessionId, caller,
-            p => p.EditorSessionAccesses, a => a.EditorSessionId, a => a.Clearance,
-            "editor session access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessBotIntegrationAsync(
-        Guid agentId, Guid botIntegrationId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, botIntegrationId, caller,
-            p => p.BotIntegrationAccesses, a => a.BotIntegrationId, a => a.Clearance,
-            "bot integration access", onApproved, ct);
-
-    public Task<AgentActionResult> AccessDocumentSessionAsync(
-        Guid agentId, Guid documentSessionId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, documentSessionId, caller,
-            p => p.DocumentSessionAccesses, a => a.DocumentSessionId, a => a.Clearance,
-            "document session access", onApproved, ct);
-
-    public Task<AgentActionResult> LaunchNativeApplicationAsync(
-        Guid agentId, Guid nativeApplicationId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
-        => EvaluateResourceAccessAsync(
-            agentId, nativeApplicationId, caller,
-            p => p.NativeApplicationAccesses, a => a.NativeApplicationId, a => a.Clearance,
-            "native application launch", onApproved, ct);
+            agentId, caller,
+            ps => ps.GlobalFlags.Any(f => f.FlagKey == flagKey),
+            ps => ps.GlobalFlags.FirstOrDefault(f => f.FlagKey == flagKey)
+                    ?.Clearance ?? PermissionClearance.Unset,
+            flagKey, onApproved, ct);
 
     // ═══════════════════════════════════════════════════════════════
     // Core evaluation engine
@@ -310,37 +85,60 @@ public sealed class AgentActionService(SharpClawDbContext db)
     }
 
     /// <summary>
-    /// Evaluate a per-resource grant (one of the typed access collections).
+    /// Check whether a permission set has a grant for a specific resource
+    /// in the unified <see cref="Infrastructure.Models.Access.ResourceAccessDB"/> collection.
+    /// Replaces 18 typed GrantCheckMap lambdas with a single method.
+    /// See Module-System-Design §3.10.5.
     /// </summary>
-    private async Task<AgentActionResult> EvaluateResourceAccessAsync<TAccess>(
+    private static bool HasResourceGrant(
+        PermissionSetDB ps, string resourceType, Guid? resourceId)
+        => ps.ResourceAccesses.Any(a =>
+            a.ResourceType == resourceType
+            && (a.ResourceId == resourceId || a.ResourceId == WellKnownIds.AllResources));
+
+    /// <summary>
+    /// Evaluate a per-resource grant using the unified
+    /// <see cref="Infrastructure.Models.Access.ResourceAccessDB"/> collection.
+    /// See Module-System-Design §3.10.5.
+    /// </summary>
+    private async Task<AgentActionResult> EvaluateResourceAccessAsync(
         Guid agentId,
         Guid resourceId,
+        string resourceType,
         ActionCaller caller,
-        Func<PermissionSetDB, IEnumerable<TAccess>> getAccessCollection,
-        Func<TAccess, Guid> getResourceId,
-        Func<TAccess, PermissionClearance> getClearance,
         string resourceDescription,
-        Func<Task>? onApproved,
-        CancellationToken ct)
+        Func<Task>? onApproved = null,
+        CancellationToken ct = default)
     {
         var agentPerms = await LoadAgentPermissionsAsync(agentId, ct);
         if (agentPerms is null)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: Agent {agentId} has no role or permission set.",
+                "SharpClaw.CLI");
             return AgentActionResult.Denied("Agent has no role or permissions assigned.");
+        }
 
-        var access = getAccessCollection(agentPerms)
-            .FirstOrDefault(a => getResourceId(a) == resourceId
-                              || getResourceId(a) == WellKnownIds.AllResources);
+        var access = agentPerms.ResourceAccesses
+            .FirstOrDefault(a => a.ResourceType == resourceType
+                              && (a.ResourceId == resourceId
+                               || a.ResourceId == WellKnownIds.AllResources));
 
         if (access is null)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: Agent {agentId} has no '{resourceType}' grant for resource {resourceId}. "
+                + $"ResourceAccesses count={agentPerms.ResourceAccesses.Count}, "
+                + $"types=[{string.Join(", ", agentPerms.ResourceAccesses.Select(a => $"{a.ResourceType}:{a.ResourceId:D}"))}]",
+                "SharpClaw.CLI");
             return AgentActionResult.Denied($"Agent does not have {resourceDescription}.");
+        }
 
-        var effective = ResolveClearance(getClearance(access), agentPerms.DefaultClearance);
+        var effective = ResolveClearance(access.Clearance, agentPerms.DefaultClearance);
 
         var result = await EvaluateCallerClearanceAsync(
             agentPerms, effective, caller,
-            callerPerms => getAccessCollection(callerPerms)
-                .Any(a => getResourceId(a) == resourceId
-                       || getResourceId(a) == WellKnownIds.AllResources),
+            callerPerms => HasResourceGrant(callerPerms, resourceType, resourceId),
             ct);
 
         if (result.Verdict == ClearanceVerdict.Approved && onApproved is not null)
@@ -465,31 +263,66 @@ public sealed class AgentActionService(SharpClawDbContext db)
 
     /// <summary>
     /// Loads a full <see cref="PermissionSetDB"/> by its primary key,
-    /// including all typed access collections and whitelists.
+    /// including the unified resource access collection and whitelists.
     /// </summary>
     public async Task<PermissionSetDB?> LoadPermissionSetAsync(
         Guid permissionSetId, CancellationToken ct)
     {
-        return await db.PermissionSets
-            .Include(p => p.DangerousShellAccesses)
-            .Include(p => p.SafeShellAccesses)
-            .Include(p => p.InternalDatabaseAccesses)
-            .Include(p => p.ExternalDatabaseAccesses)
-            .Include(p => p.WebsiteAccesses)
-            .Include(p => p.SearchEngineAccesses)
-            .Include(p => p.ContainerAccesses)
-            .Include(p => p.AudioDeviceAccesses)
-            .Include(p => p.DisplayDeviceAccesses)
-            .Include(p => p.EditorSessionAccesses)
-            .Include(p => p.AgentPermissions)
-            .Include(p => p.TaskPermissions)
-            .Include(p => p.SkillPermissions)
-            .Include(p => p.AgentHeaderAccesses)
-            .Include(p => p.ChannelHeaderAccesses)
-            .Include(p => p.BotIntegrationAccesses)
+        var ps = await db.PermissionSets
+            .Include(p => p.GlobalFlags)
+            .Include(p => p.ResourceAccesses)
             .Include(p => p.ClearanceUserWhitelist)
             .Include(p => p.ClearanceAgentWhitelist)
             .FirstOrDefaultAsync(p => p.Id == permissionSetId, ct);
+
+        return ps;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Module delegation (DelegateTo resolution)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Evaluates a permission check by delegate-method name.
+    /// Global flags are resolved dynamically via <see cref="ModuleRegistry.ResolveGlobalFlag"/>;
+    /// per-resource delegates via <see cref="ModuleRegistry.ResolveResourceType"/>.
+    /// Returns <c>null</c> if <paramref name="delegateName"/> is not recognised.
+    /// See Module-System-Design §12.4.4.
+    /// </summary>
+    public Task<AgentActionResult>? TryEvaluateByDelegateNameAsync(
+        string delegateName, Guid agentId, Guid? resourceId,
+        ActionCaller caller, CancellationToken ct = default)
+    {
+        var flagKey = registry.ResolveGlobalFlag(delegateName);
+        if (flagKey is not null)
+            return EvaluateGlobalFlagByKeyAsync(flagKey, agentId, caller, ct: ct);
+
+        var resourceType = registry.ResolveResourceType(delegateName);
+        if (resourceType is not null && resourceId.HasValue)
+            return EvaluateResourceAccessAsync(
+                agentId, resourceId.Value, resourceType, caller,
+                $"{resourceType} access", ct: ct);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Checks whether a <see cref="PermissionSetDB"/> contains a grant
+    /// that matches the given delegate-method name and optional resource ID.
+    /// Global flags are resolved dynamically via <see cref="ModuleRegistry.ResolveGlobalFlag"/>;
+    /// per-resource delegates via <see cref="ModuleRegistry.ResolveResourceType"/>.
+    /// Used by channel pre-authorization for module actions.
+    /// See Module-System-Design §12.4.4.
+    /// </summary>
+    public bool HasGrantByDelegateName(
+        PermissionSetDB ps, string delegateName, Guid? resourceId)
+    {
+        var flagKey = registry.ResolveGlobalFlag(delegateName);
+        if (flagKey is not null)
+            return ps.GlobalFlags.Any(f => f.FlagKey == flagKey);
+
+        var resourceType = registry.ResolveResourceType(delegateName);
+        return resourceType is not null && HasResourceGrant(ps, resourceType, resourceId);
     }
 
     // ═══════════════════════════════════════════════════════════════

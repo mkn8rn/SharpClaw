@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SharpClaw.Modules.DangerousShell</RootNamespace>
+    <AssemblyName>SharpClaw.Modules.DangerousShell</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

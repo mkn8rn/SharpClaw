@@ -39,6 +39,16 @@ public sealed partial class SettingsPage : Page
     private ScrollViewer? _gatewayLogScroll;
     private int _gatewayLogSnapshot;
 
+    // Module state for conditional UI
+    private List<ModuleStateEntry>? _cachedModuleStates;
+
+    // Module log console state
+    private DispatcherTimer? _moduleLogTimer;
+    private TextBlock? _moduleLogBlock;
+    private ScrollViewer? _moduleLogScroll;
+    private string? _moduleLogCursor;
+    private string? _activeModuleLogId;
+
     public SettingsPage()
     {
         this.InitializeComponent();
@@ -49,6 +59,7 @@ public sealed partial class SettingsPage : Page
     {
         Cursor.SetCommand("sharpclaw settings ");
         await FetchCurrentUserInfoAsync();
+        _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
         BuildTabs();
         SelectTab("Providers");
     }
@@ -56,6 +67,16 @@ public sealed partial class SettingsPage : Page
     // ═══════════════════════════════════════════════════════════════
     // Sidebar tabs
     // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Maps existing sidebar tabs to the module that must be enabled for them to appear.
+    /// Tabs not in this dictionary are always visible.
+    /// </summary>
+    private static readonly Dictionary<string, string> TabRequiredModules = new()
+    {
+        ["Sound Input"]      = "sharpclaw_transcription",
+        ["Bot Integrations"] = "sharpclaw_bot_integration",
+    };
 
     private void BuildTabs()
     {
@@ -67,16 +88,31 @@ public sealed partial class SettingsPage : Page
         AddTabButton("Agents", "sharpclaw agent list");
         AddTabButton("Roles", "sharpclaw role list");
         AddTabSection("Audio");
-        AddTabButton("Sound Input", "sharpclaw resource audiodevice list");
+        AddConditionalTabButton("Sound Input", "sharpclaw resource inputaudio list");
         AddTabSection("Gateway");
         AddTabButton("Gateway", "sharpclaw gateway status");
-        AddTabButton("Bot Integrations", "sharpclaw bot list");
+        AddConditionalTabButton("Bot Integrations", "sharpclaw bot list");
+        AddTabSection("Modules");
+        AddTabButton("Manage Modules", "sharpclaw module list");
+        if (_cachedModuleStates is not null)
+            foreach (var m in _cachedModuleStates)
+                if (m.Enabled)
+                    AddTabButton(m.DisplayName, $"sharpclaw module get {m.ModuleId}");
         if (_isUserAdmin)
         {
             AddTabSection("Admin");
             AddTabButton("Users", "sharpclaw user list");
             AddTabButton("Danger Zone", "sharpclaw reset");
         }
+    }
+
+    /// <summary>Only adds the tab button if its required module is enabled.</summary>
+    private void AddConditionalTabButton(string label, string cursorCmd)
+    {
+        if (TabRequiredModules.TryGetValue(label, out var requiredModule)
+            && _cachedModuleStates?.Any(m => m.ModuleId == requiredModule && m.Enabled) != true)
+            return;
+        AddTabButton(label, cursorCmd);
     }
 
     private void AddTabSection(string title) => TabPanel.Children.Add(new TextBlock
@@ -108,8 +144,17 @@ public sealed partial class SettingsPage : Page
 
     private void SelectTab(string tab)
     {
+        // Guard: if a selected tab requires a disabled module, redirect.
+        if (TabRequiredModules.TryGetValue(tab, out var req)
+            && _cachedModuleStates?.Any(m => m.ModuleId == req && m.Enabled) != true)
+        {
+            SelectTab("Manage Modules");
+            return;
+        }
+
         _activeTab = tab;
         StopGatewayLogTimer();
+        StopModuleLogTimer();
         HighlightTabs();
         ContentPanel.Children.Clear();
         _ = tab switch
@@ -123,7 +168,8 @@ public sealed partial class SettingsPage : Page
             "Bot Integrations" => LoadBotIntegrationsAsync(),
             "Users" => LoadUsersAsync(),
             "Danger Zone" => LoadDangerZoneAsync(),
-            _ => Task.CompletedTask,
+            "Manage Modules" => LoadManageModulesAsync(),
+            _ => DispatchModuleTabAsync(tab),
         };
     }
 
@@ -591,7 +637,7 @@ public sealed partial class SettingsPage : Page
             syncBtn.IsEnabled = false;
             try
             {
-                var resp = await Api.PostAsync("/resources/audiodevices/sync", null);
+                var resp = await Api.PostAsync("/resources/inputaudios/sync", null);
                 if (resp.IsSuccessStatusCode)
                 {
                     using var s = await resp.Content.ReadAsStreamAsync();
@@ -608,7 +654,7 @@ public sealed partial class SettingsPage : Page
         };
         ContentPanel.Children.Add(syncBtn);
 
-        var devices = await FetchListAsync<AudioDeviceEntry>("/resources/audiodevices");
+        var devices = await FetchListAsync<InputAudioEntry>("/resources/inputaudios");
         if (devices is not { Count: > 0 })
         {
             Lbl("No audio devices found. Click sync to detect system devices.", 0x808080);
@@ -619,7 +665,7 @@ public sealed partial class SettingsPage : Page
         var deviceBox = new ComboBox { FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
             BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 300 };
         deviceBox.Items.Add(new ComboBoxItem { Content = "(none)", Tag = Guid.Empty });
-        var savedId = LoadLocalSetting(ClientSettings.SelectedAudioDeviceId);
+        var savedId = LoadLocalSetting(ClientSettings.SelectedInputAudioId);
         var selIdx = 0;
         for (var i = 0; i < devices.Count; i++)
         {
@@ -634,7 +680,7 @@ public sealed partial class SettingsPage : Page
         {
             if (deviceBox.SelectedItem is ComboBoxItem { Tag: Guid id })
             {
-                SaveLocalSetting(ClientSettings.SelectedAudioDeviceId, id == Guid.Empty ? null : id.ToString());
+                SaveLocalSetting(ClientSettings.SelectedInputAudioId, id == Guid.Empty ? null : id.ToString());
                 Status(id == Guid.Empty ? "Input device cleared." : "✓ Input device saved.", id == Guid.Empty ? 0x808080 : 0x00FF00);
             }
         };
@@ -1988,11 +2034,16 @@ public sealed partial class SettingsPage : Page
     [ImplicitKeys(IsEnabled = false)]
     private sealed record ResolvedFile(string DownloadUrl, string Filename, string? Quantization);
     [ImplicitKeys(IsEnabled = false)]
-    private sealed record AudioDeviceEntry(Guid Id, string Name, string? DeviceIdentifier, string? Description);
+    private sealed record InputAudioEntry(Guid Id, string Name, string? DeviceIdentifier, string? Description);
     [ImplicitKeys(IsEnabled = false)]
     private sealed record UserListEntry(Guid Id, string Username, string? Bio, Guid? RoleId, string? RoleName, bool IsUserAdmin);
     [ImplicitKeys(IsEnabled = false)]
     private sealed record BotIntegrationEntry(Guid Id, string Name, string BotType, bool Enabled, bool HasBotToken, Guid? DefaultChannelId = null, string? PlatformConfig = null);
+    [ImplicitKeys(IsEnabled = false)]
+    private sealed record ModuleStateEntry(
+        string ModuleId, string DisplayName, string ToolPrefix,
+        bool Enabled, string? Version, bool Registered, bool IsExternal,
+        DateTimeOffset? CreatedAt, DateTimeOffset? UpdatedAt);
 
     // ═══════════════════════════════════════════════════════════════
     // DANGER ZONE

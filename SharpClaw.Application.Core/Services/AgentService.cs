@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
+using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Agents;
@@ -11,7 +13,7 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class AgentService(SharpClawDbContext db, SessionService session)
+public sealed class AgentService(SharpClawDbContext db, SessionService session, ModuleRegistry moduleRegistry)
 {
     public async Task<AgentResponse> CreateAsync(CreateAgentRequest request, CancellationToken ct = default)
     {
@@ -193,7 +195,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
     /// Verifies that <paramref name="callerPs"/> covers every permission in
     /// <paramref name="targetPs"/> at the same or higher clearance level.
     /// </summary>
-    private static void ValidateCallerCoversTargetRole(
+    private void ValidateCallerCoversTargetRole(
         PermissionSetDB? callerPs, PermissionSetDB? targetPs, string roleName)
     {
         // Target role has no permissions → anyone can assign it.
@@ -210,108 +212,68 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
                 $"Cannot assign '{roleName}': target default clearance " +
                 $"{targetPs.DefaultClearance} exceeds your {callerPs.DefaultClearance}.");
 
-        // Global flags.
-        if (targetPs.CanCreateSubAgents && !callerPs.CanCreateSubAgents)
-            Deny(roleName, "CanCreateSubAgents");
-        if (targetPs.CanCreateContainers && !callerPs.CanCreateContainers)
-            Deny(roleName, "CanCreateContainers");
-        if (targetPs.CanRegisterDatabases && !callerPs.CanRegisterDatabases)
-            Deny(roleName, "CanRegisterDatabases");
-        if (targetPs.CanAccessLocalhostInBrowser && !callerPs.CanAccessLocalhostInBrowser)
-            Deny(roleName, "CanAccessLocalhostInBrowser");
-        if (targetPs.CanAccessLocalhostCli && !callerPs.CanAccessLocalhostCli)
-            Deny(roleName, "CanAccessLocalhostCli");
-        if (targetPs.CanClickDesktop && !callerPs.CanClickDesktop)
-            Deny(roleName, "CanClickDesktop");
-        if (targetPs.CanTypeOnDesktop && !callerPs.CanTypeOnDesktop)
-            Deny(roleName, "CanTypeOnDesktop");
+        // Global flags — generic loop covers all registered flags.
+        // Fixes the historical 7-of-18 incomplete check (see §12.3).
+        foreach (var targetFlag in targetPs.GlobalFlags)
+        {
+            if (!callerPs.GlobalFlags.Any(f => f.FlagKey == targetFlag.FlagKey))
+                Deny(roleName, targetFlag.FlagKey);
+        }
 
-        // Per-resource grant collections.
-        ValidateResourceCoverage(roleName, "DangerousShellAccesses",
-            targetPs.DangerousShellAccesses, callerPs.DangerousShellAccesses,
-            a => a.SystemUserId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "SafeShellAccesses",
-            targetPs.SafeShellAccesses, callerPs.SafeShellAccesses,
-            a => a.ContainerId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "ContainerAccesses",
-            targetPs.ContainerAccesses, callerPs.ContainerAccesses,
-            a => a.ContainerId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "WebsiteAccesses",
-            targetPs.WebsiteAccesses, callerPs.WebsiteAccesses,
-            a => a.WebsiteId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "SearchEngineAccesses",
-            targetPs.SearchEngineAccesses, callerPs.SearchEngineAccesses,
-            a => a.SearchEngineId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "InternalDatabaseAccesses",
-            targetPs.InternalDatabaseAccesses, callerPs.InternalDatabaseAccesses,
-            a => a.InternalDatabaseId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "ExternalDatabaseAccesses",
-            targetPs.ExternalDatabaseAccesses, callerPs.ExternalDatabaseAccesses,
-            a => a.ExternalDatabaseId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "AudioDeviceAccesses",
-            targetPs.AudioDeviceAccesses, callerPs.AudioDeviceAccesses,
-            a => a.AudioDeviceId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "DisplayDeviceAccesses",
-            targetPs.DisplayDeviceAccesses, callerPs.DisplayDeviceAccesses,
-            a => a.DisplayDeviceId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "EditorSessionAccesses",
-            targetPs.EditorSessionAccesses, callerPs.EditorSessionAccesses,
-            a => a.EditorSessionId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "AgentPermissions",
-            targetPs.AgentPermissions, callerPs.AgentPermissions,
-            a => a.AgentId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "TaskPermissions",
-            targetPs.TaskPermissions, callerPs.TaskPermissions,
-            a => a.ScheduledTaskId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
-        ValidateResourceCoverage(roleName, "SkillPermissions",
-            targetPs.SkillPermissions, callerPs.SkillPermissions,
-            a => a.SkillId, a => a.Clearance, targetPs.DefaultClearance, callerPs.DefaultClearance);
+        // Per-resource grant collections — unified validation via ResourceAccesses.
+        foreach (var resourceType in moduleRegistry.GetAllRegisteredResourceTypes())
+        {
+            ValidateResourceCoverageGeneric(roleName, resourceType,
+                targetPs.ResourceAccesses, callerPs.ResourceAccesses,
+                targetPs.DefaultClearance, callerPs.DefaultClearance);
+        }
     }
 
     /// <summary>
-    /// For every resource grant in <paramref name="targetAccesses"/>, the caller
-    /// must hold either the same resource or the AllResources wildcard, at the
+    /// For every resource grant of a given <paramref name="resourceType"/> in the target permission set,
+    /// the caller must hold either the same resource or the AllResources wildcard, at the
     /// same or higher effective clearance.
     /// </summary>
-    private static void ValidateResourceCoverage<T>(
-        string roleName, string grantName,
-        ICollection<T> targetAccesses, ICollection<T> callerAccesses,
-        Func<T, Guid> resourceSelector, Func<T, PermissionClearance> clearanceSelector,
+    private static void ValidateResourceCoverageGeneric(
+        string roleName, string resourceType,
+        ICollection<ResourceAccessDB> targetAccesses, ICollection<ResourceAccessDB> callerAccesses,
         PermissionClearance targetDefault, PermissionClearance callerDefault)
     {
-        if (targetAccesses is { Count: > 0 } && callerAccesses is not { Count: > 0 })
-            throw new UnauthorizedAccessException(
-                $"Cannot assign '{roleName}': you hold no {grantName} grants.");
+        var targetFiltered = targetAccesses.Where(a => a.ResourceType == resourceType).ToList();
+        var callerFiltered = callerAccesses.Where(a => a.ResourceType == resourceType).ToList();
 
-        if (targetAccesses is not { Count: > 0 })
+        if (targetFiltered.Count > 0 && callerFiltered.Count == 0)
+            throw new UnauthorizedAccessException(
+                $"Cannot assign '{roleName}': you hold no {resourceType} grants.");
+
+        if (targetFiltered.Count == 0)
             return;
 
         // Build caller lookup: resourceId → effective clearance.
         var callerMap = new Dictionary<Guid, PermissionClearance>();
-        foreach (var a in callerAccesses)
-            callerMap[resourceSelector(a)] = EffectiveOr(clearanceSelector(a), callerDefault);
+        foreach (var a in callerFiltered)
+            callerMap[a.ResourceId] = EffectiveOr(a.Clearance, callerDefault);
 
         var callerHasWildcard = callerMap.TryGetValue(WellKnownIds.AllResources, out var wildcardClearance);
 
-        foreach (var target in targetAccesses)
+        foreach (var target in targetFiltered)
         {
-            var targetResId = resourceSelector(target);
-            var targetClearance = EffectiveOr(clearanceSelector(target), targetDefault);
+            var targetClearance = EffectiveOr(target.Clearance, targetDefault);
 
             PermissionClearance callerClearance;
-            if (callerMap.TryGetValue(targetResId, out var exact))
+            if (callerMap.TryGetValue(target.ResourceId, out var exact))
                 callerClearance = exact;
             else if (callerHasWildcard)
                 callerClearance = wildcardClearance;
             else
                 throw new UnauthorizedAccessException(
-                    $"Cannot assign '{roleName}': you lack {grantName} " +
-                    $"for resource {targetResId}.");
+                    $"Cannot assign '{roleName}': you lack {resourceType} " +
+                    $"for resource {target.ResourceId}.");
 
             if (targetClearance > callerClearance)
                 throw new UnauthorizedAccessException(
-                    $"Cannot assign '{roleName}': {grantName} for resource " +
-                    $"{targetResId} requires clearance {targetClearance} but " +
+                    $"Cannot assign '{roleName}': {resourceType} for resource " +
+                    $"{target.ResourceId} requires clearance {targetClearance} but " +
                     $"you only have {callerClearance}.");
         }
     }
@@ -332,19 +294,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session)
     private async Task<PermissionSetDB?> LoadFullPermissionSetAsync(
         Guid psId, CancellationToken ct) =>
         await db.PermissionSets
-            .Include(p => p.DangerousShellAccesses)
-            .Include(p => p.SafeShellAccesses)
-            .Include(p => p.ContainerAccesses)
-            .Include(p => p.WebsiteAccesses)
-            .Include(p => p.SearchEngineAccesses)
-            .Include(p => p.InternalDatabaseAccesses)
-            .Include(p => p.ExternalDatabaseAccesses)
-            .Include(p => p.AudioDeviceAccesses)
-            .Include(p => p.DisplayDeviceAccesses)
-            .Include(p => p.EditorSessionAccesses)
-            .Include(p => p.AgentPermissions)
-            .Include(p => p.TaskPermissions)
-            .Include(p => p.SkillPermissions)
+            .Include(p => p.GlobalFlags)
+            .Include(p => p.ResourceAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == psId, ct);
 

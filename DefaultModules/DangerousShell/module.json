@@ -1,0 +1,12 @@
+{
+  "id": "sharpclaw_dangerous_shell",
+  "displayName": "Dangerous Shell",
+  "version": "1.0.0",
+  "toolPrefix": "ds",
+  "entryAssembly": "SharpClaw.Modules.DangerousShell",
+  "minHostVersion": "1.0.0",
+  "platforms": [ "windows", "linux", "macos" ],
+  "executionTimeoutSeconds": 300,
+  "exports": [],
+  "requires": []
+}

@@ -12,8 +12,11 @@ using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
+using SharpClaw.Application.Infrastructure.Logging;
 using SharpClaw.Application.Services.Auth;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure;
 using SharpClaw.Infrastructure.Configuration;
@@ -51,6 +54,12 @@ try
     builder.Configuration.AddLocalEnvironment(builder.Environment.IsDevelopment());
 
     builder.Host.UseSerilog();
+
+    // Module log capture — feeds per-module ring buffers for the /modules/{id}/logs API.
+    var moduleLogService = new ModuleLogService();
+    builder.Services.AddSingleton(moduleLogService);
+    builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(
+        new ModuleLogSinkProvider(moduleLogService));
 
     // Infrastructure
     builder.Services.AddInfrastructure(StorageMode.JsonFile, configureJsonFile: opts =>
@@ -108,17 +117,6 @@ try
     builder.Services.AddSingleton<IProviderApiClient, MinimaxApiClient>();
     builder.Services.AddSingleton<ProviderApiClientFactory>();
 
-    // Transcription clients
-    builder.Services.AddSingleton<ITranscriptionApiClient, OpenAiTranscriptionApiClient>();
-    builder.Services.AddSingleton<ITranscriptionApiClient, GroqTranscriptionApiClient>();
-    builder.Services.AddSingleton<WhisperModelManager>();
-    builder.Services.AddSingleton<ITranscriptionApiClient, LocalTranscriptionClient>();
-    builder.Services.AddSingleton<TranscriptionApiClientFactory>();
-
-    // Audio capture
-    builder.Services.AddSingleton<IAudioCaptureProvider, WasapiAudioCaptureProvider>();
-    builder.Services.AddSingleton<SharedAudioCaptureManager>();
-
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ProviderCostService>();
     builder.Services.AddScoped<ModelService>();
@@ -132,29 +130,34 @@ try
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<ThreadActivitySignal>();
     builder.Services.AddScoped<RoleService>();
-    builder.Services.AddSingleton<LiveTranscriptionOrchestrator>();
-    builder.Services.AddScoped<TranscriptionService>();
-    builder.Services.AddScoped<ContainerService>();
-    builder.Services.AddScoped<DisplayDeviceService>();
-    builder.Services.AddScoped<DefaultResourceSetService>();
-    builder.Services.AddScoped<ToolAwarenessSetService>();
-    builder.Services.AddScoped<EditorSessionService>();
-    builder.Services.AddSingleton<EditorBridgeService>();
     builder.Services.AddScoped<TaskService>();
     builder.Services.AddScoped<EnvFileService>();
     builder.Services.AddScoped<TaskOrchestrator>();
-    builder.Services.AddScoped<BotIntegrationService>();
-    builder.Services.AddScoped<BotMessageSenderService>();
+    // Module system
+    builder.Services.AddSingleton<ModuleRegistry>();
+    builder.Services.AddSingleton<ModuleMetricsCollector>();
+    builder.Services.AddSingleton<ModuleEventDispatcher>();
+    builder.Services.AddScoped<ModuleExecutionContext>();
+    builder.Services.AddScoped<IModuleConfigStore>(sp =>
+    {
+        var ctx = sp.GetRequiredService<ModuleExecutionContext>();
+        var dbCtx = sp.GetRequiredService<SharpClaw.Infrastructure.Persistence.SharpClawDbContext>();
+        return new ModuleConfigStore(dbCtx, ctx.ModuleId ?? "");
+    });
+    builder.Services.AddSingleton<ModuleHealthCheckService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ModuleHealthCheckService>());
 
-    // Document, spreadsheet & desktop awareness services
-    builder.Services.AddScoped<DocumentSessionService>();
-    builder.Services.AddScoped<NativeApplicationService>();
-    builder.Services.AddScoped<SpreadsheetService>();
-    builder.Services.AddScoped<ExcelComInteropService>();
-    builder.Services.AddScoped<DesktopAwarenessService>();
-    builder.Services.AddScoped<SearchEngineService>();
+    // Default modules — discovered from loaded assemblies.
+    // DI services must be registered for ALL modules before Build (container is immutable after).
+    var moduleLoader = ModuleLoader.DiscoverBundled();
 
-    // Local inference (in-process via LLamaSharp)
+    foreach (var bundledModule in moduleLoader.GetAllBundled())
+        bundledModule.ConfigureServices(builder.Services);
+
+    builder.Services.AddSingleton(moduleLoader);
+    builder.Services.AddScoped<ModuleService>();
+
+    // Local inference
     // Configure native library: prefer CUDA > Vulkan > CPU; suppress verbose logs.
     NativeLibraryConfig.All
         .WithCuda(true)
@@ -195,6 +198,9 @@ try
     var apiKeyProvider = new ApiKeyProvider();
     builder.Services.AddSingleton(apiKeyProvider);
 
+    // CLI short-ID resolver (used by module CLI handlers)
+    builder.Services.AddSingleton<ICliIdResolver, CliIdResolver>();
+
     var app = builder.Build();
 
     // Configure JSON serialisation for minimal API responses to match
@@ -204,6 +210,134 @@ try
 
     // Initialize infrastructure (loads persisted data into InMemory DB)
     await app.Services.InitializeInfrastructureAsync();
+
+    // Wire up module loader with built service provider
+    moduleLoader.SetRootServices(app.Services);
+    moduleLoader.LoadAllManifests();
+
+    // Sync module state from configuration → DB, determine which modules to enable.
+    HashSet<string> enabledModuleIds;
+    using (var scope = app.Services.CreateScope())
+    {
+        var moduleSvc = scope.ServiceProvider.GetRequiredService<ModuleService>();
+        enabledModuleIds = await moduleSvc.SyncStateFromConfigAsync(app.Configuration);
+    }
+
+    // Register only enabled modules with the registry.
+    var registry = app.Services.GetRequiredService<ModuleRegistry>();
+    var allBundled = moduleLoader.GetAllBundled();
+    var registeredBundledCount = 0;
+    var disabledBundledCount = 0;
+
+    foreach (var bundledModule in allBundled)
+    {
+        if (!enabledModuleIds.Contains(bundledModule.Id))
+        {
+            Log.Information("Module '{ModuleId}' ({DisplayName}) is disabled — skipping registration [bundled]",
+                bundledModule.Id, bundledModule.DisplayName);
+            disabledBundledCount++;
+            continue;
+        }
+
+        registry.Register(bundledModule);
+        registeredBundledCount++;
+
+        var manifest = moduleLoader.GetManifest(bundledModule.Id);
+        var version = manifest?.Version ?? "unknown";
+        Log.Information("Module '{ModuleId}' ({DisplayName}) registered [bundled, v{Version}]",
+            bundledModule.Id, bundledModule.DisplayName, version);
+
+        if (manifest is not null)
+            registry.CacheManifest(bundledModule.Id, manifest);
+    }
+
+    Log.Information("Bundled modules: {Registered} registered, {Disabled} disabled, {Total} discovered",
+        registeredBundledCount, disabledBundledCount, allBundled.Count);
+
+    // Initialize enabled modules in dependency order (providers before consumers).
+    var initOrder = registry.GetInitializationOrder(out var excludedModules);
+
+    // Unregister modules excluded during dependency resolution (missing deps, cycles).
+    foreach (var (moduleId, reason) in excludedModules)
+    {
+        Log.Warning("Module '{ModuleId}' excluded from initialization: {Reason}", moduleId, reason);
+        registry.Unregister(moduleId);
+    }
+
+    // Track contracts that became unavailable due to runtime init failures
+    // so that downstream dependents can be cascade-skipped.
+    var failedContracts = new HashSet<string>(StringComparer.Ordinal);
+    var initializedCount = 0;
+    var failedInitCount = 0;
+
+    foreach (var moduleId in initOrder)
+    {
+        var module = registry.GetModule(moduleId);
+        if (module is null) continue;
+
+        // Check if any required (non-optional) contract's provider failed at runtime.
+        var cascadeMiss = module.RequiredContracts
+            .Where(r => !r.Optional && failedContracts.Contains(r.ContractName))
+            .Select(r => r.ContractName)
+            .ToList();
+
+        if (cascadeMiss.Count > 0)
+        {
+            Log.Warning(
+                "Module '{ModuleId}' skipped — depends on contract(s) whose provider failed: {Contracts}",
+                moduleId, string.Join(", ", cascadeMiss));
+
+            // Poison this module's own exports so dependents cascade too.
+            foreach (var export in module.ExportedContracts)
+                failedContracts.Add(export.ContractName);
+
+            registry.Unregister(moduleId);
+            failedInitCount++;
+            continue;
+        }
+
+        try
+        {
+            await module.InitializeAsync(app.Services, CancellationToken.None);
+            Log.Information("Module '{ModuleId}' initialized successfully [bundled]", moduleId);
+            initializedCount++;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Module '{ModuleId}' failed to initialize — unregistering", moduleId);
+
+            foreach (var export in module.ExportedContracts)
+                failedContracts.Add(export.ContractName);
+
+            registry.Unregister(moduleId);
+            failedInitCount++;
+        }
+    }
+
+    // Scan external-modules directory and hot-load any found modules
+    var externalLoadedCount = 0;
+    try
+    {
+        using var extScope = app.Services.CreateScope();
+        var moduleSvc = extScope.ServiceProvider.GetRequiredService<ModuleService>();
+        var externalModules = await moduleSvc.ScanExternalModulesAsync(app.Services);
+        externalLoadedCount = externalModules.Count;
+        foreach (var ext in externalModules)
+            Log.Information("Module '{ModuleId}' ({DisplayName}) loaded [external, v{Version}]",
+                ext.ModuleId, ext.DisplayName, ext.Version ?? "unknown");
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "External module scan failed — continuing without external modules");
+    }
+
+    // Module startup summary
+    var totalLoaded = initializedCount + externalLoadedCount;
+    Log.Information(
+        "Module startup complete: {TotalLoaded} loaded ({BundledInit} bundled, {ExternalLoaded} external), " +
+        "{FailedInit} failed, {Disabled} disabled, {Excluded} excluded",
+        totalLoaded, initializedCount, externalLoadedCount,
+        failedInitCount, disabledBundledCount, excludedModules.Count);
 
     // Seed mk8.shell base env on first startup
     Mk8GlobalEnv.Load();
@@ -236,10 +370,34 @@ try
     app.MapGet("/ping", () => Results.Ok(new { status = "authenticated" }));
 
     app.MapHandlers();
-    app.MapEditorEndpoints();
-    app.MapTranscriptionStreaming();
+
+    // Module-registered endpoints: each module maps its own REST routes.
+    foreach (var module in registry.GetAllModules())
+    {
+        try
+        {
+            module.MapEndpoints(app);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Module '{ModuleId}' failed to map endpoints", module.Id);
+        }
+    }
 
     app.Lifetime.ApplicationStopping.Register(apiKeyProvider.Cleanup);
+
+    // Module lifecycle: graceful shutdown
+    app.Lifetime.ApplicationStopping.Register(() =>
+    {
+        foreach (var module in registry.GetAllModules())
+        {
+            try { module.ShutdownAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Module '{ModuleId}' shutdown error", module.Id);
+            }
+        }
+    });
 
     var urls = string.Join(", ", app.Urls);
     Log.Information("SharpClaw API listening on {Urls}", urls);

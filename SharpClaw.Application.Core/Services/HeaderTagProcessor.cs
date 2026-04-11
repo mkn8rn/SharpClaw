@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts;
@@ -34,7 +35,10 @@ namespace SharpClaw.Application.Services;
 /// blocked from template expansion (replaced with <c>[redacted]</c>).
 /// </para>
 /// </summary>
-public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
+public sealed partial class HeaderTagProcessor(
+    SharpClawDbContext db,
+    ModuleRegistry moduleRegistry,
+    IServiceProvider serviceProvider)
 {
     // ── Tag regex ────────────────────────────────────────────────
     // Matches {{TagName}} or {{TagName:{template with {Field} placeholders}}}
@@ -107,24 +111,9 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             if (user?.Role?.PermissionSetId is { } psId)
             {
                 userPs = await db.PermissionSets
-                    .Include(p => p.DangerousShellAccesses)
-                    .Include(p => p.SafeShellAccesses)
-                    .Include(p => p.ContainerAccesses)
-                    .Include(p => p.WebsiteAccesses)
-                    .Include(p => p.SearchEngineAccesses)
-                    .Include(p => p.InternalDatabaseAccesses)
-                    .Include(p => p.ExternalDatabaseAccesses)
-                    .Include(p => p.AudioDeviceAccesses)
-                    .Include(p => p.DisplayDeviceAccesses)
-                    .Include(p => p.EditorSessionAccesses)
-                    .Include(p => p.AgentPermissions)
-                    .Include(p => p.TaskPermissions)
-                    .Include(p => p.SkillPermissions)
-                    .Include(p => p.AgentHeaderAccesses)
-                    .Include(p => p.ChannelHeaderAccesses)
-                    .Include(p => p.BotIntegrationAccesses)
-                    .AsSplitQuery()
-                    .FirstOrDefaultAsync(p => p.Id == psId, ct);
+                        .Include(p => p.ResourceAccesses)
+                        .AsSplitQuery()
+                        .FirstOrDefaultAsync(p => p.Id == psId, ct);
             }
         }
 
@@ -136,21 +125,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         if (agentWithRole?.Role?.PermissionSetId is { } agentPsId)
         {
             agentPs = await db.PermissionSets
-                .Include(p => p.SafeShellAccesses)
-                .Include(p => p.ContainerAccesses)
-                .Include(p => p.WebsiteAccesses)
-                .Include(p => p.SearchEngineAccesses)
-                .Include(p => p.InternalDatabaseAccesses)
-                .Include(p => p.ExternalDatabaseAccesses)
-                .Include(p => p.AudioDeviceAccesses)
-                .Include(p => p.DisplayDeviceAccesses)
-                .Include(p => p.EditorSessionAccesses)
-                .Include(p => p.AgentPermissions)
-                .Include(p => p.TaskPermissions)
-                .Include(p => p.SkillPermissions)
-                .Include(p => p.AgentHeaderAccesses)
-                .Include(p => p.ChannelHeaderAccesses)
-                .Include(p => p.BotIntegrationAccesses)
+                .Include(p => p.ResourceAccesses)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
         }
@@ -193,7 +168,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
     // Context tag formatters
     // ═══════════════════════════════════════════════════════════════
 
-    private static string FormatUserRole(HeaderContext ctx)
+    private string FormatUserRole(HeaderContext ctx)
     {
         if (ctx.User?.Role is null || ctx.UserPs is null)
             return "(none)";
@@ -232,51 +207,29 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         return grants.Count > 0 ? string.Join(", ", grants) : "(none)";
     }
 
-    private static string FormatGrants(PermissionSetDB? ps)
+    private string FormatGrants(PermissionSetDB? ps)
     {
         if (ps is null) return "(none)";
         var grants = CollectGrantNames(ps);
         return grants.Count > 0 ? string.Join(", ", grants) : "(none)";
     }
 
-    private static List<string> CollectGrantNames(PermissionSetDB ps)
+    private List<string> CollectGrantNames(PermissionSetDB ps)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
-        if (ps.DangerousShellAccesses.Count > 0) grants.Add("DangerousShell");
-        if (ps.SafeShellAccesses.Count > 0) grants.Add("SafeShell");
-        if (ps.ContainerAccesses.Count > 0) grants.Add("ContainerAccess");
-        if (ps.WebsiteAccesses.Count > 0) grants.Add("WebsiteAccess");
-        if (ps.SearchEngineAccesses.Count > 0) grants.Add("SearchEngineAccess");
-        if (ps.InternalDatabaseAccesses.Count > 0) grants.Add("InternalDatabase");
-        if (ps.ExternalDatabaseAccesses.Count > 0) grants.Add("ExternalDatabase");
-        if (ps.AudioDeviceAccesses.Count > 0) grants.Add("AudioDevice");
-        if (ps.DisplayDeviceAccesses.Count > 0) grants.Add("DisplayDevice");
-        if (ps.EditorSessionAccesses.Count > 0) grants.Add("EditorSession");
-        if (ps.AgentPermissions.Count > 0) grants.Add("ManageAgent");
-        if (ps.TaskPermissions.Count > 0) grants.Add("EditTask");
-        if (ps.SkillPermissions.Count > 0) grants.Add("AccessSkill");
-        if (ps.AgentHeaderAccesses.Count > 0) grants.Add("EditAgentHeader[res]");
-        if (ps.ChannelHeaderAccesses.Count > 0) grants.Add("EditChannelHeader[res]");
-        if (ps.DocumentSessionAccesses.Count > 0) grants.Add("DocumentSession");
-        if (ps.NativeApplicationAccesses.Count > 0) grants.Add("NativeApplication");
+
+        // Global flags — generic iteration.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
+
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
+        {
+            if (ps.ResourceAccesses.Any(a => a.ResourceType == desc.ResourceType))
+                grants.Add(desc.GrantLabel);
+        }
+
         return grants;
     }
 
@@ -290,96 +243,23 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
         PermissionSetDB ps, CancellationToken ct)
     {
         var grants = new List<string>();
-        if (ps.CanCreateSubAgents) grants.Add("CreateSubAgents");
-        if (ps.CanCreateContainers) grants.Add("CreateContainers");
-        if (ps.CanRegisterDatabases) grants.Add("RegisterDatabases");
-        if (ps.CanAccessLocalhostInBrowser) grants.Add("LocalhostBrowser");
-        if (ps.CanAccessLocalhostCli) grants.Add("LocalhostCli");
-        if (ps.CanClickDesktop) grants.Add("ClickDesktop");
-        if (ps.CanTypeOnDesktop) grants.Add("TypeOnDesktop");
-        if (ps.CanReadCrossThreadHistory) grants.Add("ReadCrossThreadHistory");
-        if (ps.CanEditAgentHeader) grants.Add("EditAgentHeader");
-        if (ps.CanEditChannelHeader) grants.Add("EditChannelHeader");
-        if (ps.CanCreateDocumentSessions) grants.Add("CreateDocumentSessions");
-        if (ps.CanEnumerateWindows) grants.Add("EnumerateWindows");
-        if (ps.CanFocusWindow) grants.Add("FocusWindow");
-        if (ps.CanCloseWindow) grants.Add("CloseWindow");
-        if (ps.CanResizeWindow) grants.Add("ResizeWindow");
-        if (ps.CanSendHotkey) grants.Add("SendHotkey");
-        if (ps.CanReadClipboard) grants.Add("ReadClipboard");
-        if (ps.CanWriteClipboard) grants.Add("WriteClipboard");
 
-        await AppendResourceGrantAsync(grants, "DangerousShell",
-            ps.DangerousShellAccesses.Select(a => a.SystemUserId),
-            () => db.SystemUsers.Select(s => s.Id).ToListAsync(ct));
+        // Global flags — generic iteration.
+        foreach (var flag in ps.GlobalFlags)
+            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
+                ? flag.FlagKey[3..]
+                : flag.FlagKey);
 
-        await AppendResourceGrantAsync(grants, "SafeShell",
-            ps.SafeShellAccesses.Select(a => a.ContainerId),
-            () => db.Containers.Select(c => c.Id).ToListAsync(ct));
+        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
+        {
+            var grantedIds = ps.ResourceAccesses
+                .Where(a => a.ResourceType == desc.ResourceType)
+                .Select(a => a.ResourceId)
+                .ToList();
 
-        await AppendResourceGrantAsync(grants, "ContainerAccess",
-            ps.ContainerAccesses.Select(a => a.ContainerId),
-            () => db.Containers.Select(c => c.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "WebsiteAccess",
-            ps.WebsiteAccesses.Select(a => a.WebsiteId),
-            () => db.Websites.Select(w => w.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "SearchEngineAccess",
-            ps.SearchEngineAccesses.Select(a => a.SearchEngineId),
-            () => db.SearchEngines.Select(s => s.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "InternalDatabase",
-            ps.InternalDatabaseAccesses.Select(a => a.InternalDatabaseId),
-            () => db.InternalDatabases.Select(l => l.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "ExternalDatabase",
-            ps.ExternalDatabaseAccesses.Select(a => a.ExternalDatabaseId),
-            () => db.ExternalDatabases.Select(e => e.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "AudioDevice",
-            ps.AudioDeviceAccesses.Select(a => a.AudioDeviceId),
-            () => db.AudioDevices.Select(a => a.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "DisplayDevice",
-            ps.DisplayDeviceAccesses.Select(a => a.DisplayDeviceId),
-            () => db.DisplayDevices.Select(d => d.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "EditorSession",
-            ps.EditorSessionAccesses.Select(a => a.EditorSessionId),
-            () => db.EditorSessions.Select(e => e.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "ManageAgent",
-            ps.AgentPermissions.Select(a => a.AgentId),
-            () => db.Agents.Select(a => a.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "EditTask",
-            ps.TaskPermissions.Select(a => a.ScheduledTaskId),
-            () => db.ScheduledTasks.Select(t => t.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "AccessSkill",
-            ps.SkillPermissions.Select(a => a.SkillId),
-            () => db.Skills.Select(s => s.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "EditAgentHeader",
-            ps.AgentHeaderAccesses.Select(a => a.AgentId),
-            () => db.Agents.Select(a => a.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "EditChannelHeader",
-            ps.ChannelHeaderAccesses.Select(a => a.ChannelId),
-            () => db.Channels.Select(c => c.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "BotIntegration",
-            ps.BotIntegrationAccesses.Select(a => a.BotIntegrationId),
-            () => db.BotIntegrations.Select(b => b.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "DocumentSession",
-            ps.DocumentSessionAccesses.Select(a => a.DocumentSessionId),
-            () => db.DocumentSessions.Select(d => d.Id).ToListAsync(ct));
-
-        await AppendResourceGrantAsync(grants, "NativeApplication",
-            ps.NativeApplicationAccesses.Select(a => a.NativeApplicationId),
-            () => db.NativeApplications.Select(n => n.Id).ToListAsync(ct));
+            await AppendResourceGrantAsync(grants, desc.GrantLabel, grantedIds,
+                () => desc.LoadAllIds(serviceProvider, ct));
+        }
 
         return grants;
     }
@@ -428,7 +308,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
     {
         // Reuse the same logic as ChatService — find threads from channels
         // where the agent is primary or allowed, that opt-in with ReadCrossThreadHistory.
-        if (ctx.AgentPs is null || !ctx.AgentPs.CanReadCrossThreadHistory)
+        if (ctx.AgentPs is null || !ctx.AgentPs.GlobalFlags.Any(f => f.FlagKey == "CanReadCrossThreadHistory"))
             return "(none)";
 
         var agentId = ctx.Agent.Id;
@@ -520,7 +400,7 @@ public sealed partial class HeaderTagProcessor(SharpClawDbContext db)
             "containers" => Cast(await db.Containers.ToListAsync(ct)),
             "websites" => Cast(await db.Websites.ToListAsync(ct)),
             "searchengines" => Cast(await db.SearchEngines.ToListAsync(ct)),
-            "audiodevices" => Cast(await db.AudioDevices.ToListAsync(ct)),
+            "inputaudios" => Cast(await db.InputAudios.ToListAsync(ct)),
             "displaydevices" => Cast(await db.DisplayDevices.ToListAsync(ct)),
             "editorsessions" => Cast(await db.EditorSessions.ToListAsync(ct)),
             "skills" => Cast(await db.Skills.ToListAsync(ct)),

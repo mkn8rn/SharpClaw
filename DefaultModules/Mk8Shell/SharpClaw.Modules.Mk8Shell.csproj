@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SharpClaw.Modules.Mk8Shell</RootNamespace>
+    <AssemblyName>SharpClaw.Modules.Mk8Shell</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\mk8.shell\mk8.shell.csproj" />
+    <ProjectReference Include="..\..\mk8.shell.startup\mk8.shell.startup.csproj" />
+    <ProjectReference Include="..\..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
+    <ProjectReference Include="..\..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\tool-description.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="module.json" Link="modules\mk8shell\module.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -7,17 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ClosedXML" />
-    <PackageReference Include="CsvHelper" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <PackageReference Include="NAudio" />
     <PackageReference Include="LLamaSharp" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" />
-    <PackageReference Include="System.Drawing.Common" />
-    <PackageReference Include="Whisper.net" />
-    <PackageReference Include="Whisper.net.Runtime" />
   </ItemGroup>
 
   <!--
@@ -40,8 +34,6 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\tool-instructions-native-suffix.md" LogicalName="SharpClaw.Application.Core.tool-instructions-native-suffix.md" />
-    <EmbeddedResource Include="Resources\tool-description-native.md" LogicalName="SharpClaw.Application.Core.tool-description-native.md" />
-    <EmbeddedResource Include="Resources\transcription-language-seeds.json" LogicalName="SharpClaw.Application.Core.transcription-language-seeds.json" />
   </ItemGroup>
 
   <ItemGroup>

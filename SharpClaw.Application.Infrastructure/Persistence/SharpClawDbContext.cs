@@ -22,6 +22,13 @@ public class SharpClawDbContext(
     DbContextOptions<SharpClawDbContext> options,
     IServiceProvider? serviceProvider = null) : DbContext(options)
 {
+    /// <summary>
+    /// When <c>true</c>, <see cref="SaveChangesAsync"/> skips the JSON
+    /// flush. Set by <see cref="JsonFilePersistenceService.LoadAsync"/>
+    /// to avoid re-serialising entities that are being hydrated.
+    /// </summary>
+    internal bool SuppressJsonFlush { get; set; }
+
     public DbSet<UserDB> Users => Set<UserDB>();
     public DbSet<RoleDB> Roles => Set<RoleDB>();
     public DbSet<PermissionSetDB> PermissionSets => Set<PermissionSetDB>();
@@ -39,30 +46,15 @@ public class SharpClawDbContext(
     // ── Permission resources & grants ─────────────────────────────
     public DbSet<SkillDB> Skills => Set<SkillDB>();
     public DbSet<SystemUserDB> SystemUsers => Set<SystemUserDB>();
-    public DbSet<DangerousShellAccessDB> DangerousShellAccesses => Set<DangerousShellAccessDB>();
-    public DbSet<SafeShellAccessDB> SafeShellAccesses => Set<SafeShellAccessDB>();
     public DbSet<InternalDatabaseDB> InternalDatabases => Set<InternalDatabaseDB>();
     public DbSet<ExternalDatabaseDB> ExternalDatabases => Set<ExternalDatabaseDB>();
-    public DbSet<InternalDatabaseAccessDB> InternalDatabaseAccesses => Set<InternalDatabaseAccessDB>();
-    public DbSet<ExternalDatabaseAccessDB> ExternalDatabaseAccesses => Set<ExternalDatabaseAccessDB>();
     public DbSet<WebsiteDB> Websites => Set<WebsiteDB>();
-    public DbSet<WebsiteAccessDB> WebsiteAccesses => Set<WebsiteAccessDB>();
     public DbSet<SearchEngineDB> SearchEngines => Set<SearchEngineDB>();
-    public DbSet<SearchEngineAccessDB> SearchEngineAccesses => Set<SearchEngineAccessDB>();
     public DbSet<ContainerDB> Containers => Set<ContainerDB>();
-    public DbSet<ContainerAccessDB> ContainerAccesses => Set<ContainerAccessDB>();
-    public DbSet<AudioDeviceDB> AudioDevices => Set<AudioDeviceDB>();
-    public DbSet<AudioDeviceAccessDB> AudioDeviceAccesses => Set<AudioDeviceAccessDB>();
+    public DbSet<InputAudioDB> InputAudios => Set<InputAudioDB>();
     public DbSet<DisplayDeviceDB> DisplayDevices => Set<DisplayDeviceDB>();
-    public DbSet<DisplayDeviceAccessDB> DisplayDeviceAccesses => Set<DisplayDeviceAccessDB>();
     public DbSet<EditorSessionDB> EditorSessions => Set<EditorSessionDB>();
-    public DbSet<EditorSessionAccessDB> EditorSessionAccesses => Set<EditorSessionAccessDB>();
     public DbSet<TranscriptionSegmentDB> TranscriptionSegments => Set<TranscriptionSegmentDB>();
-    public DbSet<AgentManagementAccessDB> AgentPermissions => Set<AgentManagementAccessDB>();
-    public DbSet<TaskManageAccessDB> TaskPermissions => Set<TaskManageAccessDB>();
-    public DbSet<SkillManageAccessDB> SkillPermissions => Set<SkillManageAccessDB>();
-    public DbSet<AgentHeaderAccessDB> AgentHeaderAccesses => Set<AgentHeaderAccessDB>();
-    public DbSet<ChannelHeaderAccessDB> ChannelHeaderAccesses => Set<ChannelHeaderAccessDB>();
     public DbSet<ClearanceUserWhitelistEntryDB> ClearanceUserWhitelistEntries => Set<ClearanceUserWhitelistEntryDB>();
     public DbSet<ClearanceAgentWhitelistEntryDB> ClearanceAgentWhitelistEntries => Set<ClearanceAgentWhitelistEntryDB>();
     public DbSet<AgentJobDB> AgentJobs => Set<AgentJobDB>();
@@ -73,15 +65,22 @@ public class SharpClawDbContext(
 
     // ── Bot integrations ──────────────────────────────────────────
     public DbSet<BotIntegrationDB> BotIntegrations => Set<BotIntegrationDB>();
-    public DbSet<BotIntegrationAccessDB> BotIntegrationAccesses => Set<BotIntegrationAccessDB>();
 
     // ── Document sessions ─────────────────────────────────────────
     public DbSet<DocumentSessionDB> DocumentSessions => Set<DocumentSessionDB>();
-    public DbSet<DocumentSessionAccessDB> DocumentSessionAccesses => Set<DocumentSessionAccessDB>();
 
     // ── Native applications ───────────────────────────────────────
     public DbSet<NativeApplicationDB> NativeApplications => Set<NativeApplicationDB>();
-    public DbSet<NativeApplicationAccessDB> NativeApplicationAccesses => Set<NativeApplicationAccessDB>();
+
+    // ── Generic resource access (§3.10) ───────────────────────────
+    public DbSet<ResourceAccessDB> ResourceAccesses => Set<ResourceAccessDB>();
+
+    // ── Generic global flags (§12.4.2) ────────────────────────────
+    public DbSet<GlobalFlagDB> GlobalFlags => Set<GlobalFlagDB>();
+
+    // ── Module state & config ─────────────────────────────────────
+    public DbSet<ModuleStateDB> ModuleStates => Set<ModuleStateDB>();
+    public DbSet<ModuleConfigEntryDB> ModuleConfigEntries => Set<ModuleConfigEntryDB>();
 
     // ── Task scripts ──────────────────────────────────────────────
     public DbSet<TaskDefinitionDB> TaskDefinitions => Set<TaskDefinitionDB>();
@@ -158,7 +157,11 @@ public class SharpClawDbContext(
             e.HasIndex(t => t.Name).IsUnique();
             e.Property(t => t.Tools).HasConversion(
                 v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-                v => v != null ? JsonSerializer.Deserialize<Dictionary<string, bool>>(v, (JsonSerializerOptions?)null)! : new());
+                v => v != null ? JsonSerializer.Deserialize<Dictionary<string, bool>>(v, (JsonSerializerOptions?)null)! : new())
+                .Metadata.SetValueComparer(new ValueComparer<Dictionary<string, bool>>(
+                    (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
+                    v => v != null ? JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode() : 0,
+                    v => v != null ? JsonSerializer.Deserialize<Dictionary<string, bool>>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null)! : new()));
         });
 
         // ── Agents & Chat ─────────────────────────────────────────
@@ -167,7 +170,11 @@ public class SharpClawDbContext(
             e.HasIndex(a => a.Name).IsUnique();
             e.Property(a => a.ProviderParameters).HasConversion(
                 v => v != null ? JsonSerializer.Serialize(v, (JsonSerializerOptions?)null) : null,
-                v => v != null ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(v, (JsonSerializerOptions?)null) : null);
+                v => v != null ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(v, (JsonSerializerOptions?)null) : null)
+                .Metadata.SetValueComparer(new ValueComparer<Dictionary<string, JsonElement>?>(
+                    (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
+                    v => v != null ? JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode() : 0,
+                    v => v != null ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null) : null));
             e.HasMany(a => a.Contexts)
                 .WithOne(c => c.Agent)
                 .HasForeignKey(c => c.AgentId)
@@ -269,96 +276,6 @@ public class SharpClawDbContext(
         {
             e.Property(p => p.DefaultClearance).HasConversion<string>();
 
-            e.HasMany(p => p.DangerousShellAccesses)
-                .WithOne(s => s.PermissionSet)
-                .HasForeignKey(s => s.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.SafeShellAccesses)
-                .WithOne(s => s.PermissionSet)
-                .HasForeignKey(s => s.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.InternalDatabaseAccesses)
-                .WithOne(l => l.PermissionSet)
-                .HasForeignKey(l => l.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.ExternalDatabaseAccesses)
-                .WithOne(x => x.PermissionSet)
-                .HasForeignKey(x => x.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.WebsiteAccesses)
-                .WithOne(w => w.PermissionSet)
-                .HasForeignKey(w => w.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.SearchEngineAccesses)
-                .WithOne(s => s.PermissionSet)
-                .HasForeignKey(s => s.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.ContainerAccesses)
-                .WithOne(c => c.PermissionSet)
-                .HasForeignKey(c => c.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.AudioDeviceAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.DisplayDeviceAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.EditorSessionAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.AgentPermissions)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.TaskPermissions)
-                .WithOne(t => t.PermissionSet)
-                .HasForeignKey(t => t.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.SkillPermissions)
-                .WithOne(s => s.PermissionSet)
-                .HasForeignKey(s => s.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.AgentHeaderAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.ChannelHeaderAccesses)
-                .WithOne(c => c.PermissionSet)
-                .HasForeignKey(c => c.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.BotIntegrationAccesses)
-                .WithOne(b => b.PermissionSet)
-                .HasForeignKey(b => b.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.DocumentSessionAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            e.HasMany(p => p.NativeApplicationAccesses)
-                .WithOne(a => a.PermissionSet)
-                .HasForeignKey(a => a.PermissionSetId)
-                .OnDelete(DeleteBehavior.Cascade);
-
             e.HasMany(p => p.ClearanceUserWhitelist)
                 .WithOne(w => w.PermissionSet)
                 .HasForeignKey(w => w.PermissionSetId)
@@ -368,89 +285,22 @@ public class SharpClawDbContext(
                 .WithOne(w => w.PermissionSet)
                 .HasForeignKey(w => w.PermissionSetId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            // ── Default resource access FKs ───────────────────────
-            e.HasOne(p => p.DefaultDangerousShellAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultDangerousShellAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultSafeShellAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultSafeShellAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultInternalDatabaseAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultInternalDatabaseAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultExternalDatabaseAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultExternalDatabaseAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultWebsiteAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultWebsiteAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultSearchEngineAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultSearchEngineAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultContainerAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultContainerAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultAudioDeviceAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultAudioDeviceAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultDisplayDeviceAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultDisplayDeviceAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultEditorSessionAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultEditorSessionAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultAgentPermission)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultAgentPermissionId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultTaskPermission)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultTaskPermissionId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultSkillPermission)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultSkillPermissionId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultBotIntegrationAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultBotIntegrationAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultDocumentSessionAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultDocumentSessionAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            e.HasOne(p => p.DefaultNativeApplicationAccess)
-                .WithMany()
-                .HasForeignKey(p => p.DefaultNativeApplicationAccessId)
-                .OnDelete(DeleteBehavior.SetNull);
         });
 
+        // ── GlobalFlags (§12.4.2) ────────────────────────────────
+        modelBuilder.Entity<GlobalFlagDB>(e =>
+        {
+            e.ToTable("GlobalFlags");
+
+            e.HasIndex(f => new { f.PermissionSetId, f.FlagKey }).IsUnique();
+
+            e.HasOne(f => f.PermissionSet)
+                .WithMany(p => p.GlobalFlags)
+                .HasForeignKey(f => f.PermissionSetId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.Property(f => f.Clearance).HasConversion<string>();
+        });
         // ── Skills ───────────────────────────────────────────────
         modelBuilder.Entity<SkillDB>(e =>
         {
@@ -465,24 +315,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.DangerousShellAccesses)
-                .WithOne(a => a.SystemUser)
-                .HasForeignKey(a => a.SystemUserId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<DangerousShellAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.SystemUserId, a.ShellType }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
-            e.Property(a => a.ShellType).HasConversion<string>();
-        });
-
-        modelBuilder.Entity<SafeShellAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.ContainerId, a.ShellType }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
-            e.Property(a => a.ShellType).HasConversion<string>();
         });
 
         // ── Databases ─────────────────────────────────────────────
@@ -494,10 +326,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.Permissions)
-                .WithOne(p => p.InternalDatabase)
-                .HasForeignKey(p => p.InternalDatabaseId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ExternalDatabaseDB>(e =>
@@ -508,24 +336,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.Permissions)
-                .WithOne(p => p.ExternalDatabase)
-                .HasForeignKey(p => p.ExternalDatabaseId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<InternalDatabaseAccessDB>(e =>
-        {
-            e.HasIndex(p => new { p.PermissionSetId, p.InternalDatabaseId }).IsUnique();
-            e.Property(p => p.AccessLevel).HasConversion<string>();
-            e.Property(p => p.Clearance).HasConversion<string>();
-        });
-
-        modelBuilder.Entity<ExternalDatabaseAccessDB>(e =>
-        {
-            e.HasIndex(p => new { p.PermissionSetId, p.ExternalDatabaseId }).IsUnique();
-            e.Property(p => p.AccessLevel).HasConversion<string>();
-            e.Property(p => p.Clearance).HasConversion<string>();
         });
 
         // ── Websites ─────────────────────────────────────────────
@@ -536,16 +346,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(w => w.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(w => w.Accesses)
-                .WithOne(a => a.Website)
-                .HasForeignKey(a => a.WebsiteId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<WebsiteAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.WebsiteId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Search engines ───────────────────────────────────────
@@ -557,16 +357,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.Accesses)
-                .WithOne(a => a.SearchEngine)
-                .HasForeignKey(a => a.SearchEngineId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<SearchEngineAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.SearchEngineId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Containers ───────────────────────────────────────────
@@ -578,40 +368,16 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(c => c.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(c => c.Accesses)
-                .WithOne(a => a.Container)
-                .HasForeignKey(a => a.ContainerId)
-                .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(c => c.SafeShellAccesses)
-                .WithOne(a => a.Container)
-                .HasForeignKey(a => a.ContainerId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<ContainerAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.ContainerId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
-        });
-
-        // ── Audio devices ────────────────────────────────────────
-        modelBuilder.Entity<AudioDeviceDB>(e =>
+        // ── Input audios ─────────────────────────────────────────
+        modelBuilder.Entity<InputAudioDB>(e =>
         {
             e.HasIndex(d => d.Name).IsUnique();
             e.HasOne(d => d.Skill)
                 .WithMany()
                 .HasForeignKey(d => d.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(d => d.Accesses)
-                .WithOne(a => a.AudioDevice)
-                .HasForeignKey(a => a.AudioDeviceId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<AudioDeviceAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.AudioDeviceId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Display devices ──────────────────────────────────────
@@ -622,16 +388,6 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(d => d.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(d => d.Accesses)
-                .WithOne(a => a.DisplayDevice)
-                .HasForeignKey(a => a.DisplayDeviceId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<DisplayDeviceAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.DisplayDeviceId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Editor sessions ──────────────────────────────────────
@@ -643,69 +399,28 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(s => s.SkillId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(s => s.Accesses)
-                .WithOne(a => a.EditorSession)
-                .HasForeignKey(a => a.EditorSessionId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<EditorSessionAccessDB>(e =>
+        // ── Generic resource access (§3.10) ──────────────────────
+        modelBuilder.Entity<ResourceAccessDB>(entity =>
         {
-            e.HasIndex(a => new { a.PermissionSetId, a.EditorSessionId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
-        });
+            entity.ToTable("ResourceAccesses");
 
-        // ── Agent & Task permissions ──────────────────────────────
-        modelBuilder.Entity<AgentManagementAccessDB>(e =>
-        {
-            e.HasIndex(p => new { p.PermissionSetId, p.AgentId }).IsUnique();
-            e.Property(p => p.Clearance).HasConversion<string>();
-            e.HasOne(p => p.Agent)
-                .WithMany()
-                .HasForeignKey(p => p.AgentId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
+            // Composite unique: a permission set cannot have duplicate grants
+            // for the same resource within the same resource type and sub-type.
+            entity.HasIndex(e => new { e.PermissionSetId, e.ResourceType, e.ResourceId, e.SubType })
+                  .IsUnique();
 
-        modelBuilder.Entity<TaskManageAccessDB>(e =>
-        {
-            e.HasIndex(p => new { p.PermissionSetId, p.ScheduledTaskId }).IsUnique();
-            e.Property(p => p.Clearance).HasConversion<string>();
-            e.HasOne(p => p.ScheduledTask)
-                .WithMany()
-                .HasForeignKey(p => p.ScheduledTaskId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
+            entity.HasOne(e => e.PermissionSet)
+                  .WithMany(p => p.ResourceAccesses)
+                  .HasForeignKey(e => e.PermissionSetId)
+                  .OnDelete(DeleteBehavior.Cascade);
 
-        // ── Skill permissions ─────────────────────────────────────
-        modelBuilder.Entity<SkillManageAccessDB>(e =>
-        {
-            e.HasIndex(p => new { p.PermissionSetId, p.SkillId }).IsUnique();
-            e.Property(p => p.Clearance).HasConversion<string>();
-            e.HasOne(p => p.Skill)
-                .WithMany()
-                .HasForeignKey(p => p.SkillId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
+            entity.Property(e => e.Clearance)
+                  .HasConversion<string>();
 
-        // ── Agent & Channel header permissions ────────────────────
-        modelBuilder.Entity<AgentHeaderAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.AgentId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
-            e.HasOne(a => a.Agent)
-                .WithMany()
-                .HasForeignKey(a => a.AgentId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<ChannelHeaderAccessDB>(e =>
-        {
-            e.HasIndex(c => new { c.PermissionSetId, c.ChannelId }).IsUnique();
-            e.Property(c => c.Clearance).HasConversion<string>();
-            e.HasOne(c => c.Channel)
-                .WithMany()
-                .HasForeignKey(c => c.ChannelId)
-                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(e => e.SubType)
+                  .HasDefaultValue("");
         });
 
         // ── Clearance whitelists ──────────────────────────────────
@@ -730,11 +445,11 @@ public class SharpClawDbContext(
         // ── Agent jobs ────────────────────────────────────────────
         modelBuilder.Entity<AgentJobDB>(e =>
         {
-            e.Property(j => j.ActionType).HasConversion<string>();
             e.Property(j => j.Status).HasConversion<string>();
             e.Property(j => j.EffectiveClearance).HasConversion<string>();
             e.Property(j => j.DangerousShellType).HasConversion<string>();
             e.Property(j => j.SafeShellType).HasConversion<string>();
+            e.Property(j => j.TranscriptionMode).HasConversion<string>();
             e.HasOne(j => j.Agent)
                 .WithMany()
                 .HasForeignKey(j => j.AgentId)
@@ -790,51 +505,36 @@ public class SharpClawDbContext(
         {
             e.HasIndex(b => b.BotType).IsUnique();
             e.Property(b => b.BotType).HasConversion<string>();
-            e.HasMany(b => b.Accesses)
-                .WithOne(a => a.BotIntegration)
-                .HasForeignKey(a => a.BotIntegrationId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<BotIntegrationAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.BotIntegrationId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Document sessions ─────────────────────────────────────
         modelBuilder.Entity<DocumentSessionDB>(e =>
         {
             e.Property(d => d.DocumentType).HasConversion<string>();
-            e.HasMany(d => d.Accesses)
-                .WithOne(a => a.DocumentSession)
-                .HasForeignKey(a => a.DocumentSessionId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<DocumentSessionAccessDB>(e =>
-        {
-            e.HasIndex(a => new { a.PermissionSetId, a.DocumentSessionId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
         });
 
         // ── Native applications ───────────────────────────────────
         modelBuilder.Entity<NativeApplicationDB>(e =>
         {
-            e.HasMany(n => n.Accesses)
-                .WithOne(a => a.NativeApplication)
-                .HasForeignKey(a => a.NativeApplicationId)
-                .OnDelete(DeleteBehavior.Cascade);
+            // No unique constraints or special config needed
         });
 
-        modelBuilder.Entity<NativeApplicationAccessDB>(e =>
+        // ── Module state & config ─────────────────────────────────
+        modelBuilder.Entity<ModuleStateDB>(e =>
         {
-            e.HasIndex(a => new { a.PermissionSetId, a.NativeApplicationId }).IsUnique();
-            e.Property(a => a.Clearance).HasConversion<string>();
+            e.HasIndex(s => s.ModuleId).IsUnique();
         });
 
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(SharpClawDbContext).Assembly);
-    }
+        modelBuilder.Entity<ModuleConfigEntryDB>(e =>
+        {
+            e.ToTable("ModuleConfig");
+            e.HasIndex(c => new { c.ModuleId, c.Key }).IsUnique();
+            e.Property(c => c.ModuleId).HasMaxLength(128);
+            e.Property(c => c.Key).HasMaxLength(128);
+            e.Property(c => c.Value).HasMaxLength(4096);
+        });
+
+        }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -892,9 +592,12 @@ public class SharpClawDbContext(
 
         var result = await base.SaveChangesAsync(cancellationToken);
 
-        var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
-        if (jsonSync is not null && (entityChanges.Count > 0 || joinTableChanges.Count > 0))
-            await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+        if (!SuppressJsonFlush)
+        {
+            var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
+            if (jsonSync is not null && (entityChanges.Count > 0 || joinTableChanges.Count > 0))
+                await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+        }
 
         return result;
     }
@@ -906,21 +609,7 @@ public class SharpClawDbContext(
     /// </summary>
     private static bool IsProtectedWildcardGrant(EntityEntry entry) => entry.Entity switch
     {
-        DangerousShellAccessDB      e => e.SystemUserId              == WellKnownIds.AllResources,
-        SafeShellAccessDB           e => e.ContainerId              == WellKnownIds.AllResources,
-        InternalDatabaseAccessDB     e => e.InternalDatabaseId        == WellKnownIds.AllResources,
-        ExternalDatabaseAccessDB     e => e.ExternalDatabaseId        == WellKnownIds.AllResources,
-        WebsiteAccessDB             e => e.WebsiteId                 == WellKnownIds.AllResources,
-        SearchEngineAccessDB        e => e.SearchEngineId            == WellKnownIds.AllResources,
-        ContainerAccessDB           e => e.ContainerId               == WellKnownIds.AllResources,
-        AudioDeviceAccessDB         e => e.AudioDeviceId             == WellKnownIds.AllResources,
-        DisplayDeviceAccessDB       e => e.DisplayDeviceId           == WellKnownIds.AllResources,
-        EditorSessionAccessDB       e => e.EditorSessionId           == WellKnownIds.AllResources,
-        AgentManagementAccessDB           e => e.AgentId                   == WellKnownIds.AllResources,
-        TaskManageAccessDB            e => e.ScheduledTaskId           == WellKnownIds.AllResources,
-        SkillManageAccessDB           e => e.SkillId                   == WellKnownIds.AllResources,
-        DocumentSessionAccessDB       e => e.DocumentSessionId           == WellKnownIds.AllResources,
-        NativeApplicationAccessDB     e => e.NativeApplicationId         == WellKnownIds.AllResources,
+        ResourceAccessDB e => e.ResourceId == WellKnownIds.AllResources,
         _ => false,
     };
 }

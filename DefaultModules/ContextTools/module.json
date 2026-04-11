@@ -1,0 +1,10 @@
+{
+  "id": "sharpclaw_context_tools",
+  "displayName": "Context Tools",
+  "version": "1.0.0",
+  "description": "Inline context tools: wait, list accessible threads, read cross-thread history.",
+  "author": "SharpClaw",
+  "toolPrefix": "ct",
+  "timeoutSeconds": 300,
+  "enabled": true
+}

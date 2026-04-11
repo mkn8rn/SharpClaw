@@ -13,66 +13,29 @@ public sealed record CreateRoleRequest(string Name);
 /// Replaces the entire permission set of a role. The calling user must
 /// hold every permission they are granting — you cannot give what you
 /// don't have.
+/// <para>
+/// Global flags are dictionary-keyed by FlagKey (e.g. "CanClickDesktop").
+/// Presence means the flag is granted; the value is the per-flag clearance.
+/// Per-resource grants are dictionary-keyed by ResourceType (e.g. "CuDisplay").
+/// See Module-System-Design §12.4.5.
+/// </para>
 /// </summary>
 public sealed record SetRolePermissionsRequest(
     PermissionClearance DefaultClearance = PermissionClearance.Unset,
 
-    // Global flags
-    bool CanCreateSubAgents = false,
-    PermissionClearance CreateSubAgentsClearance = PermissionClearance.Unset,
-    bool CanCreateContainers = false,
-    PermissionClearance CreateContainersClearance = PermissionClearance.Unset,
-    bool CanRegisterDatabases = false,
-    PermissionClearance RegisterDatabasesClearance = PermissionClearance.Unset,
-    bool CanAccessLocalhostInBrowser = false,
-    PermissionClearance AccessLocalhostInBrowserClearance = PermissionClearance.Unset,
-    bool CanAccessLocalhostCli = false,
-    PermissionClearance AccessLocalhostCliClearance = PermissionClearance.Unset,
-    bool CanClickDesktop = false,
-    PermissionClearance ClickDesktopClearance = PermissionClearance.Unset,
-    bool CanTypeOnDesktop = false,
-    PermissionClearance TypeOnDesktopClearance = PermissionClearance.Unset,
-    bool CanReadCrossThreadHistory = false,
-    PermissionClearance ReadCrossThreadHistoryClearance = PermissionClearance.Unset,
-    bool CanEditAgentHeader = false,
-    PermissionClearance EditAgentHeaderClearance = PermissionClearance.Unset,
-    bool CanEditChannelHeader = false,
-    PermissionClearance EditChannelHeaderClearance = PermissionClearance.Unset,
-    bool CanCreateDocumentSessions = false,
-    PermissionClearance CreateDocumentSessionsClearance = PermissionClearance.Unset,
-    bool CanEnumerateWindows = false,
-    PermissionClearance EnumerateWindowsClearance = PermissionClearance.Unset,
-    bool CanFocusWindow = false,
-    PermissionClearance FocusWindowClearance = PermissionClearance.Unset,
-    bool CanCloseWindow = false,
-    PermissionClearance CloseWindowClearance = PermissionClearance.Unset,
-    bool CanResizeWindow = false,
-    PermissionClearance ResizeWindowClearance = PermissionClearance.Unset,
-    bool CanSendHotkey = false,
-    PermissionClearance SendHotkeyClearance = PermissionClearance.Unset,
-    bool CanReadClipboard = false,
-    PermissionClearance ReadClipboardClearance = PermissionClearance.Unset,
-    bool CanWriteClipboard = false,
-    PermissionClearance WriteClipboardClearance = PermissionClearance.Unset,
+    /// <summary>
+    /// Global flag grants. Key = FlagKey (e.g. "CanClickDesktop"),
+    /// Value = clearance for that flag.
+    /// Presence in the dictionary means the flag is granted (true).
+    /// Absence means the flag is not granted (false).
+    /// </summary>
+    IReadOnlyDictionary<string, PermissionClearance>? GlobalFlags = null,
 
-    // Per-resource grants
-    IReadOnlyList<ResourceGrant>? DangerousShellAccesses = null,
-    IReadOnlyList<ResourceGrant>? SafeShellAccesses = null,
-    IReadOnlyList<ResourceGrant>? ContainerAccesses = null,
-    IReadOnlyList<ResourceGrant>? WebsiteAccesses = null,
-    IReadOnlyList<ResourceGrant>? SearchEngineAccesses = null,
-    IReadOnlyList<ResourceGrant>? InternalDatabaseAccesses = null,
-    IReadOnlyList<ResourceGrant>? ExternalDatabaseAccesses = null,
-    IReadOnlyList<ResourceGrant>? AudioDeviceAccesses = null,
-    IReadOnlyList<ResourceGrant>? DisplayDeviceAccesses = null,
-    IReadOnlyList<ResourceGrant>? EditorSessionAccesses = null,
-    IReadOnlyList<ResourceGrant>? AgentAccesses = null,
-    IReadOnlyList<ResourceGrant>? TaskAccesses = null,
-    IReadOnlyList<ResourceGrant>? SkillAccesses = null,
-    IReadOnlyList<ResourceGrant>? AgentHeaderAccesses = null,
-    IReadOnlyList<ResourceGrant>? ChannelHeaderAccesses = null,
-    IReadOnlyList<ResourceGrant>? DocumentSessionAccesses = null,
-    IReadOnlyList<ResourceGrant>? NativeApplicationAccesses = null);
+    /// <summary>
+    /// Per-resource grants. Key = ResourceType (e.g. "DsShell", "CuDisplay"),
+    /// Value = list of resource grants for that type.
+    /// </summary>
+    IReadOnlyDictionary<string, IReadOnlyList<ResourceGrant>>? ResourceGrants = null);
 
 /// <summary>
 /// A single per-resource grant entry.
@@ -90,62 +53,14 @@ public sealed record RoleResponse(
     string Name,
     Guid? PermissionSetId);
 
+/// <summary>
+/// Full permission set for a role. Global flags are dictionary-keyed by
+/// FlagKey; per-resource grants are dictionary-keyed by ResourceType.
+/// See Module-System-Design §12.4.5.
+/// </summary>
 public sealed record RolePermissionsResponse(
     Guid RoleId,
     string RoleName,
     PermissionClearance DefaultClearance,
-
-    bool CanCreateSubAgents,
-    PermissionClearance CreateSubAgentsClearance,
-    bool CanCreateContainers,
-    PermissionClearance CreateContainersClearance,
-    bool CanRegisterDatabases,
-    PermissionClearance RegisterDatabasesClearance,
-    bool CanAccessLocalhostInBrowser,
-    PermissionClearance AccessLocalhostInBrowserClearance,
-    bool CanAccessLocalhostCli,
-    PermissionClearance AccessLocalhostCliClearance,
-    bool CanClickDesktop,
-    PermissionClearance ClickDesktopClearance,
-    bool CanTypeOnDesktop,
-    PermissionClearance TypeOnDesktopClearance,
-    bool CanReadCrossThreadHistory,
-    PermissionClearance ReadCrossThreadHistoryClearance,
-    bool CanEditAgentHeader,
-    PermissionClearance EditAgentHeaderClearance,
-    bool CanEditChannelHeader,
-    PermissionClearance EditChannelHeaderClearance,
-    bool CanCreateDocumentSessions,
-    PermissionClearance CreateDocumentSessionsClearance,
-    bool CanEnumerateWindows,
-    PermissionClearance EnumerateWindowsClearance,
-    bool CanFocusWindow,
-    PermissionClearance FocusWindowClearance,
-    bool CanCloseWindow,
-    PermissionClearance CloseWindowClearance,
-    bool CanResizeWindow,
-    PermissionClearance ResizeWindowClearance,
-    bool CanSendHotkey,
-    PermissionClearance SendHotkeyClearance,
-    bool CanReadClipboard,
-    PermissionClearance ReadClipboardClearance,
-    bool CanWriteClipboard,
-    PermissionClearance WriteClipboardClearance,
-
-    IReadOnlyList<ResourceGrant> DangerousShellAccesses,
-    IReadOnlyList<ResourceGrant> SafeShellAccesses,
-    IReadOnlyList<ResourceGrant> ContainerAccesses,
-    IReadOnlyList<ResourceGrant> WebsiteAccesses,
-    IReadOnlyList<ResourceGrant> SearchEngineAccesses,
-    IReadOnlyList<ResourceGrant> InternalDatabaseAccesses,
-    IReadOnlyList<ResourceGrant> ExternalDatabaseAccesses,
-    IReadOnlyList<ResourceGrant> AudioDeviceAccesses,
-    IReadOnlyList<ResourceGrant> DisplayDeviceAccesses,
-    IReadOnlyList<ResourceGrant> EditorSessionAccesses,
-    IReadOnlyList<ResourceGrant> AgentAccesses,
-    IReadOnlyList<ResourceGrant> TaskAccesses,
-    IReadOnlyList<ResourceGrant> SkillAccesses,
-    IReadOnlyList<ResourceGrant> AgentHeaderAccesses,
-    IReadOnlyList<ResourceGrant> ChannelHeaderAccesses,
-    IReadOnlyList<ResourceGrant> DocumentSessionAccesses,
-    IReadOnlyList<ResourceGrant> NativeApplicationAccesses);
+    IReadOnlyDictionary<string, PermissionClearance> GlobalFlags,
+    IReadOnlyDictionary<string, IReadOnlyList<ResourceGrant>> ResourceGrants);

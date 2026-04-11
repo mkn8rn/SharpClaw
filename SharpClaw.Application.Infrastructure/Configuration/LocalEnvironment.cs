@@ -7,7 +7,7 @@ namespace SharpClaw.Infrastructure.Configuration;
 /// <summary>
 /// Loads environment configuration from <c>Environment/.env</c> (always)
 /// and <c>Environment/.dev.env</c> (development only) relative to the assembly location.
-/// Creates a default <c>.env</c> if one does not exist.
+/// Creates a default <c>.env</c> if it does not exist.
 /// </summary>
 public static class LocalEnvironment
 {
@@ -62,7 +62,7 @@ public static class LocalEnvironment
         }
         catch
         {
-            // Best-effort — read-only or restricted file system.
-        }
-    }
-}
+                    // Best-effort — read-only or restricted file system.
+                    }
+                }
+            }

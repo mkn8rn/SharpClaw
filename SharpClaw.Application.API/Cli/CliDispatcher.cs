@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API.Handlers;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -17,18 +18,13 @@ using SharpClaw.Contracts.DTOs.Threads;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
-using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.DTOs.DefaultResources;
-using SharpClaw.Contracts.DTOs.DisplayDevices;
-using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.DTOs.LocalModels;
-using SharpClaw.Contracts.DTOs.NativeApplications;
 using SharpClaw.Contracts.DTOs.Roles;
-using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
-using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.API.Cli;
@@ -220,18 +216,28 @@ public static class CliDispatcher
             "user" => await HandleUserCommand(args, sp),
             "resource" => await HandleResourceCommand(args, sp),
             "task" => await HandleTaskCommand(args, sp),
+            "module" => await HandleModuleCommand(args, sp),
             "tools" => await HandleToolAwarenessSetCommand(args, sp),
-            "bot" => await HandleBotCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
             "me" => await AuthHandlers.Me(
                 sp.GetRequiredService<SessionService>(),
                 sp.GetRequiredService<AuthService>()),
-            "help" or "--help" or "-h" => PrintHelp(),
+            "help" or "--help" or "-h" => PrintHelp(sp),
             _ => null
         };
 
         if (result is null)
+        {
+            // Try module-provided top-level CLI commands.
+            var registry = sp.GetRequiredService<ModuleRegistry>();
+            var moduleCmd = registry.TryResolveTopLevelCommand(command);
+            if (moduleCmd is not null)
+            {
+                await moduleCmd.Handler(args, sp, CancellationToken.None);
+                return true;
+            }
             return false;
+        }
 
         await PrintResultAsync(result);
         return true;
@@ -991,7 +997,7 @@ public static class CliDispatcher
     ///   <item><c>defaults &lt;id&gt; clear &lt;key&gt;</c> — clear one field.</item>
     /// </list>
     /// Keys: safeshell, dangshell, container, website, search, localinfo,
-    /// externalinfo, audiodevice, agent, task, skill, transcriptionmodel, editor.
+    /// externalinfo, inputaudio, agent, task, skill, transcriptionmodel, editor.
     /// </summary>
     private static async Task<IResult> HandleDefaults(
         string scope, Guid entityId, string[] extra, IServiceProvider sp)
@@ -1026,7 +1032,7 @@ public static class CliDispatcher
 
             var req = MergeDefaultResourceKey(current, key, value);
             if (req is null)
-                return UsageResult($"Unknown key '{extra[1]}'. Valid keys: safeshell, dangshell, container, website, search, localinfo, externalinfo, audiodevice, displaydevice, agent, task, skill, transcriptionmodel, editor");
+                return UsageResult($"Unknown key '{extra[1]}'. Valid keys: safeshell, dangshell, container, website, search, localinfo, externalinfo, inputaudio, displaydevice, agent, task, skill, transcriptionmodel, editor");
 
             var result = scope == "channel"
                 ? await svc.SetForChannelAsync(entityId, req)
@@ -1074,20 +1080,20 @@ public static class CliDispatcher
         var d = current;
         return key switch
         {
-            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "internaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "externaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, value, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "audiodevice" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
-            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.AudioDeviceResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
+            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "internaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "externaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, value, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "inputaudio" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
+            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
+            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
             _ => null,
         };
     }
@@ -1245,7 +1251,7 @@ public static class CliDispatcher
 
                     case ChatStreamEventType.ToolCallStart:
                         if (wroteText) { Console.WriteLine(); wroteText = false; }
-                        Console.WriteLine($"  [tool] #{CliIdMap.GetOrAssign(evt.Job!.Id)} {evt.Job.ActionType} → {evt.Job.Status}");
+                        Console.WriteLine($"  [tool] #{CliIdMap.GetOrAssign(evt.Job!.Id)} {evt.Job.ActionKey ?? "unknown"} → {evt.Job.Status}");
                         break;
 
                     case ChatStreamEventType.ToolCallResult:
@@ -1254,7 +1260,7 @@ public static class CliDispatcher
 
                     case ChatStreamEventType.ApprovalRequired:
                         if (wroteText) { Console.WriteLine(); wroteText = false; }
-                        Console.Write($"  [approval] Job #{CliIdMap.GetOrAssign(evt.PendingJob!.Id)} ({evt.PendingJob.ActionType}) requires approval. ");
+                        Console.Write($"  [approval] Job #{CliIdMap.GetOrAssign(evt.PendingJob!.Id)} ({evt.PendingJob.ActionKey ?? "unknown"}) requires approval. ");
                         break;
 
                     case ChatStreamEventType.ApprovalResult:
@@ -1730,7 +1736,7 @@ public static class CliDispatcher
                 "  --search-engine <id>[:<clearance>]      Add SearchEngine grant",
                 "  --internal-db <id>[:<clearance>]        Add InternalDatabase grant",
                 "  --external-db <id>[:<clearance>]        Add ExternalDatabase grant",
-                "  --audio-device <id>[:<clearance>]       Add AudioDevice grant",
+                "  --input-audio <id>[:<clearance>]        Add InputAudio grant",
                 "  --agent <id>[:<clearance>]              Add Agent grant",
                 "  --task <id>[:<clearance>]               Add Task grant",
                 "  --skill <id>[:<clearance>]              Add Skill grant",
@@ -1781,40 +1787,15 @@ public static class CliDispatcher
         }
 
         // role permissions <id> set [flags...]
+        // Syntax: --clearance <value>
+        //         --flag FlagKey[:clearance]
+        //         --grant ResourceType id[:clearance]
         if (_currentUserId is null)
             return UsageResult("You must be logged in to set permissions.");
 
         var clearance = PermissionClearance.Unset;
-        var createSubAgents = false;
-        var createContainers = false;
-        var registerDatabases = false;
-        var localhostBrowser = false;
-        var localhostCli = false;
-        var clickDesktop = false;
-        var typeOnDesktop = false;
-        var readCrossThreadHistory = false;
-        var editAgentHeader = false;
-        var editChannelHeader = false;
-        var createDocumentSessions = false;
-        var enumerateWindows = false;
-        var focusWindow = false;
-        var closeWindow = false;
-        var resizeWindow = false;
-        var sendHotkey = false;
-        var readClipboard = false;
-        var writeClipboard = false;
-
-        var dangerousShell = new List<ResourceGrant>();
-        var safeShell = new List<ResourceGrant>();
-        var container = new List<ResourceGrant>();
-        var website = new List<ResourceGrant>();
-        var searchEngine = new List<ResourceGrant>();
-        var internalDb = new List<ResourceGrant>();
-        var externalDb = new List<ResourceGrant>();
-        var audioDevice = new List<ResourceGrant>();
-        var agent = new List<ResourceGrant>();
-        var task = new List<ResourceGrant>();
-        var skill = new List<ResourceGrant>();
+        var globalFlags = new Dictionary<string, PermissionClearance>();
+        var resourceGrants = new Dictionary<string, List<ResourceGrant>>();
 
         for (var i = 4; i < args.Length; i++)
         {
@@ -1824,80 +1805,37 @@ public static class CliDispatcher
                     if (Enum.TryParse<PermissionClearance>(args[++i], true, out var cl))
                         clearance = cl;
                     break;
-                case "--create-sub-agents": createSubAgents = true; break;
-                case "--create-containers": createContainers = true; break;
-                case "--register-databases": registerDatabases = true; break;
-                case "--localhost-browser": localhostBrowser = true; break;
-                case "--localhost-cli": localhostCli = true; break;
-                case "--click-desktop": clickDesktop = true; break;
-                case "--type-on-desktop": typeOnDesktop = true; break;
-                case "--read-cross-thread-history": readCrossThreadHistory = true; break;
-                case "--edit-agent-header": editAgentHeader = true; break;
-                case "--edit-channel-header": editChannelHeader = true; break;
-                case "--create-document-sessions": createDocumentSessions = true; break;
-                case "--enumerate-windows": enumerateWindows = true; break;
-                case "--focus-window": focusWindow = true; break;
-                case "--close-window": closeWindow = true; break;
-                case "--resize-window": resizeWindow = true; break;
-                case "--send-hotkey": sendHotkey = true; break;
-                case "--read-clipboard": readClipboard = true; break;
-                case "--write-clipboard": writeClipboard = true; break;
-                case "--dangerous-shell" when i + 1 < args.Length:
-                    dangerousShell.Add(ParseResourceGrant(args[++i])); break;
-                case "--safe-shell" when i + 1 < args.Length:
-                    safeShell.Add(ParseResourceGrant(args[++i])); break;
-                case "--container" when i + 1 < args.Length:
-                    container.Add(ParseResourceGrant(args[++i])); break;
-                case "--website" when i + 1 < args.Length:
-                    website.Add(ParseResourceGrant(args[++i])); break;
-                case "--search-engine" when i + 1 < args.Length:
-                    searchEngine.Add(ParseResourceGrant(args[++i])); break;
-                case "--internal-db" when i + 1 < args.Length:
-                    internalDb.Add(ParseResourceGrant(args[++i])); break;
-                case "--external-db" when i + 1 < args.Length:
-                    externalDb.Add(ParseResourceGrant(args[++i])); break;
-                case "--audio-device" when i + 1 < args.Length:
-                    audioDevice.Add(ParseResourceGrant(args[++i])); break;
-                case "--agent" when i + 1 < args.Length:
-                    agent.Add(ParseResourceGrant(args[++i])); break;
-                case "--task" when i + 1 < args.Length:
-                    task.Add(ParseResourceGrant(args[++i])); break;
-                case "--skill" when i + 1 < args.Length:
-                    skill.Add(ParseResourceGrant(args[++i])); break;
+
+                case "--flag" when i + 1 < args.Length:
+                {
+                    var (flagKey, flagClearance) = ParseFlagArg(args[++i]);
+                    globalFlags[flagKey] = flagClearance;
+                    break;
+                }
+
+                case "--grant" when i + 2 < args.Length:
+                {
+                    var resourceType = args[++i];
+                    var grant = ParseResourceGrant(args[++i]);
+                    if (!resourceGrants.TryGetValue(resourceType, out var list))
+                    {
+                        list = [];
+                        resourceGrants[resourceType] = list;
+                    }
+                    list.Add(grant);
+                    break;
+                }
             }
         }
 
         var request = new SetRolePermissionsRequest(
             DefaultClearance: clearance,
-            CanCreateSubAgents: createSubAgents,
-            CanCreateContainers: createContainers,
-            CanRegisterDatabases: registerDatabases,
-            CanAccessLocalhostInBrowser: localhostBrowser,
-            CanAccessLocalhostCli: localhostCli,
-            CanClickDesktop: clickDesktop,
-            CanTypeOnDesktop: typeOnDesktop,
-            CanReadCrossThreadHistory: readCrossThreadHistory,
-            CanEditAgentHeader: editAgentHeader,
-            CanEditChannelHeader: editChannelHeader,
-            CanCreateDocumentSessions: createDocumentSessions,
-            CanEnumerateWindows: enumerateWindows,
-            CanFocusWindow: focusWindow,
-            CanCloseWindow: closeWindow,
-            CanResizeWindow: resizeWindow,
-            CanSendHotkey: sendHotkey,
-            CanReadClipboard: readClipboard,
-            CanWriteClipboard: writeClipboard,
-            DangerousShellAccesses: dangerousShell.Count > 0 ? dangerousShell : null,
-            SafeShellAccesses: safeShell.Count > 0 ? safeShell : null,
-            ContainerAccesses: container.Count > 0 ? container : null,
-            WebsiteAccesses: website.Count > 0 ? website : null,
-            SearchEngineAccesses: searchEngine.Count > 0 ? searchEngine : null,
-            InternalDatabaseAccesses: internalDb.Count > 0 ? internalDb : null,
-            ExternalDatabaseAccesses: externalDb.Count > 0 ? externalDb : null,
-            AudioDeviceAccesses: audioDevice.Count > 0 ? audioDevice : null,
-            AgentAccesses: agent.Count > 0 ? agent : null,
-            TaskAccesses: task.Count > 0 ? task : null,
-            SkillAccesses: skill.Count > 0 ? skill : null);
+            GlobalFlags: globalFlags.Count > 0 ? globalFlags : null,
+            ResourceGrants: resourceGrants.Count > 0
+                ? resourceGrants.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => (IReadOnlyList<ResourceGrant>)kvp.Value)
+                : null);
 
         try
         {
@@ -1912,6 +1850,21 @@ public static class CliDispatcher
             Console.Error.WriteLine(ex.Message);
             return Results.Ok();
         }
+    }
+
+    /// <summary>
+    /// Parses a global-flag argument: <c>FlagKey[:clearance]</c>.
+    /// If no clearance suffix is given, defaults to <see cref="PermissionClearance.Independent"/>.
+    /// </summary>
+    private static (string FlagKey, PermissionClearance Clearance) ParseFlagArg(string arg)
+    {
+        var parts = arg.Split(':', 2);
+        var clearance = parts.Length > 1
+            && Enum.TryParse<PermissionClearance>(parts[1], true, out var cl)
+                ? cl
+                : PermissionClearance.Independent;
+
+        return (parts[0], clearance);
     }
 
     /// <summary>
@@ -1938,7 +1891,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "job submit <channelId> <actionType> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
+                "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
                 "  --agent overrides the channel's default agent.",
                 "job list [channelId]                       List jobs (current channel if omitted)",
                 "job status <jobId>",
@@ -1949,17 +1902,10 @@ public static class CliDispatcher
                 "job cancel <jobId>",
                 "job listen <jobId>                         Stream live transcription segments",
                 "",
-                "Action types (global): CreateSubAgent, CreateContainer,",
-                "  RegisterDatabase, AccessLocalhostInBrowser, AccessLocalhostCli",
-                "Action types (resource): UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell,",
-                "  AccessInternalDatabases,",
-                "  AccessExternalDatabase, AccessWebsite, QuerySearchEngine,",
-                "  AccessContainer, ManageAgent, EditTask, AccessSkill",
-                "Transcription types: TranscribeFromAudioDevice,",
-                "  TranscribeFromAudioStream (API only), TranscribeFromAudioFile (API only)",
+                "Action keys are module tool names (e.g. execute_as_safe_shell, manage_agent,",
+                "  cu_click_desktop, transcribe_from_audio_device).",
                 "",
-                "Transcription: submit with TranscribeFromAudioDevice and audio device",
-                "  as resourceId.",
+                "Transcription: submit transcribe_from_audio_device <channelId> <deviceId>",
                 "  Optional flags: --model <id>, --lang <code>,",
                 "    --mode <sliding|step|window>, --window <seconds>, --step <seconds>");
             return Results.Ok();
@@ -1971,16 +1917,13 @@ public static class CliDispatcher
 
         return sub switch
         {
-            // job submit <channelId> <actionType> [resourceId] [flags...]
-            "submit" when args.Length >= 4 && Enum.TryParse<AgentActionType>(args[3], true, out var at)
-                => await HandleJobSubmit(args, CliIdMap.Resolve(args[2]), at, 4, svc, chatSvc),
+            // job submit <channelId> <actionKey> [resourceId] [flags...]
+            "submit" when args.Length >= 4
+                => await HandleJobSubmit(args, CliIdMap.Resolve(args[2]), args[3], 4, svc, chatSvc),
 
-            "submit" when args.Length < 3
+            "submit" when args.Length < 4
                 => UsageResult(
-                    "job submit <channelId> <actionType> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
-                    "  --agent overrides the channel's default agent."),
-            "submit"
-                => UsageResult($"Unknown or missing action type. Valid types: {string.Join(", ", Enum.GetNames<AgentActionType>())}"),
+                    "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]"),
 
             "list" when args.Length >= 3
                 => await AgentJobHandlers.List(CliIdMap.Resolve(args[2]), svc),
@@ -2024,7 +1967,7 @@ public static class CliDispatcher
     }
 
     private static async Task<IResult> HandleJobSubmit(
-        string[] args, Guid channelId, AgentActionType actionType, int nextArg, AgentJobService svc, ChatService chatSvc)
+        string[] args, Guid channelId, string actionKey, int nextArg, AgentJobService svc, ChatService chatSvc)
     {
         // Resource ID is the next positional arg, unless it looks like a flag
         Guid? resourceId = args.Length > nextArg && !args[nextArg].StartsWith("--")
@@ -2075,8 +2018,8 @@ public static class CliDispatcher
         return await AgentJobHandlers.Submit(
             channelId,
             new SubmitAgentJobRequest(
-                actionType,
-                resourceId,
+                ActionKey: actionKey,
+                ResourceId: resourceId,
                 AgentId: agentId,
                 TranscriptionModelId: modelId,
                 Language: language,
@@ -2096,9 +2039,7 @@ public static class CliDispatcher
             {
                 Console.Error.WriteLine("Job not found.");
             }
-            else if (job.ActionType is not AgentActionType.TranscribeFromAudioDevice
-                     and not AgentActionType.TranscribeFromAudioStream
-                     and not AgentActionType.TranscribeFromAudioFile)
+            else if (job.ActionKey is null || !job.ActionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase))
             {
                 Console.Error.WriteLine("Only transcription jobs support live listening.");
             }
@@ -2264,7 +2205,7 @@ public static class CliDispatcher
     /// Serializes a value to JSON, injecting a <c>#</c> short-ID field before each
     /// <c>Id</c> GUID property so the user can reference entities by number.
     /// </summary>
-    private static void PrintJsonWithShortIds(object value)
+    internal static void PrintJsonWithShortIds(object value)
     {
         var doc = JsonSerializer.SerializeToNode(value, JsonPrint);
         if (doc is null) return;
@@ -2654,7 +2595,59 @@ public static class CliDispatcher
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Resource (unified: container, audiodevice, ...)
+    // Module (list, get, enable, disable)
+    // ═══════════════════════════════════════════════════════════════
+
+    private static async Task<IResult?> HandleModuleCommand(string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 2)
+        {
+            PrintUsage(
+                "module list                              List all modules",
+                "module get <id>                          Show module details",
+                "module enable <id>                       Enable a module at runtime",
+                "module disable <id>                      Disable a module at runtime",
+                "module scan                              Scan & load external modules",
+                "module reload <id>                       Reload an external module",
+                "module unload <id>                       Unload an external module");
+            return Results.Ok();
+        }
+
+        var sub = args[1].ToLowerInvariant();
+        var svc = sp.GetRequiredService<ModuleService>();
+
+        return sub switch
+        {
+            "list" => await ModuleHandlers.List(svc),
+
+            "get" when args.Length >= 3
+                => await ModuleHandlers.Get(args[2], svc),
+            "get" => UsageResult("module get <id>"),
+
+            "enable" when args.Length >= 3
+                => await ModuleHandlers.Enable(args[2], svc, sp.GetRequiredService<ModuleLoader>()),
+            "enable" => UsageResult("module enable <id>"),
+
+            "disable" when args.Length >= 3
+                => await ModuleHandlers.Disable(args[2], svc),
+            "disable" => UsageResult("module disable <id>"),
+
+            "scan" => await ModuleHandlers.Scan(svc, sp.GetRequiredService<ModuleLoader>()),
+
+            "reload" when args.Length >= 3
+                => await ModuleHandlers.Reload(args[2], svc, sp.GetRequiredService<ModuleLoader>()),
+            "reload" => UsageResult("module reload <id>"),
+
+            "unload" when args.Length >= 3
+                => await ModuleHandlers.Unload(args[2], svc),
+            "unload" => UsageResult("module unload <id>"),
+
+            _ => UsageResult($"Unknown sub-command: module {sub}. Try 'help' for usage.")
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resource (unified: container, displaydevice, ...)
     // ═══════════════════════════════════════════════════════════════
 
     private static async Task<IResult?> HandleResourceCommand(string[] args, IServiceProvider sp)
@@ -2664,8 +2657,8 @@ public static class CliDispatcher
             PrintUsage(
                 "resource <type> <command> [args...]",
                 "",
-                "Types: container, audiodevice, displaydevice, editorsession,",
-                "       document, nativeapplication",
+                "All resource types are module-provided.",
+                "See 'Module Commands' in help for available types.",
                 "",
                 "Commands (all types):",
                 "  add      Create a new resource",
@@ -2678,322 +2671,8 @@ public static class CliDispatcher
         }
 
         var type = args[1].ToLowerInvariant();
-        return type switch
-        {
-            "container" => await HandleResourceContainerCommand(args, sp),
-            "audiodevice" => await HandleResourceAudioDeviceCommand(args, sp),
-            "displaydevice" or "display" or "dd" => await HandleResourceDisplayDeviceCommand(args, sp),
-            "editorsession" or "editor" or "es" => await HandleResourceEditorSessionCommand(args, sp),
-            "document" or "doc" => await HandleResourceDocumentCommand(args, sp),
-            "nativeapplication" or "nativeapp" or "app" => await HandleResourceNativeApplicationCommand(args, sp),
-            _ => UsageResult($"Unknown resource type: {type}. " +
-                "Available: container, audiodevice, displaydevice, editorsession, document, nativeapplication")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceContainerCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource container add mk8shell <name> <path>  Create an mk8shell sandbox",
-                "resource container get <id>                    Show a container",
-                "resource container list                        List all containers",
-                "resource container update <id> [description]   Update a container",
-                "resource container delete <id>                 Delete a container",
-                "resource container sync                        Import from mk8.shell registry");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<ContainerService>();
-
-        return sub switch
-        {
-            "add" when args.Length >= 6
-                && args[3].Equals("mk8shell", StringComparison.OrdinalIgnoreCase)
-                => await ResourceHandlers.CreateContainer(
-                    new CreateContainerRequest(
-                        ContainerType.Mk8Shell,
-                        args[4],
-                        args[5],
-                        args.Length >= 7 ? string.Join(' ', args[6..]) : null),
-                    svc),
-            "add" => UsageResult(
-                "resource container add mk8shell <name> <parentPath>",
-                "  Example: resource container add mk8shell Banana D:/"),
-
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetContainer(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource container get <id>"),
-
-            "list" => await ResourceHandlers.ListContainers(svc),
-
-            "update" when args.Length >= 5
-                => await ResourceHandlers.UpdateContainer(
-                    CliIdMap.Resolve(args[3]),
-                    new UpdateContainerRequest(
-                        Description: string.Join(' ', args[4..])),
-                    svc),
-            "update" => UsageResult("resource container update <id> [description]"),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteContainer(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource container delete <id>"),
-
-            "sync" => await ResourceHandlers.SyncContainers(svc),
-
-            _ => UsageResult($"Unknown command: resource container {sub}")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceAudioDeviceCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource audiodevice add <name> [identifier] [description]",
-                "resource audiodevice get <id>                  Show an audio device",
-                "resource audiodevice list                      List all audio devices",
-                "resource audiodevice update <id> [name] [id]   Update an audio device",
-                "resource audiodevice delete <id>               Delete an audio device",
-                "resource audiodevice sync                      Import system audio devices");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<TranscriptionService>();
-
-        return sub switch
-        {
-            "add" when args.Length >= 4
-                => await ResourceHandlers.CreateAudioDevice(
-                    new CreateAudioDeviceRequest(
-                        args[3],
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? string.Join(' ', args[5..]) : null),
-                    svc),
-            "add" => UsageResult("resource audiodevice add <name> [deviceIdentifier] [description]"),
-
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetAudioDevice(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource audiodevice get <id>"),
-
-            "list" => await ResourceHandlers.ListAudioDevices(svc),
-
-            "update" when args.Length >= 5
-                => await ResourceHandlers.UpdateAudioDevice(
-                    CliIdMap.Resolve(args[3]),
-                    new UpdateAudioDeviceRequest(
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? args[5] : null),
-                    svc),
-            "update" => UsageResult("resource audiodevice update <id> [name] [deviceIdentifier]"),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteAudioDevice(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource audiodevice delete <id>"),
-
-            "sync" => await ResourceHandlers.SyncAudioDevices(svc),
-
-            _ => UsageResult($"Unknown command: resource audiodevice {sub}")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceDisplayDeviceCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource displaydevice add <name> [identifier] [description]",
-                "resource displaydevice get <id>                  Show a display device",
-                "resource displaydevice list                      List all display devices",
-                "resource displaydevice update <id> [name] [id]   Update a display device",
-                "resource displaydevice delete <id>               Delete a display device",
-                "resource displaydevice sync                      Import system displays");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<DisplayDeviceService>();
-
-        return sub switch
-        {
-            "add" when args.Length >= 4
-                => await ResourceHandlers.CreateDisplayDevice(
-                    new CreateDisplayDeviceRequest(
-                        args[3],
-                        args.Length >= 5 ? args[4] : null,
-                        0,
-                        args.Length >= 6 ? string.Join(' ', args[5..]) : null),
-                    svc),
-            "add" => UsageResult("resource displaydevice add <name> [deviceIdentifier] [description]"),
-
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetDisplayDevice(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource displaydevice get <id>"),
-
-            "list" => await ResourceHandlers.ListDisplayDevices(svc),
-
-            "update" when args.Length >= 5
-                => await ResourceHandlers.UpdateDisplayDevice(
-                    CliIdMap.Resolve(args[3]),
-                    new UpdateDisplayDeviceRequest(
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? args[5] : null),
-                    svc),
-            "update" => UsageResult("resource displaydevice update <id> [name] [deviceIdentifier]"),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteDisplayDevice(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource displaydevice delete <id>"),
-
-            "sync" => await ResourceHandlers.SyncDisplayDevices(svc),
-
-            _ => UsageResult($"Unknown command: resource displaydevice {sub}")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceDocumentCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource document add <filePath> [name] [description]",
-                "resource document get <id>                  Show a document session",
-                "resource document list                      List all document sessions",
-                "resource document update <id> [name] [desc] Update a document session",
-                "resource document delete <id>               Delete a document session");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<DocumentSessionService>();
-
-        return sub switch
-        {
-            "add" when args.Length >= 4
-                => await ResourceHandlers.CreateDocumentSession(
-                    new CreateDocumentSessionRequest(
-                        args[3],
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? string.Join(' ', args[5..]) : null),
-                    svc),
-            "add" => UsageResult("resource document add <filePath> [name] [description]"),
-
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetDocumentSession(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource document get <id>"),
-
-            "list" => await ResourceHandlers.ListDocumentSessions(svc),
-
-            "update" when args.Length >= 5
-                => await ResourceHandlers.UpdateDocumentSession(
-                    CliIdMap.Resolve(args[3]),
-                    new UpdateDocumentSessionRequest(
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? string.Join(' ', args[5..]) : null),
-                    svc),
-            "update" => UsageResult("resource document update <id> [name] [description]"),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteDocumentSession(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource document delete <id>"),
-
-            _ => UsageResult($"Unknown command: resource document {sub}")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceNativeApplicationCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource nativeapp add <name> <exePath> [alias] [description]",
-                "resource nativeapp get <id>                  Show a native application",
-                "resource nativeapp list                      List all native applications",
-                "resource nativeapp update <id> [name] [exe] [alias] [desc]",
-                "resource nativeapp delete <id>               Delete a native application");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<NativeApplicationService>();
-
-        return sub switch
-        {
-            "add" when args.Length >= 5
-                => await ResourceHandlers.CreateNativeApplication(
-                    new CreateNativeApplicationRequest(
-                        args[3],
-                        args[4],
-                        args.Length >= 6 ? args[5] : null,
-                        args.Length >= 7 ? string.Join(' ', args[6..]) : null),
-                    svc),
-            "add" => UsageResult("resource nativeapp add <name> <executablePath> [alias] [description]"),
-
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetNativeApplication(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource nativeapp get <id>"),
-
-            "list" => await ResourceHandlers.ListNativeApplications(svc),
-
-            "update" when args.Length >= 5
-                => await ResourceHandlers.UpdateNativeApplication(
-                    CliIdMap.Resolve(args[3]),
-                    new UpdateNativeApplicationRequest(
-                        args.Length >= 5 ? args[4] : null,
-                        args.Length >= 6 ? args[5] : null,
-                        args.Length >= 7 ? args[6] : null,
-                        args.Length >= 8 ? string.Join(' ', args[7..]) : null),
-                    svc),
-            "update" => UsageResult("resource nativeapp update <id> [name] [exePath] [alias] [description]"),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteNativeApplication(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource nativeapp delete <id>"),
-
-            _ => UsageResult($"Unknown command: resource nativeapplication {sub}")
-        };
-    }
-
-    private static async Task<IResult?> HandleResourceEditorSessionCommand(
-        string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 3)
-        {
-            PrintUsage(
-                "resource editorsession list                      List all editor sessions",
-                "resource editorsession get <id>                  Show an editor session",
-                "resource editorsession delete <id>               Delete an editor session",
-                "",
-                "Editor sessions are auto-created when an IDE extension connects.",
-                "Use 'channel defaults <id> set editor <sessionId>' to assign one.");
-            return Results.Ok();
-        }
-
-        var sub = args[2].ToLowerInvariant();
-        var svc = sp.GetRequiredService<EditorSessionService>();
-
-        return sub switch
-        {
-            "get" when args.Length >= 4
-                => await ResourceHandlers.GetEditorSession(CliIdMap.Resolve(args[3]), svc),
-            "get" => UsageResult("resource editorsession get <id>"),
-
-            "list" => await ResourceHandlers.ListEditorSessions(svc),
-
-            "delete" when args.Length >= 4
-                => await ResourceHandlers.DeleteEditorSession(CliIdMap.Resolve(args[3]), svc),
-            "delete" => UsageResult("resource editorsession delete <id>"),
-
-            _ => UsageResult($"Unknown command: resource editorsession {sub}")
-        };
+        return await TryModuleResourceCommandAsync(type, args, sp)
+            ?? UsageResult($"Unknown resource type: {type}. Type 'help' for available types.");
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -3076,75 +2755,6 @@ public static class CliDispatcher
             Console.Error.WriteLine(ex.Message);
             return Results.Ok();
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Bot integrations
-    // ═══════════════════════════════════════════════════════════════
-
-    private static async Task<IResult?> HandleBotCommand(string[] args, IServiceProvider sp)
-    {
-        if (args.Length < 2)
-        {
-            PrintUsage(
-                "bot list                                  List all bot integrations",
-                "bot get <id>                              Show a bot integration",
-                "bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]",
-                "                                          Update a bot integration",
-                "bot config <type>                         Show decrypted config (telegram|discord|whatsapp)");
-            return Results.Ok();
-        }
-
-        var svc = sp.GetRequiredService<BotIntegrationService>();
-        var sub = args[1].ToLowerInvariant();
-
-        return sub switch
-        {
-            "list" => await BotHandlers.List(svc),
-
-            "get" when args.Length >= 3
-                => await BotHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
-            "get" => UsageResult("bot get <id>"),
-
-            "update" when args.Length >= 3
-                => await HandleBotUpdate(args, svc),
-            "update" => UsageResult("bot update <id> [--name <name>] [--enabled true|false] [--token <tok>] [--channel <channelId>]"),
-
-            "config" when args.Length >= 3
-                => await BotHandlers.GetConfig(args[2], svc),
-            "config" => UsageResult("bot config <type>  (telegram|discord|whatsapp)"),
-
-            _ => UsageResult($"Unknown sub-command: bot {sub}. Try 'bot list', 'bot get', etc.")
-        };
-    }
-
-    private static async Task<IResult> HandleBotUpdate(string[] args, BotIntegrationService svc)
-    {
-        var id = CliIdMap.Resolve(args[2]);
-        string? name = null;
-        bool? enabled = null;
-        string? token = null;
-        Guid? channelId = null;
-
-        for (var i = 3; i < args.Length - 1; i++)
-        {
-            switch (args[i].ToLowerInvariant())
-            {
-                case "--name":
-                    name = args[++i]; break;
-                case "--enabled" when bool.TryParse(args[i + 1], out var e):
-                    enabled = e; i++; break;
-                case "--token":
-                    token = args[++i]; break;
-                case "--channel" when Guid.TryParse(args[i + 1], out var ch):
-                    channelId = ch; i++; break;
-                case "--channel" when args[i + 1].ToLowerInvariant() is "none" or "clear":
-                    channelId = Guid.Empty; i++; break;
-            }
-        }
-
-        var request = new UpdateBotIntegrationRequest(name, enabled, token, channelId);
-        return await BotHandlers.Update(id, request, svc);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -3282,7 +2892,22 @@ public static class CliDispatcher
         return await ToolAwarenessSetHandlers.Update(id, new UpdateToolAwarenessSetRequest(name, tools), svc);
     }
 
-    private static IResult PrintHelp()
+    /// <summary>
+    /// Tries to dispatch a resource sub-command to a module-provided handler.
+    /// Returns null if no module registered the resource type.
+    /// </summary>
+    private static async Task<IResult?> TryModuleResourceCommandAsync(
+        string type, string[] args, IServiceProvider sp)
+    {
+        var registry = sp.GetRequiredService<ModuleRegistry>();
+        var moduleCmd = registry.TryResolveResourceTypeCommand(type);
+        if (moduleCmd is null) return null;
+
+        await moduleCmd.Handler(args, sp, CancellationToken.None);
+        return Results.Ok();
+    }
+
+    private static IResult PrintHelp(IServiceProvider? sp = null)
     {
         Console.WriteLine("""
             SharpClaw - Shell Agent
@@ -3335,7 +2960,7 @@ public static class CliDispatcher
               Fields cascade from context when not set: agent, permissions,
                 DisableChatHeader, AllowedAgents, DefaultResourceSet.
               Default-resource keys: safeshell, dangshell, container, website,
-                search, localinfo, externalinfo, audiodevice, agent, task,
+                search, localinfo, externalinfo, inputaudio, agent, task,
                 skill, transcriptionmodel
 
             Chat:
@@ -3363,7 +2988,7 @@ public static class CliDispatcher
               user role <userId> <roleId|none>   Assign or remove a user's role
 
             Job:       job <sub> [args]
-              job submit <channelId> <actionType> [resourceId] [--agent <id>]
+              job submit <channelId> <actionKey> [resourceId] [--agent <id>]
                   [--model <id>] [--lang <code>]
               job list [channelId]   status <id>   approve <id>   cancel <id>
               job stop <id>          listen <id>   (transcription jobs)
@@ -3383,9 +3008,8 @@ public static class CliDispatcher
               task listen <instanceId>           Stream live task output
 
             Resource:  resource <type> <sub>    (add, get, list, update, delete, sync)
-              Types: container, audiodevice
-              resource container add mk8shell <name> <path>
-              resource audiodevice add <name> [identifier]
+              All resource types are module-provided.
+              See Module Commands below for available types.
 
             Tools:     tools <sub> [args]       (add, get, list, update, delete)
               tools add <name> [json]            Create a tool awareness set
@@ -3397,14 +3021,36 @@ public static class CliDispatcher
               Assign to agents/channels via --tools <setId>.
               Override chain: channel → agent → null (all enabled).
 
-            Bot:       bot <sub> [args]
-              bot list                           List all bot integrations
-              bot get <id>                       Show a bot integration
-              bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>]
-              bot config <type>                  Show decrypted config (telegram|discord|whatsapp)
+            Module:    module <sub>              (list, get, enable, disable)
+              module list                        List all bundled modules
+              module get <id>                    Show module details
+              module enable <id>                 Enable a module at runtime
+              module disable <id>                Disable a module at runtime
 
               exit / quit
             """);
+
+        // Append module-provided CLI commands dynamically.
+        if (sp is not null)
+        {
+            var registry = sp.GetService<ModuleRegistry>();
+            var commands = registry?.GetAllCliCommands() ?? [];
+            if (commands.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("            Module Commands:");
+                foreach (var (moduleId, cmd) in commands)
+                {
+                    var prefix = cmd.Scope == ModuleCliScope.ResourceType ? "resource " : "";
+                    Console.WriteLine(
+                        $"              {prefix}{cmd.Name,-28} {cmd.Description}  [{moduleId}]");
+                    foreach (var alias in cmd.Aliases)
+                        Console.WriteLine(
+                            $"              {prefix}{alias,-28} (alias)");
+                }
+            }
+        }
+
         return Results.Ok();
     }
 }

@@ -55,8 +55,6 @@ fastest way to make that happen.
 - [Roles](#roles)
 - [Default resources](#default-resources)
 - [Local models](#local-models)
-- [Bot integrations](#bot-integrations)
-- [Editor bridge](#editor-bridge)
 - [Task definitions & instances](#task-definitions--instances)
 - [Token cost tracking](#token-cost-tracking)
 - [Provider cost](#provider-cost)
@@ -106,16 +104,14 @@ Minimax, Custom, Local
 `Local` is used for in-process LLamaSharp / Whisper.net models.
 `Minimax` is the Minimax AI provider.
 
-### AgentActionType
+### ActionKey
 
-| Category | Values |
-|----------|--------|
-| Global flags | `CreateSubAgent`, `CreateContainer`, `RegisterInfoStore`, `AccessLocalhostInBrowser`, `AccessLocalhostCli`, `ClickDesktop`, `TypeOnDesktop`, `ReadCrossThreadHistory`, `CreateDocumentSession`, `EnumerateWindows`, `FocusWindow`, `CloseWindow`, `ResizeWindow`, `SendHotkey`, `ReadClipboard`, `WriteClipboard` |
-| Per-resource | `UnsafeExecuteAsDangerousShell`, `ExecuteAsSafeShell`, `AccessLocalInfoStore`, `AccessExternalInfoStore`, `AccessWebsite`, `QuerySearchEngine`, `AccessContainer`, `ManageAgent`, `EditTask`, `AccessSkill`, `CaptureDisplay`, `CaptureWindow`, `StopProcess` |
-| Transcription | `TranscribeFromAudioDevice`, `TranscribeFromAudioStream`, `TranscribeFromAudioFile` |
-| Editor | `EditorReadFile`, `EditorGetOpenFiles`, `EditorGetSelection`, `EditorGetDiagnostics`, `EditorApplyEdit`, `EditorCreateFile`, `EditorDeleteFile`, `EditorShowDiff`, `EditorRunBuild`, `EditorRunTerminal` |
-| Document | `SpreadsheetReadRange`, `SpreadsheetWriteRange`, `SpreadsheetListSheets`, `SpreadsheetCreateSheet`, `SpreadsheetDeleteSheet`, `SpreadsheetGetInfo`, `SpreadsheetCreateWorkbook`, `SpreadsheetLiveReadRange`, `SpreadsheetLiveWriteRange` |
-| Desktop awareness | `LaunchNativeApplication` |
+Jobs use a string-based `ActionKey` that identifies the action to execute.
+The set of valid action keys is dynamic — query `GET /modules` for the
+authoritative list.
+
+Permission checks, job submission (`POST /channels/{id}/jobs`), and the CLI
+`job submit` command all use `ActionKey` exclusively.
 
 ### PermissionClearance
 
@@ -152,22 +148,6 @@ Values can be combined (comma-separated). Default is `Chat`.
 `Vision` enables image/screenshot input for models that support it
 (e.g. gpt-4o, claude-3+, gemini-1.5+).
 
-### DangerousShellType
-
-```
-Bash, PowerShell, CommandPrompt, Git
-```
-
-These spawn a real shell interpreter with unrestricted execution.
-
-### SafeShellType
-
-```
-Mk8Shell
-```
-
-Sandboxed DSL — never invokes a real shell interpreter.
-
 ### ChatClientType
 
 ```
@@ -178,27 +158,11 @@ UnoWindows, UnoAndroid, UnoMacOS, UnoLinux, UnoBrowser, Other
 Identifies the client interface that originated a chat message. Included
 in the chat header so the agent knows the communication channel.
 
-### EditorType
-
-```
-VisualStudio2026, VisualStudioCode, Other
-```
-
 ### LocalModelStatus
 
 ```
 Pending, Downloading, Ready, Failed
 ```
-
-### DocumentType
-
-```
-Spreadsheet = 0, Csv = 1, Document = 2, Presentation = 3
-```
-
-Inferred from the file extension when a document session is created.
-`.xlsx`/`.xlsm` → `Spreadsheet`, `.csv` → `Csv`, `.docx` → `Document`,
-`.pptx` → `Presentation`.
 
 ### ChatStreamEventType
 
@@ -211,13 +175,6 @@ Inferred from the file extension when a document session is created.
 | `ApprovalResult` | Approval decision has been applied |
 | `Error` | An error occurred during the stream |
 | `Done` | Stream complete; contains the final persisted response |
-
-### TranscriptionMode
-
-| Value | Int | Description |
-|-------|-----|-------------|
-| `SlidingWindow` | 0 | Two-pass sliding window. Segments are emitted provisionally as soon as they pass quality filters, then finalized (or retracted) once the commit delay confirms them. Consumers see text within one inference tick (~3 s) and receive an update when the segment is confirmed. **Default.** |
-| `StrictWindow` | 2 | Non-overlapping sequential windows (default 10 s). Each window of audio is transcribed exactly once — one API call per window. Cross-window continuity via prompt conditioning. Full dedup pipeline runs as a safety net. Minimal token cost; perceived latency equals the window length. Use `windowSeconds` to control the window size (clamped to [5, 15]). |
 
 ### TaskInstanceStatus
 
@@ -1091,9 +1048,14 @@ Assign a role to an agent.
   "providerParameters": { "key": "value" },
   "customChatHeader": "string | null",
   "toolAwarenessSetId": "guid | null",
-  "disableToolSchemas": false
+  "disableToolSchemas": false,
+  "cost": null
 }
 ```
+
+`cost` is an optional `AgentCostResponse` object. It is `null` on
+standard CRUD responses; use the dedicated `GET /agents/{id}/cost`
+endpoint to retrieve the full per-agent token breakdown.
 
 ### AgentSummary
 
@@ -1642,13 +1604,14 @@ Response `200`:
   "assistantMessage": { "role": "assistant", "content": "string", "timestamp": "datetime" },
   "jobResults": [ /* AgentJobResponse[], if any */ ],
   "channelCost": { /* ChannelCostResponse — see Token cost tracking */ },
-  "threadCost": null
+  "threadCost": null,
+  "agentCost": { /* AgentCostResponse — see Token cost tracking */ }
 }
 ```
 
 Every chat response piggybacks the current channel (and thread, when
-applicable) token usage so callers do not need a separate round-trip to
-the `/cost` endpoints. See [Token cost tracking](#token-cost-tracking)
+applicable) and agent token usage so callers do not need a separate
+round-trip to the `/cost` endpoints. See [Token cost tracking](#token-cost-tracking)
 for the shape of these objects.
 
 When the assistant submits agent jobs during the turn the same
@@ -2026,12 +1989,21 @@ Retrieve transcription segments added after the given timestamp.
     "totalCompletionTokens": 0,
     "totalTokens": 0,
     "agentBreakdown": []
+  },
+  "jobCost": {
+    "totalPromptTokens": 0,
+    "totalCompletionTokens": 0,
+    "totalTokens": 0
   }
 }
 ```
 
 `segments` is only populated for transcription action types; `null`
 otherwise.
+
+`jobCost` contains the prompt and completion tokens attributed to this
+specific job from the LLM round that triggered it. `null` for jobs
+that were not submitted during a chat tool-call round.
 
 `channelCost` is piggybacked on all detail / mutation responses
 (Submit, GetById, Approve, Stop, Cancel, Pause, Resume) so callers
@@ -2760,168 +2732,6 @@ Delete the local model file and its DB record.
 
 ---
 
-## Bot integrations
-
-Bot integration rows are **pre-seeded** on startup for each `BotType`
-(`Telegram`, `Discord`, `WhatsApp`). There are no POST or DELETE
-endpoints — you only update existing rows to enable/disable a bot or
-set its token.
-
-Bot tokens are AES-GCM encrypted at rest (same mechanism as provider
-API keys).
-
-### GET /bots
-
-List all bot integrations.
-
-**Response `200`:** array of `BotIntegrationResponse`.
-
-### GET /bots/{id}
-
-Get a single bot integration by ID.
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### GET /bots/type/{type}
-
-Get a bot integration by type name (`telegram`, `discord`, `whatsapp`).
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### PUT /bots/{id}
-
-Update a bot integration. All fields are optional (partial update).
-
-**Request:**
-
-```json
-{
-  "enabled": true,
-  "botToken": "string | null",
-  "defaultChannelId": "guid | null"
-}
-```
-
-| Field | Behaviour |
-|---|---|
-| `enabled` | Enable or disable the bot. |
-| `botToken` | Non-empty string → encrypt and store. Empty string (`""`) → clear the stored token. Omit to leave unchanged. |
-| `defaultChannelId` | GUID → set the default SharpClaw channel for forwarded messages. `Guid.Empty` → clear. Omit to leave unchanged. |
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### GET /bots/config/{type}
-
-Return the **decrypted** bot configuration for gateway consumption.
-Intended for internal use by the gateway process.
-
-**Response `200`:**
-
-```json
-{
-  "enabled": true,
-  "botToken": "plaintext-token",
-  "defaultChannelId": "guid | null"
-}
-```
-
-### BotIntegrationResponse
-
-```json
-{
-  "id": "guid",
-  "botType": "Telegram",
-  "enabled": false,
-  "hasBotToken": true,
-  "defaultChannelId": "guid | null",
-  "createdAt": "2025-01-01T00:00:00Z",
-  "updatedAt": "2025-01-01T00:00:00Z"
-}
-```
-
-`hasBotToken` indicates whether an encrypted token is stored — the
-actual token is never returned by list/get endpoints.
-
-### CLI
-
-```
-bot list                                        List all bot integrations
-bot get <id>                                    Show a single integration
-bot update <id> [--enabled true|false]          Enable/disable
-                [--token <tok>]                 Set bot token
-                [--channel <channelId>]          Set default channel
-bot config <type>                               Show decrypted config
-```
-
----
-
-## Editor bridge
-
-The editor bridge provides a WebSocket connection for IDE extensions
-(VS 2026, VS Code) and a REST endpoint for querying active sessions.
-
-### WS /editor/ws
-
-WebSocket upgrade endpoint. IDE extensions connect here and send a
-registration message, then enter a request/response loop managed by
-`EditorBridgeService`.
-
-**Registration message (extension → server):**
-
-```json
-{
-  "editorType": "VisualStudio2026 | VisualStudioCode | Other",
-  "editorVersion": "string | null",
-  "workspacePath": "string | null"
-}
-```
-
-**Request (server → extension):**
-
-```json
-{
-  "requestId": "guid",
-  "action": "string",
-  "params": { ... }
-}
-```
-
-**Response (extension → server):**
-
-```json
-{
-  "requestId": "guid",
-  "success": true,
-  "data": "string | null",
-  "error": "string | null"
-}
-```
-
-30-second timeout per request.
-
----
-
-### GET /editor/sessions
-
-List all currently connected editor sessions.
-
-**Response `200`:**
-
-```json
-[
-  {
-    "sessionId": "guid",
-    "editorType": "VisualStudio2026",
-    "editorVersion": "string | null",
-    "workspacePath": "string | null",
-    "isConnected": true,
-    "connectedAt": "datetime"
-  }
-]
-```
-
----
-
 ## Task definitions & instances
 
 Tasks are user-defined C# scripts that run as background processes.
@@ -3146,8 +2956,8 @@ and task responses so callers rarely need the dedicated cost endpoints.
 
 | Response type | Field(s) | When populated |
 |---------------|----------|----------------|
-| `ChatResponse` | `channelCost`, `threadCost` | Always (every chat turn) |
-| `AgentJobResponse` | `channelCost` | On detail / mutation endpoints (`GET`, `POST approve/stop/cancel`, `PUT pause/resume`) |
+| `ChatResponse` | `channelCost`, `threadCost`, `agentCost` | Always (every chat turn) |
+| `AgentJobResponse` | `channelCost`, `jobCost` | `channelCost` on detail / mutation endpoints (`GET`, `POST approve/stop/cancel`, `PUT pause/resume`); `jobCost` when the job was submitted during a chat tool-call round |
 | `TaskInstanceResponse` | `channelCost` | On `GET .../instances/{instanceId}` when bound to a channel |
 | SSE `Done` event | Inside the `ChatResponse` payload | Always |
 
@@ -3186,6 +2996,40 @@ Same shape as `ChannelCostResponse` with an additional `threadId` field:
 }
 ```
 
+### TokenUsageResponse
+
+Flat prompt / completion / total triple used for per-job cost:
+
+```json
+{
+  "totalPromptTokens": 0,
+  "totalCompletionTokens": 0,
+  "totalTokens": 0
+}
+```
+
+### AgentCostResponse
+
+Aggregated token usage across all channels for a single agent:
+
+```json
+{
+  "agentId": "guid",
+  "agentName": "string",
+  "totalPromptTokens": 0,
+  "totalCompletionTokens": 0,
+  "totalTokens": 0,
+  "channelBreakdown": [
+    {
+      "channelId": "guid",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0
+    }
+  ]
+}
+```
+
 ### Diagnostic endpoints
 
 Dedicated endpoints for querying cost without a chat/job round-trip:
@@ -3198,6 +3042,12 @@ Dedicated endpoints for querying cost without a chat/job round-trip:
 
 **Response `200`:** `ThreadCostResponse`
 **Response `404`:** Thread not found.
+
+#### GET /agents/{id}/cost
+
+**Response `200`:** `AgentCostResponse` — total token usage for the
+agent across all channels, with per-channel breakdown.
+**Response `404`:** Agent not found.
 
 ---
 

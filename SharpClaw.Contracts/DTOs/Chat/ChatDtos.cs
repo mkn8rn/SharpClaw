@@ -27,4 +27,5 @@ public sealed record ChatResponse(
     ChatMessageResponse AssistantMessage,
     IReadOnlyList<AgentJobResponse>? JobResults = null,
     ChannelCostResponse? ChannelCost = null,
-    ThreadCostResponse? ThreadCost = null);
+    ThreadCostResponse? ThreadCost = null,
+    AgentCostResponse? AgentCost = null);

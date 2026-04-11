@@ -69,18 +69,25 @@ internal sealed class PermissionEditorBuilder
         _flagEditors.Clear();
         var panel = new StackPanel { Spacing = _flagClearance ? 10 : 4 };
 
+        // Resolve the globalFlags sub-objects from existing/caller JSON.
+        JsonElement? existingFlags = _existing is { } ex
+            && ex.TryGetProperty("globalFlags", out var ef) ? ef : null;
+        JsonElement? callerFlags = _callerFilter is { } cf
+            && cf.TryGetProperty("globalFlags", out var cff) ? cff : null;
+
         for (var i = 0; i < TerminalUI.GlobalFlagNames.Length; i++)
         {
             var flag = TerminalUI.GlobalFlagNames[i];
 
             // Caller filtering — skip flags the caller doesn't hold
-            if (_callerFilter is { } cf)
+            if (_callerFilter is not null)
             {
-                var callerHas = cf.TryGetProperty(flag, out var cfp) && cfp.GetBoolean();
-                if (!callerHas) continue;
+                if (callerFlags is null || !callerFlags.Value.TryGetProperty(flag, out _))
+                    continue;
             }
 
-            var on = _existing is { } ex && ex.TryGetProperty(flag, out var fp) && fp.GetBoolean();
+            // A flag is "on" if the key exists in the globalFlags dict.
+            var on = existingFlags is { } ef2 && ef2.TryGetProperty(flag, out _);
             var cb = new CheckBox
             {
                 IsChecked = on, MinWidth = 0, MinHeight = 0,
@@ -98,9 +105,10 @@ internal sealed class PermissionEditorBuilder
             ComboBox? clrBox = null;
             if (_flagClearance)
             {
-                var clrN = TerminalUI.GlobalFlagClearanceNames[i];
-                var cl = _existing is { } e2 && e2.TryGetProperty(clrN, out var cpp)
-                    ? cpp.GetString() ?? "Unset" : "Unset";
+                // Clearance is now the dictionary value.
+                var cl = existingFlags is { } ef3
+                    && ef3.TryGetProperty(flag, out var clrProp)
+                        ? clrProp.GetString() ?? "Unset" : "Unset";
 
                 var row = new StackPanel { Spacing = 4 };
                 row.Children.Add(cb);
@@ -137,12 +145,18 @@ internal sealed class PermissionEditorBuilder
         _resourcesByType.Clear();
         await PreloadResourceNamesAsync();
 
+        // Resolve the resourceGrants sub-objects from existing/caller JSON.
+        JsonElement? existingGrants = _existing is { } ex
+            && ex.TryGetProperty("resourceGrants", out var eg) ? eg : null;
+        JsonElement? callerGrants = _callerFilter is { } cf
+            && cf.TryGetProperty("resourceGrants", out var cg) ? cg : null;
+
         var resCont = new StackPanel { Spacing = _grantClearance ? 16 : 10 };
 
         foreach (var (apiName, displayName) in TerminalUI.ResourceAccessTypes)
         {
             // Caller filtering — skip types the caller has no grants for
-            var callerIds = GetCallerResourceIds(apiName);
+            var callerIds = GetCallerResourceIds(callerGrants, apiName);
             if (_callerFilter is not null && callerIds is null)
                 continue;
 
@@ -160,8 +174,9 @@ internal sealed class PermissionEditorBuilder
             var gp = new StackPanel { Spacing = _grantClearance ? 6 : 2, Margin = new Thickness(12, 0, 0, 0) };
             _grantPanels[apiName] = gp;
 
-            // Populate existing grants
-            if (_existing is { } ex && ex.TryGetProperty(apiName, out var ap) && ap.ValueKind == JsonValueKind.Array)
+            // Populate existing grants from the resourceGrants dict
+            if (existingGrants is { } eg2
+                && eg2.TryGetProperty(apiName, out var ap) && ap.ValueKind == JsonValueKind.Array)
                 foreach (var g in ap.EnumerateArray())
                     if (g.TryGetProperty("resourceId", out var rid) && rid.ValueKind == JsonValueKind.String)
                     {
@@ -192,26 +207,26 @@ internal sealed class PermissionEditorBuilder
     /// <summary>Reads the current state of global flag checkboxes (+ optional clearance).</summary>
     public Dictionary<string, object?> CollectFlags()
     {
-        var req = new Dictionary<string, object?>();
-        for (var i = 0; i < TerminalUI.GlobalFlagNames.Length; i++)
+        var flags = new Dictionary<string, object?>();
+        foreach (var (flagKey, ed) in _flagEditors)
         {
-            var flag = TerminalUI.GlobalFlagNames[i];
-            if (!_flagEditors.TryGetValue(flag, out var ed)) continue;
-            req[flag] = ed.Check.IsChecked == true;
-            if (_flagClearance && ed.Clearance is { } clr)
-                req[TerminalUI.GlobalFlagClearanceNames[i]] =
-                    clr.SelectedItem is ComboBoxItem { Tag: string cl } ? cl : "Unset";
+            if (ed.Check.IsChecked != true) continue;
+
+            var clearance = _flagClearance && ed.Clearance is { } clr
+                && clr.SelectedItem is ComboBoxItem { Tag: string cl }
+                    ? cl : "Independent";
+            flags[flagKey] = clearance;
         }
-        return req;
+        return flags;
     }
 
     /// <summary>Reads the current state of per-resource grant rows.</summary>
     public Dictionary<string, object?> CollectGrants()
     {
-        var req = new Dictionary<string, object?>();
+        var grants = new Dictionary<string, object?>();
         foreach (var (apiName, panel) in _grantPanels)
         {
-            var grants = new List<object>();
+            var list = new List<object>();
             foreach (var child in panel.Children)
             {
                 if (child is not StackPanel row) continue;
@@ -229,18 +244,25 @@ internal sealed class PermissionEditorBuilder
                     clearance = "Independent";
                 }
 
-                grants.Add(new { resourceId = resId, clearance });
+                list.Add(new { resourceId = resId, clearance });
             }
-            req[apiName] = grants;
+            if (list.Count > 0)
+                grants[apiName] = list;
         }
-        return req;
+        return grants;
     }
 
-    /// <summary>Merges <see cref="CollectFlags"/> and <see cref="CollectGrants"/> into one dictionary.</summary>
+    /// <summary>
+    /// Merges <see cref="CollectFlags"/> and <see cref="CollectGrants"/> into the
+    /// <c>SetRolePermissionsRequest</c> JSON shape.
+    /// </summary>
     public Dictionary<string, object?> CollectAll()
     {
-        var result = CollectFlags();
-        foreach (var (k, v) in CollectGrants()) result[k] = v;
+        var result = new Dictionary<string, object?>
+        {
+            ["globalFlags"] = CollectFlags(),
+            ["resourceGrants"] = CollectGrants(),
+        };
         return result;
     }
 
@@ -392,9 +414,9 @@ internal sealed class PermissionEditorBuilder
         await Task.WhenAll(tasks);
     }
 
-    private HashSet<Guid>? GetCallerResourceIds(string accessType)
+    private static HashSet<Guid>? GetCallerResourceIds(JsonElement? callerGrants, string accessType)
     {
-        if (_callerFilter is not { } perms) return null;
+        if (callerGrants is not { } perms) return null;
         if (!perms.TryGetProperty(accessType, out var arr) || arr.ValueKind != JsonValueKind.Array)
             return null;
 

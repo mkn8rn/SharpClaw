@@ -1,17 +1,15 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Mk8.Shell;
-using Mk8.Shell.Engine;
-using Mk8.Shell.Isolation;
-using Mk8.Shell.Models;
-using Mk8.Shell.Safety;
-using Mk8.Shell.Startup;
+using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
@@ -19,8 +17,10 @@ using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -35,16 +35,12 @@ namespace SharpClaw.Application.Services;
 public sealed class AgentJobService(
 SharpClawDbContext db,
 AgentActionService actions,
-LiveTranscriptionOrchestrator orchestrator,
-EditorBridgeService editorBridge,
+ILiveTranscriptionOrchestrator orchestrator,
 SessionService session,
-BotMessageSenderService botMessageSender,
-SpreadsheetService spreadsheetService,
-ExcelComInteropService excelComInteropService,
-DocumentSessionService documentSessionService,
-DesktopAwarenessService desktopAwarenessService,
-NativeApplicationService nativeApplicationService,
-SearchEngineService searchEngineService,
+ModuleRegistry moduleRegistry,
+ModuleMetricsCollector metricsCollector,
+ModuleEventDispatcher eventDispatcher,
+IServiceScopeFactory serviceScopeFactory,
 IConfiguration configuration)
 {
     /// <summary>
@@ -61,7 +57,7 @@ IConfiguration configuration)
     /// is inferred from the channel unless explicitly overridden in the
     /// request.  Permission is evaluated immediately:
     /// <list type="bullet">
-    ///   <item>Approved → executes inline, returns <see cref="AgentJobStatus.Completed"/>
+    ///   <item>Approved → executes inline, returns <see cref="AgentJobStatus.Completed/>
     ///         or <see cref="AgentJobStatus.Failed"/> (or <see cref="AgentJobStatus.Executing"/>
     ///         for long-running jobs like transcription).</item>
     ///   <item>PendingApproval → returns <see cref="AgentJobStatus.AwaitingApproval"/>.</item>
@@ -104,15 +100,15 @@ IConfiguration configuration)
         // When no resource is specified for a per-resource action, resolve
         // the default from: channel DefaultResourceSet → context DefaultResourceSet
         // → channel/context/role PermissionSet defaults.
-        if (!effectiveResourceId.HasValue && IsPerResourceAction(request.ActionType))
+        if (!effectiveResourceId.HasValue && IsPerResourceAction(request.ActionKey))
         {
             effectiveResourceId = await ResolveDefaultResourceIdAsync(
-                request.ActionType, channelId, agentId, ct);
+                request.ActionKey, channelId, agentId, ct);
         }
 
         // Resolve default transcription model when not specified.
         var effectiveTranscriptionModelId = request.TranscriptionModelId;
-        if (!effectiveTranscriptionModelId.HasValue && IsTranscriptionAction(request.ActionType))
+        if (!effectiveTranscriptionModelId.HasValue && IsTranscriptionActionKey(request.ActionKey))
         {
             effectiveTranscriptionModelId = await ResolveDefaultTranscriptionModelAsync(
                 channelId, ct);
@@ -124,7 +120,7 @@ IConfiguration configuration)
             ChannelId = channelId,
             CallerUserId = session.UserId,
             CallerAgentId = request.CallerAgentId,
-            ActionType = request.ActionType,
+            ActionKey = request.ActionKey,
             ResourceId = effectiveResourceId,
             Status = AgentJobStatus.Queued,
             DangerousShellType = request.DangerousShellType,
@@ -139,12 +135,12 @@ IConfiguration configuration)
         };
 
         db.AgentJobs.Add(job);
-        AddLog(job, $"Job queued: {request.ActionType}.");
+        AddLog(job, $"Job queued: {request.ActionKey ?? "unknown"}.");
         await db.SaveChangesAsync(ct);
 
         var caller = new ActionCaller(session.UserId, request.CallerAgentId);
         var result = await DispatchPermissionCheckAsync(
-            agentId, job.ActionType, job.ResourceId, caller, ct);
+            agentId, job.ResourceId, caller, ct, job.ActionKey);
 
         job.EffectiveClearance = result.EffectiveClearance;
 
@@ -162,9 +158,9 @@ IConfiguration configuration)
                 // personally hold the same permission via their own role.
                 // Level 3 (agent-only) is never pre-authorised.
                 if (await HasChannelAuthorizationAsync(
-                        channelId, job.ActionType,
+                        channelId,
                         job.ResourceId, result.EffectiveClearance,
-                        session.UserId, ct))
+                        session.UserId, ct, job.ActionKey))
                 {
                     AddLog(job, "Pre-authorized by channel/context permission set.");
                     await ExecuteJobAsync(job, ct);
@@ -208,7 +204,7 @@ IConfiguration configuration)
 
         var approver = new ActionCaller(session.UserId, request.ApproverAgentId);
         var result = await DispatchPermissionCheckAsync(
-            job.AgentId, job.ActionType, job.ResourceId, approver, ct);
+            job.AgentId, job.ResourceId, approver, ct, job.ActionKey);
 
         switch (result.Verdict)
         {
@@ -251,7 +247,7 @@ IConfiguration configuration)
             return ToResponse(job);
         }
 
-        if (IsTranscriptionAction(job.ActionType)
+        if (IsTranscriptionActionKey(job.ActionKey)
             && job.Status is AgentJobStatus.Executing or AgentJobStatus.Paused)
         {
             if (job.Status == AgentJobStatus.Executing)
@@ -274,7 +270,7 @@ IConfiguration configuration)
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (!IsTranscriptionAction(job.ActionType))
+        if (!IsTranscriptionActionKey(job.ActionKey))
         {
             AddLog(job, "Stop rejected: not a transcription job.", "Warning");
             await db.SaveChangesAsync(ct);
@@ -320,7 +316,7 @@ IConfiguration configuration)
             return ToResponse(job);
         }
 
-        if (IsTranscriptionAction(job.ActionType))
+        if (IsTranscriptionActionKey(job.ActionKey))
             orchestrator.Stop(jobId);
 
         job.Status = AgentJobStatus.Paused;
@@ -352,7 +348,7 @@ IConfiguration configuration)
         AddLog(job, "Job resumed.");
         await db.SaveChangesAsync(ct);
 
-        if (IsTranscriptionAction(job.ActionType))
+        if (IsTranscriptionActionKey(job.ActionKey))
             await RestartTranscriptionAsync(job, ct);
 
         return ToResponse(job);
@@ -393,24 +389,22 @@ IConfiguration configuration)
             .OrderByDescending(j => j.CreatedAt)
             .Select(j => new AgentJobSummaryResponse(
                 j.Id, j.ChannelId, j.AgentId,
-                j.ActionType, j.ResourceId, j.Status,
+                j.ActionKey, j.ResourceId, j.Status,
                 j.CreatedAt, j.StartedAt, j.CompletedAt))
             .ToListAsync(ct);
     }
 
-    /// <summary>List transcription jobs, optionally filtered by audio device.</summary>
+    /// <summary>List transcription jobs, optionally filtered by input audio.</summary>
     public async Task<IReadOnlyList<AgentJobResponse>> ListTranscriptionJobsAsync(
-        Guid? audioDeviceId = null, CancellationToken ct = default)
+        Guid? inputAudioId = null, CancellationToken ct = default)
     {
         var query = db.AgentJobs
             .Include(j => j.LogEntries)
             .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-            .Where(j => j.ActionType == AgentActionType.TranscribeFromAudioDevice
-                      || j.ActionType == AgentActionType.TranscribeFromAudioStream
-                      || j.ActionType == AgentActionType.TranscribeFromAudioFile);
+            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio"));
 
-        if (audioDeviceId is not null)
-            query = query.Where(j => j.ResourceId == audioDeviceId);
+        if (inputAudioId is not null)
+            query = query.Where(j => j.ResourceId == inputAudioId);
 
         var jobs = await query.OrderByDescending(j => j.CreatedAt).ToListAsync(ct);
         return jobs.Select(ToResponse).ToList();
@@ -425,9 +419,10 @@ IConfiguration configuration)
     /// user has authority to approve an awaiting job inline.
     /// </summary>
     public Task<AgentActionResult> CheckPermissionAsync(
-        Guid agentId, AgentActionType actionType, Guid? resourceId,
-        ActionCaller caller, CancellationToken ct = default)
-        => DispatchPermissionCheckAsync(agentId, actionType, resourceId, caller, ct);
+        Guid agentId, Guid? resourceId,
+        ActionCaller caller, CancellationToken ct = default,
+        string? actionKey = null)
+        => DispatchPermissionCheckAsync(agentId, resourceId, caller, ct, actionKey);
 
     // ═══════════════════════════════════════════════════════════════
     // Transcription: segments & streaming
@@ -595,7 +590,7 @@ IConfiguration configuration)
 
         try
         {
-            if (IsTranscriptionAction(job.ActionType))
+            if (IsTranscriptionActionKey(job.ActionKey))
             {
                 await StartTranscriptionAsync(job, ct);
                 return;
@@ -658,7 +653,7 @@ IConfiguration configuration)
 
         job.TranscriptionModelId = model.Id;
 
-        var device = await db.AudioDevices.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
+        var device = await db.InputAudios.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
             ?? throw new InvalidOperationException("Audio device not found.");
 
         _channels.TryAdd(job.Id, Channel.CreateUnbounded<TranscriptionSegmentResponse>());
@@ -680,7 +675,7 @@ IConfiguration configuration)
         var modelId = job.TranscriptionModelId
             ?? throw new InvalidOperationException("Paused transcription job has no model.");
 
-        var device = await db.AudioDevices.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
+        var device = await db.InputAudios.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
             ?? throw new InvalidOperationException("Audio device not found.");
 
         _channels.TryAdd(job.Id, Channel.CreateUnbounded<TranscriptionSegmentResponse>());
@@ -690,2336 +685,237 @@ IConfiguration configuration)
             job.TranscriptionMode, job.WindowSeconds, job.StepSeconds);
     }
 
-    // ── Shell execution routing ─────────────────────────────────
-    //
-    //  SAFE  (ExecuteAsSafeShell)             → mk8.shell pipeline
-    //        mk8.shell is sandboxed HARD: closed verb set,
-    //        binary allowlist, path jailing, no real shell
-    //        interpreter is ever invoked.  ALL mk8.shell
-    //        execution is safe by definition.
-    //
-    //  DANGEROUS  (UnsafeExecuteAsDangerousShell) → real shell process
-    //        Bash, PowerShell, CommandPrompt, Git are ALWAYS
-    //        dangerous.  The raw command text is handed to the
-    //        interpreter with no sandboxing.  There is no such
-    //        thing as a "safe" Bash/PowerShell/Cmd/Git execution.
-    //
-    // ──────────────────────────────────────────────────────────────
-
     private async Task<string?> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
     {
-        return job.ActionType switch
-        {
-            // Safe shell — always mk8.shell, always sandboxed.
-            AgentActionType.ExecuteAsSafeShell
-                => await ExecuteSafeShellAsync(job, ct),
-
-            // Dangerous shell — real interpreter, unrestricted.
-            AgentActionType.UnsafeExecuteAsDangerousShell
-                => await ExecuteDangerousShellAsync(job, ct),
-
-            // Agent lifecycle
-            AgentActionType.CreateSubAgent
-                => await ExecuteCreateSubAgentAsync(job, ct),
-            AgentActionType.ManageAgent
-                => await ExecuteManageAgentAsync(job, ct),
-
-            // Container lifecycle
-            AgentActionType.CreateContainer
-                => await ExecuteCreateContainerAsync(job, ct),
-
-            // Task management
-            AgentActionType.EditTask
-                => await ExecuteEditTaskAsync(job, ct),
-
-            // Knowledge / skills
-            AgentActionType.AccessSkill
-                => await ExecuteAccessSkillAsync(job, ct),
-
-            // Localhost access
-            AgentActionType.AccessLocalhostInBrowser
-                => await ExecuteAccessLocalhostInBrowserAsync(job, ct),
-            AgentActionType.AccessLocalhostCli
-                => await ExecuteAccessLocalhostCliAsync(job, ct),
-
-            // External website access (per-resource: registered website)
-            AgentActionType.AccessWebsite
-                => await ExecuteAccessWebsiteAsync(job, ct),
-
-            // Search engine query (per-resource: registered search engine)
-            AgentActionType.QuerySearchEngine
-                => await ExecuteQuerySearchEngineAsync(job, ct),
-
-            // Display capture
-            AgentActionType.CaptureDisplay
-                => await ExecuteCaptureDisplayAsync(job, ct),
-
-            // Desktop interaction
-            AgentActionType.ClickDesktop
-                => await ExecuteClickDesktopAsync(job, ct),
-            AgentActionType.TypeOnDesktop
-                => await ExecuteTypeOnDesktopAsync(job, ct),
-
-            // Editor actions — delegated to the connected IDE extension
-            AgentActionType.EditorReadFile or
-            AgentActionType.EditorGetOpenFiles or
-            AgentActionType.EditorGetSelection or
-            AgentActionType.EditorGetDiagnostics or
-            AgentActionType.EditorApplyEdit or
-            AgentActionType.EditorCreateFile or
-            AgentActionType.EditorDeleteFile or
-            AgentActionType.EditorShowDiff or
-            AgentActionType.EditorRunBuild or
-            AgentActionType.EditorRunTerminal
-                => await ExecuteEditorActionAsync(job, ct),
-
-            // Bot messaging
-            AgentActionType.SendBotMessage
-                => await ExecuteSendBotMessageAsync(job, ct),
-
-            // Document session registration
-            AgentActionType.CreateDocumentSession
-                => await ExecuteCreateDocumentSessionAsync(job, ct),
-
-            // File-based spreadsheet operations (ClosedXML / CsvHelper)
-            AgentActionType.SpreadsheetReadRange or
-            AgentActionType.SpreadsheetWriteRange or
-            AgentActionType.SpreadsheetListSheets or
-            AgentActionType.SpreadsheetCreateSheet or
-            AgentActionType.SpreadsheetDeleteSheet or
-            AgentActionType.SpreadsheetGetInfo
-                => await ExecuteSpreadsheetActionAsync(job, ct),
-
-            AgentActionType.SpreadsheetCreateWorkbook
-                => await ExecuteSpreadsheetCreateWorkbookAsync(job, ct),
-
-            // Live Excel COM Interop operations
-            AgentActionType.SpreadsheetLiveReadRange or
-            AgentActionType.SpreadsheetLiveWriteRange
-                => await ExecuteSpreadsheetLiveActionAsync(job, ct),
-
-            // Desktop awareness
-            AgentActionType.EnumerateWindows
-                => await ExecuteEnumerateWindowsAsync(job, ct),
-            AgentActionType.LaunchNativeApplication
-                => await ExecuteLaunchNativeApplicationAsync(job, ct),
-
-            // Window management
-            AgentActionType.FocusWindow
-                => await ExecuteFocusWindowAsync(job, ct),
-            AgentActionType.CloseWindow
-                => await ExecuteCloseWindowAsync(job, ct),
-            AgentActionType.ResizeWindow
-                => await ExecuteResizeWindowAsync(job, ct),
-
-            // Hotkey
-            AgentActionType.SendHotkey
-                => await ExecuteSendHotkeyAsync(job, ct),
-
-            // Window capture
-            AgentActionType.CaptureWindow
-                => await ExecuteCaptureWindowAsync(job, ct),
-
-            // Clipboard
-            AgentActionType.ReadClipboard
-                => await ExecuteReadClipboardAsync(job, ct),
-            AgentActionType.WriteClipboard
-                => await ExecuteWriteClipboardAsync(job, ct),
-
-            // Process control
-            AgentActionType.StopProcess
-                => await ExecuteStopProcessAsync(job, ct),
-
-            _ => $"Action '{job.ActionType}' executed successfully " +
-                 $"(resource: {job.ResourceId?.ToString() ?? "n/a"})."
-        };
+        // Try ActionKey-based dispatch first (synthesizes envelope from raw params).
+        // Falls back to full envelope deserialization.
+        return await TryDispatchByActionKeyAsync(job, ct)
+               ?? await DispatchModuleExecutionAsync(job, ct);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // SAFE SHELL — mk8.shell only (sandboxed, verb-restricted DSL)
+    // MODULE DISPATCH — executes module tool calls via ModuleRegistry
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Executes an <see cref="AgentActionType.ExecuteAsSafeShell"/> job
-    /// through the mk8.shell pipeline.
-    /// <para>
-    /// The job's <see cref="AgentJobDB.ResourceId"/> identifies the
-    /// <see cref="ContainerDB"/> (which must be an mk8shell container).
-    /// mk8.shell is self-contained: the sandbox name is passed to
-    /// <see cref="Mk8TaskContainer.Create"/> which resolves the sandbox
-    /// from its own <c>%APPDATA%/mk8.shell</c> registry, verifies the
-    /// signed environment, and builds the workspace context.
-    /// </para>
-    /// <para>
-    /// Permission check (<see cref="AgentActionService.AccessContainerAsync"/>)
-    /// must have already been evaluated before reaching this method.
-    /// </para>
+    /// Executes a module job by resolving the <c>ActionKey</c> through
+    /// <see cref="ModuleRegistry"/>, deserializing the <see cref="ModuleEnvelope"/>
+    /// from <c>ScriptJson</c>, and calling
+    /// <see cref="ISharpClawModule.ExecuteToolAsync"/> inside a restricted
+    /// <see cref="ModuleServiceScope"/> with a per-manifest timeout.
     /// </summary>
-    private async Task<string?> ExecuteSafeShellAsync(
+    private async Task<string?> DispatchModuleExecutionAsync(
         AgentJobDB job, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(job.ScriptJson))
             throw new InvalidOperationException(
-                "Safe shell job requires a script payload (ScriptJson) " +
-                "containing an mk8.shell script.");
+                "Module action requires a ScriptJson envelope.");
 
-        if (!job.ResourceId.HasValue)
+        if (job.ScriptJson.Length > SecureJsonOptions.MaxEnvelopeSize)
             throw new InvalidOperationException(
-                "Safe shell job requires a ResourceId (Container).");
+                $"ScriptJson exceeds maximum envelope size ({SecureJsonOptions.MaxEnvelopeSize} bytes).");
 
-        var container = await db.Containers
-            .FirstOrDefaultAsync(c => c.Id == job.ResourceId.Value, ct)
+        var envelope = JsonSerializer.Deserialize<ModuleEnvelope>(
+            job.ScriptJson, SecureJsonOptions.Envelope)
             ?? throw new InvalidOperationException(
-                $"Container {job.ResourceId} not found.");
+                "Failed to deserialize module envelope from ScriptJson.");
 
-        if (container.Type != ContainerType.Mk8Shell)
-            throw new InvalidOperationException(
-                $"Container '{container.Name}' is not an mk8shell container.");
-
-        if (string.IsNullOrWhiteSpace(container.SandboxName))
-            throw new InvalidOperationException(
-                $"Container '{container.Name}' has no sandbox name configured.");
-
-        var script = JsonSerializer.Deserialize<Mk8ShellScript>(
-            job.ScriptJson,
-            new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                Converters = { new JsonStringEnumConverter() }
-            })
+        var module = moduleRegistry.GetModule(envelope.Module)
             ?? throw new InvalidOperationException(
-                "Failed to deserialise mk8.shell script from ScriptJson.");
+                $"Module '{envelope.Module}' is not loaded.");
 
-        // mk8.shell is self-contained: pass the sandbox name and it
-        // resolves everything from its own local registry.
-        await using var taskContainer = await Mk8TaskContainer.CreateAsync(container.SandboxName, ct: ct);
+        var prefixedToolName = $"{module.ToolPrefix}_{envelope.Tool}";
 
-        var effectiveOptions = script.Options ?? Mk8ExecutionOptions.Default;
+        var jobContext = new AgentJobContext(
+            JobId: job.Id,
+            AgentId: job.AgentId,
+            ChannelId: job.ChannelId,
+            ResourceId: job.ResourceId,
+            ActionKey: job.ActionKey,
+            Language: job.Language);
 
-        // Compile through the full mk8.shell pipeline
-        // (expand → resolve → sanitize → compile).
-        var compiler = new Mk8ShellCompiler(
-            Mk8CommandWhitelist.CreateDefault(
-                taskContainer.RuntimeConfig,
-                taskContainer.FreeTextConfig,
-                taskContainer.EnvVocabularies,
-                taskContainer.GigaBlacklist));
-        var compiled = compiler.Compile(
-            script, taskContainer.Workspace, effectiveOptions);
-
-        AddLog(job,
-            $"mk8.shell script compiled: {compiled.Commands.Count} command(s), " +
-            $"sandbox '{container.SandboxName}'.");
-        await db.SaveChangesAsync(ct);
-
-        // Execute all compiled commands (safe — never spawns a real shell).
-        // The sandbox container provides OS-level process containment,
-        // resource limits, network iron curtain, and filesystem isolation.
-        // The container is persistent — managed by Mk8ContainerManager,
-        // not created/destroyed per command.
-        var executor = new Mk8ShellExecutor(
-            sandboxContainer: taskContainer.SandboxContainer);
-        var result = await executor.ExecuteAsync(compiled, ct);
-
-        // Build a human-readable summary for ResultData.
-        var summary = new System.Text.StringBuilder();
-        summary.AppendLine($"AllSucceeded: {result.AllSucceeded}");
-        summary.AppendLine($"Duration: {result.TotalDuration}");
-        summary.AppendLine($"Steps: {result.Steps.Count}");
-
-        foreach (var step in result.Steps)
-        {
-            var status = step.Success ? "OK" : "FAIL";
-            summary.AppendLine(
-                $"  [{step.StepIndex}] {step.Verb} {status} " +
-                $"({step.Attempts} attempt(s), {step.Duration.TotalMilliseconds:F0}ms)");
-
-            if (!string.IsNullOrWhiteSpace(step.Error))
-                summary.AppendLine($"    Error: {step.Error}");
-        }
-
-        if (!result.AllSucceeded)
+        // External modules use their own per-module DI container;
+        // bundled modules use the host's scope.
+        var externalHost = moduleRegistry.GetExternalHost(envelope.Module);
+        if (externalHost is not null && !externalHost.TryAcquireExecution())
             throw new InvalidOperationException(
-                $"mk8.shell script execution failed.{Environment.NewLine}{summary}");
+                $"Module '{envelope.Module}' is unloading — cannot execute tools.");
 
-        return summary.ToString();
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // DANGEROUS SHELL — real interpreter (Bash/PowerShell/Cmd/Git)
-    // ═══════════════════════════════════════════════════════════════
-    //
-    // Bash, PowerShell, CommandPrompt, and Git are ALWAYS dangerous.
-    // They are never sandboxed through mk8.shell.  The raw command
-    // text is handed directly to the interpreter.  The only protection
-    // is the permission system's clearance requirement.
-    //
-
-    /// <summary>
-    /// Executes an <see cref="AgentActionType.UnsafeExecuteAsDangerousShell"/>
-    /// job by spawning a real shell interpreter process.
-    /// <para>
-    /// <b>This is inherently dangerous.</b>  The raw command from
-    /// <see cref="AgentJobDB.ScriptJson"/> is passed to the shell with
-    /// no sandboxing, no allowlist, and no path validation.  Safety
-    /// relies entirely on the two-level permission clearance check that
-    /// was already evaluated before reaching this point.
-    /// </para>
-    /// <para>
-    /// Cross-platform: Bash on Linux/macOS, PowerShell (pwsh) everywhere,
-    /// CommandPrompt on Windows only, Git everywhere.
-    /// </para>
-    /// </summary>
-    private async Task<string?> ExecuteDangerousShellAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "Dangerous shell job requires a command payload (ScriptJson).");
-
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "Dangerous shell job requires a ResourceId (SystemUser).");
-
-        if (!job.DangerousShellType.HasValue)
-            throw new InvalidOperationException(
-                "Dangerous shell job requires a DangerousShellType.");
-
-        var systemUser = await db.SystemUsers
-            .FirstOrDefaultAsync(u => u.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"SystemUser {job.ResourceId} not found.");
-
-        var workingDir = job.WorkingDirectory
-            ?? systemUser.WorkingDirectory
-            ?? systemUser.SandboxRoot
-            ?? Directory.GetCurrentDirectory();
-
-        // Resolve the shell executable and argument list.
-        var (executable, arguments) = ResolveDangerousShell(
-            job.DangerousShellType.Value, job.ScriptJson);
-
-        AddLog(job,
-            $"Dangerous shell ({job.DangerousShellType}) executing as " +
-            $"'{systemUser.Username}' in '{workingDir}'.");
-        await db.SaveChangesAsync(ct);
-
-        // Spawn the real shell — NO sandboxing, NO allowlist.
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = executable,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            WorkingDirectory = workingDir,
-        };
-
-        foreach (var arg in arguments)
-            psi.ArgumentList.Add(arg);
-
-        using var process = new System.Diagnostics.Process { StartInfo = psi };
-        process.Start();
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-        await process.WaitForExitAsync(ct);
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"Dangerous shell '{executable}' exited with code {process.ExitCode}.\n" +
-                $"stderr: {stderr}");
-
-        return string.IsNullOrWhiteSpace(stdout) ? "(no output)" : stdout;
-    }
-
-    /// <summary>
-    /// Maps a <see cref="DangerousShellType"/> to the OS executable and
-    /// the argument list that passes the raw command to the interpreter.
-    /// <para>
-    /// Every value in this enum spawns a real, unrestricted process.
-    /// None of them ever go through mk8.shell.
-    /// </para>
-    /// </summary>
-    private static (string Executable, string[] Arguments) ResolveDangerousShell(
-        DangerousShellType shellType, string command) => shellType switch
-    {
-        // Bash — Linux/macOS (or WSL on Windows).
-        DangerousShellType.Bash => ("bash", ["-c", command]),
-
-        // PowerShell — cross-platform via pwsh.
-        DangerousShellType.PowerShell => (
-            OperatingSystem.IsWindows() ? "powershell" : "pwsh",
-            ["-NoProfile", "-NonInteractive", "-Command", command]),
-
-        // Command Prompt — Windows only.
-        DangerousShellType.CommandPrompt => ("cmd", ["/C", command]),
-
-        // Git — cross-platform, command is the git sub-command + args.
-        DangerousShellType.Git => ("git", command.Split(' ', StringSplitOptions.RemoveEmptyEntries)),
-
-        _ => throw new InvalidOperationException(
-            $"Unsupported dangerous shell type: {shellType}.")
-    };
-
-    // ═══════════════════════════════════════════════════════════════
-    // CREATE SUB-AGENT
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class CreateSubAgentPayload
-    {
-        public string? Name { get; set; }
-        public string? ModelId { get; set; }
-        public string? SystemPrompt { get; set; }
-    }
-
-    private async Task<string?> ExecuteCreateSubAgentAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "CreateSubAgent requires a JSON payload in ScriptJson.");
-
-        var payload = JsonSerializer.Deserialize<CreateSubAgentPayload>(
-            job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to deserialise CreateSubAgent payload.");
-
-        if (string.IsNullOrWhiteSpace(payload.Name))
-            throw new InvalidOperationException(
-                "CreateSubAgent payload requires a 'name' field.");
-
-        if (!Guid.TryParse(payload.ModelId, out var modelId))
-            throw new InvalidOperationException(
-                "CreateSubAgent payload requires a valid 'modelId' GUID.");
-
-        var model = await db.Models
-            .Include(m => m.Provider)
-            .FirstOrDefaultAsync(m => m.Id == modelId, ct)
-            ?? throw new InvalidOperationException(
-                $"Model {modelId} not found.");
-
-        var agent = new AgentDB
-        {
-            Name = payload.Name,
-            SystemPrompt = payload.SystemPrompt,
-            ModelId = model.Id,
-        };
-
-        db.Agents.Add(agent);
-        await db.SaveChangesAsync(ct);
-
-        AddLog(job, $"Sub-agent '{agent.Name}' created (id={agent.Id}).");
-        return $"Created sub-agent '{agent.Name}' (id={agent.Id}, model={model.Name}).";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // CREATE CONTAINER
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class CreateContainerPayload
-    {
-        public string? Name { get; set; }
-        public string? Path { get; set; }
-        public string? Description { get; set; }
-    }
-
-    private async Task<string?> ExecuteCreateContainerAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "CreateContainer requires a JSON payload in ScriptJson.");
-
-        var payload = JsonSerializer.Deserialize<CreateContainerPayload>(
-            job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to deserialise CreateContainer payload.");
-
-        if (string.IsNullOrWhiteSpace(payload.Name))
-            throw new InvalidOperationException(
-                "CreateContainer payload requires a 'name' field.");
-
-        if (string.IsNullOrWhiteSpace(payload.Path))
-            throw new InvalidOperationException(
-                "CreateContainer payload requires a 'path' field.");
-
-        var sandboxName = payload.Name;
-        var sandboxDir = Path.Combine(
-            Path.GetFullPath(payload.Path), sandboxName);
-
-        var exists = await db.Containers.AnyAsync(
-            c => c.Type == ContainerType.Mk8Shell
-                 && c.SandboxName == sandboxName, ct);
-
-        if (exists)
-            throw new InvalidOperationException(
-                $"An mk8shell container with sandbox name '{sandboxName}' already exists.");
-
-        await Mk8SandboxRegistrar.RegisterAsync(sandboxName, sandboxDir, ct: ct);
-
-        var container = new ContainerDB
-        {
-            Name = $"mk8shell:{sandboxName}",
-            Type = ContainerType.Mk8Shell,
-            SandboxName = sandboxName,
-            Description = payload.Description,
-        };
-
-        db.Containers.Add(container);
-        await db.SaveChangesAsync(ct);
-
-        AddLog(job, $"Container '{container.Name}' created (id={container.Id}).");
-        return $"Created mk8shell container '{sandboxName}' at '{sandboxDir}' (id={container.Id}).";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // MANAGE AGENT
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class ManageAgentPayload
-    {
-        public string? TargetId { get; set; }
-        public string? Name { get; set; }
-        public string? SystemPrompt { get; set; }
-        public string? ModelId { get; set; }
-    }
-
-    private async Task<string?> ExecuteManageAgentAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "ManageAgent requires a ResourceId (target agent).");
-
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .FirstOrDefaultAsync(a => a.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Agent {job.ResourceId} not found.");
-
-        ManageAgentPayload? payload = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            payload = JsonSerializer.Deserialize<ManageAgentPayload>(
-                job.ScriptJson, _payloadJsonOptions);
-        }
-
-        var changes = new List<string>();
-
-        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
-        {
-            agent.Name = newName;
-            changes.Add($"name='{newName}'");
-        }
-
-        if (payload?.SystemPrompt is not null)
-        {
-            agent.SystemPrompt = payload.SystemPrompt;
-            changes.Add("systemPrompt updated");
-        }
-
-        if (payload?.ModelId is { } modelIdStr && Guid.TryParse(modelIdStr, out var newModelId))
-        {
-            var model = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == newModelId, ct)
-                ?? throw new InvalidOperationException($"Model {newModelId} not found.");
-            agent.ModelId = model.Id;
-            agent.Model = model;
-            changes.Add($"model='{model.Name}'");
-        }
-
-        if (changes.Count == 0)
-            return $"Agent '{agent.Name}' (id={agent.Id}) — no changes applied.";
-
-        await db.SaveChangesAsync(ct);
-
-        var summary = string.Join(", ", changes);
-        AddLog(job, $"Agent '{agent.Name}' updated: {summary}.");
-        return $"Updated agent '{agent.Name}' (id={agent.Id}): {summary}.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // EDIT TASK
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class EditTaskPayload
-    {
-        public string? TargetId { get; set; }
-        public string? Name { get; set; }
-        public int? RepeatIntervalMinutes { get; set; }
-        public int? MaxRetries { get; set; }
-    }
-
-    private async Task<string?> ExecuteEditTaskAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "EditTask requires a ResourceId (target task).");
-
-        var task = await db.ScheduledTasks
-            .FirstOrDefaultAsync(t => t.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"ScheduledTask {job.ResourceId} not found.");
-
-        EditTaskPayload? payload = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            payload = JsonSerializer.Deserialize<EditTaskPayload>(
-                job.ScriptJson, _payloadJsonOptions);
-        }
-
-        var changes = new List<string>();
-
-        if (payload?.Name is { } newName && !string.IsNullOrWhiteSpace(newName))
-        {
-            task.Name = newName;
-            changes.Add($"name='{newName}'");
-        }
-
-        if (payload?.RepeatIntervalMinutes is { } intervalMinutes)
-        {
-            task.RepeatInterval = intervalMinutes > 0
-                ? TimeSpan.FromMinutes(intervalMinutes)
-                : null;
-            changes.Add($"repeatInterval={task.RepeatInterval?.ToString() ?? "none"}");
-        }
-
-        if (payload?.MaxRetries is { } retries)
-        {
-            task.MaxRetries = retries;
-            changes.Add($"maxRetries={retries}");
-        }
-
-        if (changes.Count == 0)
-            return $"Task '{task.Name}' (id={task.Id}) — no changes applied.";
-
-        await db.SaveChangesAsync(ct);
-
-        var summary = string.Join(", ", changes);
-        AddLog(job, $"Task '{task.Name}' updated: {summary}.");
-        return $"Updated task '{task.Name}' (id={task.Id}): {summary}.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ACCESS SKILL
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task<string?> ExecuteAccessSkillAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "AccessSkill requires a ResourceId (target skill).");
-
-        var skill = await db.Skills
-            .FirstOrDefaultAsync(s => s.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Skill {job.ResourceId} not found.");
-
-        AddLog(job, $"Skill '{skill.Name}' accessed.");
-        return $"Skill: {skill.Name}\n\n{skill.SkillText}";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ACCESS LOCALHOST IN BROWSER
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class AccessLocalhostPayload
-    {
-        public string? Url { get; set; }
-        public string? Mode { get; set; }
-    }
-
-    /// <summary>
-    /// Launches a headless browser (configured via <c>Browser:Executable</c>
-    /// and <c>Browser:Arguments</c> in the SharpClaw .env — defaults to
-    /// auto-detected Chrome/Edge on Windows) against a <b>localhost</b> URL
-    /// and returns either a screenshot path or the page HTML.
-    /// </summary>
-    private async Task<string?> ExecuteAccessLocalhostInBrowserAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        var payload = DeserializePayload<AccessLocalhostPayload>(job,
-            "AccessLocalhostInBrowser");
-
-        var url = ValidateLocalhostUrl(payload.Url);
-        var mode = (payload.Mode ?? "html").ToLowerInvariant();
-
-        var executable = configuration["Browser:Executable"] ?? ResolveChromiumExecutable();
-        var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
-
-        // Build headless Chrome/Edge arguments.
-        // --dump-dom returns the serialised DOM as text.
-        // --screenshot returns a PNG screenshot to a temp file.
-        // --ignore-certificate-errors allows self-signed localhost HTTPS.
-        // --virtual-time-budget gives the page simulated time (ms) for JS
-        //   execution and async fetches before the DOM/screenshot is captured.
-        //   Without this, SPA pages (e.g. Swagger UI) render empty because
-        //   --dump-dom snapshots before JS has finished loading content.
-        var tempFile = mode == "screenshot"
-            ? Path.Combine(Path.GetTempPath(), $"sc_{job.Id:N}.png")
-            : null;
-
-        var headlessArgs = mode switch
-        {
-            "screenshot" => $"--headless --disable-gpu --no-sandbox --ignore-certificate-errors --virtual-time-budget=10000 {extraArgs} --screenshot=\"{tempFile}\" \"{url}\"",
-            _ => $"--headless --disable-gpu --no-sandbox --ignore-certificate-errors --virtual-time-budget=10000 {extraArgs} --dump-dom \"{url}\"",
-        };
-
-        AddLog(job, $"Browser ({mode}): {executable} → {url}");
-        await db.SaveChangesAsync(ct);
-
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = executable,
-            Arguments = headlessArgs,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-
-        using var process = new System.Diagnostics.Process { StartInfo = psi };
-        process.Start();
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-        // 30-second timeout to prevent hanging on unresponsive pages.
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-
+        var sw = Stopwatch.StartNew();
         try
         {
-            await process.WaitForExitAsync(timeoutCts.Token);
+            using var scope = externalHost is not null
+                ? externalHost.CreateScope()
+                : serviceScopeFactory.CreateScope();
+
+            // Set ModuleExecutionContext so IModuleConfigStore resolves correctly.
+            var execCtx = scope.ServiceProvider.GetService<ModuleExecutionContext>();
+            if (execCtx is not null) execCtx.ModuleId = module.Id;
+
+            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
+
+            // Timeout: per-tool override → manifest default → 30s.
+            var manifest = moduleRegistry.GetManifest(envelope.Module);
+            var toolTimeout = moduleRegistry.GetToolTimeout(envelope.Module, envelope.Tool);
+            var timeoutSeconds = toolTimeout ?? manifest?.ExecutionTimeoutSeconds ?? 30;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+            try
+            {
+                // Try streaming variant first; fall back to non-streaming.
+                var stream = module.ExecuteToolStreamingAsync(
+                    envelope.Tool, envelope.Params, jobContext, restrictedScope, cts.Token);
+
+                string? result;
+                if (stream is not null)
+                {
+                    var sb = new StringBuilder();
+                    await foreach (var chunk in stream.WithCancellation(cts.Token))
+                        sb.Append(chunk);
+                    result = sb.ToString();
+                }
+                else
+                {
+                    result = await module.ExecuteToolAsync(
+                        envelope.Tool, envelope.Params, jobContext, restrictedScope, cts.Token);
+                }
+
+                sw.Stop();
+                metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
+                return result;
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                sw.Stop();
+                metricsCollector.RecordTimeout(prefixedToolName);
+                throw new InvalidOperationException(
+                    $"Module tool '{envelope.Module}.{envelope.Tool}' " +
+                    $"exceeded timeout ({timeoutSeconds}s).");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
+            {
+                sw.Stop();
+                metricsCollector.RecordFailure(prefixedToolName);
+                throw new InvalidOperationException(
+                    $"[{ex.GetType().Name}] " +
+                    ExceptionSanitizer.Sanitize(envelope.Module, envelope.Tool, ex.Message),
+                    ex);
+            }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        finally
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            throw new InvalidOperationException(
-                $"Browser timed out after 30 seconds for URL: {url}");
+            externalHost?.ReleaseExecution();
         }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"Browser exited with code {process.ExitCode}.\nstderr: {stderr}");
-
-        if (mode == "screenshot" && tempFile is not null && File.Exists(tempFile))
-        {
-            var bytes = await File.ReadAllBytesAsync(tempFile, ct);
-            File.Delete(tempFile);
-            // Structured marker: ChatService splits on [SCREENSHOT_BASE64] to
-            // extract the raw base64 data and send it as a vision content block.
-            return $"Screenshot captured ({bytes.Length} bytes) of {url}\n[SCREENSHOT_BASE64]{Convert.ToBase64String(bytes)}";
-        }
-
-        return string.IsNullOrWhiteSpace(stdout) ? "(empty page)" : stdout;
     }
 
     /// <summary>
-    /// Probes well-known installation paths for Chromium-based browsers
-    /// on Windows (Chrome, Edge) and returns the first existing path.
-    /// Falls back to <c>"chrome"</c> on non-Windows or if nothing is found.
-    /// </summary>
-    private static string ResolveChromiumExecutable()
-    {
-        if (!OperatingSystem.IsWindows())
-            return "google-chrome";
-
-        ReadOnlySpan<string> candidates =
-        [
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Google", "Chrome", "Application", "chrome.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                "Google", "Chrome", "Application", "chrome.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Google", "Chrome", "Application", "chrome.exe"),
-            // Microsoft Edge is always present on Windows 10/11.
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                "Microsoft", "Edge", "Application", "msedge.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Microsoft", "Edge", "Application", "msedge.exe"),
-        ];
-
-        foreach (var path in candidates)
-        {
-            if (File.Exists(path))
-                return path;
-        }
-
-        return "chrome";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ACCESS LOCALHOST CLI
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Makes a direct HTTP request to a <b>localhost</b> URL and returns
-    /// the status code, headers, and response body. No browser involved.
-    /// </summary>
-    private async Task<string?> ExecuteAccessLocalhostCliAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        var payload = DeserializePayload<AccessLocalhostPayload>(job,
-            "AccessLocalhostCli");
-
-        var url = ValidateLocalhostUrl(payload.Url);
-
-        AddLog(job, $"HTTP GET → {url}");
-        await db.SaveChangesAsync(ct);
-
-        using var handler = new HttpClientHandler
-        {
-            // Localhost URLs may use self-signed development certificates.
-            ServerCertificateCustomValidationCallback =
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-        };
-        using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
-        var response = await httpClient.GetAsync(url, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
-        foreach (var header in response.Headers)
-            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        foreach (var header in response.Content.Headers)
-            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        sb.AppendLine();
-        sb.Append(body);
-
-        return sb.ToString();
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Localhost helpers
-    // ═══════════════════════════════════════════════════════════════
-
-    private static T DeserializePayload<T>(AgentJobDB job, string actionName) where T : class
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                $"{actionName} requires a JSON payload in ScriptJson.");
-
-        return JsonSerializer.Deserialize<T>(job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                $"Failed to deserialise {actionName} payload.");
-    }
-
-    private static string ValidateLocalhostUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            throw new InvalidOperationException(
-                "Localhost access requires a 'url' field.");
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            throw new InvalidOperationException(
-                $"Invalid URL: '{url}'.");
-
-        if (uri.Host is not ("localhost" or "127.0.0.1" or "[::1]"))
-            throw new InvalidOperationException(
-                $"URL host must be localhost, 127.0.0.1, or [::1]. Got: '{uri.Host}'.");
-
-        return url;
-    }
-
-    private static readonly JsonSerializerOptions _payloadJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    // ═══════════════════════════════════════════════════════════════
-    // QUERY SEARCH ENGINE
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class QuerySearchEnginePayload
-    {
-        public string? ResourceId { get; set; }
-        public string? TargetId { get; set; }
-        public string? Query { get; set; }
-        public int? Count { get; set; }
-        public int? Offset { get; set; }
-        public string? Language { get; set; }
-        public string? Region { get; set; }
-        public string? SafeSearch { get; set; }
-        public string? DateRestrict { get; set; }
-        public string? SiteRestrict { get; set; }
-        public string? FileType { get; set; }
-        public string? ExactTerms { get; set; }
-        public string? ExcludeTerms { get; set; }
-        public string? SearchType { get; set; }
-        public string? SortBy { get; set; }
-        public string? Topic { get; set; }
-        public string? Category { get; set; }
-    }
-
-    /// <summary>
-    /// Executes a search query against a registered <see cref="SearchEngineDB"/>.
-    /// The engine's <see cref="SearchEngineType"/> determines which API-specific
-    /// parameters are forwarded by <see cref="SearchEngineService.QueryAsync"/>.
-    /// </summary>
-    private async Task<string?> ExecuteQuerySearchEngineAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "QuerySearchEngine requires a ResourceId (search engine).");
-
-        var engine = await db.SearchEngines
-            .Include(e => e.Skill)
-            .FirstOrDefaultAsync(e => e.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Search engine {job.ResourceId} not found.");
-
-        var payload = DeserializePayload<QuerySearchEnginePayload>(job,
-            "QuerySearchEngine");
-
-        if (string.IsNullOrWhiteSpace(payload.Query))
-            throw new InvalidOperationException(
-                "QuerySearchEngine requires a 'query' field.");
-
-        AddLog(job, $"Search engine '{engine.Name}' ({engine.Type}): {payload.Query}");
-        await db.SaveChangesAsync(ct);
-
-        var result = await searchEngineService.QueryAsync(
-            engine,
-            payload.Query,
-            count: payload.Count ?? 10,
-            offset: payload.Offset ?? 0,
-            language: payload.Language,
-            region: payload.Region,
-            safeSearch: payload.SafeSearch,
-            dateRestrict: payload.DateRestrict,
-            siteRestrict: payload.SiteRestrict,
-            fileType: payload.FileType,
-            exactTerms: payload.ExactTerms,
-            excludeTerms: payload.ExcludeTerms,
-            searchType: payload.SearchType,
-            sortBy: payload.SortBy,
-            topic: payload.Topic,
-            category: payload.Category,
-            ct: ct);
-
-        if (engine.Skill is { SkillText.Length: > 0 } skill)
-            result = $"[Search Engine Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
-
-        return result;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ACCESS WEBSITE — external sites, hardened
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class AccessWebsitePayload
-    {
-        public string? ResourceId { get; set; }
-        public string? TargetId { get; set; }
-        public string? Mode { get; set; }
-        public string? Path { get; set; }
-    }
-
-    /// <summary>
-    /// Maximum response body size (2 MB) to prevent memory exhaustion from
-    /// malicious or very large external pages.
-    /// </summary>
-    private const int MaxWebsiteResponseBytes = 2 * 1024 * 1024;
-
-    /// <summary>
-    /// Content-Type prefixes that are considered safe to return as text.
-    /// Binary types (images, executables, archives, etc.) are blocked.
-    /// </summary>
-    private static readonly string[] SafeContentTypePrefixes =
-    [
-        "text/",
-        "application/json",
-        "application/xml",
-        "application/xhtml+xml",
-        "application/javascript",
-        "application/x-javascript",
-    ];
-
-    /// <summary>
-    /// Fetches an external website registered in <see cref="WebsiteDB"/>
-    /// using either a headless browser (<c>mode=html|screenshot</c>) or
-    /// a direct HTTP GET (<c>mode=cli</c>, the default).
-    /// <para>
-    /// Unlike localhost access, external websites are untrusted.
-    /// The following precautions are enforced:
+    /// Permission check for module-provided tool calls.
+    /// Resolves the module tool's <see cref="ModuleToolPermission"/> descriptor
+    /// and evaluates it:
     /// <list type="bullet">
-    ///   <item>Only the registered base URL (plus optional <c>path</c>
-    ///         suffix) is allowed — agents cannot browse arbitrary
-    ///         external sites.</item>
-    ///   <item>Responses are capped at <see cref="MaxWebsiteResponseBytes"/>
-    ///         to prevent memory exhaustion.</item>
-    ///   <item>Binary content types are rejected — only text-based
-    ///         responses are returned to the agent.</item>
-    ///   <item>Browser mode uses <c>--disable-downloads</c> to prevent
-    ///         the headless browser from saving files to disk.</item>
-    ///   <item>Redirect chains are limited to 10 hops and must stay
-    ///         within the registered origin (scheme + host + port).</item>
-    ///   <item>Private/loopback IPs are blocked to prevent SSRF.</item>
-    ///   <item>30-second hard timeout kills runaway requests.</item>
+    ///   <item>If <see cref="ModuleToolPermission.Check"/> is set, calls it directly.</item>
+    ///   <item>If <see cref="ModuleToolPermission.DelegateTo"/> is set, routes to the
+    ///         named <see cref="AgentActionService"/> method via the delegation map.</item>
+    ///   <item>Otherwise, the action is denied (no permission descriptor = no access).</item>
     /// </list>
-    /// </para>
     /// </summary>
-    private async Task<string?> ExecuteAccessWebsiteAsync(
+    private async Task<AgentActionResult> DispatchModulePermissionCheckAsync(
+        Guid agentId, Guid? resourceId, ActionCaller caller,
+        string? actionKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(actionKey))
+            return AgentActionResult.Denied("Module action requires an ActionKey to resolve permissions.");
+
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
+            return AgentActionResult.Denied($"No module registered for tool '{actionKey}'.");
+
+        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
+        if (descriptor is null)
+            return AgentActionResult.Denied($"Module tool '{actionKey}' has no permission descriptor.");
+
+        if (descriptor.IsPerResource && !resourceId.HasValue)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: ResourceId is null for per-resource tool '{actionKey}'",
+                "SharpClaw.CLI");
+            return AgentActionResult.Denied($"ResourceId is required for module tool '{actionKey}'.");
+        }
+
+        Debug.WriteLine(
+            $"[PermissionCheck] Tool='{actionKey}' AgentId={agentId} ResourceId={resourceId} DelegateTo='{descriptor.DelegateTo}'",
+            "SharpClaw.CLI");
+
+        // Direct callback takes priority.
+        if (descriptor.Check is not null)
+            return await descriptor.Check(agentId, resourceId, caller, ct);
+
+        // Delegate to a named AgentActionService method.
+        if (!string.IsNullOrWhiteSpace(descriptor.DelegateTo))
+        {
+            var result = actions.TryEvaluateByDelegateNameAsync(
+                descriptor.DelegateTo, agentId, resourceId, caller, ct);
+            if (result is not null) return await result;
+
+            return AgentActionResult.Denied(
+                $"Module tool '{actionKey}' delegates to '{descriptor.DelegateTo}' "
+                + "which is not a recognised permission check method.");
+        }
+
+        return AgentActionResult.Denied($"Module tool '{actionKey}' has no permission check configured.");
+    }
+
+    /// <summary>
+    /// Attempts to dispatch a job to a module-provided tool using the
+    /// explicit <see cref="AgentJobDB.ActionKey"/>.
+    /// Returns <c>null</c> if no module owns the resolved tool name.
+    /// </summary>
+    private async Task<string?> TryDispatchByActionKeyAsync(
         AgentJobDB job, CancellationToken ct)
     {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "AccessWebsite requires a ResourceId (Website).");
+        var actionKey = job.ActionKey;
 
-        var website = await db.Websites
-            .Include(w => w.Skill)
-            .FirstOrDefaultAsync(w => w.Id == job.ResourceId.Value, ct)
-            ?? throw new InvalidOperationException(
-                $"Website {job.ResourceId} not found.");
+        if (string.IsNullOrWhiteSpace(actionKey))
+            return null;
 
-        var payload = DeserializePayload<AccessWebsitePayload>(job, "AccessWebsite");
-        var mode = (payload.Mode ?? "cli").ToLowerInvariant();
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
+            return null;
 
-        // Build the final URL: registered base + optional path suffix.
-        var url = BuildWebsiteUrl(website.Url, payload.Path);
-
-        // Validate the resolved URL is safe for external access.
-        ValidateExternalUrl(url, website.Url);
-
-        AddLog(job, $"Website '{website.Name}' ({mode}): {url}");
-        await db.SaveChangesAsync(ct);
-
-        string? result = mode switch
+        // Parse the raw ScriptJson into tool parameters.  When ScriptJson
+        // is already a full ModuleEnvelope (created by ParseNativeToolCall),
+        // extract only the nested "params" element to avoid double-wrapping.
+        JsonElement paramsElement;
+        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
         {
-            "html" or "screenshot"
-                => await ExecuteAccessWebsiteBrowserAsync(job, url, mode, ct),
-            _ => await ExecuteAccessWebsiteCliAsync(url, ct),
-        };
-
-        // Prepend skill instructions when available so the agent knows
-        // how to interpret the website's structure and navigation.
-        if (website.Skill is { SkillText.Length: > 0 } skill)
-            result = $"[Website Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
-
-        return result;
-    }
-
-    /// <summary>
-    /// Browser-based external website access.  Identical to the localhost
-    /// browser implementation but with hardened flags for untrusted sites.
-    /// </summary>
-    private async Task<string?> ExecuteAccessWebsiteBrowserAsync(
-        AgentJobDB job, string url, string mode, CancellationToken ct)
-    {
-        var executable = configuration["Browser:Executable"] ?? ResolveChromiumExecutable();
-        var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
-
-        var tempFile = mode == "screenshot"
-            ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sc_web_{job.Id:N}.png")
-            : null;
-
-        // Security: external sites get stricter flags than localhost.
-        //   --disable-downloads           — block all file downloads
-        //   --disable-extensions          — no extension side-effects
-        //   --disable-plugins             — no NPAPI/PPAPI plugins
-        //   --disable-popup-blocking      — *off* so popups don't spawn
-        //   --no-first-run               — skip Chrome first-run experience
-        //   --disable-background-networking — reduce background traffic
-        //   --disable-default-apps        — no default app installs
-        //   --disable-sync               — no account sync
-        //
-        // NOTE: --ignore-certificate-errors is intentionally OMITTED for
-        // external sites — a bad cert is a genuine red flag.
-        var securityFlags = "--disable-downloads --disable-extensions --disable-plugins " +
-                            "--no-first-run --disable-background-networking " +
-                            "--disable-default-apps --disable-sync";
-
-        var headlessArgs = mode switch
-        {
-            "screenshot" =>
-                $"--headless --disable-gpu --no-sandbox --virtual-time-budget=10000 " +
-                $"{securityFlags} {extraArgs} --screenshot=\"{tempFile}\" \"{url}\"",
-            _ =>
-                $"--headless --disable-gpu --no-sandbox --virtual-time-budget=10000 " +
-                $"{securityFlags} {extraArgs} --dump-dom \"{url}\"",
-        };
-
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = executable,
-            Arguments = headlessArgs,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-
-        using var process = new System.Diagnostics.Process { StartInfo = psi };
-        process.Start();
-
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            throw new InvalidOperationException(
-                $"Browser timed out after 30 seconds for URL: {url}");
-        }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"Browser exited with code {process.ExitCode}.\nstderr: {stderr}");
-
-        if (mode == "screenshot" && tempFile is not null && File.Exists(tempFile))
-        {
-            var bytes = await File.ReadAllBytesAsync(tempFile, ct);
-            File.Delete(tempFile);
-            return $"Screenshot captured ({bytes.Length} bytes) of {url}\n[SCREENSHOT_BASE64]{Convert.ToBase64String(bytes)}";
-        }
-
-        return string.IsNullOrWhiteSpace(stdout) ? "(empty page)" : stdout;
-    }
-
-    /// <summary>
-    /// Direct HTTP GET for an external website. Enforces size limits,
-    /// content-type allow-listing, redirect origin pinning, and SSRF
-    /// protection.
-    /// </summary>
-    private async Task<string?> ExecuteAccessWebsiteCliAsync(
-        string url, CancellationToken ct)
-    {
-        // ── Handler: redirect pinning + SSRF protection ──────────
-        var allowedOrigin = new Uri(url).GetLeftPart(UriPartial.Authority);
-
-        using var handler = new HttpClientHandler
-        {
-            MaxAutomaticRedirections = 10,
-            AllowAutoRedirect = false, // we follow redirects manually
-        };
-
-        using var httpClient = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(30),
-            MaxResponseContentBufferSize = MaxWebsiteResponseBytes,
-        };
-
-        // Set a realistic user-agent so sites don't block us outright.
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (compatible; SharpClaw/1.0; +https://github.com/mkn8rn/SharpClaw)");
-
-        // ── Manual redirect loop with origin pinning ─────────────
-        var currentUrl = url;
-        HttpResponseMessage response;
-        var redirectCount = 0;
-        const int maxRedirects = 10;
-
-        do
-        {
-            var requestUri = new Uri(currentUrl);
-            RejectPrivateAddress(requestUri);
-
-            response = await httpClient.GetAsync(
-                requestUri, HttpCompletionOption.ResponseHeadersRead, ct);
-
-            if ((int)response.StatusCode is >= 300 and < 400
-                && response.Headers.Location is { } location)
-            {
-                var redirectUri = location.IsAbsoluteUri
-                    ? location
-                    : new Uri(requestUri, location);
-
-                // Pin redirects to the original origin to prevent open-redirect SSRF.
-                if (!string.Equals(
-                        redirectUri.GetLeftPart(UriPartial.Authority),
-                        allowedOrigin, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(
-                        $"Redirect to a different origin is blocked: {redirectUri}");
-
-                currentUrl = redirectUri.AbsoluteUri;
-                response.Dispose();
-                redirectCount++;
-            }
+            using var doc = JsonDocument.Parse(job.ScriptJson);
+            var root = doc.RootElement;
+            if ((root.TryGetProperty("module", out _) || root.TryGetProperty("Module", out _)) &&
+                (root.TryGetProperty("tool", out _) || root.TryGetProperty("Tool", out _)) &&
+                (root.TryGetProperty("params", out var nested) || root.TryGetProperty("Params", out nested)))
+                paramsElement = nested.Clone();
             else
-            {
-                break;
-            }
-        } while (redirectCount < maxRedirects);
-
-        if (redirectCount >= maxRedirects)
-            throw new InvalidOperationException(
-                $"Too many redirects ({maxRedirects}) for URL: {url}");
-
-        // ── Content-type guard: reject binary payloads ────────────
-        var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-        var isSafeContent = SafeContentTypePrefixes.Any(
-            prefix => contentType.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-
-        if (!isSafeContent)
-        {
-            response.Dispose();
-            throw new InvalidOperationException(
-                $"Blocked: content type '{contentType}' is not text-based. " +
-                "Binary downloads are not permitted.");
-        }
-
-        // ── Read body with size cap ──────────────────────────────
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-        var buffer = new char[MaxWebsiteResponseBytes / sizeof(char)];
-        var charsRead = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
-        var body = new string(buffer, 0, charsRead);
-
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
-        foreach (var header in response.Headers)
-            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        foreach (var header in response.Content.Headers)
-            sb.AppendLine($"{header.Key}: {string.Join(", ", header.Value)}");
-        sb.AppendLine();
-        sb.Append(body);
-
-        if (!reader.EndOfStream)
-            sb.AppendLine("\n\n[TRUNCATED — response exceeded 2 MB limit]");
-
-        return sb.ToString();
-    }
-
-    // ── Website helpers ──────────────────────────────────────────
-
-    /// <summary>
-    /// Builds the final URL by combining the website's registered base URL
-    /// with an optional agent-specified path suffix.
-    /// </summary>
-    private static string BuildWebsiteUrl(string baseUrl, string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return baseUrl;
-
-        // Prevent path traversal and injection.
-        if (path.Contains("..", StringComparison.Ordinal))
-            throw new InvalidOperationException(
-                "Path traversal ('..') is not permitted.");
-
-        // Strip leading slash to avoid double-slash.
-        var trimmedBase = baseUrl.TrimEnd('/');
-        var trimmedPath = path.TrimStart('/');
-
-        return $"{trimmedBase}/{trimmedPath}";
-    }
-
-    /// <summary>
-    /// Validates that the resolved URL is safe for external access:
-    /// must be http/https, must share the same origin as the registered
-    /// website, and must not target private/loopback addresses.
-    /// </summary>
-    private static void ValidateExternalUrl(string url, string registeredBaseUrl)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            throw new InvalidOperationException($"Invalid URL: '{url}'.");
-
-        if (uri.Scheme is not ("http" or "https"))
-            throw new InvalidOperationException(
-                $"Only http/https schemes are allowed. Got: '{uri.Scheme}'.");
-
-        // The resolved URL must stay within the registered website's origin.
-        if (!Uri.TryCreate(registeredBaseUrl, UriKind.Absolute, out var baseUri))
-            throw new InvalidOperationException(
-                $"Registered website has an invalid base URL: '{registeredBaseUrl}'.");
-
-        if (!string.Equals(
-                uri.GetLeftPart(UriPartial.Authority),
-                baseUri.GetLeftPart(UriPartial.Authority),
-                StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
-                $"URL origin does not match the registered website. " +
-                $"Expected: {baseUri.GetLeftPart(UriPartial.Authority)}, " +
-                $"got: {uri.GetLeftPart(UriPartial.Authority)}.");
-
-        RejectPrivateAddress(uri);
-    }
-
-    /// <summary>
-    /// Blocks requests to loopback and private IP ranges to prevent SSRF.
-    /// External website access must never target internal infrastructure.
-    /// </summary>
-    private static void RejectPrivateAddress(Uri uri)
-    {
-        if (uri.Host is "localhost" or "127.0.0.1" or "[::1]")
-            throw new InvalidOperationException(
-                "External website access cannot target localhost. " +
-                "Use the localhost tools instead.");
-
-        if (System.Net.IPAddress.TryParse(uri.Host, out var ip))
-        {
-            if (System.Net.IPAddress.IsLoopback(ip))
-                throw new InvalidOperationException(
-                    $"Blocked: loopback address '{uri.Host}'.");
-
-            // RFC 1918 / RFC 4193 private ranges
-            var bytes = ip.GetAddressBytes();
-            var isPrivate = bytes switch
-            {
-                [10, ..] => true,                                      // 10.0.0.0/8
-                [172, >= 16 and <= 31, ..] => true,                    // 172.16.0.0/12
-                [192, 168, ..] => true,                                // 192.168.0.0/16
-                [169, 254, ..] => true,                                // 169.254.0.0/16 (link-local)
-                [0, ..] => true,                                       // 0.0.0.0/8
-                _ => false,
-            };
-
-            if (isPrivate)
-                throw new InvalidOperationException(
-                    $"Blocked: private/reserved IP address '{uri.Host}'.");
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // CAPTURE DISPLAY
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Captures a screenshot of a display device. On Windows, uses
-    /// <c>Graphics.CopyFromScreen</c> via the GDI+ interop built into
-    /// .NET.  The result is a base64-encoded PNG with the same
-    /// <c>[SCREENSHOT_BASE64]</c> marker that
-    /// <see cref="ChatService"/> splits on for vision models.
-    /// </summary>
-    private async Task<string?> ExecuteCaptureDisplayAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException("CaptureDisplay requires a ResourceId (DisplayDevice).");
-
-        var device = await db.DisplayDevices.FirstOrDefaultAsync(
-            d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Display device {job.ResourceId} not found.");
-
-        AddLog(job, $"Capturing display: {device.Name} (index {device.DisplayIndex})");
-        await db.SaveChangesAsync(ct);
-
-        byte[] imageBytes;
-
-        if (OperatingSystem.IsWindows())
-        {
-            imageBytes = CaptureWindowsDisplay(device.DisplayIndex);
+                paramsElement = root.Clone();
         }
         else
         {
-            throw new PlatformNotSupportedException(
-                "Display capture is currently only supported on Windows.");
+            paramsElement = JsonDocument.Parse("{}").RootElement.Clone();
         }
 
-        return $"Screenshot captured ({imageBytes.Length} bytes) of display '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(imageBytes)}";
-    }
+        // Build a ModuleEnvelope from the job's existing data.
+        var envelope = new ModuleEnvelope(moduleId, toolName, paramsElement);
+        var syntheticJson = JsonSerializer.Serialize(envelope, SecureJsonOptions.Envelope);
 
-    /// <summary>
-    /// Captures a single monitor on Windows using GDI+ via
-    /// <c>System.Drawing</c> interop (available on .NET 10 Windows).
-    /// The image is encoded as lossless PNG at native resolution to
-    /// preserve full detail on high-DPI (4K/8K) displays.
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static byte[] CaptureWindowsDisplay(int displayIndex)
-    {
-        var bounds = GetDisplayBounds(displayIndex);
-
-        using var bitmap = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
-        using (var g = System.Drawing.Graphics.FromImage(bitmap))
+        // Temporarily patch ScriptJson so DispatchModuleExecutionAsync can deserialize it.
+        var original = job.ScriptJson;
+        job.ScriptJson = syntheticJson;
+        try
         {
-            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
+            return await DispatchModuleExecutionAsync(job, ct);
         }
-
-        return EncodePng(bitmap);
-    }
-
-    /// <summary>
-    /// Captures a display and draws a high-contrast crosshair annotation
-    /// at the given display-relative click coordinates so the agent can
-    /// see exactly where it clicked.  Two full-span ruler lines
-    /// (horizontal + vertical) intersect at the click point, with a
-    /// concentric circle marker at the centre.
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static byte[] CaptureWindowsDisplayWithClickMarker(
-        int displayIndex, int clickX, int clickY)
-    {
-        var bounds = GetDisplayBounds(displayIndex);
-
-        using var bitmap = new System.Drawing.Bitmap(bounds.Width, bounds.Height);
-        using (var g = System.Drawing.Graphics.FromImage(bitmap))
+        finally
         {
-            g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
+            job.ScriptJson = original;
         }
-
-        DrawClickMarker(bitmap, clickX, clickY);
-        return EncodePng(bitmap);
-    }
-
-    /// <summary>
-    /// Draws a high-contrast click indicator on the bitmap:
-    /// <list type="bullet">
-    ///   <item>Full-width horizontal ruler line through <paramref name="y"/>.</item>
-    ///   <item>Full-height vertical ruler line through <paramref name="x"/>.</item>
-    ///   <item>Concentric circle marker at (<paramref name="x"/>, <paramref name="y"/>).</item>
-    /// </list>
-    /// Each element has a dark outline underneath for contrast on any background.
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static void DrawClickMarker(System.Drawing.Bitmap bitmap, int x, int y)
-    {
-        // Clamp to bitmap bounds to avoid GDI+ errors on edge clicks.
-        x = Math.Clamp(x, 0, bitmap.Width - 1);
-        y = Math.Clamp(y, 0, bitmap.Height - 1);
-
-        using var g = System.Drawing.Graphics.FromImage(bitmap);
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-        var w = bitmap.Width;
-        var h = bitmap.Height;
-
-        // ── Ruler lines: dark outline + bright red ────────────────
-        using var outlinePen = new System.Drawing.Pen(
-            System.Drawing.Color.FromArgb(180, 0, 0, 0), 3f);
-        using var rulerPen = new System.Drawing.Pen(
-            System.Drawing.Color.FromArgb(210, 255, 0, 0), 1.5f);
-
-        // Horizontal ruler
-        g.DrawLine(outlinePen, 0, y, w, y);
-        g.DrawLine(rulerPen, 0, y, w, y);
-
-        // Vertical ruler
-        g.DrawLine(outlinePen, x, 0, x, h);
-        g.DrawLine(rulerPen, x, 0, x, h);
-
-        // ── Centre marker: outer ring + filled inner + white dot ──
-        const int outerR = 20;
-        const int innerR = 8;
-
-        using var ringOutline = new System.Drawing.Pen(
-            System.Drawing.Color.FromArgb(200, 0, 0, 0), 3f);
-        using var ringBright = new System.Drawing.Pen(
-            System.Drawing.Color.FromArgb(230, 255, 0, 0), 2f);
-        using var fillBrush = new System.Drawing.SolidBrush(
-            System.Drawing.Color.FromArgb(160, 255, 50, 50));
-        using var dotBrush = new System.Drawing.SolidBrush(
-            System.Drawing.Color.White);
-
-        g.DrawEllipse(ringOutline,
-            x - outerR, y - outerR, outerR * 2, outerR * 2);
-        g.DrawEllipse(ringBright,
-            x - outerR, y - outerR, outerR * 2, outerR * 2);
-        g.FillEllipse(fillBrush,
-            x - innerR, y - innerR, innerR * 2, innerR * 2);
-        g.FillEllipse(dotBrush, x - 3, y - 3, 6, 6);
-    }
-
-    /// <summary>
-    /// Encodes a bitmap as lossless PNG at native resolution.
-    /// Preserves full detail on high-DPI (4K/8K) displays.
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static byte[] EncodePng(System.Drawing.Bitmap bitmap)
-    {
-        using var ms = new System.IO.MemoryStream();
-        bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-        return ms.ToArray();
-    }
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static System.Drawing.Rectangle GetDisplayBounds(int displayIndex)
-    {
-        var monitors = new List<MONITORINFO>();
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMonitor, _, _, _) =>
-        {
-            var info = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
-            if (GetMonitorInfo(hMonitor, ref info))
-                monitors.Add(info);
-            return true;
-        }, IntPtr.Zero);
-
-        if (displayIndex >= 0 && displayIndex < monitors.Count)
-        {
-            var r = monitors[displayIndex].rcMonitor;
-            return new System.Drawing.Rectangle(r.left, r.top, r.right - r.left, r.bottom - r.top);
-        }
-
-        // Fallback: virtual screen (all monitors combined).
-        var vsX = GetSystemMetrics(76); // SM_XVIRTUALSCREEN
-        var vsY = GetSystemMetrics(77); // SM_YVIRTUALSCREEN
-        var vsW = GetSystemMetrics(78); // SM_CXVIRTUALSCREEN
-        var vsH = GetSystemMetrics(79); // SM_CYVIRTUALSCREEN
-        return new System.Drawing.Rectangle(vsX, vsY, vsW, vsH);
-    }
-
-    // ── Win32 P/Invoke for monitor enumeration ────────────────────
-
-    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, IntPtr lprcMonitor, IntPtr dwData);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static extern int GetSystemMetrics(int nIndex);
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct RECT { public int left, top, right, bottom; }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct MONITORINFO
-    {
-        public int cbSize;
-        public RECT rcMonitor;
-        public RECT rcWork;
-        public uint dwFlags;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // DESKTOP INTERACTION — ClickDesktop / TypeOnDesktop
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class ClickDesktopPayload
-    {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public string? Button { get; set; }
-        public string? ClickType { get; set; }
-    }
-
-    private sealed class TypeOnDesktopPayload
-    {
-        public string? Text { get; set; }
-        public int? X { get; set; }
-        public int? Y { get; set; }
-    }
-
-    /// <summary>
-    /// Simulates a mouse click at the given display-relative coordinates.
-    /// Coordinates are translated from the display device's bounds to
-    /// the virtual screen space required by <c>SendInput</c>.
-    /// </summary>
-    private async Task<string?> ExecuteClickDesktopAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException(
-                "Desktop click is currently only supported on Windows.");
-
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "ClickDesktop requires a ResourceId (DisplayDevice).");
-
-        var device = await db.DisplayDevices.FirstOrDefaultAsync(
-            d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Display device {job.ResourceId} not found.");
-
-        var payload = DeserializePayload<ClickDesktopPayload>(job, "ClickDesktop");
-        var button = (payload.Button ?? "left").ToLowerInvariant();
-        var clickType = (payload.ClickType ?? "single").ToLowerInvariant();
-
-        // Coordinates are in native display-relative space (no scaling).
-        var bounds = GetDisplayBounds(device.DisplayIndex);
-        var displayX = payload.X;
-        var displayY = payload.Y;
-
-        // Translate display-relative → absolute virtual screen coords
-        var absX = bounds.X + displayX;
-        var absY = bounds.Y + displayY;
-
-        AddLog(job, $"Click {button} {clickType} at ({displayX},{displayY}) on '{device.Name}' → abs ({absX},{absY})");
-        await db.SaveChangesAsync(ct);
-
-        PerformClick(absX, absY, button, clickType);
-
-        // Capture a follow-up screenshot with a crosshair overlay so
-        // the agent can see exactly where it clicked.
-        var imageBytes = CaptureWindowsDisplayWithClickMarker(
-            device.DisplayIndex, displayX, displayY);
-        return $"Clicked {button} ({clickType}) at ({displayX},{displayY}) on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(imageBytes)}";
-    }
-
-    /// <summary>
-    /// Types text using <c>SendInput</c> keyboard events. Optionally
-    /// clicks at a position first (e.g. to focus an input field).
-    /// </summary>
-    private async Task<string?> ExecuteTypeOnDesktopAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException(
-                "Desktop typing is currently only supported on Windows.");
-
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "TypeOnDesktop requires a ResourceId (DisplayDevice).");
-
-        var device = await db.DisplayDevices.FirstOrDefaultAsync(
-            d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Display device {job.ResourceId} not found.");
-
-        var payload = DeserializePayload<TypeOnDesktopPayload>(job, "TypeOnDesktop");
-
-        if (string.IsNullOrEmpty(payload.Text))
-            throw new InvalidOperationException("TypeOnDesktop requires a 'text' field.");
-
-        // If coordinates given, click to focus first.
-        // Coordinates are in native display-relative space (no scaling).
-        if (payload.X.HasValue && payload.Y.HasValue)
-        {
-            var bounds = GetDisplayBounds(device.DisplayIndex);
-            var displayX = payload.X.Value;
-            var displayY = payload.Y.Value;
-            var absX = bounds.X + displayX;
-            var absY = bounds.Y + displayY;
-
-            AddLog(job, $"Click to focus at ({displayX},{displayY}) on '{device.Name}' → abs ({absX},{absY})");
-            PerformClick(absX, absY, "left", "single");
-            await Task.Delay(100, ct); // Brief pause for focus
-        }
-
-        var preview = payload.Text.Length <= 200
-            ? payload.Text
-            : string.Concat(payload.Text.AsSpan(0, 200), "… (truncated)");
-        AddLog(job, $"Typing {payload.Text.Length} characters on '{device.Name}': {preview}");
-        await db.SaveChangesAsync(ct);
-
-        PerformType(payload.Text);
-
-        // Brief pause for UI to settle, then screenshot
-        await Task.Delay(200, ct);
-        var imageBytes = CaptureWindowsDisplay(device.DisplayIndex);
-        return $"Typed {payload.Text.Length} characters on '{device.Name}'\n[SCREENSHOT_BASE64]{Convert.ToBase64String(imageBytes)}";
-    }
-
-    // ── Win32 SendInput helpers ───────────────────────────────────
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static void PerformClick(int absX, int absY, string button, string clickType)
-    {
-        // Move cursor
-        SetCursorPos(absX, absY);
-
-        // Determine flags
-        uint downFlag, upFlag;
-        switch (button)
-        {
-            case "right":
-                downFlag = MOUSEEVENTF_RIGHTDOWN;
-                upFlag = MOUSEEVENTF_RIGHTUP;
-                break;
-            case "middle":
-                downFlag = MOUSEEVENTF_MIDDLEDOWN;
-                upFlag = MOUSEEVENTF_MIDDLEUP;
-                break;
-            default: // left
-                downFlag = MOUSEEVENTF_LEFTDOWN;
-                upFlag = MOUSEEVENTF_LEFTUP;
-                break;
-        }
-
-        var clicks = clickType == "double" ? 2 : 1;
-        for (var i = 0; i < clicks; i++)
-        {
-            var inputs = new INPUT[2];
-            inputs[0] = CreateMouseInput(downFlag);
-            inputs[1] = CreateMouseInput(upFlag);
-            SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
-        }
-    }
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static void PerformType(string text)
-    {
-        // Use KEYEVENTF_UNICODE so we don't need to map individual
-        // keycodes — SendInput accepts raw UTF-16 characters.
-        // Newlines (\r\n, \n, \r) are sent as VK_RETURN virtual-key
-        // events because control characters are ignored by UNICODE mode.
-        var inputs = new List<INPUT>(text.Length * 2);
-        for (var i = 0; i < text.Length; i++)
-        {
-            var c = text[i];
-
-            if (c == '\r')
-            {
-                // Skip \r when followed by \n — the \n will send Enter
-                if (i + 1 < text.Length && text[i + 1] == '\n')
-                    continue;
-                // Standalone \r → Enter
-                inputs.Add(CreateVirtualKeyInput(VK_RETURN, 0));
-                inputs.Add(CreateVirtualKeyInput(VK_RETURN, KEYEVENTF_KEYUP));
-                continue;
-            }
-
-            if (c == '\n')
-            {
-                inputs.Add(CreateVirtualKeyInput(VK_RETURN, 0));
-                inputs.Add(CreateVirtualKeyInput(VK_RETURN, KEYEVENTF_KEYUP));
-                continue;
-            }
-
-            if (c == '\t')
-            {
-                inputs.Add(CreateVirtualKeyInput(VK_TAB, 0));
-                inputs.Add(CreateVirtualKeyInput(VK_TAB, KEYEVENTF_KEYUP));
-                continue;
-            }
-
-            inputs.Add(CreateKeyboardInput(c, KEYEVENTF_UNICODE));
-            inputs.Add(CreateKeyboardInput(c, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-        }
-
-        if (inputs.Count > 0)
-            SendInput((uint)inputs.Count, inputs.ToArray(), System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
-    }
-
-    private static INPUT CreateMouseInput(uint flags) => new()
-    {
-        type = INPUT_MOUSE,
-        u = new InputUnion { mi = new MOUSEINPUT { dwFlags = flags } }
-    };
-
-    private static INPUT CreateKeyboardInput(char c, uint flags) => new()
-    {
-        type = INPUT_KEYBOARD,
-        u = new InputUnion { ki = new KEYBDINPUT { wScan = c, dwFlags = flags } }
-    };
-
-    private static INPUT CreateVirtualKeyInput(ushort vk, uint flags) => new()
-    {
-        type = INPUT_KEYBOARD,
-        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, dwFlags = flags } }
-    };
-
-    // ── Win32 SendInput P/Invoke types ────────────────────────────
-
-    private const uint INPUT_MOUSE = 0;
-    private const uint INPUT_KEYBOARD = 1;
-    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
-    private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
-    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
-    private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
-    private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
-    private const uint KEYEVENTF_UNICODE = 0x0004;
-    private const uint KEYEVENTF_KEYUP = 0x0002;
-    private const ushort VK_RETURN = 0x0D;
-    private const ushort VK_TAB = 0x09;
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static extern bool SetCursorPos(int X, int Y);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct MOUSEINPUT
-    {
-        public int dx, dy;
-        public uint mouseData, dwFlags, time;
-        public IntPtr dwExtraInfo;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk, wScan;
-        public uint dwFlags, time;
-        public IntPtr dwExtraInfo;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct HARDWAREINPUT
-    {
-        public uint uMsg;
-        public ushort wParamL, wParamH;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [System.Runtime.InteropServices.FieldOffset(0)] public MOUSEINPUT mi;
-        [System.Runtime.InteropServices.FieldOffset(0)] public KEYBDINPUT ki;
-        [System.Runtime.InteropServices.FieldOffset(0)] public HARDWAREINPUT hi;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public uint type;
-        public InputUnion u;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // EDITOR ACTIONS — delegated to connected IDE extension
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Maps the <see cref="AgentActionType"/> to the WebSocket action
-    /// name, extracts parameters from the job's <see cref="AgentJobDB.ScriptJson"/>,
-    /// and routes the request to the connected editor via the
-    /// <see cref="EditorBridgeService"/>.
-    /// </summary>
-    private async Task<string?> ExecuteEditorActionAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                $"{job.ActionType} requires a ResourceId (EditorSession).");
-
-        var actionName = job.ActionType switch
-        {
-            AgentActionType.EditorReadFile => "read_file",
-            AgentActionType.EditorGetOpenFiles => "get_open_files",
-            AgentActionType.EditorGetSelection => "get_selection",
-            AgentActionType.EditorGetDiagnostics => "get_diagnostics",
-            AgentActionType.EditorApplyEdit => "apply_edit",
-            AgentActionType.EditorCreateFile => "create_file",
-            AgentActionType.EditorDeleteFile => "delete_file",
-            AgentActionType.EditorShowDiff => "show_diff",
-            AgentActionType.EditorRunBuild => "run_build",
-            AgentActionType.EditorRunTerminal => "run_terminal",
-            _ => throw new InvalidOperationException(
-                $"Unknown editor action: {job.ActionType}")
-        };
-
-        // Parse parameters from the tool call JSON
-        Dictionary<string, object?>? parameters = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            parameters = System.Text.Json.JsonSerializer
-                .Deserialize<Dictionary<string, object?>>(
-                    job.ScriptJson, _payloadJsonOptions);
-            // Remove targetId — it's the resource ID, not a parameter
-            parameters?.Remove("targetId");
-        }
-
-        AddLog(job, $"Editor action '{actionName}' → session {job.ResourceId}");
-        await db.SaveChangesAsync(ct);
-
-        var response = await editorBridge.SendRequestAsync(
-            job.ResourceId.Value, actionName, parameters, ct);
-
-        if (!response.Success)
-            throw new InvalidOperationException(
-                $"Editor action '{actionName}' failed: {response.Error}");
-
-        return response.Data ?? $"Editor action '{actionName}' completed.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // BOT MESSAGING
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class SendBotMessagePayload
-    {
-        public string? ResourceId { get; set; }
-        public string? RecipientId { get; set; }
-        public string? Message { get; set; }
-        public string? Subject { get; set; }
-    }
-
-    private async Task<string?> ExecuteSendBotMessageAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            throw new InvalidOperationException(
-                "SendBotMessage requires a JSON payload in ScriptJson.");
-
-        var payload = JsonSerializer.Deserialize<SendBotMessagePayload>(
-            job.ScriptJson, _payloadJsonOptions)
-            ?? throw new InvalidOperationException(
-                "Failed to deserialise SendBotMessage payload.");
-
-        if (string.IsNullOrWhiteSpace(payload.RecipientId))
-            throw new InvalidOperationException(
-                "SendBotMessage payload requires a 'recipientId' field.");
-
-        if (string.IsNullOrWhiteSpace(payload.Message))
-            throw new InvalidOperationException(
-                "SendBotMessage payload requires a 'message' field.");
-
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                "SendBotMessage requires a ResourceId (bot integration ID).");
-
-        AddLog(job, $"Sending bot message via integration {job.ResourceId}");
-        await db.SaveChangesAsync(ct);
-
-        await botMessageSender.SendMessageAsync(
-            job.ResourceId.Value, payload.RecipientId, payload.Message,
-            payload.Subject, ct);
-
-        return $"Message sent successfully via bot integration {job.ResourceId} to recipient '{payload.RecipientId}'.";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // DOCUMENT SESSION — register a file as a document session
-    // ═══════════════════════════════════════════════════════════════
-
-    private sealed class RegisterDocumentPayload
-    {
-        public string? FilePath { get; set; }
-        public string? Name { get; set; }
-        public string? Description { get; set; }
-    }
-
-    private async Task<string?> ExecuteCreateDocumentSessionAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        var payload = DeserializePayload<RegisterDocumentPayload>(job, "CreateDocumentSession");
-
-        if (string.IsNullOrWhiteSpace(payload.FilePath))
-            throw new InvalidOperationException(
-                "CreateDocumentSession requires a 'filePath' field.");
-
-        var fullPath = Path.GetFullPath(payload.FilePath);
-        if (!File.Exists(fullPath))
-            throw new InvalidOperationException(
-                $"File not found: {fullPath}");
-
-        var docSession = await documentSessionService.CreateAsync(
-            new Contracts.DTOs.Documents.CreateDocumentSessionRequest(
-                fullPath,
-                payload.Name ?? Path.GetFileNameWithoutExtension(fullPath),
-                payload.Description),
-            ct);
-
-        AddLog(job, $"Registered document session '{docSession.Name}' (id={docSession.Id}).");
-        return JsonSerializer.Serialize(new
-        {
-            sessionId = docSession.Id,
-            name = docSession.Name,
-            filePath = docSession.FilePath,
-            documentType = docSession.DocumentType.ToString(),
-        });
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // SPREADSHEET — file-based (ClosedXML / CsvHelper)
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task<string?> ExecuteSpreadsheetActionAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                $"{job.ActionType} requires a ResourceId (DocumentSession).");
-
-        var docSession = await db.DocumentSessions.FirstOrDefaultAsync(
-            d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Document session {job.ResourceId} not found.");
-
-        Dictionary<string, object?>? parameters = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            parameters = JsonSerializer.Deserialize<Dictionary<string, object?>>(
-                job.ScriptJson, _payloadJsonOptions);
-            parameters?.Remove("targetId");
-        }
-
-        var sheetName = parameters?.GetValueOrDefault("sheetName")?.ToString();
-        var range = parameters?.GetValueOrDefault("range")?.ToString();
-
-        AddLog(job, $"{job.ActionType} on '{docSession.Name}' ({docSession.FilePath})");
-        await db.SaveChangesAsync(ct);
-
-        return job.ActionType switch
-        {
-            AgentActionType.SpreadsheetReadRange
-                => spreadsheetService.ReadRange(docSession.FilePath, sheetName, range),
-            AgentActionType.SpreadsheetWriteRange
-                => spreadsheetService.WriteRange(
-                    docSession.FilePath, sheetName, range,
-                    ExtractJsonData(parameters)),
-            AgentActionType.SpreadsheetListSheets
-                => spreadsheetService.ListSheets(docSession.FilePath),
-            AgentActionType.SpreadsheetCreateSheet
-                => spreadsheetService.CreateSheet(
-                    docSession.FilePath,
-                    sheetName ?? throw new InvalidOperationException(
-                        "spreadsheet_create_sheet requires a 'sheetName' parameter.")),
-            AgentActionType.SpreadsheetDeleteSheet
-                => spreadsheetService.DeleteSheet(
-                    docSession.FilePath,
-                    sheetName ?? throw new InvalidOperationException(
-                        "spreadsheet_delete_sheet requires a 'sheetName' parameter.")),
-            AgentActionType.SpreadsheetGetInfo
-                => spreadsheetService.GetInfo(docSession.FilePath),
-            _ => throw new InvalidOperationException(
-                $"Unexpected spreadsheet action: {job.ActionType}"),
-        };
-    }
-
-    private async Task<string?> ExecuteSpreadsheetCreateWorkbookAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        Dictionary<string, object?>? parameters = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            parameters = JsonSerializer.Deserialize<Dictionary<string, object?>>(
-                job.ScriptJson, _payloadJsonOptions);
-        }
-
-        var filePath = parameters?.GetValueOrDefault("filePath")?.ToString()
-            ?? throw new InvalidOperationException(
-                "spreadsheet_create_workbook requires a 'filePath' parameter.");
-
-        var fullPath = Path.GetFullPath(filePath);
-        var sheetName = parameters?.GetValueOrDefault("sheetName")?.ToString();
-
-        AddLog(job, $"Creating workbook at '{fullPath}'");
-        await db.SaveChangesAsync(ct);
-
-        var result = spreadsheetService.CreateWorkbook(
-            fullPath, sheetName, ExtractJsonDataOrNull(parameters));
-
-        // Auto-register a DocumentSession for the new workbook
-        var docSession = await documentSessionService.CreateAsync(
-            new Contracts.DTOs.Documents.CreateDocumentSessionRequest(
-                fullPath,
-                Path.GetFileNameWithoutExtension(fullPath)),
-            ct);
-
-        AddLog(job, $"Auto-registered document session '{docSession.Name}' (id={docSession.Id}).");
-
-        return JsonSerializer.Serialize(new
-        {
-            sessionId = docSession.Id,
-            name = docSession.Name,
-            filePath = docSession.FilePath,
-            documentType = docSession.DocumentType.ToString(),
-            createResult = result,
-        });
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // SPREADSHEET — live Excel COM Interop (Windows only)
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task<string?> ExecuteSpreadsheetLiveActionAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        if (!job.ResourceId.HasValue)
-            throw new InvalidOperationException(
-                $"{job.ActionType} requires a ResourceId (DocumentSession).");
-
-        var docSession = await db.DocumentSessions.FirstOrDefaultAsync(
-            d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Document session {job.ResourceId} not found.");
-
-        Dictionary<string, object?>? parameters = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            parameters = JsonSerializer.Deserialize<Dictionary<string, object?>>(
-                job.ScriptJson, _payloadJsonOptions);
-            parameters?.Remove("targetId");
-        }
-
-        var sheetName = parameters?.GetValueOrDefault("sheetName")?.ToString();
-        var range = parameters?.GetValueOrDefault("range")?.ToString();
-
-        AddLog(job, $"{job.ActionType} (live COM) on '{docSession.Name}' ({docSession.FilePath})");
-        await db.SaveChangesAsync(ct);
-
-        return job.ActionType switch
-        {
-            AgentActionType.SpreadsheetLiveReadRange
-                => excelComInteropService.ReadRange(docSession.FilePath, sheetName, range),
-            AgentActionType.SpreadsheetLiveWriteRange
-                => excelComInteropService.WriteRange(
-                    docSession.FilePath, sheetName, range,
-                    ExtractJsonData(parameters)),
-            _ => throw new InvalidOperationException(
-                $"Unexpected live spreadsheet action: {job.ActionType}"),
-        };
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // DESKTOP AWARENESS — enumerate windows / launch app
-    // ═══════════════════════════════════════════════════════════════
-
-    private Task<string?> ExecuteEnumerateWindowsAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        AddLog(job, "Enumerating desktop windows");
-        return Task.FromResult<string?>(desktopAwarenessService.EnumerateWindows());
-    }
-
-    private sealed class LaunchApplicationPayload
-    {
-        public string? TargetId { get; set; }
-        public string? Alias { get; set; }
-        public string? Arguments { get; set; }
-        public string? FilePath { get; set; }
-    }
-
-    private async Task<string?> ExecuteLaunchNativeApplicationAsync(
-        AgentJobDB job, CancellationToken ct)
-    {
-        Dictionary<string, object?>? parameters = null;
-        if (!string.IsNullOrWhiteSpace(job.ScriptJson))
-        {
-            parameters = JsonSerializer.Deserialize<Dictionary<string, object?>>(
-                job.ScriptJson, _payloadJsonOptions);
-            parameters?.Remove("targetId");
-            parameters?.Remove("alias");
-        }
-
-        // Resolve the native application by ResourceId (GUID) or alias.
-        NativeApplicationDB? app = null;
-
-        if (job.ResourceId.HasValue)
-        {
-            app = await db.NativeApplications.FirstOrDefaultAsync(
-                n => n.Id == job.ResourceId, ct);
-        }
-
-        if (app is null)
-        {
-            var alias = parameters?.GetValueOrDefault("alias")?.ToString();
-            if (!string.IsNullOrWhiteSpace(alias))
-                app = await nativeApplicationService.ResolveAsync(alias, ct);
-        }
-
-        if (app is null)
-            throw new InvalidOperationException(
-                job.ResourceId.HasValue
-                    ? $"Native application {job.ResourceId} not found."
-                    : "LaunchNativeApplication requires a targetId or alias.");
-
-        var arguments = parameters?.GetValueOrDefault("arguments")?.ToString();
-        var filePath = parameters?.GetValueOrDefault("filePath")?.ToString();
-
-        AddLog(job, $"Launching '{app.Name}' ({app.ExecutablePath})");
-        await db.SaveChangesAsync(ct);
-
-        return await desktopAwarenessService.LaunchApplicationAsync(
-            app, arguments, filePath, ct);
-    }
-
-    // ── Window management execution ───────────────────────────────
-
-    private sealed class WindowTargetPayload
-    {
-        public int? ProcessId { get; set; }
-        public string? ProcessName { get; set; }
-        public string? TitleContains { get; set; }
-    }
-
-    private Task<string?> ExecuteFocusWindowAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var p = ParseWindowTarget(job);
-        AddLog(job, "Focusing window");
-        return Task.FromResult<string?>(
-            desktopAwarenessService.FocusWindow(p.ProcessId, p.ProcessName, p.TitleContains));
-    }
-
-    private Task<string?> ExecuteCloseWindowAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var p = ParseWindowTarget(job);
-        AddLog(job, "Closing window");
-        return Task.FromResult<string?>(
-            desktopAwarenessService.CloseWindow(p.ProcessId, p.ProcessName, p.TitleContains));
-    }
-
-    private Task<string?> ExecuteResizeWindowAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var parameters = ParsePayload(job);
-        var processId = GetInt(parameters, "processId");
-        var titleContains = GetString(parameters, "titleContains");
-        var x = GetInt(parameters, "x");
-        var y = GetInt(parameters, "y");
-        var width = GetInt(parameters, "width");
-        var height = GetInt(parameters, "height");
-        var state = GetString(parameters, "state");
-
-        AddLog(job, "Resizing window");
-        return Task.FromResult<string?>(
-            desktopAwarenessService.ResizeWindow(processId, titleContains, x, y, width, height, state));
-    }
-
-    // ── Hotkey execution ──────────────────────────────────────────
-
-    private Task<string?> ExecuteSendHotkeyAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var parameters = ParsePayload(job);
-        var keys = GetString(parameters, "keys")
-            ?? throw new InvalidOperationException("send_hotkey requires a 'keys' parameter.");
-        var processId = GetInt(parameters, "processId");
-        var titleContains = GetString(parameters, "titleContains");
-
-        AddLog(job, $"Sending hotkey: {keys}");
-        return Task.FromResult<string?>(
-            desktopAwarenessService.SendHotkey(keys, processId, titleContains));
-    }
-
-    // ── Window capture execution ──────────────────────────────────
-
-    private Task<string?> ExecuteCaptureWindowAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var p = ParseWindowTarget(job);
-        AddLog(job, "Capturing window");
-        return Task.FromResult<string?>(
-            desktopAwarenessService.CaptureWindow(p.ProcessId, p.ProcessName, p.TitleContains));
-    }
-
-    // ── Clipboard execution ───────────────────────────────────────
-
-    private async Task<string?> ExecuteReadClipboardAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var parameters = ParsePayload(job);
-        var format = GetString(parameters, "format");
-        AddLog(job, "Reading clipboard");
-        return await desktopAwarenessService.ReadClipboardAsync(format);
-    }
-
-    private async Task<string?> ExecuteWriteClipboardAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var parameters = ParsePayload(job);
-        var text = GetString(parameters, "text");
-        string[]? filePaths = null;
-        if (parameters?.GetValueOrDefault("filePaths") is JsonElement je && je.ValueKind == JsonValueKind.Array)
-            filePaths = je.EnumerateArray().Select(e => e.GetString()!).ToArray();
-
-        AddLog(job, "Writing clipboard");
-        return await desktopAwarenessService.WriteClipboardAsync(text, filePaths);
-    }
-
-    // ── Process control execution ─────────────────────────────────
-
-    private async Task<string?> ExecuteStopProcessAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var parameters = ParsePayload(job);
-        var processId = GetInt(parameters, "processId")
-            ?? throw new InvalidOperationException("stop_process requires a 'processId' parameter.");
-        var force = GetBool(parameters, "force") ?? false;
-
-        // Resolve native application from ResourceId
-        NativeApplicationDB? app = null;
-        if (job.ResourceId.HasValue)
-            app = await db.NativeApplications.FirstOrDefaultAsync(n => n.Id == job.ResourceId, ct);
-
-        app ??= await ResolveNativeAppByAlias(parameters, ct);
-
-        if (app is null)
-            throw new InvalidOperationException(
-                "stop_process requires a registered native application (resourceId or alias).");
-
-        AddLog(job, $"Stopping process {processId} (app: {app.Name})");
-        await db.SaveChangesAsync(ct);
-        return await desktopAwarenessService.StopProcessAsync(processId, force, app, ct);
-    }
-
-    private async Task<NativeApplicationDB?> ResolveNativeAppByAlias(
-        Dictionary<string, object?>? parameters, CancellationToken ct)
-    {
-        var alias = GetString(parameters, "alias");
-        if (!string.IsNullOrWhiteSpace(alias))
-            return await nativeApplicationService.ResolveAsync(alias, ct);
-        return null;
-    }
-
-    private WindowTargetPayload ParseWindowTarget(AgentJobDB job)
-    {
-        var parameters = ParsePayload(job);
-        return new WindowTargetPayload
-        {
-            ProcessId = GetInt(parameters, "processId"),
-            ProcessName = GetString(parameters, "processName"),
-            TitleContains = GetString(parameters, "titleContains"),
-        };
-    }
-
-    private Dictionary<string, object?>? ParsePayload(AgentJobDB job)
-    {
-        if (string.IsNullOrWhiteSpace(job.ScriptJson))
-            return null;
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(
-            job.ScriptJson, _payloadJsonOptions);
-    }
-
-    private static string? GetString(Dictionary<string, object?>? p, string key) =>
-        p?.GetValueOrDefault(key)?.ToString();
-
-    private static int? GetInt(Dictionary<string, object?>? p, string key)
-    {
-        var val = p?.GetValueOrDefault(key);
-        return val switch
-        {
-            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32(),
-            _ when val is not null && int.TryParse(val.ToString(), out var i) => i,
-            _ => null,
-        };
-    }
-
-    private static bool? GetBool(Dictionary<string, object?>? p, string key)
-    {
-        var val = p?.GetValueOrDefault(key);
-        return val switch
-        {
-            JsonElement je when je.ValueKind == JsonValueKind.True => true,
-            JsonElement je when je.ValueKind == JsonValueKind.False => false,
-            _ when val is not null && bool.TryParse(val.ToString(), out var b) => b,
-            _ => null,
-        };
-    }
-
-    // ── Spreadsheet data extraction helpers ───────────────────────
-
-    private static JsonElement ExtractJsonData(Dictionary<string, object?>? parameters)
-    {
-        if (parameters?.GetValueOrDefault("data") is JsonElement je)
-            return je;
-
-        var dataStr = parameters?.GetValueOrDefault("data")?.ToString();
-        if (dataStr is not null)
-            return JsonDocument.Parse(dataStr).RootElement;
-
-        throw new InvalidOperationException(
-            "Spreadsheet write requires a 'data' parameter.");
-    }
-
-    private static JsonElement? ExtractJsonDataOrNull(Dictionary<string, object?>? parameters)
-    {
-        if (parameters?.GetValueOrDefault("data") is JsonElement je)
-            return je;
-
-        var dataStr = parameters?.GetValueOrDefault("data")?.ToString();
-        if (dataStr is not null)
-            return JsonDocument.Parse(dataStr).RootElement;
-
-        return null;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -3027,124 +923,27 @@ IConfiguration configuration)
     // ═══════════════════════════════════════════════════════════════
 
     private Task<AgentActionResult> DispatchPermissionCheckAsync(
-        Guid agentId, AgentActionType actionType, Guid? resourceId,
-        ActionCaller caller, CancellationToken ct)
+        Guid agentId, Guid? resourceId,
+        ActionCaller caller, CancellationToken ct,
+        string? actionKey = null)
     {
-        return actionType switch
-        {
-            AgentActionType.CreateSubAgent
-                => actions.CreateSubAgentAsync(agentId, caller, ct: ct),
-            AgentActionType.CreateContainer
-                => actions.CreateContainerAsync(agentId, caller, ct: ct),
-            AgentActionType.RegisterDatabase
-                => actions.RegisterDatabaseAsync(agentId, caller, ct: ct),
-            AgentActionType.AccessLocalhostInBrowser
-                => actions.AccessLocalhostInBrowserAsync(agentId, caller, ct: ct),
-            AgentActionType.AccessLocalhostCli
-                => actions.AccessLocalhostCliAsync(agentId, caller, ct: ct),
-            AgentActionType.ClickDesktop
-                => actions.ClickDesktopAsync(agentId, caller, ct: ct),
-            AgentActionType.TypeOnDesktop
-                => actions.TypeOnDesktopAsync(agentId, caller, ct: ct),
-            AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
-                => actions.UnsafeExecuteAsDangerousShellAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
-                => actions.ExecuteAsSafeShellAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessInternalDatabases when resourceId.HasValue
-                => actions.AccessInternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessExternalDatabase when resourceId.HasValue
-                => actions.AccessExternalDatabaseAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessWebsite when resourceId.HasValue
-                => actions.AccessWebsiteAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.QuerySearchEngine when resourceId.HasValue
-                => actions.QuerySearchEngineAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessContainer when resourceId.HasValue
-                => actions.AccessContainerAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.ManageAgent when resourceId.HasValue
-                => actions.ManageAgentAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.EditTask when resourceId.HasValue
-                => actions.EditTaskAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.AccessSkill when resourceId.HasValue
-                => actions.AccessSkillAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.TranscribeFromAudioDevice when resourceId.HasValue
-                => actions.AccessAudioDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.TranscribeFromAudioStream when resourceId.HasValue
-                => actions.AccessAudioDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
-                => actions.AccessAudioDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.CaptureDisplay when resourceId.HasValue
-                => actions.AccessDisplayDeviceAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.EditorReadFile or
-            AgentActionType.EditorGetOpenFiles or
-            AgentActionType.EditorGetSelection or
-            AgentActionType.EditorGetDiagnostics or
-            AgentActionType.EditorApplyEdit or
-            AgentActionType.EditorCreateFile or
-            AgentActionType.EditorDeleteFile or
-            AgentActionType.EditorShowDiff or
-            AgentActionType.EditorRunBuild or
-            AgentActionType.EditorRunTerminal when resourceId.HasValue
-                => actions.AccessEditorSessionAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.SendBotMessage when resourceId.HasValue
-                => actions.AccessBotIntegrationAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.CreateDocumentSession
-                => actions.CreateDocumentSessionAsync(agentId, caller, ct: ct),
-            AgentActionType.SpreadsheetReadRange or
-            AgentActionType.SpreadsheetWriteRange or
-            AgentActionType.SpreadsheetListSheets or
-            AgentActionType.SpreadsheetCreateSheet or
-            AgentActionType.SpreadsheetDeleteSheet or
-            AgentActionType.SpreadsheetGetInfo or
-            AgentActionType.SpreadsheetLiveReadRange or
-            AgentActionType.SpreadsheetLiveWriteRange when resourceId.HasValue
-                => actions.AccessDocumentSessionAsync(agentId, resourceId.Value, caller, ct: ct),
-            AgentActionType.SpreadsheetCreateWorkbook
-                => actions.CreateDocumentSessionAsync(agentId, caller, ct: ct),
-            AgentActionType.EnumerateWindows
-                => actions.EnumerateWindowsAsync(agentId, caller, ct: ct),
-            AgentActionType.LaunchNativeApplication when resourceId.HasValue
-                => actions.LaunchNativeApplicationAsync(agentId, resourceId.Value, caller, ct: ct),
-            _ when IsPerResourceAction(actionType) && !resourceId.HasValue
-                => Task.FromResult(AgentActionResult.Denied($"ResourceId is required for {actionType}.")),
-            _ => Task.FromResult(AgentActionResult.Denied($"Unknown action type: {actionType}."))
-        };
+        return DispatchModulePermissionCheckAsync(agentId, resourceId, caller, actionKey, ct);
     }
 
-    private static bool IsPerResourceAction(AgentActionType type) =>
-        type is AgentActionType.UnsafeExecuteAsDangerousShell
-            or AgentActionType.ExecuteAsSafeShell
-            or AgentActionType.AccessInternalDatabases
-            or AgentActionType.AccessExternalDatabase
-            or AgentActionType.AccessWebsite
-            or AgentActionType.QuerySearchEngine
-            or AgentActionType.AccessContainer
-            or AgentActionType.ManageAgent
-            or AgentActionType.EditTask
-            or AgentActionType.AccessSkill
-            or AgentActionType.TranscribeFromAudioDevice
-            or AgentActionType.TranscribeFromAudioStream
-            or AgentActionType.TranscribeFromAudioFile
-            or AgentActionType.CaptureDisplay
-            or AgentActionType.EditorReadFile
-            or AgentActionType.EditorGetOpenFiles
-            or AgentActionType.EditorGetSelection
-            or AgentActionType.EditorGetDiagnostics
-            or AgentActionType.EditorApplyEdit
-            or AgentActionType.EditorCreateFile
-            or AgentActionType.EditorDeleteFile
-            or AgentActionType.EditorShowDiff
-            or AgentActionType.EditorRunBuild
-            or AgentActionType.EditorRunTerminal
-            or AgentActionType.SendBotMessage
-            or AgentActionType.SpreadsheetReadRange
-            or AgentActionType.SpreadsheetWriteRange
-            or AgentActionType.SpreadsheetListSheets
-            or AgentActionType.SpreadsheetCreateSheet
-            or AgentActionType.SpreadsheetDeleteSheet
-            or AgentActionType.SpreadsheetGetInfo
-            or AgentActionType.SpreadsheetLiveReadRange
-            or AgentActionType.SpreadsheetLiveWriteRange
-            or AgentActionType.LaunchNativeApplication;
+    /// <summary>
+    /// Determines whether the given action key requires a per-resource grant.
+    /// Resolves via the module registry's permission descriptor.
+    /// </summary>
+    private bool IsPerResourceAction(string? actionKey)
+    {
+        if (string.IsNullOrWhiteSpace(actionKey)) return false;
+
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
+            return false;
+
+        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
+        return descriptor?.IsPerResource ?? false;
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Default resource resolution
@@ -3157,9 +956,11 @@ IConfiguration configuration)
     /// PermissionSet.
     /// </summary>
     private async Task<Guid?> ResolveDefaultResourceIdAsync(
-        AgentActionType actionType, Guid channelId, Guid agentId,
+        string? actionKey, Guid channelId, Guid agentId,
         CancellationToken ct)
     {
+        var delegateTo = ResolveDelegateTo(actionKey);
+
         var ch = await db.Channels
             .Include(c => c.DefaultResourceSet)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.DefaultResourceSet)
@@ -3169,14 +970,14 @@ IConfiguration configuration)
         // 1. Channel's DefaultResourceSet
         if (ch?.DefaultResourceSet is { } chDrs)
         {
-            var id = ExtractFromDefaultResourceSet(chDrs, actionType);
+            var id = ExtractFromDefaultResourceSet(chDrs, delegateTo);
             if (id.HasValue) return id;
         }
 
         // 2. Context's DefaultResourceSet
         if (ch?.AgentContext?.DefaultResourceSet is { } ctxDrs)
         {
-            var id = ExtractFromDefaultResourceSet(ctxDrs, actionType);
+            var id = ExtractFromDefaultResourceSet(ctxDrs, delegateTo);
             if (id.HasValue) return id;
         }
 
@@ -3201,22 +1002,7 @@ IConfiguration configuration)
 
         var permissionSets = await db.PermissionSets
             .Where(p => permissionSetIds.Contains(p.Id))
-            .Include(p => p.DefaultDangerousShellAccess)
-            .Include(p => p.DefaultSafeShellAccess)
-            .Include(p => p.DefaultInternalDatabaseAccess)
-            .Include(p => p.DefaultExternalDatabaseAccess)
-            .Include(p => p.DefaultWebsiteAccess)
-            .Include(p => p.DefaultSearchEngineAccess)
-            .Include(p => p.DefaultContainerAccess)
-            .Include(p => p.DefaultAudioDeviceAccess)
-            .Include(p => p.DefaultDisplayDeviceAccess)
-            .Include(p => p.DefaultEditorSessionAccess)
-            .Include(p => p.DefaultAgentPermission)
-            .Include(p => p.DefaultTaskPermission)
-            .Include(p => p.DefaultSkillPermission)
-            .Include(p => p.DefaultBotIntegrationAccess)
-            .Include(p => p.DefaultDocumentSessionAccess)
-            .Include(p => p.DefaultNativeApplicationAccess)
+            .Include(p => p.ResourceAccesses)
             .ToListAsync(ct);
 
         foreach (var psId in permissionSetIds)
@@ -3224,7 +1010,7 @@ IConfiguration configuration)
             var ps = permissionSets.FirstOrDefault(p => p.Id == psId);
             if (ps is null) continue;
 
-            var resourceId = ExtractDefaultResourceId(ps, actionType);
+            var resourceId = ExtractDefaultResourceId(ps, delegateTo);
             if (resourceId.HasValue)
                 return resourceId;
         }
@@ -3254,44 +1040,24 @@ IConfiguration configuration)
     }
 
     private static Guid? ExtractFromDefaultResourceSet(
-        DefaultResourceSetDB drs, AgentActionType actionType) => actionType switch
+        DefaultResourceSetDB drs, string? delegateTo) => delegateTo switch
     {
-        AgentActionType.UnsafeExecuteAsDangerousShell => drs.DangerousShellResourceId,
-        AgentActionType.ExecuteAsSafeShell => drs.SafeShellResourceId,
-        AgentActionType.AccessInternalDatabases => drs.InternalDatabaseResourceId,
-        AgentActionType.AccessExternalDatabase => drs.ExternalDatabaseResourceId,
-        AgentActionType.AccessWebsite => drs.WebsiteResourceId,
-        AgentActionType.QuerySearchEngine => drs.SearchEngineResourceId,
-        AgentActionType.AccessContainer => drs.ContainerResourceId,
-        AgentActionType.ManageAgent => drs.AgentResourceId,
-        AgentActionType.EditTask => drs.TaskResourceId,
-        AgentActionType.AccessSkill => drs.SkillResourceId,
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile => drs.AudioDeviceResourceId,
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop => drs.DisplayDeviceResourceId,
-        AgentActionType.EditorReadFile or
-        AgentActionType.EditorGetOpenFiles or
-        AgentActionType.EditorGetSelection or
-        AgentActionType.EditorGetDiagnostics or
-        AgentActionType.EditorApplyEdit or
-        AgentActionType.EditorCreateFile or
-        AgentActionType.EditorDeleteFile or
-        AgentActionType.EditorShowDiff or
-        AgentActionType.EditorRunBuild or
-        AgentActionType.EditorRunTerminal => drs.EditorSessionResourceId,
-        AgentActionType.SendBotMessage => drs.BotIntegrationResourceId,
-        AgentActionType.SpreadsheetReadRange or
-        AgentActionType.SpreadsheetWriteRange or
-        AgentActionType.SpreadsheetListSheets or
-        AgentActionType.SpreadsheetCreateSheet or
-        AgentActionType.SpreadsheetDeleteSheet or
-        AgentActionType.SpreadsheetGetInfo or
-        AgentActionType.SpreadsheetLiveReadRange or
-        AgentActionType.SpreadsheetLiveWriteRange => drs.DocumentSessionResourceId,
-        AgentActionType.LaunchNativeApplication => drs.NativeApplicationResourceId,
+        "UnsafeExecuteAsDangerousShellAsync" => drs.DangerousShellResourceId,
+        "ExecuteAsSafeShellAsync" => drs.SafeShellResourceId,
+        "AccessContainerAsync" => drs.ContainerResourceId,
+        "AccessWebsiteAsync" => drs.WebsiteResourceId,
+        "QuerySearchEngineAsync" => drs.SearchEngineResourceId,
+        "AccessInternalDatabaseAsync" => drs.InternalDatabaseResourceId,
+        "AccessExternalDatabaseAsync" => drs.ExternalDatabaseResourceId,
+        "AccessInputAudioAsync" => drs.InputAudioResourceId,
+        "AccessDisplayDeviceAsync" => drs.DisplayDeviceResourceId,
+        "AccessEditorSessionAsync" => drs.EditorSessionResourceId,
+        "ManageAgentAsync" => drs.AgentResourceId,
+        "EditTaskAsync" => drs.TaskResourceId,
+        "AccessSkillAsync" => drs.SkillResourceId,
+        "AccessBotIntegrationAsync" => drs.BotIntegrationResourceId,
+        "AccessDocumentSessionAsync" => drs.DocumentSessionResourceId,
+        "LaunchNativeApplicationAsync" => drs.NativeApplicationResourceId,
         _ => null,
     };
 
@@ -3299,63 +1065,20 @@ IConfiguration configuration)
     /// Returns the resource ID from the matching default access entry on
     /// a permission set, or <c>null</c> if no default is configured.
     /// </summary>
-    private static Guid? ExtractDefaultResourceId(
-        PermissionSetDB permissionSet, AgentActionType actionType) => actionType switch
+    private Guid? ExtractDefaultResourceId(
+        PermissionSetDB permissionSet, string? delegateTo)
     {
-        AgentActionType.UnsafeExecuteAsDangerousShell
-            => permissionSet.DefaultDangerousShellAccess?.SystemUserId,
-        AgentActionType.ExecuteAsSafeShell
-            => permissionSet.DefaultSafeShellAccess?.ContainerId,
-        AgentActionType.AccessInternalDatabases
-            => permissionSet.DefaultInternalDatabaseAccess?.InternalDatabaseId,
-        AgentActionType.AccessExternalDatabase
-            => permissionSet.DefaultExternalDatabaseAccess?.ExternalDatabaseId,
-        AgentActionType.AccessWebsite
-            => permissionSet.DefaultWebsiteAccess?.WebsiteId,
-        AgentActionType.QuerySearchEngine
-            => permissionSet.DefaultSearchEngineAccess?.SearchEngineId,
-        AgentActionType.AccessContainer
-            => permissionSet.DefaultContainerAccess?.ContainerId,
-        AgentActionType.ManageAgent
-            => permissionSet.DefaultAgentPermission?.AgentId,
-        AgentActionType.EditTask
-            => permissionSet.DefaultTaskPermission?.ScheduledTaskId,
-        AgentActionType.AccessSkill
-            => permissionSet.DefaultSkillPermission?.SkillId,
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile
-            => permissionSet.DefaultAudioDeviceAccess?.AudioDeviceId,
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop
-            => permissionSet.DefaultDisplayDeviceAccess?.DisplayDeviceId,
-        AgentActionType.EditorReadFile or
-        AgentActionType.EditorGetOpenFiles or
-        AgentActionType.EditorGetSelection or
-        AgentActionType.EditorGetDiagnostics or
-        AgentActionType.EditorApplyEdit or
-        AgentActionType.EditorCreateFile or
-        AgentActionType.EditorDeleteFile or
-        AgentActionType.EditorShowDiff or
-        AgentActionType.EditorRunBuild or
-        AgentActionType.EditorRunTerminal
-            => permissionSet.DefaultEditorSessionAccess?.EditorSessionId,
-        AgentActionType.SendBotMessage
-            => permissionSet.DefaultBotIntegrationAccess?.BotIntegrationId,
-        AgentActionType.SpreadsheetReadRange or
-        AgentActionType.SpreadsheetWriteRange or
-        AgentActionType.SpreadsheetListSheets or
-        AgentActionType.SpreadsheetCreateSheet or
-        AgentActionType.SpreadsheetDeleteSheet or
-        AgentActionType.SpreadsheetGetInfo or
-        AgentActionType.SpreadsheetLiveReadRange or
-        AgentActionType.SpreadsheetLiveWriteRange
-            => permissionSet.DefaultDocumentSessionAccess?.DocumentSessionId,
-        AgentActionType.LaunchNativeApplication
-            => permissionSet.DefaultNativeApplicationAccess?.NativeApplicationId,
-        _ => null,
-    };
+        if (delegateTo is null)
+            return null;
+
+        var resourceType = moduleRegistry.ResolveResourceType(delegateTo);
+        if (resourceType is null)
+            return null;
+
+        return permissionSet.ResourceAccesses
+            .FirstOrDefault(a => a.ResourceType == resourceType && a.IsDefault)
+            ?.ResourceId;
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Channel / context pre-authorisation
@@ -3389,11 +1112,11 @@ IConfiguration configuration)
     /// </summary>
     private async Task<bool> HasChannelAuthorizationAsync(
         Guid channelId,
-        AgentActionType actionType,
         Guid? resourceId,
         PermissionClearance agentClearance,
         Guid? callerUserId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? actionKey = null)
     {
         // Level 3 is agent-only — no user/channel pre-auth applies.
         if (agentClearance is not (PermissionClearance.ApprovedBySameLevelUser
@@ -3416,7 +1139,7 @@ IConfiguration configuration)
                 return false;
 
             var userPs = await actions.LoadPermissionSetAsync(userPsId, ct);
-            if (userPs is null || !HasMatchingGrant(userPs, actionType, resourceId))
+            if (userPs is null || !HasMatchingGrant(userPs, resourceId, actionKey))
                 return false;
         }
 
@@ -3429,7 +1152,7 @@ IConfiguration configuration)
         if (ch.PermissionSetId is { } chPsId)
         {
             var chPs = await actions.LoadPermissionSetAsync(chPsId, ct);
-            if (chPs is not null && HasMatchingGrant(chPs, actionType, resourceId))
+            if (chPs is not null && HasMatchingGrant(chPs, resourceId, actionKey))
                 return true;
         }
 
@@ -3437,7 +1160,7 @@ IConfiguration configuration)
         if (ch.AgentContext?.PermissionSetId is { } ctxPsId)
         {
             var ctxPs = await actions.LoadPermissionSetAsync(ctxPsId, ct);
-            if (ctxPs is not null && HasMatchingGrant(ctxPs, actionType, resourceId))
+            if (ctxPs is not null && HasMatchingGrant(ctxPs, resourceId, actionKey))
                 return true;
         }
 
@@ -3446,97 +1169,51 @@ IConfiguration configuration)
 
     /// <summary>
     /// Returns <c>true</c> when the permission set contains a grant
-    /// that covers the given action type (and resource, for per-resource
-    /// actions).  Wildcard grants (<see cref="WellKnownIds.AllResources"/>)
-    /// match any resource.  The clearance value on the grant is
-    /// irrelevant — only existence matters.
+    /// that covers the given action key (and resource, for per-resource
+    /// actions).  Resolves the tool's <see cref="ModuleToolPermission.DelegateTo"/>
+    /// and checks the corresponding grant collection via
+    /// <see cref="AgentActionService.HasGrantByDelegateName"/>.
     /// </summary>
-    private static bool HasMatchingGrant(
-        PermissionSetDB ps, AgentActionType actionType, Guid? resourceId) => actionType switch
+    private bool HasMatchingGrant(
+        PermissionSetDB ps, Guid? resourceId,
+        string? actionKey = null)
     {
-        // ── Global flags ──────────────────────────────────────────
-        AgentActionType.CreateSubAgent    => ps.CanCreateSubAgents,
-        AgentActionType.CreateContainer   => ps.CanCreateContainers,
-        AgentActionType.RegisterDatabase => ps.CanRegisterDatabases,
-        AgentActionType.AccessLocalhostInBrowser => ps.CanAccessLocalhostInBrowser,
-        AgentActionType.AccessLocalhostCli       => ps.CanAccessLocalhostCli,
+        if (string.IsNullOrWhiteSpace(actionKey))
+            return false;
+        return ResolveModuleGrantCheck(ps, actionKey, resourceId);
+    }
 
-        // ── Per-resource grants ───────────────────────────────────
-        AgentActionType.UnsafeExecuteAsDangerousShell when resourceId.HasValue
-            => ps.DangerousShellAccesses.Any(a =>
-                a.SystemUserId == resourceId || a.SystemUserId == WellKnownIds.AllResources),
+    /// <summary>
+    /// Resolves a module tool's <see cref="ModuleToolPermission.DelegateTo"/>
+    /// and checks whether the permission set contains the corresponding grant.
+    /// </summary>
+    private bool ResolveModuleGrantCheck(PermissionSetDB ps, string actionKey, Guid? resourceId)
+    {
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
+            return false;
 
-        AgentActionType.ExecuteAsSafeShell when resourceId.HasValue
-            => ps.SafeShellAccesses.Any(a =>
-                a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
+        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
+        if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.DelegateTo))
+            return false;
 
-        AgentActionType.AccessInternalDatabases when resourceId.HasValue
-            => ps.InternalDatabaseAccesses.Any(a =>
-                a.InternalDatabaseId == resourceId || a.InternalDatabaseId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessExternalDatabase when resourceId.HasValue
-            => ps.ExternalDatabaseAccesses.Any(a =>
-                a.ExternalDatabaseId == resourceId || a.ExternalDatabaseId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessWebsite when resourceId.HasValue
-            => ps.WebsiteAccesses.Any(a =>
-                a.WebsiteId == resourceId || a.WebsiteId == WellKnownIds.AllResources),
-
-        AgentActionType.QuerySearchEngine when resourceId.HasValue
-            => ps.SearchEngineAccesses.Any(a =>
-                a.SearchEngineId == resourceId || a.SearchEngineId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessContainer when resourceId.HasValue
-            => ps.ContainerAccesses.Any(a =>
-                a.ContainerId == resourceId || a.ContainerId == WellKnownIds.AllResources),
-
-        AgentActionType.ManageAgent when resourceId.HasValue
-            => ps.AgentPermissions.Any(a =>
-                a.AgentId == resourceId || a.AgentId == WellKnownIds.AllResources),
-
-        AgentActionType.EditTask when resourceId.HasValue
-            => ps.TaskPermissions.Any(a =>
-                a.ScheduledTaskId == resourceId || a.ScheduledTaskId == WellKnownIds.AllResources),
-
-        AgentActionType.AccessSkill when resourceId.HasValue
-            => ps.SkillPermissions.Any(a =>
-                a.SkillId == resourceId || a.SkillId == WellKnownIds.AllResources),
-
-        AgentActionType.TranscribeFromAudioDevice or
-        AgentActionType.TranscribeFromAudioStream or
-        AgentActionType.TranscribeFromAudioFile when resourceId.HasValue
-            => ps.AudioDeviceAccesses.Any(a =>
-                a.AudioDeviceId == resourceId || a.AudioDeviceId == WellKnownIds.AllResources),
-
-        AgentActionType.CaptureDisplay or
-        AgentActionType.ClickDesktop or
-        AgentActionType.TypeOnDesktop when resourceId.HasValue
-            => ps.DisplayDeviceAccesses.Any(a =>
-                a.DisplayDeviceId == resourceId || a.DisplayDeviceId == WellKnownIds.AllResources),
-
-        AgentActionType.EditorReadFile or
-        AgentActionType.EditorGetOpenFiles or
-        AgentActionType.EditorGetSelection or
-        AgentActionType.EditorGetDiagnostics or
-        AgentActionType.EditorApplyEdit or
-        AgentActionType.EditorCreateFile or
-        AgentActionType.EditorDeleteFile or
-        AgentActionType.EditorShowDiff or
-        AgentActionType.EditorRunBuild or
-        AgentActionType.EditorRunTerminal when resourceId.HasValue
-            => ps.EditorSessionAccesses.Any(a =>
-                a.EditorSessionId == resourceId || a.EditorSessionId == WellKnownIds.AllResources),
-
-        AgentActionType.SendBotMessage when resourceId.HasValue
-            => ps.BotIntegrationAccesses.Any(a =>
-                a.BotIntegrationId == resourceId || a.BotIntegrationId == WellKnownIds.AllResources),
-
-        _ => false,
-    };
+        return actions.HasGrantByDelegateName(ps, descriptor.DelegateTo, resourceId);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Resolves the <see cref="ModuleToolPermission.DelegateTo"/> string
+    /// for the given action key via the module registry.
+    /// </summary>
+    private string? ResolveDelegateTo(string? actionKey)
+    {
+        if (string.IsNullOrWhiteSpace(actionKey)) return null;
+        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName)) return null;
+        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
+        return descriptor?.DelegateTo;
+    }
 
     private async Task<AgentJobDB?> LoadJobAsync(Guid jobId, CancellationToken ct) =>
         await db.AgentJobs
@@ -3565,17 +1242,27 @@ IConfiguration configuration)
             channel.Writer.TryComplete();
     }
 
-    private static bool IsTranscriptionAction(AgentActionType type) =>
-        type is AgentActionType.TranscribeFromAudioDevice
-            or AgentActionType.TranscribeFromAudioStream
-            or AgentActionType.TranscribeFromAudioFile;
+    /// <summary>
+    /// Returns <c>true</c> when the <paramref name="actionKey"/> corresponds
+    /// to a transcription tool (e.g. "transcribe_from_audio_device").
+    /// </summary>
+    private static bool IsTranscriptionActionKey(string? actionKey) =>
+        actionKey is not null && actionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase);
 
-    private static AgentJobResponse ToResponse(AgentJobDB job) =>
-        new(
+    private static AgentJobResponse ToResponse(AgentJobDB job)
+    {
+        var jobCost = job.PromptTokens is not null || job.CompletionTokens is not null
+            ? new TokenUsageResponse(
+                job.PromptTokens ?? 0,
+                job.CompletionTokens ?? 0,
+                (job.PromptTokens ?? 0) + (job.CompletionTokens ?? 0))
+            : null;
+
+        return new(
             Id: job.Id,
             ChannelId: job.ChannelId,
             AgentId: job.AgentId,
-            ActionType: job.ActionType,
+            ActionKey: job.ActionKey,
             ResourceId: job.ResourceId,
             Status: job.Status,
             EffectiveClearance: job.EffectiveClearance,
@@ -3597,12 +1284,45 @@ IConfiguration configuration)
             TranscriptionMode: job.TranscriptionMode,
             WindowSeconds: job.WindowSeconds,
             StepSeconds: job.StepSeconds,
-            Segments: IsTranscriptionAction(job.ActionType)
+            Segments: IsTranscriptionActionKey(job.ActionKey)
                 ? job.TranscriptionSegments
                     .OrderBy(s => s.StartTime)
                     .Select(s => new TranscriptionSegmentResponse(
                         s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp,
                         s.IsProvisional))
                     .ToList()
-                : null);
+                : null,
+            JobCost: jobCost);
+    }
+
+    /// <summary>
+    /// Records prompt/completion tokens on a set of jobs that were
+    /// submitted during a single LLM round.  Tokens are split evenly
+    /// across the jobs; any remainder is assigned to the first job.
+    /// </summary>
+    public async Task RecordTokensAsync(
+        IReadOnlyList<Guid> jobIds, int promptTokens, int completionTokens,
+        CancellationToken ct = default)
+    {
+        if (jobIds.Count == 0) return;
+
+        var jobs = await db.AgentJobs
+            .Where(j => jobIds.Contains(j.Id))
+            .ToListAsync(ct);
+
+        if (jobs.Count == 0) return;
+
+        var promptPer = promptTokens / jobs.Count;
+        var completionPer = completionTokens / jobs.Count;
+        var promptRemainder = promptTokens % jobs.Count;
+        var completionRemainder = completionTokens % jobs.Count;
+
+        for (var i = 0; i < jobs.Count; i++)
+        {
+            jobs[i].PromptTokens = (jobs[i].PromptTokens ?? 0) + promptPer + (i == 0 ? promptRemainder : 0);
+            jobs[i].CompletionTokens = (jobs[i].CompletionTokens ?? 0) + completionPer + (i == 0 ? completionRemainder : 0);
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
 }

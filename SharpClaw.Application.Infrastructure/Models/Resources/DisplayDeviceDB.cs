@@ -1,11 +1,10 @@
-using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Contracts.Entities;
 
 namespace SharpClaw.Application.Infrastructure.Models.Resources;
 
 /// <summary>
 /// A registered display / monitor that agents can capture screenshots
-/// from via the <see cref="Contracts.Enums.AgentActionType.CaptureDisplay"/> action.
+/// from via the Computer Use module.
 /// </summary>
 public class DisplayDeviceDB : BaseEntity
 {
@@ -22,5 +21,4 @@ public class DisplayDeviceDB : BaseEntity
     public Guid? SkillId { get; set; }
     public SkillDB? Skill { get; set; }
 
-    public ICollection<DisplayDeviceAccessDB> Accesses { get; set; } = [];
-}
+    }

@@ -25,12 +25,15 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
-    <ProjectReference Include="..\mk8.shell\mk8.shell.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="Data\**" CopyToOutputDirectory="PreserveNewest" />
-    <!-- .env files are now copied by Directory.Build.targets -->
+    <!-- .env files registered dynamically by Directory.Build.targets (_RegisterEnvironmentContent) -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Shell\" />
   </ItemGroup>
 
 </Project>

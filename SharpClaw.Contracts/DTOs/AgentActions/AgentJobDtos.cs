@@ -7,7 +7,7 @@ namespace SharpClaw.Contracts.DTOs.AgentActions;
 // ── Requests ──────────────────────────────────────────────────────
 
 public sealed record SubmitAgentJobRequest(
-AgentActionType ActionType,
+string? ActionKey = null,
 Guid? ResourceId = null,
 Guid? AgentId = null,
 Guid? CallerAgentId = null,
@@ -32,7 +32,7 @@ public sealed record AgentJobResponse(
 Guid Id,
 Guid ChannelId,
 Guid AgentId,
-AgentActionType ActionType,
+string? ActionKey,
 Guid? ResourceId,
 AgentJobStatus Status,
 PermissionClearance EffectiveClearance,
@@ -54,6 +54,7 @@ TranscriptionMode? TranscriptionMode = null,
 int? WindowSeconds = null,
 int? StepSeconds = null,
 IReadOnlyList<TranscriptionSegmentResponse>? Segments = null,
+TokenUsageResponse? JobCost = null,
 ChannelCostResponse? ChannelCost = null);
 
 public sealed record AgentJobLogResponse(
@@ -70,7 +71,7 @@ public sealed record AgentJobSummaryResponse(
     Guid Id,
     Guid ChannelId,
     Guid AgentId,
-    AgentActionType ActionType,
+    string? ActionKey,
     Guid? ResourceId,
     AgentJobStatus Status,
     DateTimeOffset CreatedAt,
