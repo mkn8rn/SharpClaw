@@ -1,6 +1,6 @@
 SharpClaw Module: Computer Use — Agent Skill Reference
 
-Module ID: sharpclaw.computer-use
+Module ID: sharpclaw_computer_use
 Display Name: Computer Use
 Tool Prefix: cu
 Version: 1.0.0

@@ -55,15 +55,12 @@ fastest way to make that happen.
 - [Roles](#roles)
 - [Default resources](#default-resources)
 - [Local models](#local-models)
-- [Bot integrations](#bot-integrations)
-- [Editor bridge](#editor-bridge)
 - [Task definitions & instances](#task-definitions--instances)
 - [Token cost tracking](#token-cost-tracking)
 - [Provider cost](#provider-cost)
 - [Env file management](#env-file-management)
 - [Custom chat header](#custom-chat-header)
 - [Tool awareness sets](#tool-awareness-sets)
-- [Modules](#modules)
 - [Permission Resolution](#permission-resolution)
 
 ---
@@ -109,21 +106,9 @@ Minimax, Custom, Local
 
 ### ActionKey
 
-Jobs use a string-based `ActionKey` that routes through the `ModuleRegistry`
-to the owning module. Each module registers its tools with a prefixed naming
-convention:
-
-| Module | Prefix | Example keys |
-|--------|--------|--------------|
-| Mk8 Shell | `mk8_` | `mk8_safe_shell`, `mk8_dangerous_shell` |
-| Computer Use | `cu_` | `cu_click_desktop`, `cu_capture_display`, `cu_enumerate_windows` |
-| Office Apps | `oa_` | `oa_read_range`, `oa_write_range`, `oa_register_document` |
-| Transcription | *(none)* | `transcribe_from_audio_device`, `transcribe_from_audio_stream`, `transcribe_from_audio_file` |
-| VS 2026 Editor | `vs_` | `vs_read_file`, `vs_apply_edit`, `vs_run_build` |
-| VS Code Editor | `vsc_` | `vsc_read_file`, `vsc_apply_edit`, `vsc_run_terminal` |
-
-The full list of registered tools is available at runtime via
-`GET /modules` → each module's `Tools` array.
+Jobs use a string-based `ActionKey` that identifies the action to execute.
+The set of valid action keys is dynamic — query `GET /modules` for the
+authoritative list.
 
 Permission checks, job submission (`POST /channels/{id}/jobs`), and the CLI
 `job submit` command all use `ActionKey` exclusively.
@@ -163,22 +148,6 @@ Values can be combined (comma-separated). Default is `Chat`.
 `Vision` enables image/screenshot input for models that support it
 (e.g. gpt-4o, claude-3+, gemini-1.5+).
 
-### DangerousShellType
-
-```
-Bash, PowerShell, CommandPrompt, Git
-```
-
-These spawn a real shell interpreter with unrestricted execution.
-
-### SafeShellType
-
-```
-Mk8Shell
-```
-
-Sandboxed DSL — never invokes a real shell interpreter.
-
 ### ChatClientType
 
 ```
@@ -189,27 +158,11 @@ UnoWindows, UnoAndroid, UnoMacOS, UnoLinux, UnoBrowser, Other
 Identifies the client interface that originated a chat message. Included
 in the chat header so the agent knows the communication channel.
 
-### EditorType
-
-```
-VisualStudio2026, VisualStudioCode, Other
-```
-
 ### LocalModelStatus
 
 ```
 Pending, Downloading, Ready, Failed
 ```
-
-### DocumentType
-
-```
-Spreadsheet = 0, Csv = 1, Document = 2, Presentation = 3
-```
-
-Inferred from the file extension when a document session is created.
-`.xlsx`/`.xlsm` → `Spreadsheet`, `.csv` → `Csv`, `.docx` → `Document`,
-`.pptx` → `Presentation`.
 
 ### ChatStreamEventType
 
@@ -222,13 +175,6 @@ Inferred from the file extension when a document session is created.
 | `ApprovalResult` | Approval decision has been applied |
 | `Error` | An error occurred during the stream |
 | `Done` | Stream complete; contains the final persisted response |
-
-### TranscriptionMode
-
-| Value | Int | Description |
-|-------|-----|-------------|
-| `SlidingWindow` | 0 | Two-pass sliding window. Segments are emitted provisionally as soon as they pass quality filters, then finalized (or retracted) once the commit delay confirms them. Consumers see text within one inference tick (~3 s) and receive an update when the segment is confirmed. **Default.** |
-| `StrictWindow` | 2 | Non-overlapping sequential windows (default 10 s). Each window of audio is transcribed exactly once — one API call per window. Cross-window continuity via prompt conditioning. Full dedup pipeline runs as a safety net. Minimal token cost; perceived latency equals the window length. Use `windowSeconds` to control the window size (clamped to [5, 15]). |
 
 ### TaskInstanceStatus
 
@@ -2771,168 +2717,6 @@ Delete the local model file and its DB record.
 
 ---
 
-## Bot integrations
-
-Bot integration rows are **pre-seeded** on startup for each `BotType`
-(`Telegram`, `Discord`, `WhatsApp`). There are no POST or DELETE
-endpoints — you only update existing rows to enable/disable a bot or
-set its token.
-
-Bot tokens are AES-GCM encrypted at rest (same mechanism as provider
-API keys).
-
-### GET /bots
-
-List all bot integrations.
-
-**Response `200`:** array of `BotIntegrationResponse`.
-
-### GET /bots/{id}
-
-Get a single bot integration by ID.
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### GET /bots/type/{type}
-
-Get a bot integration by type name (`telegram`, `discord`, `whatsapp`).
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### PUT /bots/{id}
-
-Update a bot integration. All fields are optional (partial update).
-
-**Request:**
-
-```json
-{
-  "enabled": true,
-  "botToken": "string | null",
-  "defaultChannelId": "guid | null"
-}
-```
-
-| Field | Behaviour |
-|---|---|
-| `enabled` | Enable or disable the bot. |
-| `botToken` | Non-empty string → encrypt and store. Empty string (`""`) → clear the stored token. Omit to leave unchanged. |
-| `defaultChannelId` | GUID → set the default SharpClaw channel for forwarded messages. `Guid.Empty` → clear. Omit to leave unchanged. |
-
-**Response `200`:** `BotIntegrationResponse`.
-
-### GET /bots/config/{type}
-
-Return the **decrypted** bot configuration for gateway consumption.
-Intended for internal use by the gateway process.
-
-**Response `200`:**
-
-```json
-{
-  "enabled": true,
-  "botToken": "plaintext-token",
-  "defaultChannelId": "guid | null"
-}
-```
-
-### BotIntegrationResponse
-
-```json
-{
-  "id": "guid",
-  "botType": "Telegram",
-  "enabled": false,
-  "hasBotToken": true,
-  "defaultChannelId": "guid | null",
-  "createdAt": "2025-01-01T00:00:00Z",
-  "updatedAt": "2025-01-01T00:00:00Z"
-}
-```
-
-`hasBotToken` indicates whether an encrypted token is stored — the
-actual token is never returned by list/get endpoints.
-
-### CLI
-
-```
-bot list                                        List all bot integrations
-bot get <id>                                    Show a single integration
-bot update <id> [--enabled true|false]          Enable/disable
-                [--token <tok>]                 Set bot token
-                [--channel <channelId>]          Set default channel
-bot config <type>                               Show decrypted config
-```
-
----
-
-## Editor bridge
-
-The editor bridge provides a WebSocket connection for IDE extensions
-(VS 2026, VS Code) and a REST endpoint for querying active sessions.
-
-### WS /editor/ws
-
-WebSocket upgrade endpoint. IDE extensions connect here and send a
-registration message, then enter a request/response loop managed by
-`EditorBridgeService`.
-
-**Registration message (extension → server):**
-
-```json
-{
-  "editorType": "VisualStudio2026 | VisualStudioCode | Other",
-  "editorVersion": "string | null",
-  "workspacePath": "string | null"
-}
-```
-
-**Request (server → extension):**
-
-```json
-{
-  "requestId": "guid",
-  "action": "string",
-  "params": { ... }
-}
-```
-
-**Response (extension → server):**
-
-```json
-{
-  "requestId": "guid",
-  "success": true,
-  "data": "string | null",
-  "error": "string | null"
-}
-```
-
-30-second timeout per request.
-
----
-
-### GET /editor/sessions
-
-List all currently connected editor sessions.
-
-**Response `200`:**
-
-```json
-[
-  {
-    "sessionId": "guid",
-    "editorType": "VisualStudio2026",
-    "editorVersion": "string | null",
-    "workspacePath": "string | null",
-    "isConnected": true,
-    "connectedAt": "datetime"
-  }
-]
-```
-
----
-
 ## Task definitions & instances
 
 Tasks are user-defined C# scripts that run as background processes.
@@ -3767,199 +3551,6 @@ agent add MyAgent #42 --no-tools
 channel add --agent #3 --tools #5 "My Channel"
 channel add --agent #3 --no-tools "My Channel"
 ```
-
----
-
-## Modules
-
-SharpClaw uses a **module system** to organize tools into loadable,
-self-contained units. Each module provides a set of tool definitions
-that are registered at startup and dispatched via
-`AgentActionType = ModuleAction` (value 100).
-
-### Architecture
-
-- Modules implement the `ISharpClawModule` contract and are loaded at
-  startup by the `ModuleRegistry`.
-- Each module has a **tool prefix** (e.g. `cu`, `oa`) that is prepended
-  to tool names when sent to the model — for example, a module tool
-  named `capture_display` with prefix `cu` becomes `cu_capture_display`.
-- Module tools are dispatched via the `ModuleAction` action type. The
-  module registry resolves the prefixed tool name to the correct module
-  and local tool name.
-- Modules can declare **platform restrictions** (`"platforms"` in
-  `module.json`), **exports** (contract-based services other modules can
-  depend on), and **requires** (contracts the module needs from others).
-- Module manifests are stored at `modules/{module_dir}/module.json` in
-  the published output.
-
-### ModuleManifest
-
-```json
-{
-  "id": "string",
-  "displayName": "string",
-  "version": "string",
-  "toolPrefix": "string",
-  "entryAssembly": "string",
-  "minHostVersion": "string | null",
-  "author": "string | null",
-  "description": "string | null",
-  "license": "string | null",
-  "platforms": ["windows", "linux", "macos"],
-  "enabled": true,
-  "defaultEnabled": true,
-  "executionTimeoutSeconds": "int | null",
-  "exports": [
-    {
-      "contractName": "string",
-      "serviceType": "string"
-    }
-  ],
-  "requires": ["string"]
-}
-```
-
-### Default modules
-
-SharpClaw ships with five bundled default modules:
-
-| Module | ID | Prefix | Tools | Platforms | Description |
-|--------|----|--------|-------|-----------|-------------|
-| [Computer Use](Module-ComputerUse.md) | `sharpclaw_computer_use` | `cu` | 13 | Windows | Desktop awareness, window management, input simulation, clipboard, display capture, process control |
-| [Office Apps](Module-OfficeApps.md) | `sharpclaw_office_apps` | `oa` | 10 | Windows, Linux, macOS | Document sessions, spreadsheet CRUD (ClosedXML / CsvHelper), live Excel COM Interop |
-| mk8.shell | `sharpclaw_mk8shell` | `mk8` | 2 | All | Sandboxed mk8.shell script execution and sandbox container lifecycle |
-| Dangerous Shell | `sharpclaw_dangerous_shell` | `ds` | 1 | All | Unsandboxed real shell execution (Bash, PowerShell, Cmd, Git) — clearance-gated |
-| Database Access | `sharpclaw_database_access` | `db` | 3 | All | Register and query internal/external databases (PostgreSQL, MySQL, SQLite, MSSQL, MongoDB, Redis) |
-
-### Runtime enable / disable
-
-Bundled modules can be enabled or disabled at runtime without
-restarting the server. All modules have their DI services pre-registered
-before `builder.Build()`, so toggling only affects the `ModuleRegistry`
-registration and tool availability.
-
-**Enable flow** (`POST /modules/{moduleId}/enable`):
-1. Update DB state → write `.modules.env`.
-2. `ModuleRegistry.Register` — validates prefix/tool uniqueness.
-3. `ModuleRegistry.CacheManifest` — loads the module manifest.
-4. Check `GetUnsatisfiedRequirements` — if any required contract is
-   missing, roll back (unregister) and throw.
-5. `ISharpClawModule.InitializeAsync` — run module startup logic.
-6. On failure at any step, the registration is rolled back.
-
-**Disable flow** (`POST /modules/{moduleId}/disable`):
-1. **Safety check** — if any other enabled module has a
-   `RequiredContract` matching this module's `ExportedContracts`,
-   disable is rejected (`409 Conflict`).
-2. `ISharpClawModule.ShutdownAsync` — run module teardown.
-3. `ModuleRegistry.Unregister` — remove tools, commands, contracts.
-4. Update DB state → write `.modules.env`.
-
-State is persisted in the `ModuleStates` DB table and the
-`.modules.env` file, so the setting survives restarts.
-
-### Module REST endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/modules` | List all modules and their current state |
-| `GET` | `/modules/{moduleId}` | Get a single module's state |
-| `POST` | `/modules/{moduleId}/enable` | Enable a disabled module at runtime |
-| `POST` | `/modules/{moduleId}/disable` | Disable an enabled module at runtime |
-
-**Response schema** (`ModuleStateResponse`):
-
-```json
-{
-  "moduleId": "string",
-  "displayName": "string",
-  "toolPrefix": "string",
-  "enabled": true,
-  "version": "string | null",
-  "registered": true,
-  "createdAt": "datetime",
-  "updatedAt": "datetime"
-}
-```
-
-**Error responses:**
-- `404 Not Found` — unknown module ID.
-- `409 Conflict` — enable failed (unsatisfied dependencies) or disable
-  failed (other modules depend on this module's exports).
-
-### Tool name resolution
-
-When the model returns a tool call, the name is resolved in order:
-
-1. **Core tools** — built-in tool names (e.g. `wait`,
-   `list_accessible_threads`) are matched first.
-2. **Module tools** — prefixed names (e.g. `cu_capture_display`,
-   `oa_read_range`) are resolved via the `ModuleRegistry`. The prefix
-   identifies the module; the suffix identifies the local tool name.
-
-### Module tool names
-
-All module tools are included in the [tool awareness set](#tool-awareness-sets)
-tool name list. The complete set of module tool names:
-
-**Computer Use (`cu_` prefix, 13 tools):**
-`cu_capture_display`, `cu_click_desktop`, `cu_type_on_desktop`,
-`cu_enumerate_windows`, `cu_launch_application`, `cu_focus_window`,
-`cu_close_window`, `cu_resize_window`, `cu_send_hotkey`,
-`cu_capture_window`, `cu_read_clipboard`, `cu_write_clipboard`,
-`cu_stop_process`
-
-**Office Apps (`oa_` prefix, 10 tools):**
-`oa_register_document`, `oa_read_range`, `oa_write_range`,
-`oa_list_sheets`, `oa_create_sheet`, `oa_delete_sheet`,
-`oa_get_info`, `oa_create_workbook`, `oa_live_read_range`,
-`oa_live_write_range`
-
-**mk8.shell (`mk8_` prefix, 2 tools):**
-`mk8_execute_mk8_shell`, `mk8_create_mk8_sandbox`
-
-**Dangerous Shell (`ds_` prefix, 1 tool):**
-`ds_execute_dangerous_shell`
-
-**Database Access (`db_` prefix, 3 tools):**
-`db_register_database`, `db_access_internal_databases`,
-`db_access_external_database`
-
-### Module CLI commands
-
-Modules can register top-level and resource-type CLI commands.
-These are discoverable at runtime via `help`.
-
-| Command | Aliases | Module | Description |
-|---------|---------|--------|-------------|
-| `cu` | `computer-use` | Computer Use | `cu windows`, `cu displays`, `cu apps` |
-| `docs` | `office`, `oa` | Office Apps | `docs list` |
-| `db` | `database-access` | Database Access | `db list-internal`, `db list-external` |
-
-**Module management CLI commands** (built-in, not module-provided):
-
-| Command | Description |
-|---------|-------------|
-| `module list` | List all modules and their enabled/registered state |
-| `module get <id>` | Show a module's details |
-| `module enable <id>` | Enable a module at runtime |
-| `module disable <id>` | Disable a module at runtime |
-
-### Module contracts (exports / requires)
-
-Modules can export named contracts (service interfaces) that other
-modules can depend on. The Computer Use module exports:
-
-| Contract | Interface | Description |
-|----------|-----------|-------------|
-| `window_management` | `IWindowManager` | Window enumeration, focus, capture, close |
-| `desktop_input` | `IDesktopInput` | Mouse click, keyboard input, hotkey simulation |
-
-The dependency graph is resolved via topological sort at startup to
-ensure exports are registered before consumers. Disabling a module
-that exports a contract required by another enabled module is
-rejected with `409 Conflict`.
 
 ---
 

@@ -1,0 +1,101 @@
+SharpClaw Module: Transcription — Agent Skill Reference
+
+Module ID: sharpclaw_transcription
+Display Name: Transcription
+Tool Prefix: tr
+Version: 1.0.0
+Platforms: Windows only
+Exports: transcription_stt, transcription_audio_capture
+Requires: none
+
+────────────────────────────────────────
+OVERVIEW
+────────────────────────────────────────
+Live audio transcription, input audio device management, and STT provider
+integration. WASAPI audio capture (Windows only), normalised to mono
+16 kHz 16-bit PCM. Providers: OpenAI Whisper, Groq, local Whisper.net.
+
+Tools are dispatched via the module system. Transcription jobs are
+intercepted by the core AgentJobService and routed to
+ILiveTranscriptionOrchestrator.StartTranscriptionAsync.
+
+────────────────────────────────────────
+ENUMS
+────────────────────────────────────────
+TranscriptionMode:
+  SlidingWindow (0) — two-pass, provisional then finalized/retracted.
+  StrictWindow (2)  — non-overlapping sequential windows, final-only.
+
+────────────────────────────────────────
+TOOLS (3)
+────────────────────────────────────────
+
+tr_transcribe_audio_device
+  Start live transcription from an input audio device.
+  Params: targetId (audio device GUID, required),
+          transcriptionModelId (GUID, optional — override model),
+          language (string, optional — BCP-47 hint e.g. "en", "de"),
+          transcriptionMode (string, optional — "SlidingWindow"|"StrictWindow"),
+          windowSeconds (int, optional — 5-15, default 10),
+          stepSeconds (int, optional — 1-window, default 2, SlidingWindow only)
+  Permission: per-resource (InputAudioDevice)
+
+tr_transcribe_audio_stream
+  Start live transcription from an audio stream.
+  Params: same as tr_transcribe_audio_device
+  Permission: per-resource (InputAudioDevice)
+
+tr_transcribe_audio_file
+  Transcribe an audio file.
+  Params: same as tr_transcribe_audio_device
+  Permission: per-resource (InputAudioDevice)
+
+────────────────────────────────────────
+TRANSCRIPTION MODES
+────────────────────────────────────────
+SlidingWindow (default):
+  Provisional → Finalized (commit delay 2s) or Retracted (hallucination).
+  Step interval ~2s. Low latency.
+
+StrictWindow:
+  Non-overlapping windows (default 10s). One API call per window.
+  All segments final. Minimal token cost. Latency = window length.
+
+Pipeline constants: WindowSeconds=10, InferenceInterval=2,
+  BufferCapacity=15, CommitDelay=2.0, MaxPromptChars=500, SampleRate=16000.
+
+────────────────────────────────────────
+STREAMING
+────────────────────────────────────────
+WebSocket: /jobs/{jobId}/ws
+SSE:       /jobs/{jobId}/stream
+
+Both send transcription segment JSON. 404 if job not found.
+
+────────────────────────────────────────
+CLI
+────────────────────────────────────────
+resource inputaudio add <name> [identifier] [description]
+resource inputaudio get <id>
+resource inputaudio list
+resource inputaudio update <id> [name] [identifier]
+resource inputaudio delete <id>
+resource inputaudio sync            Import system input audio devices
+
+Aliases: ia
+
+────────────────────────────────────────
+RESOURCE DEPENDENCIES
+────────────────────────────────────────
+- InputAudioDevices — for all transcription tools
+
+────────────────────────────────────────
+ROLE PERMISSIONS (relevant)
+────────────────────────────────────────
+Per-resource: audioDeviceAccesses (InputAudioDevices)
+
+────────────────────────────────────────
+EXPORTED CONTRACTS
+────────────────────────────────────────
+transcription_stt          → ITranscriptionApiClient
+transcription_audio_capture → IAudioCaptureProvider

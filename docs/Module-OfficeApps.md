@@ -1,6 +1,6 @@
 # SharpClaw Module: Office Apps
 
-> **Module ID:** `sharpclaw.office-apps`
+> **Module ID:** `sharpclaw_office_apps`
 > **Display Name:** Office Apps
 > **Version:** 1.0.0
 > **Tool Prefix:** `oa`
@@ -293,7 +293,7 @@ The `createDocumentSessionsClearance` override defaults to `Unset`
 
 ```json
 {
-  "id": "sharpclaw.office-apps",
+  "id": "sharpclaw_office_apps",
   "displayName": "Office Apps",
   "version": "1.0.0",
   "toolPrefix": "oa",

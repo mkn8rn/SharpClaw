@@ -62,24 +62,15 @@ LocalModelStatus: Pending, Downloading, Ready, Failed.
 ────────────────────────────────────────
 BOT INTEGRATIONS
 ────────────────────────────────────────
-GET    /bots                       → list all bot integrations
+Bot integration CRUD and messaging is provided by the Bot Integration module.
+See Module-BotIntegration-skill.md for tool definitions, CLI, and BotType values.
+
+REST endpoints:
+GET    /bots                       → list all
 GET    /bots/{id}                  → get by id
-GET    /bots/type/{type}           → get by type name (telegram, discord, whatsapp)
+GET    /bots/type/{type}           → get by type name
 PUT    /bots/{id}                  { enabled?, botToken?, defaultChannelId? }
-GET    /bots/config/{type}         → decrypted config for gateway use (enabled, botToken, defaultChannelId)
-
-Rows are pre-seeded on startup for each BotType — no POST/DELETE.
-Bot tokens are AES-GCM encrypted at rest (same as provider API keys).
-PUT fields are all optional (partial update):
-  enabled (bool): enable/disable the bot.
-  botToken (string): set or replace the encrypted token. Empty string clears it.
-  defaultChannelId (guid|null): the SharpClaw channel the bot forwards messages to. Guid.Empty clears it.
-
-BotType values: Telegram, Discord, WhatsApp.
-
-BotIntegrationResponse: id, botType, enabled, hasBotToken, defaultChannelId, createdAt, updatedAt.
-
-CLI: bot list, bot get <id>, bot update <id> [--enabled true|false] [--token <tok>] [--channel <channelId>], bot config <type>.
+GET    /bots/config/{type}         → decrypted config
 
 ────────────────────────────────────────
 AGENTS
@@ -301,123 +292,84 @@ Dedup pipeline (non-timestamped API responses):
 
 Audio is automatically normalised to mono 16 kHz 16-bit PCM (Whisper-optimal).
 
-AgentActionType categories:
-  Global: CreateSubAgent, CreateContainer, RegisterInfoStore, AccessLocalhostInBrowser, AccessLocalhostCli, ReadCrossThreadHistory
-  Per-resource: UnsafeExecuteAsDangerousShell, ExecuteAsSafeShell, AccessLocalInfoStore, AccessExternalInfoStore, AccessWebsite, QuerySearchEngine, AccessContainer, ManageAgent, EditTask, AccessSkill
-  Transcription: TranscribeFromAudioDevice, TranscribeFromAudioStream, TranscribeFromAudioFile
-  Editor: EditorReadFile, EditorGetOpenFiles, EditorGetSelection, EditorGetDiagnostics, EditorApplyEdit, EditorCreateFile, EditorDeleteFile, EditorShowDiff, EditorRunBuild, EditorRunTerminal
-  Module dispatch: ModuleAction (=100) — dispatches to a loaded module by tool name. See MODULE SYSTEM section.
-
-Deprecated (still accepted, use module equivalents):
-  Computer Use → cu_* tools: ClickDesktop, TypeOnDesktop, EnumerateWindows, FocusWindow, CloseWindow, ResizeWindow, SendHotkey, ReadClipboard, WriteClipboard, CaptureDisplay, CaptureWindow, StopProcess, LaunchNativeApplication
-  Office Apps → oa_* tools: CreateDocumentSession, SpreadsheetReadRange, SpreadsheetWriteRange, SpreadsheetListSheets, SpreadsheetCreateSheet, SpreadsheetDeleteSheet, SpreadsheetGetInfo, SpreadsheetCreateWorkbook, SpreadsheetLiveReadRange, SpreadsheetLiveWriteRange
-
-Inline tools (no job created, handled in the chat inference loop):
-  wait — pause 1–300 seconds. No permissions required.
-  list_accessible_threads — list threads from other channels the agent can read. Requires ReadCrossThreadHistory permission.
-  read_thread_history — read conversation history from a cross-channel thread. Params: threadId (required), maxMessages (optional, 1–200). Requires ReadCrossThreadHistory + channel opt-in.
-
-DangerousShellType: Bash, PowerShell, CommandPrompt, Git.
-SafeShellType: Mk8Shell.
-
 ────────────────────────────────────────
-TRANSCRIPTION STREAMING
+JOB STREAMING
 ────────────────────────────────────────
-WebSocket: /jobs/{jobId}/ws       → JSON text frames with segment objects
-SSE:       /jobs/{jobId}/stream   → data: frames with segment JSON
+Long-running jobs (transcription, etc.) can push incremental results:
+
+WebSocket: /jobs/{jobId}/ws       → JSON text frames
+SSE:       /jobs/{jobId}/stream   → data: frames with JSON
 
 ────────────────────────────────────────
 RESOURCES
 ────────────────────────────────────────
-All resource types follow the same CRUD + sync pattern under /resources/{type}.
+Modules may register resource types at startup. All resource types follow the
+same CRUD pattern under /resources/{type}:
 
-Containers:           /resources/containers        (+ /sync)
-Audio devices:        /resources/audiodevices       (+ /sync)
-Display devices:      /resources/displaydevices     (+ /sync)
-Editor sessions:      /resources/editorsessions     (no sync)
-Document sessions:    /resources/documentsessions   (no sync)
-Native applications:  /resources/nativeapplications (no sync)
+  POST (create), GET (list), GET /{id}, PUT /{id}, DELETE /{id}.
+  Some types also expose POST /sync for external-source reconciliation.
 
-Each type: POST (create), GET (list), GET /{id}, PUT /{id}, DELETE /{id}, POST /sync (where applicable).
-
-DocumentType: Spreadsheet=0, Csv=1, Document=2, Presentation=3. Inferred from file extension on create.
-CreateDocumentSessionRequest: { filePath, name?, description? }. DocumentSessionResponse: { id, name, filePath, documentType, description, createdAt, updatedAt }.
-CreateNativeApplicationRequest: { name, executablePath, alias?, description? }. NativeApplicationResponse: { id, name, executablePath, alias, description, createdAt, updatedAt }.
+The set of available /resources/* endpoints is not fixed — it grows or shrinks
+as modules are enabled or disabled. Query GET /modules for each module's
+registered resource types.
 
 Resource lookup: GET /resources/lookup/{type} → [{id, name}]
-  Valid types: dangerousShellAccesses, safeShellAccesses, containerAccesses, websiteAccesses, searchEngineAccesses, localInfoStoreAccesses, externalInfoStoreAccesses, inputAudioAccesses, displayDeviceAccesses, editorSessionAccesses, agentAccesses, taskAccesses, skillAccesses, documentSessionAccesses, nativeApplicationAccesses.
-
-────────────────────────────────────────
-EDITOR BRIDGE
-────────────────────────────────────────
-WS  /editor/ws         WebSocket for IDE extensions. Registration → request/response loop. 30s timeout.
-GET /editor/sessions   List connected editor sessions.
-
-EditorType: VisualStudio2026, VisualStudioCode, Other.
+  Returns a lightweight list of IDs and display names for a given access type.
+  Available access types are module-defined; the host guarantees the endpoint
+  but not the set of valid type strings.
 
 ────────────────────────────────────────
 MODULE SYSTEM
 ────────────────────────────────────────
-Tools are organized into loadable modules. Each module has an ID, a tool prefix,
-and a set of tool definitions. Module tools are dispatched via AgentActionType = ModuleAction (100).
+"If you wish to make an apple pie from scratch, you must first invent the
+universe." — Carl Sagan (via Dawkins, The Selfish Gene, extended-phenotype
+argument: the interesting thing about a system is not its current list of
+parts but the rules by which parts can be added, removed, and swapped.)
 
-Module manifests stored at modules/{dir}/module.json in published output.
-Tool names are prefixed: {prefix}_{toolName} (e.g. cu_capture_display, oa_read_range).
+The host application is deliberately agnostic about which modules ship or
+what they do. This section describes only the framework; individual module
+capabilities live in their own documentation.
 
-Default modules:
-  Computer Use  id=sharpclaw_computer_use  prefix=cu  13 tools  Windows only
-    Desktop awareness, window management, input simulation, clipboard, display capture, process control.
-    Exports: window_management (IWindowManager), desktop_input (IDesktopInput).
-    Tools: cu_capture_display, cu_click_desktop, cu_type_on_desktop, cu_enumerate_windows,
-           cu_launch_application, cu_focus_window, cu_close_window, cu_resize_window,
-           cu_send_hotkey, cu_capture_window, cu_read_clipboard, cu_write_clipboard, cu_stop_process.
-    CLI: cu windows | cu displays | cu apps (aliases: computer-use)
+Concepts:
+  Module: a self-contained unit of tools, CLI commands, REST endpoints,
+    resource types, and optional DI service exports, loaded at startup
+    from a manifest and an entry assembly.
+  Tool: a single callable operation exposed to the LLM. Dispatched via
+    AgentActionType = ModuleAction (100) and routed by action key.
+  Tool prefix: a short string (e.g. "cu_", "oa_") prepended to all of a
+    module's tool names to avoid collisions.
+  Contract: a named DI service a module exports for others to consume.
+    Modules may declare required contracts; the dependency graph is
+    resolved via topological sort at startup.
 
-  Office Apps  id=sharpclaw_office_apps  prefix=oa  10 tools  Windows/Linux/macOS
-    Document sessions, spreadsheet CRUD (ClosedXML/CsvHelper), live Excel COM Interop (Windows only).
-    Tools: oa_register_document, oa_read_range, oa_write_range, oa_list_sheets,
-           oa_create_sheet, oa_delete_sheet, oa_get_info, oa_create_workbook,
-           oa_live_read_range, oa_live_write_range.
-    CLI: docs list (aliases: office, oa)
-
-  mk8.shell  id=sharpclaw_mk8shell  prefix=mk8  2 tools  All platforms
-    Sandboxed mk8.shell script execution and sandbox container lifecycle.
-    Tools: mk8_execute_mk8_shell, mk8_create_mk8_sandbox.
-
-  Dangerous Shell  id=sharpclaw_dangerous_shell  prefix=ds  1 tool  All platforms
-    Unsandboxed real shell execution (Bash, PowerShell, Cmd, Git) — clearance-gated.
-    Tools: ds_execute_dangerous_shell.
-
-  Database Access  id=sharpclaw_database_access  prefix=db  3 tools  All platforms
-    Register and query internal/external databases (PostgreSQL, MySQL, SQLite, MSSQL, MongoDB, Redis).
-    Tools: db_register_database, db_access_internal_databases, db_access_external_database.
-    CLI: db list-internal | db list-external (aliases: database-access)
-
-  Transcription  id=transcription  prefix=(none — uses core AgentActionType 17-19)  3 tools  Windows (audio capture)
-    Live audio transcription, input audio device management, and STT provider integration.
-    Owns: TranscriptionService, LiveTranscriptionOrchestrator, STT clients (OpenAI Whisper, Groq, Local), WASAPI audio capture, WhisperModelManager, LanguageScriptValidator.
-    Core interface: ILiveTranscriptionOrchestrator decouples AgentJobService from module.
-    Permission delegation: DelegateTo:"AccessInputAudioAsync" routes through AgentActionService.
-    Execution: IsTranscriptionAction → StartTranscriptionAsync (long-running, stays Executing).
-    Tools: transcribe_from_audio_device, transcribe_from_audio_stream, transcribe_from_audio_file.
-    CLI: resource inputaudio (alias ia) with list/get/add/update/delete/default sub-commands.
-    Seeds default input audio device on startup via SeedDataAsync.
-
-Runtime enable/disable:
-  Modules can be toggled at runtime without restart. DI services are pre-registered for all modules.
-  Enable: Register + CacheManifest + check unsatisfied deps + InitializeAsync (rollback on failure).
-  Disable: safety check (reject if other modules depend on exports) + ShutdownAsync + Unregister.
+Lifecycle:
+  Startup: manifests loaded from modules/{dir}/module.json → topological
+    sort by requires/exports → InitializeAsync per module → tools and
+    endpoints registered in ModuleRegistry.
+  Runtime enable:  Register + CacheManifest + check unsatisfied deps +
+    InitializeAsync (rollback on failure).
+  Runtime disable: safety check (reject if other modules depend on
+    exports) + ShutdownAsync + Unregister. Disabling a module that
+    exports a required contract is rejected (409 Conflict).
   State persisted in DB + .modules.env.
-  REST: GET /modules, GET /modules/{moduleId}, POST /modules/{moduleId}/enable, POST /modules/{moduleId}/disable.
-  CLI: module list | module get <id> | module enable <id> | module disable <id>.
 
-ModuleManifest fields: id, displayName, version, toolPrefix, entryAssembly, minHostVersion?,
-  author?, description?, license?, platforms[], enabled, defaultEnabled, executionTimeoutSeconds?,
+Tool resolution: module tools are resolved by prefix lookup via
+  ModuleRegistry. Inline tools (executed in the chat loop without a job
+  record) are also module-registered.
+
+ModuleManifest fields: id, displayName, version, toolPrefix, entryAssembly,
+  minHostVersion?, author?, description?, license?, platforms[], enabled,
+  defaultEnabled, executionTimeoutSeconds?,
   exports[{contractName, serviceType}], requires[string].
 
-Tool resolution order: core tools first, then module tools (prefix lookup via ModuleRegistry).
-Modules can export/require named contracts; dependency graph resolved via topological sort at startup.
-Disabling a module that exports a required contract is rejected (409 Conflict).
+REST:
+  GET  /modules                          List all modules with tools and status
+  GET  /modules/{moduleId}               Single module detail
+  POST /modules/{moduleId}/enable        Enable a disabled module at runtime
+  POST /modules/{moduleId}/disable       Disable an enabled module at runtime
+
+CLI:
+  module list | module get <id> | module enable <id> | module disable <id>
 
 ────────────────────────────────────────
 PERMISSION RESOLUTION
@@ -802,31 +754,6 @@ CLI:
   agent update <id> <name> --tools <setId>      Assign on update
   channel add --agent <id> --tools <setId>      Assign on creation
 
-Available tool names:
-
-Core tools (34):
-  wait, list_accessible_threads, read_thread_history,
-  execute_mk8_shell, execute_dangerous_shell,
-  transcribe_from_audio_device, transcribe_from_audio_stream, transcribe_from_audio_file,
-  create_sub_agent, create_container, register_info_store,
-  access_localhost_in_browser, access_localhost_cli,
-  access_local_info_store, access_external_info_store,
-  access_website, query_search_engine, access_container,
-  manage_agent, edit_task, access_skill,
-  editor_read_file, editor_get_open_files, editor_get_selection, editor_get_diagnostics,
-  editor_apply_edit, editor_create_file, editor_delete_file,
-  editor_show_diff, editor_run_build, editor_run_terminal,
-  send_bot_message,
-  task_view_info, task_view_source, task_output
-
-Computer Use module tools (cu_ prefix, 13):
-  cu_capture_display, cu_click_desktop, cu_type_on_desktop,
-  cu_enumerate_windows, cu_launch_application,
-  cu_focus_window, cu_close_window, cu_resize_window, cu_send_hotkey,
-  cu_capture_window, cu_read_clipboard, cu_write_clipboard, cu_stop_process
-
-Office Apps module tools (oa_ prefix, 10):
-  oa_register_document, oa_read_range, oa_write_range,
-  oa_list_sheets, oa_create_sheet, oa_delete_sheet,
-  oa_get_info, oa_create_workbook,
-  oa_live_read_range, oa_live_write_range
+Available tool names are dynamic — they depend on which modules are enabled.
+Query GET /modules for the authoritative list; each module entry includes a
+Tools array with the exact names to use as dictionary keys.

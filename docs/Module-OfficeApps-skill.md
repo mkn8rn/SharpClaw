@@ -1,6 +1,6 @@
 SharpClaw Module: Office Apps — Agent Skill Reference
 
-Module ID: sharpclaw.office-apps
+Module ID: sharpclaw_office_apps
 Display Name: Office Apps
 Tool Prefix: oa
 Version: 1.0.0

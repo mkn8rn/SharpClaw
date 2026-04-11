@@ -1,6 +1,6 @@
 # SharpClaw Module: Computer Use
 
-> **Module ID:** `sharpclaw.computer-use`
+> **Module ID:** `sharpclaw_computer_use`
 > **Display Name:** Computer Use
 > **Version:** 1.0.0
 > **Tool Prefix:** `cu`
@@ -368,7 +368,7 @@ services.
 
 ```json
 {
-  "id": "sharpclaw.computer-use",
+  "id": "sharpclaw_computer_use",
   "displayName": "Computer Use",
   "version": "1.0.0",
   "toolPrefix": "cu",

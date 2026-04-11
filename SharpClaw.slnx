@@ -45,6 +45,10 @@
     <File Path="docs/App-API-documentation.md" />
     <File Path="docs/App-API-skill.md" />
     <File Path="docs/Gateway-documentation.md" />
+    <File Path="docs/Module-ComputerUse-skill.md" />
+    <File Path="docs/Module-ComputerUse.md" />
+    <File Path="docs/Module-OfficeApps-skill.md" />
+    <File Path="docs/Module-OfficeApps.md" />
     <File Path="docs/Provider-Parameters.md" />
   </Folder>
   <Folder Name="/Solution Items/Git/">
