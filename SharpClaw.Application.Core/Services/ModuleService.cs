@@ -1,6 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
-
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,7 +13,7 @@ namespace SharpClaw.Application.Services;
 /// <summary>
 /// Manages module lifecycle: listing, enabling, and disabling bundled modules,
 /// and loading / unloading / reloading external (hot-loaded) modules.
-/// Updates both the database and the <c>.modules.env</c> configuration file.
+/// Updates the database to track module state.
 /// </summary>
 public sealed class ModuleService(
     SharpClawDbContext db,
@@ -136,7 +133,7 @@ public sealed class ModuleService(
 
     /// <summary>
     /// Enable a module. Registers it with the <see cref="ModuleRegistry"/>,
-    /// runs initialization, updates DB, and writes <c>.modules.env</c>.
+    /// runs initialization, and updates DB.
     /// </summary>
     public async Task<ModuleStateResponse> EnableAsync(
         string moduleId, IServiceProvider rootServices, CancellationToken ct = default)
@@ -164,9 +161,6 @@ public sealed class ModuleService(
             state.Version = manifest?.Version;
         }
         await db.SaveChangesAsync(ct);
-
-        // Write .modules.env
-        await WriteModulesEnvAsync(ct);
 
         // Register + initialize if not already active
         if (registry.GetModule(moduleId) is null)
@@ -210,7 +204,7 @@ public sealed class ModuleService(
 
     /// <summary>
     /// Disable a module. Shuts it down, unregisters from <see cref="ModuleRegistry"/>,
-    /// updates DB, and writes <c>.modules.env</c>.
+    /// and updates DB.
     /// </summary>
     public async Task<ModuleStateResponse> DisableAsync(string moduleId, CancellationToken ct = default)
     {
@@ -264,9 +258,6 @@ public sealed class ModuleService(
             state.Enabled = false;
         }
         await db.SaveChangesAsync(ct);
-
-        // Write .modules.env
-        await WriteModulesEnvAsync(ct);
 
         eventDispatcher.InvalidateSinkCache();
         eventDispatcher.Dispatch(new SharpClawEvent(
@@ -396,7 +387,7 @@ public sealed class ModuleService(
 
     /// <summary>
     /// Synchronise DB state from the current <see cref="Microsoft.Extensions.Configuration.IConfiguration"/>.
-    /// Called once at startup. The <c>.modules.env</c> file is the authoritative
+    /// Called once at startup. The <c>.env</c> configuration is the authoritative
     /// source; DB records are created or updated to match.
     /// Returns the set of module IDs that should be enabled.
     /// </summary>
@@ -435,41 +426,6 @@ public sealed class ModuleService(
 
         await db.SaveChangesAsync(ct);
         return enabledSet;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // .modules.env persistence
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Rewrite the <c>.modules.env</c> file to reflect the current DB state
-    /// of all bundled modules.
-    /// </summary>
-    private async Task WriteModulesEnvAsync(CancellationToken ct)
-    {
-        var states = await db.ModuleStates.ToDictionaryAsync(
-            s => s.ModuleId, StringComparer.Ordinal, ct);
-
-        var modulesObj = new JsonObject();
-        foreach (var module in loader.GetAllBundled().OrderBy(m => m.Id))
-        {
-            states.TryGetValue(module.Id, out var state);
-            modulesObj[module.Id] = state?.Enabled ?? false;
-        }
-
-        var root = new JsonObject { ["Modules"] = modulesObj };
-        var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-
-        var path = ResolveModulesEnvPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, json, ct);
-    }
-
-    internal static string ResolveModulesEnvPath()
-    {
-        return Path.Combine(
-            Path.GetDirectoryName(typeof(ModuleService).Assembly.Location)!,
-            "Environment", ".modules.env");
     }
 
     // ═══════════════════════════════════════════════════════════════
