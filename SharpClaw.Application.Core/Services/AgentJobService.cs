@@ -832,7 +832,16 @@ IConfiguration configuration)
             return AgentActionResult.Denied($"Module tool '{actionKey}' has no permission descriptor.");
 
         if (descriptor.IsPerResource && !resourceId.HasValue)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: ResourceId is null for per-resource tool '{actionKey}'",
+                "SharpClaw.CLI");
             return AgentActionResult.Denied($"ResourceId is required for module tool '{actionKey}'.");
+        }
+
+        Debug.WriteLine(
+            $"[PermissionCheck] Tool='{actionKey}' AgentId={agentId} ResourceId={resourceId} DelegateTo='{descriptor.DelegateTo}'",
+            "SharpClaw.CLI");
 
         // Direct callback takes priority.
         if (descriptor.Check is not null)

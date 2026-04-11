@@ -22,6 +22,13 @@ public class SharpClawDbContext(
     DbContextOptions<SharpClawDbContext> options,
     IServiceProvider? serviceProvider = null) : DbContext(options)
 {
+    /// <summary>
+    /// When <c>true</c>, <see cref="SaveChangesAsync"/> skips the JSON
+    /// flush. Set by <see cref="JsonFilePersistenceService.LoadAsync"/>
+    /// to avoid re-serialising entities that are being hydrated.
+    /// </summary>
+    internal bool SuppressJsonFlush { get; set; }
+
     public DbSet<UserDB> Users => Set<UserDB>();
     public DbSet<RoleDB> Roles => Set<RoleDB>();
     public DbSet<PermissionSetDB> PermissionSets => Set<PermissionSetDB>();
@@ -584,9 +591,12 @@ public class SharpClawDbContext(
 
         var result = await base.SaveChangesAsync(cancellationToken);
 
-        var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
-        if (jsonSync is not null && (entityChanges.Count > 0 || joinTableChanges.Count > 0))
-            await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+        if (!SuppressJsonFlush)
+        {
+            var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
+            if (jsonSync is not null && (entityChanges.Count > 0 || joinTableChanges.Count > 0))
+                await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+        }
 
         return result;
     }

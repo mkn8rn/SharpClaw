@@ -20,46 +20,46 @@ public static class ResourceHandlers
     /// Returns lightweight <c>[{id, name}]</c> items for the resource type
     /// that backs a given permission access category.  The <paramref name="type"/>
     /// value matches the <see cref="ResourceAccessDB.ResourceType"/> discriminator
-    /// (e.g. <c>InputAudio</c>, <c>ContainerAccess</c>).
+    /// (e.g. <c>TrAudio</c>, <c>Container</c>).
     /// </summary>
     [MapGet("/lookup/{type}")]
     public static async Task<IResult> LookupByAccessType(string type, SharpClawDbContext db)
     {
         IQueryable<ResourceItem>? query = type switch
         {
-            "DangerousShell" => db.SystemUsers
+            "DsShell" => db.SystemUsers
                 .Select(e => new ResourceItem(e.Id, e.Username)),
-            "SafeShell" or "ContainerAccess" => db.Containers
+            "Mk8Shell" or "Container" => db.Containers
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "WebsiteAccess" => db.Websites
+            "WaWebsite" => db.Websites
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "SearchEngineAccess" => db.SearchEngines
+            "WaSearch" => db.SearchEngines
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "InternalDatabase" => db.InternalDatabases
+            "DbInternal" => db.InternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "ExternalDatabase" => db.ExternalDatabases
+            "DbExternal" => db.ExternalDatabases
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "InputAudio" => db.InputAudios
+            "TrAudio" => db.InputAudios
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "DisplayDevice" => db.DisplayDevices
+            "CuDisplay" => db.DisplayDevices
                 .Select(e => new ResourceItem(e.Id, e.Name)),
             "EditorSession" => db.EditorSessions
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "ManageAgent" => db.Agents
+            "AoAgent" => db.Agents
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "EditTask" => db.ScheduledTasks
+            "AoTask" => db.ScheduledTasks
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AccessSkill" => db.Skills
+            "AoSkill" => db.Skills
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "EditAgentHeader" => db.Agents
+            "AoAgentHeader" => db.Agents
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "EditChannelHeader" => db.Channels
+            "AoChannelHeader" => db.Channels
                 .Select(e => new ResourceItem(e.Id, e.Title ?? e.Id.ToString())),
-            "DocumentSession" => db.DocumentSessions
+            "OaDocument" => db.DocumentSessions
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "NativeApplication" => db.NativeApplications
+            "CuNativeApp" => db.NativeApplications
                 .Select(e => new ResourceItem(e.Id, e.Name)),
-            "BotIntegration" => db.BotIntegrations
+            "BiChannel" => db.BotIntegrations
                 .Select(e => new ResourceItem(e.Id, e.Name)),
             _ => null,
         };
