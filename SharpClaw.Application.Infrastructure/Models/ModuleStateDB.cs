@@ -4,7 +4,6 @@ namespace SharpClaw.Application.Infrastructure.Models;
 
 /// <summary>
 /// Tracks the enabled/disabled state of a bundled module.
-/// Synced with <c>.modules.env</c> on every state change.
 /// </summary>
 public class ModuleStateDB : BaseEntity
 {

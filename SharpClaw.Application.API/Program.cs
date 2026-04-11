@@ -215,7 +215,7 @@ try
     moduleLoader.SetRootServices(app.Services);
     moduleLoader.LoadAllManifests();
 
-    // Sync module state from .modules.env → DB, determine which modules to enable.
+    // Sync module state from configuration → DB, determine which modules to enable.
     HashSet<string> enabledModuleIds;
     using (var scope = app.Services.CreateScope())
     {
