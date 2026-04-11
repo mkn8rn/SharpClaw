@@ -968,7 +968,10 @@ public sealed partial class MainPage : Page
         Guid? SenderUserId = null, string? SenderUsername = null,
         Guid? SenderAgentId = null, string? SenderAgentName = null,
         string? ClientType = null);
-    private sealed record ChatResponseDto(ChatMessageDto UserMessage, ChatMessageDto AssistantMessage);
+    private sealed record ChatResponseDto(ChatMessageDto UserMessage, ChatMessageDto AssistantMessage,
+        IReadOnlyList<JobDetailDto>? JobResults = null,
+        ChannelCostDto? ChannelCost = null, ThreadCostDto? ThreadCost = null,
+        AgentCostDto? AgentCost = null);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record ThreadDto(Guid Id, string Name, Guid ChannelId, int? MaxMessages, int? MaxCharacters, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     [ImplicitKeys(IsEnabled = false)]
@@ -993,6 +996,7 @@ public sealed partial class MainPage : Page
         IReadOnlyList<JobLogDto>? Logs,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
         IReadOnlyList<TranscriptionSegmentDto>? Segments = null,
+        TokenUsageDto? JobCost = null,
         ChannelCostDto? ChannelCost = null);
 
     // ── Task DTOs ────────────────────────────────────────────────
@@ -1017,6 +1021,9 @@ public sealed partial class MainPage : Page
         Guid? ChannelId = null, ChannelCostDto? ChannelCost = null);
 
     // ── Cost DTOs ────────────────────────────────────────────────
+    private sealed record TokenUsageDto(
+        int TotalPromptTokens, int TotalCompletionTokens, int TotalTokens);
+
     private sealed record AgentTokenBreakdownDto(
         Guid AgentId, string AgentName,
         int PromptTokens, int CompletionTokens, int TotalTokens);
@@ -1030,4 +1037,13 @@ public sealed partial class MainPage : Page
         Guid ThreadId, Guid ChannelId,
         int TotalPromptTokens, int TotalCompletionTokens, int TotalTokens,
         IReadOnlyList<AgentTokenBreakdownDto> AgentBreakdown);
+
+    private sealed record AgentChannelTokenBreakdownDto(
+        Guid ChannelId,
+        int PromptTokens, int CompletionTokens, int TotalTokens);
+
+    private sealed record AgentCostDto(
+        Guid AgentId, string AgentName,
+        int TotalPromptTokens, int TotalCompletionTokens, int TotalTokens,
+        IReadOnlyList<AgentChannelTokenBreakdownDto> ChannelBreakdown);
 }

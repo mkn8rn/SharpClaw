@@ -54,6 +54,7 @@ TranscriptionMode? TranscriptionMode = null,
 int? WindowSeconds = null,
 int? StepSeconds = null,
 IReadOnlyList<TranscriptionSegmentResponse>? Segments = null,
+TokenUsageResponse? JobCost = null,
 ChannelCostResponse? ChannelCost = null);
 
 public sealed record AgentJobLogResponse(

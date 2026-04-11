@@ -1048,9 +1048,14 @@ Assign a role to an agent.
   "providerParameters": { "key": "value" },
   "customChatHeader": "string | null",
   "toolAwarenessSetId": "guid | null",
-  "disableToolSchemas": false
+  "disableToolSchemas": false,
+  "cost": null
 }
 ```
+
+`cost` is an optional `AgentCostResponse` object. It is `null` on
+standard CRUD responses; use the dedicated `GET /agents/{id}/cost`
+endpoint to retrieve the full per-agent token breakdown.
 
 ### AgentSummary
 
@@ -1599,13 +1604,14 @@ Response `200`:
   "assistantMessage": { "role": "assistant", "content": "string", "timestamp": "datetime" },
   "jobResults": [ /* AgentJobResponse[], if any */ ],
   "channelCost": { /* ChannelCostResponse — see Token cost tracking */ },
-  "threadCost": null
+  "threadCost": null,
+  "agentCost": { /* AgentCostResponse — see Token cost tracking */ }
 }
 ```
 
 Every chat response piggybacks the current channel (and thread, when
-applicable) token usage so callers do not need a separate round-trip to
-the `/cost` endpoints. See [Token cost tracking](#token-cost-tracking)
+applicable) and agent token usage so callers do not need a separate
+round-trip to the `/cost` endpoints. See [Token cost tracking](#token-cost-tracking)
 for the shape of these objects.
 
 When the assistant submits agent jobs during the turn the same
@@ -1983,12 +1989,21 @@ Retrieve transcription segments added after the given timestamp.
     "totalCompletionTokens": 0,
     "totalTokens": 0,
     "agentBreakdown": []
+  },
+  "jobCost": {
+    "totalPromptTokens": 0,
+    "totalCompletionTokens": 0,
+    "totalTokens": 0
   }
 }
 ```
 
 `segments` is only populated for transcription action types; `null`
 otherwise.
+
+`jobCost` contains the prompt and completion tokens attributed to this
+specific job from the LLM round that triggered it. `null` for jobs
+that were not submitted during a chat tool-call round.
 
 `channelCost` is piggybacked on all detail / mutation responses
 (Submit, GetById, Approve, Stop, Cancel, Pause, Resume) so callers
@@ -2941,8 +2956,8 @@ and task responses so callers rarely need the dedicated cost endpoints.
 
 | Response type | Field(s) | When populated |
 |---------------|----------|----------------|
-| `ChatResponse` | `channelCost`, `threadCost` | Always (every chat turn) |
-| `AgentJobResponse` | `channelCost` | On detail / mutation endpoints (`GET`, `POST approve/stop/cancel`, `PUT pause/resume`) |
+| `ChatResponse` | `channelCost`, `threadCost`, `agentCost` | Always (every chat turn) |
+| `AgentJobResponse` | `channelCost`, `jobCost` | `channelCost` on detail / mutation endpoints (`GET`, `POST approve/stop/cancel`, `PUT pause/resume`); `jobCost` when the job was submitted during a chat tool-call round |
 | `TaskInstanceResponse` | `channelCost` | On `GET .../instances/{instanceId}` when bound to a channel |
 | SSE `Done` event | Inside the `ChatResponse` payload | Always |
 
@@ -2981,6 +2996,40 @@ Same shape as `ChannelCostResponse` with an additional `threadId` field:
 }
 ```
 
+### TokenUsageResponse
+
+Flat prompt / completion / total triple used for per-job cost:
+
+```json
+{
+  "totalPromptTokens": 0,
+  "totalCompletionTokens": 0,
+  "totalTokens": 0
+}
+```
+
+### AgentCostResponse
+
+Aggregated token usage across all channels for a single agent:
+
+```json
+{
+  "agentId": "guid",
+  "agentName": "string",
+  "totalPromptTokens": 0,
+  "totalCompletionTokens": 0,
+  "totalTokens": 0,
+  "channelBreakdown": [
+    {
+      "channelId": "guid",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0
+    }
+  ]
+}
+```
+
 ### Diagnostic endpoints
 
 Dedicated endpoints for querying cost without a chat/job round-trip:
@@ -2993,6 +3042,12 @@ Dedicated endpoints for querying cost without a chat/job round-trip:
 
 **Response `200`:** `ThreadCostResponse`
 **Response `404`:** Thread not found.
+
+#### GET /agents/{id}/cost
+
+**Response `200`:** `AgentCostResponse` — total token usage for the
+agent across all channels, with per-channel breakdown.
+**Response `404`:** Agent not found.
 
 ---
 

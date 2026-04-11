@@ -17,6 +17,7 @@ using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
@@ -1248,8 +1249,16 @@ IConfiguration configuration)
     private static bool IsTranscriptionActionKey(string? actionKey) =>
         actionKey is not null && actionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase);
 
-    private static AgentJobResponse ToResponse(AgentJobDB job) =>
-        new(
+    private static AgentJobResponse ToResponse(AgentJobDB job)
+    {
+        var jobCost = job.PromptTokens is not null || job.CompletionTokens is not null
+            ? new TokenUsageResponse(
+                job.PromptTokens ?? 0,
+                job.CompletionTokens ?? 0,
+                (job.PromptTokens ?? 0) + (job.CompletionTokens ?? 0))
+            : null;
+
+        return new(
             Id: job.Id,
             ChannelId: job.ChannelId,
             AgentId: job.AgentId,
@@ -1282,5 +1291,38 @@ IConfiguration configuration)
                         s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp,
                         s.IsProvisional))
                     .ToList()
-                : null);
+                : null,
+            JobCost: jobCost);
+    }
+
+    /// <summary>
+    /// Records prompt/completion tokens on a set of jobs that were
+    /// submitted during a single LLM round.  Tokens are split evenly
+    /// across the jobs; any remainder is assigned to the first job.
+    /// </summary>
+    public async Task RecordTokensAsync(
+        IReadOnlyList<Guid> jobIds, int promptTokens, int completionTokens,
+        CancellationToken ct = default)
+    {
+        if (jobIds.Count == 0) return;
+
+        var jobs = await db.AgentJobs
+            .Where(j => jobIds.Contains(j.Id))
+            .ToListAsync(ct);
+
+        if (jobs.Count == 0) return;
+
+        var promptPer = promptTokens / jobs.Count;
+        var completionPer = completionTokens / jobs.Count;
+        var promptRemainder = promptTokens % jobs.Count;
+        var completionRemainder = completionTokens % jobs.Count;
+
+        for (var i = 0; i < jobs.Count; i++)
+        {
+            jobs[i].PromptTokens = (jobs[i].PromptTokens ?? 0) + promptPer + (i == 0 ? promptRemainder : 0);
+            jobs[i].CompletionTokens = (jobs[i].CompletionTokens ?? 0) + completionPer + (i == 0 ? completionRemainder : 0);
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
 }

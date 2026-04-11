@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Contracts.DTOs.Chat;
 
 namespace SharpClaw.Contracts.DTOs.Agents;
 
@@ -67,7 +68,8 @@ public sealed record AgentResponse(
     Dictionary<string, JsonElement>? ProviderParameters = null,
     string? CustomChatHeader = null,
     Guid? ToolAwarenessSetId = null,
-    bool DisableToolSchemas = false);
+    bool DisableToolSchemas = false,
+    AgentCostResponse? Cost = null);
 
 /// <summary>
 /// Lightweight agent summary —
