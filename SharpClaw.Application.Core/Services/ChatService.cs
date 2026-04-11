@@ -492,6 +492,7 @@ public sealed class ChatService(
         if (user.Role?.PermissionSetId is { } psId)
         {
             ps = await db.PermissionSets
+                .Include(p => p.GlobalFlags)
                 .Include(p => p.ResourceAccesses)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == psId, ct);
@@ -540,9 +541,10 @@ public sealed class ChatService(
             if (agentRole.PermissionSetId is { } agentPsId)
             {
                 agentPs = await db.PermissionSets
-                    .Include(p => p.ResourceAccesses)
-                    .AsSplitQuery()
-                    .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+                        .Include(p => p.GlobalFlags)
+                        .Include(p => p.ResourceAccesses)
+                        .AsSplitQuery()
+                        .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
             }
 
             // NOTE: DefaultClearance is intentionally NOT included in the header.
@@ -1648,16 +1650,22 @@ public sealed class ChatService(
                 new { module = moduleId, tool = toolName, @params = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}").RootElement },
                 SecureJsonOptions.Envelope);
 
-            // Attempt to extract resourceId from the arguments (same convention).
+            // Attempt to extract resourceId from the arguments.
+            // Modules use either "resource_id" or "targetId" as the parameter name.
             Guid? modResourceId = null;
             try
             {
                 using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
-                if (doc.RootElement.TryGetProperty("resource_id", out var rp)
+                if ((doc.RootElement.TryGetProperty("resource_id", out var rp)
+                     || doc.RootElement.TryGetProperty("targetId", out rp))
                     && Guid.TryParse(rp.GetString(), out var mrid))
                     modResourceId = mrid;
             }
             catch (JsonException) { /* non-critical */ }
+
+            Debug.WriteLine(
+                $"[ParseToolCall] ResourceId={modResourceId?.ToString() ?? "(null)"} from args: {toolCall.ArgumentsJson}",
+                "SharpClaw.CLI");
 
             return new ParsedToolCall(
                 toolCall.Id,

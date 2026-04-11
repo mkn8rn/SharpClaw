@@ -590,8 +590,17 @@ public sealed partial class MainPage
                         }
                         else if (evtSpan.SequenceEqual("ToolCallStart"))
                         {
-                            // Server now sends tool notation via TextDelta events;
-                            // no client-side marker generation needed.
+                            using var doc = JsonDocument.Parse(line.AsMemory(6));
+                            var actionKey = "unknown";
+                            var status = "unknown";
+                            if (doc.RootElement.TryGetProperty("job", out var job))
+                            {
+                                if (job.TryGetProperty("actionKey", out var ak) && ak.GetString() is { } a)
+                                    actionKey = a;
+                                if (job.TryGetProperty("status", out var st) && st.GetString() is { } s)
+                                    status = s;
+                            }
+                            accumulated.Append($"\n⚙ [{actionKey}] → {status}");
                             lastWasToolEvent = true;
                             lastFlushedLength = accumulated.Length;
                             var snap = accumulated.ToString();
@@ -603,8 +612,17 @@ public sealed partial class MainPage
                         }
                         else if (evtSpan.SequenceEqual("ToolCallResult"))
                         {
-                            // Server now sends tool notation via TextDelta events;
-                            // no client-side marker generation needed.
+                            using var doc = JsonDocument.Parse(line.AsMemory(6));
+                            var actionKey = "unknown";
+                            var status = "unknown";
+                            if (doc.RootElement.TryGetProperty("result", out var res))
+                            {
+                                if (res.TryGetProperty("actionKey", out var ak) && ak.GetString() is { } a)
+                                    actionKey = a;
+                                if (res.TryGetProperty("status", out var st) && st.GetString() is { } s)
+                                    status = s;
+                            }
+                            accumulated.Append($"\n⚙ [{actionKey}] → {status}");
                             lastWasToolEvent = true;
                             lastFlushedLength = accumulated.Length;
                             var snap = accumulated.ToString();
@@ -616,8 +634,13 @@ public sealed partial class MainPage
                         }
                         else if (evtSpan.SequenceEqual("ApprovalRequired"))
                         {
-                            // Server now sends approval notation via TextDelta events;
-                            // no client-side marker generation needed.
+                            using var doc = JsonDocument.Parse(line.AsMemory(6));
+                            var actionKey = "unknown";
+                            if (doc.RootElement.TryGetProperty("pendingJob", out var pj)
+                                && pj.TryGetProperty("actionKey", out var ak)
+                                && ak.GetString() is { } a)
+                                actionKey = a;
+                            accumulated.Append($"\n⏳ [{actionKey}] awaiting approval");
                             lastWasToolEvent = true;
                             lastFlushedLength = accumulated.Length;
                             var snap = accumulated.ToString();
@@ -629,8 +652,17 @@ public sealed partial class MainPage
                         }
                         else if (evtSpan.SequenceEqual("ApprovalResult"))
                         {
-                            // Server now sends approval notation via TextDelta events;
-                            // no client-side marker generation needed.
+                            using var doc = JsonDocument.Parse(line.AsMemory(6));
+                            var actionKey = "unknown";
+                            var status = "unknown";
+                            if (doc.RootElement.TryGetProperty("approvalOutcome", out var ao))
+                            {
+                                if (ao.TryGetProperty("actionKey", out var ak) && ak.GetString() is { } a)
+                                    actionKey = a;
+                                if (ao.TryGetProperty("status", out var st) && st.GetString() is { } s)
+                                    status = s;
+                            }
+                            accumulated.Append($"\n⚙ [{actionKey}] → {status}");
                             lastWasToolEvent = true;
                             lastFlushedLength = accumulated.Length;
                             var snap = accumulated.ToString();

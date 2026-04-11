@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
+using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -110,7 +112,12 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     {
         var agentPerms = await LoadAgentPermissionsAsync(agentId, ct);
         if (agentPerms is null)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: Agent {agentId} has no role or permission set.",
+                "SharpClaw.CLI");
             return AgentActionResult.Denied("Agent has no role or permissions assigned.");
+        }
 
         var access = agentPerms.ResourceAccesses
             .FirstOrDefault(a => a.ResourceType == resourceType
@@ -118,7 +125,14 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
                                || a.ResourceId == WellKnownIds.AllResources));
 
         if (access is null)
+        {
+            Debug.WriteLine(
+                $"[PermissionCheck] DENIED: Agent {agentId} has no '{resourceType}' grant for resource {resourceId}. "
+                + $"ResourceAccesses count={agentPerms.ResourceAccesses.Count}, "
+                + $"types=[{string.Join(", ", agentPerms.ResourceAccesses.Select(a => $"{a.ResourceType}:{a.ResourceId:D}"))}]",
+                "SharpClaw.CLI");
             return AgentActionResult.Denied($"Agent does not have {resourceDescription}.");
+        }
 
         var effective = ResolveClearance(access.Clearance, agentPerms.DefaultClearance);
 
@@ -254,12 +268,14 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     public async Task<PermissionSetDB?> LoadPermissionSetAsync(
         Guid permissionSetId, CancellationToken ct)
     {
-        return await db.PermissionSets
+        var ps = await db.PermissionSets
             .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .Include(p => p.ClearanceUserWhitelist)
             .Include(p => p.ClearanceAgentWhitelist)
             .FirstOrDefaultAsync(p => p.Id == permissionSetId, ct);
+
+        return ps;
     }
 
     // ═══════════════════════════════════════════════════════════════

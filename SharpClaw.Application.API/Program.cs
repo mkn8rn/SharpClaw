@@ -225,20 +225,34 @@ try
 
     // Register only enabled modules with the registry.
     var registry = app.Services.GetRequiredService<ModuleRegistry>();
-    foreach (var bundledModule in moduleLoader.GetAllBundled())
+    var allBundled = moduleLoader.GetAllBundled();
+    var registeredBundledCount = 0;
+    var disabledBundledCount = 0;
+
+    foreach (var bundledModule in allBundled)
     {
         if (!enabledModuleIds.Contains(bundledModule.Id))
         {
-            Log.Information("Module '{ModuleId}' is disabled — skipping registration", bundledModule.Id);
+            Log.Information("Module '{ModuleId}' ({DisplayName}) is disabled — skipping registration [bundled]",
+                bundledModule.Id, bundledModule.DisplayName);
+            disabledBundledCount++;
             continue;
         }
 
         registry.Register(bundledModule);
+        registeredBundledCount++;
 
         var manifest = moduleLoader.GetManifest(bundledModule.Id);
+        var version = manifest?.Version ?? "unknown";
+        Log.Information("Module '{ModuleId}' ({DisplayName}) registered [bundled, v{Version}]",
+            bundledModule.Id, bundledModule.DisplayName, version);
+
         if (manifest is not null)
             registry.CacheManifest(bundledModule.Id, manifest);
     }
+
+    Log.Information("Bundled modules: {Registered} registered, {Disabled} disabled, {Total} discovered",
+        registeredBundledCount, disabledBundledCount, allBundled.Count);
 
     // Initialize enabled modules in dependency order (providers before consumers).
     var initOrder = registry.GetInitializationOrder(out var excludedModules);
@@ -253,6 +267,8 @@ try
     // Track contracts that became unavailable due to runtime init failures
     // so that downstream dependents can be cascade-skipped.
     var failedContracts = new HashSet<string>(StringComparer.Ordinal);
+    var initializedCount = 0;
+    var failedInitCount = 0;
 
     foreach (var moduleId in initOrder)
     {
@@ -276,12 +292,15 @@ try
                 failedContracts.Add(export.ContractName);
 
             registry.Unregister(moduleId);
+            failedInitCount++;
             continue;
         }
 
         try
         {
             await module.InitializeAsync(app.Services, CancellationToken.None);
+            Log.Information("Module '{ModuleId}' initialized successfully [bundled]", moduleId);
+            initializedCount++;
         }
         catch (Exception ex)
         {
@@ -291,22 +310,34 @@ try
                 failedContracts.Add(export.ContractName);
 
             registry.Unregister(moduleId);
+            failedInitCount++;
         }
     }
 
     // Scan external-modules directory and hot-load any found modules
+    var externalLoadedCount = 0;
     try
     {
         using var extScope = app.Services.CreateScope();
         var moduleSvc = extScope.ServiceProvider.GetRequiredService<ModuleService>();
         var externalModules = await moduleSvc.ScanExternalModulesAsync(app.Services);
+        externalLoadedCount = externalModules.Count;
         foreach (var ext in externalModules)
-            Log.Information("External module '{ModuleId}' loaded ({Version})", ext.ModuleId, ext.Version);
+            Log.Information("Module '{ModuleId}' ({DisplayName}) loaded [external, v{Version}]",
+                ext.ModuleId, ext.DisplayName, ext.Version ?? "unknown");
     }
     catch (Exception ex)
     {
         Log.Warning(ex, "External module scan failed — continuing without external modules");
     }
+
+    // Module startup summary
+    var totalLoaded = initializedCount + externalLoadedCount;
+    Log.Information(
+        "Module startup complete: {TotalLoaded} loaded ({BundledInit} bundled, {ExternalLoaded} external), " +
+        "{FailedInit} failed, {Disabled} disabled, {Excluded} excluded",
+        totalLoaded, initializedCount, externalLoadedCount,
+        failedInitCount, disabledBundledCount, excludedModules.Count);
 
     // Seed mk8.shell base env on first startup
     Mk8GlobalEnv.Load();

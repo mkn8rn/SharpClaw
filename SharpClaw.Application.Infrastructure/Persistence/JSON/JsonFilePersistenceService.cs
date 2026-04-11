@@ -127,19 +127,28 @@ public sealed class JsonFilePersistenceService(
             logger.LogDebug("Loaded {Count} {Type} from {Path}", files.Length, clrType.Name, entityDir);
         }
 
-        await context.SaveChangesAsync(ct);
-
-        // Second pass: load many-to-many join tables after all entities
-        // are committed so the FK references resolve correctly.
-        foreach (var entityType in context.Model.GetEntityTypes())
+        context.SuppressJsonFlush = true;
+        try
         {
-            if (!entityType.HasSharedClrType)
-                continue;
+            await context.SaveChangesAsync(ct);
 
-            await LoadJoinTableAsync(entityType, ct);
+            // Second pass: load many-to-many join tables after all entities
+            // are committed so the FK references resolve correctly.
+            foreach (var entityType in context.Model.GetEntityTypes())
+            {
+                if (!entityType.HasSharedClrType)
+                    continue;
+
+                await LoadJoinTableAsync(entityType, ct);
+            }
+
+            await context.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            context.SuppressJsonFlush = false;
         }
 
-        await context.SaveChangesAsync(ct);
         DetachAll();
     }
 
