@@ -202,13 +202,15 @@ public sealed class ChatService(
         var threadCost = threadId is not null
             ? await GetThreadCostAsync(channelId, threadId.Value, ct)
             : null;
+        var agentCost = await GetAgentCostAsync(agent.Id, ct);
 
         return new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
             loopResult.JobResults.Count > 0 ? loopResult.JobResults : null,
             channelCost,
-            threadCost);
+            threadCost,
+            agentCost);
 
         } // try
         finally
@@ -320,6 +322,45 @@ public sealed class ChatService(
         return new ThreadCostResponse(
             threadId, channelId, totalPrompt, totalCompletion,
             totalPrompt + totalCompletion, breakdown);
+    }
+
+    /// <summary>
+    /// Aggregated token usage for a single agent across all channels,
+    /// with per-channel breakdown.
+    /// </summary>
+    public async Task<AgentCostResponse?> GetAgentCostAsync(
+        Guid agentId, CancellationToken ct = default)
+    {
+        var agent = await db.Agents.FindAsync([agentId], ct);
+        if (agent is null) return null;
+
+        var rows = await db.ChatMessages
+            .Where(m => m.SenderAgentId == agentId && m.PromptTokens != null)
+            .GroupBy(m => m.ChannelId)
+            .Select(g => new
+            {
+                ChannelId = g.Key,
+                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
+                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
+            })
+            .ToListAsync(ct);
+
+        var channelBreakdown = rows
+            .Select(r => new AgentChannelTokenBreakdown(
+                r.ChannelId,
+                r.PromptTokens,
+                r.CompletionTokens,
+                r.PromptTokens + r.CompletionTokens))
+            .OrderByDescending(b => b.TotalTokens)
+            .ToList();
+
+        var totalPrompt = channelBreakdown.Sum(b => b.PromptTokens);
+        var totalCompletion = channelBreakdown.Sum(b => b.CompletionTokens);
+
+        return new AgentCostResponse(
+            agentId, agent.Name,
+            totalPrompt, totalCompletion,
+            totalPrompt + totalCompletion, channelBreakdown);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -855,6 +896,7 @@ public sealed class ChatService(
         var rounds = 0;
         var totalPromptTokens = 0;
         var totalCompletionTokens = 0;
+        var roundJobIds = new List<Guid>();
 
         while (true)
         {
@@ -891,6 +933,7 @@ public sealed class ChatService(
 
             // Reset content for next round (tool results will produce new text)
             fullContent.Clear();
+            roundJobIds.Clear();
 
             foreach (var tc in roundResult.ToolCalls)
             {
@@ -927,6 +970,7 @@ public sealed class ChatService(
 
                 var jobRequest = await BuildJobRequestAsync(parsed, agent.Id, ct);
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+                roundJobIds.Add(jobResponse.Id);
 
                 // ── Inline approval ───────────────────────────────
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
@@ -975,6 +1019,13 @@ public sealed class ChatService(
 
                 messages.Add(BuildToolResultMessage(tc.Id, jobResponse, supportsVision));
             }
+
+            // Distribute this round's token usage across jobs submitted in the round
+            if (roundJobIds.Count > 0 && roundResult.Usage is { } ru)
+            {
+                await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
+                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
+            }
         }
 
         // Persist assistant message after LLM completes
@@ -1004,13 +1055,15 @@ public sealed class ChatService(
         var threadCost = threadId is not null
             ? await GetThreadCostAsync(channelId, threadId.Value, ct)
             : null;
+        var agentCost = await GetAgentCostAsync(agent.Id, ct);
 
         yield return ChatStreamEvent.Complete(new ChatResponse(
             ToMessageResponse(userMessage),
             ToMessageResponse(assistantMessage),
             jobResults.Count > 0 ? jobResults : null,
             channelCost,
-            threadCost));
+            threadCost,
+            agentCost));
 
         } // try
         finally
@@ -1439,6 +1492,51 @@ public sealed class ChatService(
     }
 
     /// <summary>
+    /// Patches <paramref name="jobResults"/> entries whose IDs appear in
+    /// <paramref name="roundJobIds"/> with the correct <see cref="TokenUsageResponse"/>
+    /// computed from the same even-split logic used by
+    /// <see cref="AgentJobService.RecordTokensAsync"/>.
+    /// This fixes the timing gap where job snapshots are captured at submit
+    /// time, before the tokens have been written to the database.
+    /// </summary>
+    private static void PatchJobCosts(
+        List<AgentJobResponse> jobResults, IReadOnlyList<Guid> roundJobIds,
+        int promptTokens, int completionTokens)
+    {
+        if (roundJobIds.Count == 0) return;
+
+        var count = roundJobIds.Count;
+        var promptPer = promptTokens / count;
+        var completionPer = completionTokens / count;
+        var promptRemainder = promptTokens % count;
+        var completionRemainder = completionTokens % count;
+
+        // Walk the round IDs in order; the first gets the remainder (mirrors RecordTokensAsync).
+        for (var ri = 0; ri < roundJobIds.Count; ri++)
+        {
+            var id = roundJobIds[ri];
+            var p = promptPer + (ri == 0 ? promptRemainder : 0);
+            var c = completionPer + (ri == 0 ? completionRemainder : 0);
+
+            for (var ji = jobResults.Count - 1; ji >= 0; ji--)
+            {
+                if (jobResults[ji].Id != id) continue;
+
+                // Accumulate: the snapshot may already carry tokens from a previous round.
+                var existing = jobResults[ji].JobCost;
+                var newP = (existing?.TotalPromptTokens ?? 0) + p;
+                var newC = (existing?.TotalCompletionTokens ?? 0) + c;
+
+                jobResults[ji] = jobResults[ji] with
+                {
+                    JobCost = new TokenUsageResponse(newP, newC, newP + newC)
+                };
+                break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Builds a <see cref="SubmitAgentJobRequest"/> from a parsed tool call.
     /// </summary>
     private async Task<SubmitAgentJobRequest> BuildJobRequestAsync(
@@ -1495,6 +1593,7 @@ public sealed class ChatService(
         var effectiveTools = GetEffectiveTools(taskContext, toolAwareness);
         var totalPromptTokens = 0;
         var totalCompletionTokens = 0;
+        var roundJobIds = new List<Guid>();
 
         while (true)
         {
@@ -1520,6 +1619,7 @@ public sealed class ChatService(
             messages.Add(ToolAwareMessage.AssistantWithToolCalls(result.ToolCalls, result.Content));
 
             var anyUnresolvableApproval = false;
+            roundJobIds.Clear();
 
             foreach (var tc in result.ToolCalls)
             {
@@ -1553,6 +1653,7 @@ public sealed class ChatService(
                 var jobRequest = await BuildJobRequestAsync(parsed, agentId, ct);
 
                 var jobResponse = await jobService.SubmitAsync(channelId, jobRequest, ct);
+                roundJobIds.Add(jobResponse.Id);
 
                 // ── Inline approval (when callback available) ────
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval
@@ -1584,6 +1685,13 @@ public sealed class ChatService(
 
                 if (jobResponse.Status == AgentJobStatus.AwaitingApproval)
                     anyUnresolvableApproval = true;
+            }
+
+            // Distribute this round's token usage across jobs submitted in the round
+            if (roundJobIds.Count > 0 && result.Usage is { } ru)
+            {
+                await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
+                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
             }
 
             if (anyUnresolvableApproval)

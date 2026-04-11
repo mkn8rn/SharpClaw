@@ -23,6 +23,13 @@ public static class AgentHandlers
         return agent is not null ? Results.Ok(agent) : Results.NotFound();
     }
 
+    [MapGet("/{id:guid}/cost")]
+    public static async Task<IResult> GetCost(Guid id, ChatService chatSvc)
+    {
+        var cost = await chatSvc.GetAgentCostAsync(id);
+        return cost is not null ? Results.Ok(cost) : Results.NotFound();
+    }
+
     [MapPut("/{id:guid}")]
     public static async Task<IResult> Update(Guid id, UpdateAgentRequest request, AgentService svc)
     {
