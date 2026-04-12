@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Unified publish script for SharpClaw. Builds every supported release
     type across all platforms in a single invocation.
@@ -40,7 +40,8 @@
     MSIX variants: Both, Sideload, Store. Default: Both.
 
 .PARAMETER MsixVersion
-    Package version for MSIX (Major.Minor.Build.0). Default: 0.0.2.0.
+    Package version for MSIX (Major.Minor.Build.0).
+    Default: read from Directory.Build.props AssemblyVersion.
 
 .PARAMETER MsixRid
     RID for the MSIX build. Default: win-x64.
@@ -91,7 +92,7 @@ param(
     [string]$Rid                   = "all",
     [ValidateSet("Both", "Sideload", "Store")]
     [string]$MsixMode              = "Both",
-    [string]$MsixVersion           = "0.0.2.0",
+    [string]$MsixVersion           = "",
     [string]$MsixRid               = "win-x64",
     [string]$ServerRid             = "all",
     [string]$Configuration         = "Release",
@@ -106,6 +107,25 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# ===================================================================
+#  Resolve MSIX version from Directory.Build.props when not supplied
+# ===================================================================
+
+if (-not $MsixVersion) {
+    $propsPath = Join-Path $PSScriptRoot "Directory.Build.props"
+    if (Test-Path $propsPath) {
+        [xml]$propsXml = Get-Content $propsPath -Raw
+        $rawVersion = $propsXml.Project.PropertyGroup.AssemblyVersion
+    }
+    if ($rawVersion) {
+        $MsixVersion = $rawVersion
+    } else {
+        Write-Error "Could not read AssemblyVersion from Directory.Build.props. Pass -MsixVersion explicitly."
+        exit 1
+    }
+    Write-Host "Resolved MsixVersion from Directory.Build.props: $MsixVersion" -ForegroundColor DarkGray
+}
 
 # ===================================================================
 #  Constants & paths

@@ -49,7 +49,6 @@ fastest way to make that happen.
 - [Chat (per-channel)](#chat-per-channel)
 - [Chat streaming (SSE)](#chat-streaming-sse)
 - [Agent Jobs](#agent-jobs)
-- [Inline tools](#inline-tools)
 - [Resources](#resources)
 - [Roles](#roles)
 - [Default resources](#default-resources)
@@ -1942,56 +1941,6 @@ List and summary endpoints omit it.
 
 ---
 
-## Inline tools
-
-Inline tools are handled directly within the chat inference loop and do
-not create agent jobs. They execute immediately and return results to
-the model in the same turn.
-
-### wait
-
-Pause execution for a specified number of seconds (1–300). No
-permissions required. Useful for waiting on external processes without
-wasting tokens on polling.
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `seconds` | integer | yes | Number of seconds to wait (1–300) |
-
-### list_accessible_threads
-
-List threads from other channels that the agent can read. Returns
-thread IDs, names, and parent channel info. Requires
-`ReadCrossThreadHistory` permission on the agent's role.
-
-A channel's threads are accessible when:
-- The agent is the channel's primary agent or is in `AllowedAgents`.
-- The channel's effective permission set has `CanReadCrossThreadHistory = true`.
-- If the agent's role has `Independent` clearance for this flag, the
-  channel opt-in requirement is bypassed.
-
-**Parameters:** none (uses `globalSchema` — empty object).
-
-**Returns:** JSON array of `{ threadId, threadName, channelId, channelTitle }`.
-
-### read_thread_history
-
-Read conversation history from a thread in another channel. Requires
-the same double-gate as `list_accessible_threads`.
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `threadId` | string (GUID) | yes | ID of the thread to read |
-| `maxMessages` | integer | no | Max messages to return (1–200, default 50) |
-
-**Returns:** formatted conversation history as text.
-
----
-
 ## Resources
 
 The API exposes multiple resource types under the `/resources` group.
@@ -3291,8 +3240,8 @@ The agent must also be the channel's primary agent or listed in its
 `AllowedAgents` (channel-level first, context-level fallback).
 
 Accessible threads are surfaced in the chat header
-(`accessible-threads:` section) and via the `list_accessible_threads`
-and `read_thread_history` inline tools.
+(`accessible-threads:` section) and via inline tools provided by the
+[Context Tools](modules/Module-ContextTools.md) module.
 
 ---
 

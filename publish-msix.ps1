@@ -33,7 +33,7 @@
 
 .PARAMETER Version
     Package version in Major.Minor.Build.0 format. The last quad MUST be 0
-    for Store packages. Default: 0.0.1.0
+    for Store packages. Default: read from Directory.Build.props AssemblyVersion.
 
 .PARAMETER IdentityName
     Package identity name. Default: mkn8rn.SharpClaw
@@ -69,7 +69,7 @@ param(
     [ValidateSet("Both", "Sideload", "Store")]
     [string]$Mode = "Both",
 
-    [string]$Version              = "0.0.2.0",
+    [string]$Version              = "",
     [string]$IdentityName         = "mkn8rn.SharpClaw",
     [string]$IdentityPublisher    = "CN=SharpClaw Dev",
     [string]$PublisherDisplayName = "marko",
@@ -81,6 +81,22 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# -- Resolve version from Directory.Build.props when not supplied --
+if (-not $Version) {
+    $propsPath = Join-Path $PSScriptRoot "Directory.Build.props"
+    if (Test-Path $propsPath) {
+        [xml]$propsXml = Get-Content $propsPath -Raw
+        $rawVersion = $propsXml.Project.PropertyGroup.AssemblyVersion
+    }
+    if ($rawVersion) {
+        $Version = $rawVersion
+    } else {
+        Write-Error "Could not read AssemblyVersion from Directory.Build.props. Pass -Version explicitly."
+        exit 1
+    }
+    Write-Host "Resolved version from Directory.Build.props: $Version" -ForegroundColor DarkGray
+}
 
 $buildSideload = $Mode -in @("Both", "Sideload")
 $buildStore    = $Mode -in @("Both", "Store")

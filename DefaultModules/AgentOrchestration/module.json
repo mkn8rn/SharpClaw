@@ -7,7 +7,7 @@
   "minHostVersion": "1.0.0",
   "author": "SharpClaw Team",
   "description": "Agent lifecycle and orchestration tools: sub-agent creation, agent management, task editing, skill access.",
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "platforms": null,
   "enabled": true,
   "defaultEnabled": true,

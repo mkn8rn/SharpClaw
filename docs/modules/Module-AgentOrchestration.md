@@ -216,6 +216,7 @@ Set or clear the custom chat header for a channel.
   "toolPrefix": "ao",
   "entryAssembly": "SharpClaw.Modules.AgentOrchestration.dll",
   "minHostVersion": "1.0.0",
+  "license": "AGPL-3.0",
   "platforms": null,
   "executionTimeoutSeconds": 30,
   "exports": [],
