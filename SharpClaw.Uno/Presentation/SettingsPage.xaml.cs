@@ -2273,7 +2273,21 @@ public sealed partial class SettingsPage : Page
 
         var errors = new List<string>();
 
-        // 1. Stop the backend and gateway processes so files are not locked.
+        // 1. Tell the backend to purge its own Data and Environment directories
+        //    while the process is still running and knows its own paths.
+        try
+        {
+            var api = App.Services?.GetService<SharpClawApiClient>();
+            if (api is not null)
+            {
+                using var resp = await api.PostAsync("/system/factory-reset", null);
+                if (!resp.IsSuccessStatusCode)
+                    errors.Add($"Factory reset API: HTTP {(int)resp.StatusCode}");
+            }
+        }
+        catch (Exception ex) { errors.Add($"Factory reset API: {ex.Message}"); }
+
+        // 2. Stop the backend and gateway processes.
         try
         {
             var gateway = App.Services?.GetService<GatewayProcessManager>();
@@ -2288,35 +2302,29 @@ public sealed partial class SettingsPage : Page
         }
         catch (Exception ex) { errors.Add($"Stop backend: {ex.Message}"); }
 
-        // Wait for processes to fully release file handles.
-        await Task.Delay(2000);
-
-        // 2. Clear frontend-only preferences (client-settings.json) in memory
+        // 3. Clear frontend-only preferences (client-settings.json) in memory
         //    so they are not re-flushed to disk before the directory is deleted.
         try { App.Services?.GetService<ClientSettings>()?.Reset(); }
         catch (Exception ex) { errors.Add($"Client settings: {ex.Message}"); }
 
-        // 2b. Clear saved account store.
+        // 3b. Clear saved account store.
         try { App.Services?.GetService<AccountStore>()?.Reset(); }
         catch (Exception ex) { errors.Add($"Account store: {ex.Message}"); }
 
-        // 3. Delete %LOCALAPPDATA%/SharpClaw (api-key, encryption keys, setup marker,
-        //    client-settings.json).
+        // 4. Clean %LOCALAPPDATA%/SharpClaw — remove user data but preserve
+        //    .api-key and .gateway-token, which belong to the (potentially
+        //    still-running) backend process.  In dev/external mode Stop() is
+        //    a no-op, so the backend keeps its in-memory key; deleting the
+        //    key file would leave the client unable to authenticate.
         var localAppData = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "SharpClaw");
-        await DeleteWithRetryAsync(localAppData, "LocalAppData", errors);
+        await CleanDirectoryPreservingAuthFilesAsync(localAppData, errors);
 
-        // 4. Delete the backend's Data directory (JSON persistence).
-        //    It lives next to the backend executable or, in dev mode, next
-        //    to the Infrastructure assembly.  We check both the bundled
-        //    location and the common dev-time location.
-        var baseDir = AppContext.BaseDirectory;
-        await DeleteWithRetryAsync(Path.Combine(baseDir, "backend", "Data"), "Data dir", errors);
-        await DeleteWithRetryAsync(Path.Combine(baseDir, "Data"), "Data dir (dev)", errors);
-
-        // 5. Delete the backend's Environment directory (config files).
-        await DeleteWithRetryAsync(Path.Combine(baseDir, "backend", "Environment"), "Backend env", errors);
+        // 5. Invalidate the client's cached API key so the next request
+        //    re-reads from disk (handles both external and bundled restarts).
+        try { App.Services?.GetService<SharpClawApiClient>()?.InvalidateApiKey(); }
+        catch { /* best-effort */ }
 
         // Show result
         ContentPanel.Children.Clear();
@@ -2363,6 +2371,34 @@ public sealed partial class SettingsPage : Page
             {
                 errors.Add($"{label}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Removes all files and subdirectories inside <paramref name="path"/>
+    /// except <c>.api-key</c> and <c>.gateway-token</c>, which are owned by
+    /// the backend process and must survive a factory reset so the client can
+    /// re-authenticate against a still-running (external/dev) backend.
+    /// </summary>
+    private static async Task CleanDirectoryPreservingAuthFilesAsync(string path, List<string> errors)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        HashSet<string> preserve = [".api-key", ".gateway-token"];
+
+        foreach (var file in Directory.EnumerateFiles(path))
+        {
+            if (preserve.Contains(Path.GetFileName(file)))
+                continue;
+
+            try { File.Delete(file); }
+            catch (Exception ex) { errors.Add($"LocalAppData/{Path.GetFileName(file)}: {ex.Message}"); }
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(path))
+        {
+            await DeleteWithRetryAsync(dir, $"LocalAppData/{Path.GetFileName(dir)}", errors);
         }
     }
 }

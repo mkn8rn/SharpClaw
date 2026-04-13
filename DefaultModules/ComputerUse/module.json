@@ -5,6 +5,9 @@
   "toolPrefix": "cu",
   "entryAssembly": "SharpClaw.Modules.ComputerUse",
   "minHostVersion": "1.0.0",
+  "author": "SharpClaw Team",
+  "description": "Screen capture, window management, and mouse/keyboard input automation for desktop interaction.",
+  "license": "AGPL-3.0",
   "platforms": [ "windows" ],
   "exports": [
     {

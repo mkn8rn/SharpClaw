@@ -2,9 +2,15 @@
   "id": "sharpclaw_context_tools",
   "displayName": "Context Tools",
   "version": "1.0.0",
-  "description": "Inline context tools: wait, list accessible threads, read cross-thread history.",
-  "author": "SharpClaw",
   "toolPrefix": "ct",
-  "timeoutSeconds": 300,
-  "enabled": true
+  "entryAssembly": "SharpClaw.Modules.ContextTools",
+  "minHostVersion": "1.0.0",
+  "author": "SharpClaw Team",
+  "description": "Inline context tools: wait, list accessible threads, read cross-thread history.",
+  "license": "AGPL-3.0",
+  "platforms": null,
+  "executionTimeoutSeconds": 300,
+  "enabled": true,
+  "exports": [],
+  "requires": []
 }

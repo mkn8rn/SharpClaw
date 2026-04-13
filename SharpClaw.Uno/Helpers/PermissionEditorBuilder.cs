@@ -28,6 +28,13 @@ internal sealed class PermissionEditorBuilder
     private bool _grantClearance = true;
     private bool _useAutoSuggest;
 
+    /// <summary>
+    /// Optional callback invoked whenever the user manually edits a permission
+    /// (unchecks a flag, removes a grant row, etc.). Used by callers to reset
+    /// "grant all" state.
+    /// </summary>
+    private Action? _onManualEdit;
+
     // ── State (populated during Build*, read during Collect*) ────
     private readonly Dictionary<string, (CheckBox Check, ComboBox? Clearance)> _flagEditors = new(7);
     private readonly Dictionary<string, StackPanel> _grantPanels = new(13);
@@ -57,6 +64,10 @@ internal sealed class PermissionEditorBuilder
     /// <summary>Use <see cref="AutoSuggestBox"/> instead of <see cref="ComboBox"/> for adding resources.</summary>
     public PermissionEditorBuilder WithAutoSuggestBox(bool enabled)
     { _useAutoSuggest = enabled; return this; }
+
+    /// <summary>Register a callback invoked when the user manually edits any permission.</summary>
+    public PermissionEditorBuilder WithManualEditCallback(Action? callback)
+    { _onManualEdit = callback; return this; }
 
     // ── Build methods ────────────────────────────────────────────
 
@@ -99,6 +110,7 @@ internal sealed class PermissionEditorBuilder
                     Foreground = TerminalUI.Brush(0xE0E0E0),
                 },
             };
+            cb.Unchecked += (_, _) => _onManualEdit?.Invoke();
             if (TerminalUI.GlobalFlagTooltips.TryGetValue(flag, out var tip))
                 ToolTipService.SetToolTip(cb, tip);
 
@@ -299,7 +311,11 @@ internal sealed class PermissionEditorBuilder
             row.Children.Add(TerminalUI.MakeClearanceCombo(clearance));
         }
 
-        var rm = TerminalUI.RemoveButton(() => panel.Children.Remove(row));
+        var rm = TerminalUI.RemoveButton(() =>
+        {
+            panel.Children.Remove(row);
+            _onManualEdit?.Invoke();
+        });
         rm.Padding = new Thickness(2);
         if (rm.Content is TextBlock rmTb) rmTb.FontSize = 9;
         row.Children.Add(rm);
@@ -541,6 +557,7 @@ internal sealed class PermissionEditorBuilder
                         Foreground = TerminalUI.Brush(0xE0E0E0),
                     },
                 };
+                cb.Unchecked += (_, _) => _onManualEdit?.Invoke();
                 if (!string.IsNullOrEmpty(flag.Description))
                     ToolTipService.SetToolTip(cb, flag.Description);
 
@@ -637,5 +654,46 @@ internal sealed class PermissionEditorBuilder
             _flagEditors.Remove(flag.FlagKey);
         foreach (var res in module.ResourceTypes)
             _grantPanels.Remove(res.ResourceType);
+    }
+
+    /// <summary>
+    /// Checks all global-flag checkboxes for the given module and sets their
+    /// clearance to "Independent".
+    /// </summary>
+    public void CheckAllFlags(ModulePermissionMetadata module)
+    {
+        foreach (var flag in module.GlobalFlags)
+        {
+            if (!_flagEditors.TryGetValue(flag.FlagKey, out var entry)) continue;
+            entry.Check.IsChecked = true;
+            if (entry.Clearance is { } clr)
+            {
+                for (var i = 0; i < clr.Items.Count; i++)
+                    if (clr.Items[i] is ComboBoxItem { Tag: "Independent" })
+                    { clr.SelectedIndex = i; break; }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ensures every resource type in the given module has at least a wildcard
+    /// (<c>AllResources</c>) grant row. Existing rows are not duplicated.
+    /// </summary>
+    public void EnsureWildcardGrants(ModulePermissionMetadata module)
+    {
+        foreach (var resType in module.ResourceTypes)
+        {
+            if (!_grantPanels.TryGetValue(resType.ResourceType, out var panel)) continue;
+
+            // Check if wildcard already present
+            var hasWildcard = false;
+            foreach (var child in panel.Children)
+                if (child is StackPanel row && row.Children.Count > 0
+                    && row.Children[0] is TextBlock { Tag: Guid id } && id == TerminalUI.AllResourcesId)
+                { hasWildcard = true; break; }
+
+            if (!hasWildcard)
+                AddGrantRow(panel, TerminalUI.AllResourcesId, "Independent");
+        }
     }
 }

@@ -5,6 +5,9 @@
   "toolPrefix": "db",
   "entryAssembly": "SharpClaw.Modules.DatabaseAccess",
   "minHostVersion": "1.0.0",
+  "author": "SharpClaw Team",
+  "description": "Direct database connectivity and SQL query execution for structured data operations.",
+  "license": "AGPL-3.0",
   "platforms": [ "windows", "linux", "macos" ],
   "exports": [],
   "requires": []
