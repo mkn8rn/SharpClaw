@@ -132,7 +132,7 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
 
     private static string EnsureSafeModuleId(string moduleId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(moduleId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(moduleId, nameof(moduleId));
         if (!ModuleIdRegex.IsMatch(moduleId))
             throw new ArgumentException("Module ID contains invalid characters.", nameof(moduleId));
         return moduleId;
