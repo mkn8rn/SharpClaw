@@ -33,6 +33,7 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
     private static readonly TimeSpan BuildTimeout = TimeSpan.FromSeconds(120);
     private static readonly HashSet<string> AllowedConfigurations =
         new(StringComparer.OrdinalIgnoreCase) { "Debug", "Release" };
+    private static readonly Regex ModuleIdRegex = new("^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Build a module project. Returns structured diagnostics.
@@ -45,8 +46,9 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
                 $"Invalid build configuration '{configuration}'. Allowed: {string.Join(", ", AllowedConfigurations)}.",
                 nameof(configuration));
 
+        var safeModuleId = EnsureSafeModuleId(moduleId);
         var moduleDir = PathGuard.EnsureContainedIn(
-            workspace.ResolveModuleDir(moduleId), ModuleService.ResolveExternalModulesDir());
+            workspace.ResolveModuleDir(safeModuleId), ModuleService.ResolveExternalModulesDir());
 
         if (!Directory.Exists(moduleDir))
             throw new DirectoryNotFoundException($"Module directory not found: {moduleDir}");
@@ -126,6 +128,14 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
         }
 
         return new BuildResult(success, errors, warnings, outputDll, rawOutput);
+    }
+
+    private static string EnsureSafeModuleId(string moduleId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(moduleId);
+        if (!ModuleIdRegex.IsMatch(moduleId))
+            throw new ArgumentException("Module ID contains invalid characters.", nameof(moduleId));
+        return moduleId;
     }
 
     // ── MSBuild diagnostic parsing ────────────────────────────────
