@@ -37,6 +37,8 @@ public sealed partial class FirstSetupPage : Page
     private readonly Stack<int> _wizardHistory = new();
     private readonly List<string> _lastAutoSkipped = [];
     private bool _suppressToggle;
+    private bool _suppressGrantAllToggle;
+    private readonly Dictionary<string, bool> _moduleGrantAll = [];
 
     public FirstSetupPage()
     {
@@ -798,7 +800,8 @@ public sealed partial class FirstSetupPage : Page
     {
         _permEditor = new PermissionEditorBuilder(Api)
             .WithGrantClearance(true)
-            .WithFlagClearance(true);
+            .WithFlagClearance(true)
+            .WithManualEditCallback(OnPermissionManuallyEdited);
 
         var metadata = await TerminalUI.LoadPermissionMetadataAsync(Api);
         _sortedModules = TerminalUI.TopologicalSort(metadata);
@@ -883,6 +886,9 @@ public sealed partial class FirstSetupPage : Page
         ModuleProgressBlock.Text = $"Module {_moduleIndex + 1} of {_sortedModules!.Count}";
         ModuleWizardTitle.Text = $"── {module.DisplayName} ──";
 
+        // Populate manifest info
+        PopulateManifestPanel(module);
+
         // Show auto-skipped notice
         if (_lastAutoSkipped.Count > 0)
         {
@@ -899,21 +905,57 @@ public sealed partial class FirstSetupPage : Page
         ModuleEnableToggle.IsOn = _moduleEnabled[module.ModuleId];
         _suppressToggle = false;
 
+        // Module status text
+        UpdateModuleStatusText(_moduleEnabled[module.ModuleId]);
+
         // Show permissions for enabled modules
         ModulePermissionsContainer.Children.Clear();
         if (_moduleEnabled[module.ModuleId])
         {
-            if (!_moduleContainers.TryGetValue(module.ModuleId, out var cached))
+            var hasPermissions = module.GlobalFlags.Count > 0 || module.ResourceTypes.Count > 0;
+
+            ModuleDefaultAgentNotice.Visibility = hasPermissions ? Visibility.Visible : Visibility.Collapsed;
+            GrantAllPanel.Visibility = hasPermissions ? Visibility.Visible : Visibility.Collapsed;
+
+            if (hasPermissions)
             {
-                cached = new StackPanel { Spacing = 6 };
-                _permEditor!.BuildSingleModule(cached, module);
-                _moduleContainers[module.ModuleId] = cached;
+                // Set grant-all toggle (suppress handler)
+                _suppressGrantAllToggle = true;
+                GrantAllToggle.IsOn = _moduleGrantAll.TryGetValue(module.ModuleId, out var ga) && ga;
+                _suppressGrantAllToggle = false;
+
+                if (!_moduleContainers.TryGetValue(module.ModuleId, out var cached))
+                {
+                    cached = new StackPanel { Spacing = 6 };
+                    _permEditor!.BuildSingleModule(cached, module);
+                    _moduleContainers[module.ModuleId] = cached;
+                }
+
+                // If grant-all is on, apply it to the cached container
+                if (GrantAllToggle.IsOn)
+                    ApplyGrantAll(module);
+
+                ModulePermissionsContainer.Children.Add(cached);
             }
-            ModulePermissionsContainer.Children.Add(cached);
+            else
+            {
+                var notice = new TextBlock
+                {
+                    Text = "This module has no configurable permissions.",
+                    FontFamily = Mono,
+                    FontSize = 14,
+                    Foreground = TerminalUI.Brush(0x888888),
+                    Margin = new Thickness(0, 4, 0, 0),
+                };
+                ModulePermissionsContainer.Children.Add(notice);
+            }
+
             ModulePermissionsContainer.Visibility = Visibility.Visible;
         }
         else
         {
+            ModuleDefaultAgentNotice.Visibility = Visibility.Collapsed;
+            GrantAllPanel.Visibility = Visibility.Collapsed;
             ModulePermissionsContainer.Visibility = Visibility.Collapsed;
         }
 
@@ -955,21 +997,56 @@ public sealed partial class FirstSetupPage : Page
         var enabled = ModuleEnableToggle.IsOn;
         _moduleEnabled[module.ModuleId] = enabled;
 
+        // Update status text
+        UpdateModuleStatusText(enabled);
+
         ModulePermissionsContainer.Children.Clear();
 
         if (enabled)
         {
-            if (!_moduleContainers.TryGetValue(module.ModuleId, out var cached))
+            var hasPermissions = module.GlobalFlags.Count > 0 || module.ResourceTypes.Count > 0;
+
+            ModuleDefaultAgentNotice.Visibility = hasPermissions ? Visibility.Visible : Visibility.Collapsed;
+            GrantAllPanel.Visibility = hasPermissions ? Visibility.Visible : Visibility.Collapsed;
+
+            if (hasPermissions)
             {
-                cached = new StackPanel { Spacing = 6 };
-                _permEditor!.BuildSingleModule(cached, module);
-                _moduleContainers[module.ModuleId] = cached;
+                _suppressGrantAllToggle = true;
+                GrantAllToggle.IsOn = _moduleGrantAll.TryGetValue(module.ModuleId, out var ga) && ga;
+                _suppressGrantAllToggle = false;
+
+                if (!_moduleContainers.TryGetValue(module.ModuleId, out var cached))
+                {
+                    cached = new StackPanel { Spacing = 6 };
+                    _permEditor!.BuildSingleModule(cached, module);
+                    _moduleContainers[module.ModuleId] = cached;
+                }
+
+                if (GrantAllToggle.IsOn)
+                    ApplyGrantAll(module);
+
+                ModulePermissionsContainer.Children.Add(cached);
             }
-            ModulePermissionsContainer.Children.Add(cached);
+            else
+            {
+                var notice = new TextBlock
+                {
+                    Text = "This module has no configurable permissions.",
+                    FontFamily = Mono,
+                    FontSize = 14,
+                    Foreground = TerminalUI.Brush(0x888888),
+                    Margin = new Thickness(0, 4, 0, 0),
+                };
+                ModulePermissionsContainer.Children.Add(notice);
+            }
+
             ModulePermissionsContainer.Visibility = Visibility.Visible;
         }
         else
         {
+            ModuleDefaultAgentNotice.Visibility = Visibility.Collapsed;
+            GrantAllPanel.Visibility = Visibility.Collapsed;
+
             _permEditor!.ClearModuleEntries(module);
             _moduleContainers.Remove(module.ModuleId);
             ModulePermissionsContainer.Visibility = Visibility.Collapsed;
@@ -984,6 +1061,139 @@ public sealed partial class FirstSetupPage : Page
 
     private void OnModuleBackClick(object sender, RoutedEventArgs e)
         => _moduleWizardTcs?.TrySetResult(-1);
+
+    private void UpdateModuleStatusText(bool enabled)
+    {
+        if (enabled)
+        {
+            ModuleStatusBlock.Text = "This module is enabled. Permissions below will be granted to the default agent.";
+            ModuleStatusBlock.Foreground = TerminalUI.Brush(0x00CC66);
+        }
+        else
+        {
+            ModuleStatusBlock.Text = "This module is disabled for all agents.";
+            ModuleStatusBlock.Foreground = TerminalUI.Brush(0xFF6666);
+        }
+    }
+
+    private void PopulateManifestPanel(ModulePermissionMetadata module)
+    {
+        ModuleManifestPanel.Children.Clear();
+
+        // Description
+        if (!string.IsNullOrWhiteSpace(module.Description))
+        {
+            ModuleManifestPanel.Children.Add(new TextBlock
+            {
+                Text = module.Description,
+                FontFamily = Mono,
+                FontSize = 12,
+                Foreground = TerminalUI.Brush(0xCCCCCC),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 4),
+            });
+        }
+
+        // Metadata line: version · author · license · platforms
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(module.Version))
+            parts.Add($"v{module.Version}");
+        if (!string.IsNullOrWhiteSpace(module.Author))
+            parts.Add(module.Author);
+        if (!string.IsNullOrWhiteSpace(module.License))
+            parts.Add(module.License);
+        if (module.Platforms is { Length: > 0 })
+            parts.Add(string.Join(", ", module.Platforms));
+
+        if (parts.Count > 0)
+        {
+            ModuleManifestPanel.Children.Add(new TextBlock
+            {
+                Text = string.Join("  ·  ", parts),
+                FontFamily = Mono,
+                FontSize = 11,
+                Foreground = TerminalUI.Brush(0x808080),
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        // Dependencies
+        if (module.DependsOn.Count > 0)
+        {
+            var depNames = module.DependsOn
+                .Select(depId => _sortedModules?.FirstOrDefault(m => m.ModuleId == depId)?.DisplayName ?? depId)
+                .ToList();
+
+            ModuleManifestPanel.Children.Add(new TextBlock
+            {
+                Text = $"Depends on: {string.Join(", ", depNames)}",
+                FontFamily = Mono,
+                FontSize = 11,
+                Foreground = TerminalUI.Brush(0xAA8844),
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+    }
+
+    private void OnGrantAllToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressGrantAllToggle || _sortedModules is null || _moduleIndex >= _sortedModules.Count)
+            return;
+
+        var module = _sortedModules[_moduleIndex];
+        var grantAll = GrantAllToggle.IsOn;
+        _moduleGrantAll[module.ModuleId] = grantAll;
+
+        if (grantAll)
+        {
+            ApplyGrantAll(module);
+        }
+        else
+        {
+            // Rebuild the module UI from scratch (unchecked state)
+            _permEditor!.ClearModuleEntries(module);
+            _moduleContainers.Remove(module.ModuleId);
+
+            var cached = new StackPanel { Spacing = 6 };
+            _permEditor.BuildSingleModule(cached, module);
+            _moduleContainers[module.ModuleId] = cached;
+
+            ModulePermissionsContainer.Children.Clear();
+            ModulePermissionsContainer.Children.Add(cached);
+        }
+    }
+
+    /// <summary>
+    /// Checks all global-flag checkboxes and ensures a wildcard grant row exists
+    /// for every resource type in the given module.
+    /// </summary>
+    private void ApplyGrantAll(ModulePermissionMetadata module)
+    {
+        if (_permEditor is null) return;
+
+        _permEditor.CheckAllFlags(module);
+        _permEditor.EnsureWildcardGrants(module);
+    }
+
+    /// <summary>
+    /// Called by <see cref="PermissionEditorBuilder"/> when the user manually
+    /// unchecks a flag or removes a grant row. Resets the grant-all toggle
+    /// for the current module.
+    /// </summary>
+    private void OnPermissionManuallyEdited()
+    {
+        if (_sortedModules is null || _moduleIndex >= _sortedModules.Count) return;
+
+        var module = _sortedModules[_moduleIndex];
+        if (_moduleGrantAll.TryGetValue(module.ModuleId, out var ga) && ga)
+        {
+            _moduleGrantAll[module.ModuleId] = false;
+            _suppressGrantAllToggle = true;
+            GrantAllToggle.IsOn = false;
+            _suppressGrantAllToggle = false;
+        }
+    }
 
     private async Task CreateRoleAndAssignAsync(Guid agentId)
     {

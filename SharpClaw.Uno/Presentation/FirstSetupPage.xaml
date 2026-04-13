@@ -325,11 +325,46 @@
                        FontSize="14" FontWeight="SemiBold"
                        Foreground="#00CCFF" Margin="0,8,0,0" />
 
+            <!-- Module manifest info (description, version, author, license, platforms) -->
+            <StackPanel x:Name="ModuleManifestPanel"
+                        Spacing="2"
+                        Margin="0,4,0,4" />
+
             <!-- Enable / disable toggle -->
             <ToggleSwitch x:Name="ModuleEnableToggle"
                           OnContent="Enabled" OffContent="Disabled"
                           Margin="0,4,0,0"
                           Toggled="OnModuleEnableToggled" />
+
+            <!-- Module status text (red when disabled, green when enabled) -->
+            <TextBlock x:Name="ModuleStatusBlock"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,2,0,0" />
+
+            <!-- Separator between module toggle and permissions -->
+            <Border Height="1" Background="#333333" Margin="0,8,0,8" />
+
+            <!-- Default-agent notice (above permissions) -->
+            <TextBlock x:Name="ModuleDefaultAgentNotice"
+                       Style="{StaticResource TerminalText}"
+                       FontSize="11" Foreground="#AA8844"
+                       TextWrapping="Wrap"
+                       Text="⚠ These permissions are being granted to the DEFAULT agent only. Other agents will need their permissions manually configured."
+                       Margin="0,0,0,6" />
+
+            <!-- Grant all permissions toggle -->
+            <StackPanel x:Name="GrantAllPanel" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+              <ToggleSwitch x:Name="GrantAllToggle"
+                            OnContent="Grant all" OffContent="Grant all"
+                            Margin="0"
+                            Toggled="OnGrantAllToggled" />
+              <TextBlock Style="{StaticResource TerminalText}"
+                         FontSize="10" Foreground="#808080"
+                         VerticalAlignment="Center"
+                         Text="Grant all permissions in this module to the default role" />
+            </StackPanel>
 
             <!-- Module permissions (visible when enabled) -->
             <StackPanel x:Name="ModulePermissionsContainer" Spacing="6" Margin="0,4,0,0" />

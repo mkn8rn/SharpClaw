@@ -5,6 +5,9 @@
   "toolPrefix": "tr",
   "entryAssembly": "SharpClaw.Modules.Transcription",
   "minHostVersion": "1.0.0",
+  "author": "SharpClaw Team",
+  "description": "Speech-to-text transcription via OpenAI Whisper, Groq, or local models with live audio capture and streaming output.",
+  "license": "AGPL-3.0",
   "platforms": [ "windows" ],
   "executionTimeoutSeconds": 120,
   "exports": [

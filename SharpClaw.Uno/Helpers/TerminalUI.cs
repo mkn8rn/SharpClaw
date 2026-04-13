@@ -244,6 +244,13 @@ internal static class TerminalUI
                     GlobalFlags = [],
                     ResourceTypes = [],
                     DependsOn = [],
+                    Description = m.TryGetProperty("description", out var descProp) && descProp.ValueKind == System.Text.Json.JsonValueKind.String ? descProp.GetString() : null,
+                    Author = m.TryGetProperty("author", out var authProp) && authProp.ValueKind == System.Text.Json.JsonValueKind.String ? authProp.GetString() : null,
+                    License = m.TryGetProperty("license", out var licProp) && licProp.ValueKind == System.Text.Json.JsonValueKind.String ? licProp.GetString() : null,
+                    Version = m.TryGetProperty("version", out var verProp) && verProp.ValueKind == System.Text.Json.JsonValueKind.String ? verProp.GetString() : null,
+                    Platforms = m.TryGetProperty("platforms", out var platProp) && platProp.ValueKind == System.Text.Json.JsonValueKind.Array
+                        ? platProp.EnumerateArray().Select(p => p.GetString() ?? "").Where(s => s.Length > 0).ToArray()
+                        : null,
                 };
 
                 if (m.TryGetProperty("globalFlags", out var flags) && flags.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -355,6 +362,11 @@ internal sealed class ModulePermissionMetadata
     public required List<FlagEntry> GlobalFlags { get; init; }
     public required List<ResourceTypeEntry> ResourceTypes { get; init; }
     public required List<string> DependsOn { get; init; }
+    public string? Description { get; init; }
+    public string? Author { get; init; }
+    public string? License { get; init; }
+    public string? Version { get; init; }
+    public string[]? Platforms { get; init; }
 
     public sealed record FlagEntry(string FlagKey, string DisplayName, string Description);
     public sealed record ResourceTypeEntry(string ResourceType, string DisplayName);

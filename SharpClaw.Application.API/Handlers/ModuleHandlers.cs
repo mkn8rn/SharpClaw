@@ -352,41 +352,58 @@ public static class ModuleHandlers
     /// </summary>
     [MapGet("/permissions-metadata")]
     public static async Task<IResult> GetPermissionsMetadata(
-        ModuleRegistry registry, ModuleService svc, CancellationToken ct)
+        ModuleRegistry registry, ModuleLoader loader, ModuleService svc, CancellationToken ct)
     {
         var states = await svc.ListAsync(ct);
         var stateMap = states.ToDictionary(s => s.ModuleId, StringComparer.Ordinal);
         var flagsByModule = registry.GetFlagsByModule();
         var resourcesByModule = registry.GetResourceTypesByModule();
 
-        // Collect all module IDs that own flags or resources
-        var moduleIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var id in flagsByModule.Keys) moduleIds.Add(id);
-        foreach (var id in resourcesByModule.Keys) moduleIds.Add(id);
+        // Include ALL bundled modules, not just those with flags/resources.
+        // Modules without permissions still need to appear in the wizard for enable/disable.
+        var allBundled = loader.GetAllBundled();
+        var registeredModules = registry.GetAllModules();
+        var registeredIds = new HashSet<string>(registeredModules.Select(m => m.Id), StringComparer.Ordinal);
 
-        var modules = new List<object>(moduleIds.Count);
-        foreach (var moduleId in moduleIds)
+        var modules = new List<object>(allBundled.Count);
+        foreach (var bundled in allBundled)
         {
-            var module = registry.GetModule(moduleId);
-            if (module is null) continue;
-
+            var moduleId = bundled.Id;
             var enabled = stateMap.TryGetValue(moduleId, out var st) && st.Enabled;
 
-            var flags = flagsByModule.TryGetValue(moduleId, out var fl)
-                ? fl.Select(f => new { flagKey = f.FlagKey, displayName = f.DisplayName, description = f.Description }).ToList()
-                : [];
+            // Use the registered instance for flags/resources when available,
+            // otherwise fall back to the bundled instance's descriptors directly.
+            List<object> flags;
+            List<object> resources;
 
-            var resources = resourcesByModule.TryGetValue(moduleId, out var rl)
-                ? rl.Select(r => new { resourceType = r.ResourceType, grantLabel = r.GrantLabel }).ToList()
-                : [];
+            if (registeredIds.Contains(moduleId))
+            {
+                flags = flagsByModule.TryGetValue(moduleId, out var fl)
+                    ? fl.Select(f => new { flagKey = f.FlagKey, displayName = f.DisplayName, description = f.Description } as object).ToList()
+                    : [];
+                resources = resourcesByModule.TryGetValue(moduleId, out var rl)
+                    ? rl.Select(r => new { resourceType = r.ResourceType, grantLabel = r.GrantLabel } as object).ToList()
+                    : [];
+            }
+            else
+            {
+                flags = bundled.GetGlobalFlagDescriptors()
+                    .Select(f => new { flagKey = f.FlagKey, displayName = f.DisplayName, description = f.Description } as object).ToList();
+                resources = bundled.GetResourceTypeDescriptors()
+                    .Select(r => new { resourceType = r.ResourceType, grantLabel = r.GrantLabel } as object).ToList();
+            }
 
             // Resolve contract dependencies to module IDs
+            var module = registry.GetModule(moduleId) ?? bundled;
             var dependsOn = module.RequiredContracts
                 .Where(r => !r.Optional)
                 .Select(r => registry.ResolveContract(r.ContractName)?.ModuleId)
                 .Where(id => id is not null)
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
+
+            // Include manifest fields for UI display
+            var manifest = loader.GetManifest(moduleId);
 
             modules.Add(new
             {
@@ -396,6 +413,11 @@ public static class ModuleHandlers
                 globalFlags = flags,
                 resourceTypes = resources,
                 dependsOn,
+                description = manifest?.Description,
+                author = manifest?.Author,
+                license = manifest?.License,
+                version = manifest?.Version,
+                platforms = manifest?.Platforms,
             });
         }
 

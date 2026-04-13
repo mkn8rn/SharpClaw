@@ -38,6 +38,9 @@
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
     <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj" />
     <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj" />
+    <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj" />
+    <ProjectReference Include="..\DefaultModules\VSCodeEditor\SharpClaw.Modules.VSCodeEditor.csproj" />
+    <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj" />
   </ItemGroup>
 
 </Project>
