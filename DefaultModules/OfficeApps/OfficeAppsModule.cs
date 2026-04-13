@@ -11,6 +11,7 @@ using SharpClaw.Modules.OfficeApps.Handlers;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps;
 
@@ -293,7 +294,7 @@ public sealed class OfficeAppsModule : ISharpClawModule
             ?? throw new InvalidOperationException(
                 "register_document requires a 'filePath' field.");
 
-        var fullPath = Path.GetFullPath(filePath);
+        var fullPath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
         if (!File.Exists(fullPath))
             throw new InvalidOperationException($"File not found: {fullPath}");
 
@@ -358,7 +359,7 @@ public sealed class OfficeAppsModule : ISharpClawModule
             ?? throw new InvalidOperationException(
                 "create_workbook requires a 'filePath' parameter.");
 
-        var fullPath = Path.GetFullPath(filePath);
+        var fullPath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
         var sheetName = Str(parameters, "sheetName");
 
         var result = spreadsheet.CreateWorkbook(

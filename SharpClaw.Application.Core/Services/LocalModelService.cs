@@ -5,6 +5,7 @@ using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
 
@@ -191,9 +192,12 @@ public sealed class LocalModelService(
         // Unload from memory if loaded
         processManager.Unload(modelId);
 
-        // Delete from disk
+        // Delete from disk (validate path stays inside the models directory)
         if (File.Exists(localFile.FilePath))
+        {
+            PathGuard.EnsureContainedIn(localFile.FilePath, ModelDownloadManager.ModelsDirectoryPath);
             File.Delete(localFile.FilePath);
+        }
 
         // Remove the local file record (model record cascade-deleted via provider)
         db.LocalModelFiles.Remove(localFile);

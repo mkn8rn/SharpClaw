@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
 
@@ -164,7 +165,9 @@ internal sealed partial class ModuleScaffoldService(
     private static async Task WriteFileAsync(
         string baseDir, string relativePath, string content, CancellationToken ct)
     {
-        var fullPath = Path.Combine(baseDir, relativePath);
+        PathGuard.EnsureFileName(relativePath, nameof(relativePath));
+        var fullPath = PathGuard.EnsureContainedIn(
+            Path.Combine(baseDir, relativePath), baseDir);
         var dir = Path.GetDirectoryName(fullPath)!;
         Directory.CreateDirectory(dir);
         await File.WriteAllTextAsync(fullPath, content, ct);

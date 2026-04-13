@@ -117,7 +117,7 @@ public sealed class DangerousShellModule : ISharpClawModule
 
         var workingDir = parameters.TryGetProperty("workingDirectory", out var wdProp)
             ? wdProp.GetString() : null;
-        workingDir ??= Directory.GetCurrentDirectory();
+        workingDir = Path.GetFullPath(workingDir ?? Directory.GetCurrentDirectory());
 
         // Resolve the shell executable and argument list.
         var (executable, arguments) = ResolveDangerousShell(shellType, command!);

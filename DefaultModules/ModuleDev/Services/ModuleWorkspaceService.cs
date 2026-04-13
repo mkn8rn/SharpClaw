@@ -1,6 +1,7 @@
 using System.Text;
 
 using SharpClaw.Application.Services;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
 
@@ -58,6 +59,7 @@ internal sealed class ModuleWorkspaceService
     {
         var fullPath = ResolveFilePath(moduleId, relativePath);
         ValidateExtension(fullPath);
+        PathGuard.EnsureContainedIn(fullPath, _externalModulesDir);
 
         var dir = Path.GetDirectoryName(fullPath)!;
         Directory.CreateDirectory(dir);
@@ -75,6 +77,7 @@ internal sealed class ModuleWorkspaceService
         string moduleId, string relativePath, int maxLines = 500, CancellationToken ct = default)
     {
         var fullPath = ResolveFilePath(moduleId, relativePath);
+        PathGuard.EnsureContainedIn(fullPath, _externalModulesDir);
 
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"File not found: {relativePath}", fullPath);
@@ -94,7 +97,7 @@ internal sealed class ModuleWorkspaceService
     /// </summary>
     public IReadOnlyList<string> ListFiles(string moduleId, string? includePattern = null)
     {
-        var moduleDir = ResolveModuleDir(moduleId);
+        var moduleDir = PathGuard.EnsureContainedIn(ResolveModuleDir(moduleId), _externalModulesDir);
 
         if (!Directory.Exists(moduleDir))
             return [];

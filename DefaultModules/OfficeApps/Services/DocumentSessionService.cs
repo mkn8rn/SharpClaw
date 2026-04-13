@@ -3,6 +3,7 @@ using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps.Services;
 
@@ -16,12 +17,13 @@ public sealed class DocumentSessionService(SharpClawDbContext db)
     public async Task<DocumentSessionResponse> CreateAsync(
         CreateDocumentSessionRequest request, CancellationToken ct = default)
     {
-        var docType = DetectDocumentType(request.FilePath);
+        var filePath = PathGuard.EnsureAbsolutePath(request.FilePath, nameof(request.FilePath));
+        var docType = DetectDocumentType(filePath);
 
         var session = new DocumentSessionDB
         {
-            Name = request.Name ?? Path.GetFileName(request.FilePath),
-            FilePath = Path.GetFullPath(request.FilePath),
+            Name = request.Name ?? Path.GetFileName(filePath),
+            FilePath = filePath,
             DocumentType = docType,
             Description = request.Description,
         };

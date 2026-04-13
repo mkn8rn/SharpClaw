@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Core.Modules;
 
@@ -45,7 +46,12 @@ public sealed class ExternalModuleHost : IAsyncDisposable
         IServiceProvider hostServices,
         ILoggerFactory loggerFactory)
     {
-        var dllPath = Path.Combine(moduleDir, manifest.EntryAssembly);
+        PathGuard.EnsureFileName(manifest.EntryAssembly, nameof(manifest.EntryAssembly));
+        PathGuard.EnsureExtension(manifest.EntryAssembly, ".dll");
+
+        var dllPath = PathGuard.EnsureContainedIn(
+            Path.Combine(moduleDir, manifest.EntryAssembly), moduleDir);
+
         if (!File.Exists(dllPath))
             throw new FileNotFoundException(
                 $"Entry assembly '{manifest.EntryAssembly}' not found in '{moduleDir}'.", dllPath);

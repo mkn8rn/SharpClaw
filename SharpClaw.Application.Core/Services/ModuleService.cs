@@ -7,6 +7,7 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
 
@@ -280,25 +281,31 @@ public sealed class ModuleService(
     public async Task<ModuleStateResponse> LoadExternalAsync(
         string moduleDir, IServiceProvider hostServices, CancellationToken ct = default)
     {
-        var manifestPath = Path.Combine(moduleDir, "module.json");
+        // Validate that moduleDir is strictly inside the external-modules root.
+        var externalRoot = ResolveExternalModulesDir();
+        var canonicalModuleDir = PathGuard.EnsureContainedIn(moduleDir, externalRoot);
+
+        var manifestPath = PathGuard.EnsureContainedIn(
+            Path.Combine(canonicalModuleDir, "module.json"), canonicalModuleDir);
         if (!File.Exists(manifestPath))
-            throw new FileNotFoundException($"No module.json found in '{moduleDir}'.", manifestPath);
+            throw new FileNotFoundException($"No module.json found in '{canonicalModuleDir}'.", manifestPath);
 
         var json = await File.ReadAllTextAsync(manifestPath, ct);
         var manifest = System.Text.Json.JsonSerializer.Deserialize<ModuleManifest>(json, SecureJsonOptions.Manifest)
-            ?? throw new InvalidOperationException($"Failed to parse manifest in '{moduleDir}'.");
+            ?? throw new InvalidOperationException($"Failed to parse manifest in '{canonicalModuleDir}'.");
 
         if (registry.GetModule(manifest.Id) is not null)
             throw new InvalidOperationException($"Module '{manifest.Id}' is already loaded.");
 
-        var host = ExternalModuleHost.Load(moduleDir, manifest, hostServices, loggerFactory);
+        var host = ExternalModuleHost.Load(canonicalModuleDir, manifest, hostServices, loggerFactory);
         try
         {
             registry.Register(host.Module, host);
             registry.CacheManifest(manifest.Id, manifest);
             await host.Module.InitializeAsync(host.Services, ct);
 
-            logger.LogInformation("External module '{ModuleId}' loaded from {Dir}", manifest.Id, moduleDir);
+            logger.LogInformation("External module '{ModuleId}' loaded from {Dir}",
+                PathGuard.SanitizeForLog(manifest.Id), PathGuard.SanitizeForLog(canonicalModuleDir));
             return ToResponse(host.Module, state: null, manifest, isExternal: true);
         }
         catch
@@ -352,7 +359,10 @@ public sealed class ModuleService(
         var loaded = new List<ModuleStateResponse>();
         foreach (var subDir in Directory.EnumerateDirectories(dir))
         {
-            var manifestPath = Path.Combine(subDir, "module.json");
+            // Validate that the enumerated subdirectory is actually inside the
+            // external-modules root (guards against symlink / junction escapes).
+            var canonicalSubDir = PathGuard.EnsureContainedIn(subDir, dir);
+            var manifestPath = Path.Combine(canonicalSubDir, "module.json");
             if (!File.Exists(manifestPath)) continue;
 
             try
@@ -362,7 +372,7 @@ public sealed class ModuleService(
                 if (manifest is null || registry.GetModule(manifest.Id) is not null)
                     continue;
 
-                var result = await LoadExternalAsync(subDir, hostServices, ct);
+                var result = await LoadExternalAsync(canonicalSubDir, hostServices, ct);
                 loaded.Add(result);
             }
             catch (Exception ex)

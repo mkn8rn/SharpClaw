@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Core.Modules;
 
@@ -38,7 +39,9 @@ public sealed class ModuleLoader
         {
             try
             {
-                Assembly.LoadFrom(dll);
+                // Validate the enumerated path stays inside the base directory.
+                var safeDll = PathGuard.EnsureContainedIn(dll, baseDir);
+                Assembly.LoadFrom(safeDll);
             }
             catch
             {
@@ -120,7 +123,8 @@ public sealed class ModuleLoader
 
         foreach (var dir in Directory.EnumerateDirectories(modulesDir))
         {
-            var manifestPath = Path.Combine(dir, "module.json");
+            var safeDir = PathGuard.EnsureContainedIn(dir, modulesDir);
+            var manifestPath = Path.Combine(safeDir, "module.json");
             if (!File.Exists(manifestPath)) continue;
 
             try

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using CsvHelper;
 using CsvHelper.Configuration;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps;
 
@@ -22,7 +23,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string ReadRange(string filePath, string? sheetName, string? range)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
 
         return IsCsv(filePath)
             ? ReadRangeCsv(filePath, range)
@@ -35,7 +36,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string WriteRange(string filePath, string? sheetName, string? range, JsonElement data)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
 
         return IsCsv(filePath)
             ? WriteRangeCsv(filePath, range, data)
@@ -48,7 +49,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string ListSheets(string filePath)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
 
         if (IsCsv(filePath))
         {
@@ -79,7 +80,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string CreateSheet(string filePath, string sheetName)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
         ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
 
         if (IsCsv(filePath))
@@ -97,7 +98,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string DeleteSheet(string filePath, string sheetName)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
         ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
 
         if (IsCsv(filePath))
@@ -116,7 +117,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string GetInfo(string filePath)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
 
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
@@ -167,7 +168,7 @@ public sealed class SpreadsheetService
     /// </summary>
     public string CreateWorkbook(string filePath, string? initialSheetName, JsonElement? initialData)
     {
-        ArgumentNullException.ThrowIfNull(filePath);
+        filePath = PathGuard.EnsureAbsolutePath(filePath, nameof(filePath));
 
         var fullPath = Path.GetFullPath(filePath);
         var dir = Path.GetDirectoryName(fullPath);

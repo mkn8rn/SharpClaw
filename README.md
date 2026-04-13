@@ -2,7 +2,9 @@
 
 > **⚠️ Alpha.** Single developer, early stage, lots of untested surface area. [Read the full disclaimer.](DISCLAIMER.md)
 
-A local AI agent platform built on .NET 10. Agents run on your machine, talk to the LLM providers you choose, and do real work through a typed, permission-gated tool pipeline. No shell interpreter. No trust-and-pray.
+> **📢 Developer notice.** The developer of SharpClaw has been hired to work on an undisclosed commercial enterprise tool that is inspired by this project. Due to time constraints and contractual limitations that cannot be disclosed, future development on SharpClaw will be limited. **The project is not abandoned.** SharpClaw remains open-source under [AGPL-3.0](LICENSE.md), and that will not change regardless of what happens with the commercial version. Contributions, issues, and community involvement are still welcome.
+
+A local AI agent platform built on .NET 10.
 
 ## What it does
 

@@ -6,6 +6,7 @@ using System.Runtime.Versioning;
 using System.Text.Json;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.Modules.Contracts;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ComputerUse;
 
@@ -58,15 +59,17 @@ public sealed class DesktopAwarenessService : IWindowManager
             throw new InvalidOperationException(
                 $"Launching '{exeName}' is blocked for security reasons.");
 
-        if (!File.Exists(app.ExecutablePath))
+        var executablePath = PathGuard.EnsureAbsolutePath(
+            app.ExecutablePath, nameof(app.ExecutablePath));
+        if (!File.Exists(executablePath))
             throw new FileNotFoundException(
-                $"Executable not found: {app.ExecutablePath}");
+                $"Executable not found: {executablePath}");
 
         var args = BuildArguments(arguments, filePath);
 
         var psi = new ProcessStartInfo
         {
-            FileName = app.ExecutablePath,
+            FileName = executablePath,
             Arguments = args,
             UseShellExecute = true,
         };

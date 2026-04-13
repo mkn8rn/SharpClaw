@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.WebAccess.Services;
 
@@ -102,8 +103,10 @@ public sealed class WebsiteAccessService(
     private async Task<string?> AccessBrowserAsync(
         AgentJobContext job, string url, string mode, CancellationToken ct)
     {
-        var executable = configuration["Browser:Executable"]
-            ?? LocalhostAccessService.ResolveChromiumExecutable();
+        var executable = PathGuard.EnsureAbsolutePath(
+            configuration["Browser:Executable"]
+            ?? LocalhostAccessService.ResolveChromiumExecutable(),
+            "Browser:Executable");
         var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
 
         var tempFile = mode == "screenshot"

@@ -1,5 +1,7 @@
 namespace SharpClaw.Application.Core.LocalInference;
 
+using SharpClaw.Utils.Security;
+
 /// <summary>
 /// Downloads model files to the local models directory with progress
 /// tracking and HTTP Range resume support.
@@ -11,11 +13,23 @@ public sealed class ModelDownloadManager(IHttpClientFactory httpClientFactory)
             Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
             "LocalModels");
 
-    public string GetModelPath(string filename) =>
-        Path.Combine(ModelsDirectory, filename);
+    /// <summary>Root directory for locally downloaded model files.</summary>
+    public static string ModelsDirectoryPath => ModelsDirectory;
 
-    public string GetModelPath(string subfolder, string filename) =>
-        Path.Combine(ModelsDirectory, subfolder, filename);
+    public string GetModelPath(string filename)
+    {
+        PathGuard.EnsureFileName(filename, nameof(filename));
+        return PathGuard.EnsureContainedIn(
+            Path.Combine(ModelsDirectory, filename), ModelsDirectory);
+    }
+
+    public string GetModelPath(string subfolder, string filename)
+    {
+        PathGuard.EnsureFileName(subfolder, nameof(subfolder));
+        PathGuard.EnsureFileName(filename, nameof(filename));
+        return PathGuard.EnsureContainedIn(
+            Path.Combine(ModelsDirectory, subfolder, filename), ModelsDirectory);
+    }
 
     /// <summary>
     /// Determines the source subfolder from a download URL.

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.WebAccess.Services;
 
@@ -49,7 +50,9 @@ public sealed class LocalhostAccessService(
         var url = ValidateLocalhostUrl(payload.Url);
         var mode = (payload.Mode ?? "html").ToLowerInvariant();
 
-        var executable = configuration["Browser:Executable"] ?? ResolveChromiumExecutable();
+        var executable = PathGuard.EnsureAbsolutePath(
+            configuration["Browser:Executable"] ?? ResolveChromiumExecutable(),
+            "Browser:Executable");
         var extraArgs = configuration["Browser:Arguments"] ?? "--incognito";
 
         var tempFile = mode == "screenshot"

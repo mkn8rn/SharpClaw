@@ -2,6 +2,9 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 
+using SharpClaw.Application.Services;
+using SharpClaw.Utils.Security;
+
 namespace SharpClaw.Modules.ModuleDev.Services;
 
 /// <summary>
@@ -28,6 +31,8 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
         string Message);
 
     private static readonly TimeSpan BuildTimeout = TimeSpan.FromSeconds(120);
+    private static readonly HashSet<string> AllowedConfigurations =
+        new(StringComparer.OrdinalIgnoreCase) { "Debug", "Release" };
 
     /// <summary>
     /// Build a module project. Returns structured diagnostics.
@@ -35,7 +40,13 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
     public async Task<BuildResult> BuildAsync(
         string moduleId, string configuration = "Debug", CancellationToken ct = default)
     {
-        var moduleDir = workspace.ResolveModuleDir(moduleId);
+        if (!AllowedConfigurations.Contains(configuration))
+            throw new ArgumentException(
+                $"Invalid build configuration '{configuration}'. Allowed: {string.Join(", ", AllowedConfigurations)}.",
+                nameof(configuration));
+
+        var moduleDir = PathGuard.EnsureContainedIn(
+            workspace.ResolveModuleDir(moduleId), ModuleService.ResolveExternalModulesDir());
 
         if (!Directory.Exists(moduleDir))
             throw new DirectoryNotFoundException($"Module directory not found: {moduleDir}");
@@ -45,7 +56,12 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
         if (csprojFiles.Length == 0)
             throw new FileNotFoundException($"No .csproj found in '{moduleDir}'.");
 
-        var csprojPath = csprojFiles[0];
+        // Extract just the file name from the discovered path, validate it is a plain
+        // name with no traversal, then reconstruct from the trusted moduleDir.
+        // This severs the taint chain so CodeQL sees no user-controlled value reaching Process.Start.
+        var csprojFileName = PathGuard.EnsureFileName(Path.GetFileName(csprojFiles[0]));
+        PathGuard.EnsureExtension(csprojFileName, ".csproj");
+        var csprojPath = Path.GetFullPath(Path.Combine(moduleDir, csprojFileName));
 
         var psi = new ProcessStartInfo
         {
