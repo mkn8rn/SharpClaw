@@ -45,8 +45,9 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
                 $"Invalid build configuration '{configuration}'. Allowed: {string.Join(", ", AllowedConfigurations)}.",
                 nameof(configuration));
 
+        var safeModuleId = EnsureSafeModuleId(moduleId);
         var moduleDir = PathGuard.EnsureContainedIn(
-            workspace.ResolveModuleDir(moduleId), ModuleService.ResolveExternalModulesDir());
+            workspace.ResolveModuleDir(safeModuleId), ModuleService.ResolveExternalModulesDir());
 
         if (!Directory.Exists(moduleDir))
             throw new DirectoryNotFoundException($"Module directory not found: {moduleDir}");
@@ -128,6 +129,15 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
         return new BuildResult(success, errors, warnings, outputDll, rawOutput);
     }
 
+    private static string EnsureSafeModuleId(string moduleId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(moduleId, nameof(moduleId));
+        if (!ModuleIdRegex().IsMatch(moduleId))
+            throw new ArgumentException(
+                $"Invalid module ID '{moduleId}'. Must match ^[a-z][a-z0-9_]{{0,39}}$.", nameof(moduleId));
+        return moduleId;
+    }
+
     // ── MSBuild diagnostic parsing ────────────────────────────────
 
     private static IReadOnlyList<BuildDiagnostic> ParseDiagnostics(string output, string severity)
@@ -154,6 +164,9 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
 
         return diagnostics;
     }
+
+    [GeneratedRegex(@"^[a-z][a-z0-9_]{0,39}$")]
+    private static partial Regex ModuleIdRegex();
 
     [GeneratedRegex(@"(?<file>[^(]+)\((?<line>\d+),(?<col>\d+)\):\s+(?<severity>error|warning)\s+(?<code>\w+):\s+(?<msg>.+)")]
     private static partial Regex MsBuildDiagnosticRegex();
