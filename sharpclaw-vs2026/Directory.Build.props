@@ -1,14 +1,10 @@
 <Project>
-  <!-- Exclude VS extension from regular solution builds -->
+  <!-- Import root Directory.Build.props for central package management.
+       A local Directory.Build.props blocks automatic traversal to the root. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..\'))" />
+
   <PropertyGroup>
-    <!-- Only included when explicitly building this project -->
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
-    
-    <!-- Skip this project during solution-wide builds unless explicitly enabled -->
-    <BuildInParallel Condition="'$(PublishVSExtension)' != 'true'">false</BuildInParallel>
-    
-    <!-- Exclude from default build targets unless publishing -->
-    <ExcludeFromBuild Condition="'$(PublishVSExtension)' != 'true'">true</ExcludeFromBuild>
   </PropertyGroup>
 </Project>

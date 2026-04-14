@@ -21,7 +21,7 @@ namespace SharpClaw.VS2026Extension;
 /// <remarks>
 /// Protocol:
 /// <list type="number">
-/// <item>Connect to <c>ws://localhost:5163/api/editor/bridge</c></item>
+/// <item>Connect to <c>ws://127.0.0.1:48923/editor/ws</c> with <c>X-Api-Key</c> header</item>
 /// <item>Send registration: <c>{ type, editorType, editorVersion, workspacePath }</c></item>
 /// <item>Receive ack: <c>{ type: "registered", sessionId, connectionId }</c></item>
 /// <item>Receive loop: handle <c>{ type: "request", requestId, action, params }</c>
@@ -37,20 +37,22 @@ internal sealed class SharpClawBridgeClient
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
-    private static readonly Uri BridgeUri =
-        new("ws://localhost:5163/api/editor/bridge");
-
     private readonly string? _workspacePath;
     private readonly SharpClawPackage _package;
+    private readonly BridgeClientConfig _config;
 
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
 
-    public SharpClawBridgeClient(string? workspacePath, SharpClawPackage package)
+    public SharpClawBridgeClient(
+        string? workspacePath,
+        SharpClawPackage package,
+        BridgeClientConfig config)
     {
         _workspacePath = workspacePath;
         _package = package;
+        _config = config;
     }
 
     /// <summary>
@@ -68,10 +70,48 @@ internal sealed class SharpClawBridgeClient
     /// </summary>
     public async Task ConnectAsync(CancellationToken ct = default)
     {
+        var bridgeUri = _config.BridgeUri;
+        var apiKeyPath = _config.ApiKeyFilePath;
+
+        await LogAsync("Connection sequence starting...");
+        await LogAsync($"  Workspace: {_workspacePath ?? "(none)"}");
+        await LogAsync($"  Target:    {bridgeUri}");
+
         _cts = new CancellationTokenSource();
         _socket = new ClientWebSocket();
 
-        await _socket.ConnectAsync(BridgeUri, ct);
+        // The ApiKeyMiddleware on the backend requires X-Api-Key on every
+        // request except /echo.  The key is written to a well-known file
+        // by ApiKeyProvider each time the backend starts.
+        await LogAsync($"  Reading API key from: {apiKeyPath}");
+        string apiKey;
+        try
+        {
+            apiKey = ReadApiKey(apiKeyPath);
+            await LogAsync($"  API key read OK ({apiKey.Length} chars)");
+        }
+        catch (Exception ex)
+        {
+            await LogAsync($"  API key read FAILED: {ex.Message}");
+            throw;
+        }
+
+        _socket.Options.SetRequestHeader("X-Api-Key", apiKey);
+        await LogAsync("  X-Api-Key header set.");
+
+        await LogAsync($"  Opening WebSocket to {bridgeUri}...");
+        try
+        {
+            await _socket.ConnectAsync(bridgeUri, ct);
+            await LogAsync($"  WebSocket connected (state: {_socket.State}).");
+        }
+        catch (Exception ex)
+        {
+            var inner = ex.InnerException?.Message;
+            await LogAsync($"  WebSocket connect FAILED: {ex.Message}"
+                + (inner != null ? $" -> {inner}" : ""));
+            throw;
+        }
 
         // Registration: must be the first message per EditorBridgeService protocol.
         // editorType uses camelCase enum value matching the server's JsonStringEnumConverter.
@@ -83,13 +123,17 @@ internal sealed class SharpClawBridgeClient
             workspacePath = _workspacePath
         }, JsonOptions);
 
+        await LogAsync("  Sending registration...");
         await SendTextAsync(registration, ct);
+        await LogAsync("  Registration sent, waiting for ack...");
 
         // Wait for the "registered" ack (contains sessionId + connectionId).
-        _ = await ReceiveTextAsync(ct);
+        var ack = await ReceiveTextAsync(ct);
+        await LogAsync($"  Ack received: {Truncate(ack, 200)}");
 
         // Start the background receive loop.
         _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        await LogAsync("  Receive loop started. Connection ready.");
     }
 
     /// <summary>
@@ -97,32 +141,50 @@ internal sealed class SharpClawBridgeClient
     /// </summary>
     public async Task DisconnectAsync()
     {
+        await LogAsync("Disconnect starting...");
+
         try
         {
             if (_cts is not null)
-                await _cts.CancelAsync();
+            {
+                _cts.Cancel();
+                await LogAsync("  Cancellation signalled.");
+            }
 
             if (_socket?.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
+                await LogAsync($"  Sending WebSocket close (state: {_socket.State})...");
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 await _socket.CloseAsync(
                     WebSocketCloseStatus.NormalClosure, "Extension closing", timeout.Token);
+                await LogAsync("  WebSocket close handshake complete.");
             }
         }
-        catch { /* best-effort close */ }
+        catch (Exception ex)
+        {
+            await LogAsync($"  Close error (best-effort): {ex.Message}");
+        }
 
         try
         {
             if (_receiveTask is not null)
+            {
+                await LogAsync("  Draining receive loop...");
                 await _receiveTask;
+            }
         }
-        catch { /* absorb cancellation */ }
+        catch (Exception ex)
+        {
+            await LogAsync($"  Receive loop drain: {ex.GetType().Name}");
+        }
 
         _socket?.Dispose();
         _cts?.Dispose();
         _socket = null;
         _cts = null;
         _receiveTask = null;
+
+        await LogAsync("Disconnected.");
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -131,18 +193,31 @@ internal sealed class SharpClawBridgeClient
 
     private async Task ReceiveLoopAsync(CancellationToken ct)
     {
+        await LogAsync("Receive loop running.");
         try
         {
             while (_socket?.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 var json = await ReceiveTextAsync(ct);
-                if (json is null) break;
+                if (json is null)
+                {
+                    await LogAsync("Receive loop: server closed connection.");
+                    break;
+                }
 
                 await HandleMessageAsync(json, ct);
             }
+
+            await LogAsync($"Receive loop exited (socket: {_socket?.State}, cancelled: {ct.IsCancellationRequested}).");
         }
-        catch (OperationCanceledException) { /* shutdown */ }
-        catch (WebSocketException) { /* connection dropped */ }
+        catch (OperationCanceledException)
+        {
+            await LogAsync("Receive loop: cancelled (shutdown).");
+        }
+        catch (WebSocketException ex)
+        {
+            await LogAsync($"Receive loop: WebSocket error — {ex.Message}");
+        }
     }
 
     private async Task HandleMessageAsync(string json, CancellationToken ct)
@@ -152,12 +227,19 @@ internal sealed class SharpClawBridgeClient
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.GetProperty("type").GetString() != "request")
+            var msgType = root.GetProperty("type").GetString();
+            if (msgType != "request")
+            {
+                await LogAsync($"Received non-request message: type={msgType}");
                 return;
+            }
 
             var requestId = root.GetProperty("requestId").GetGuid();
             var action = root.GetProperty("action").GetString()!;
             JsonElement? parameters = root.TryGetProperty("params", out var p) ? p : null;
+
+            await LogAsync($"Request {requestId:N}: action={action}");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
 
             string? result = null;
             string? error = null;
@@ -174,10 +256,17 @@ internal sealed class SharpClawBridgeClient
                 success = false;
             }
 
+            sw.Stop();
+            if (success)
+                await LogAsync($"Request {requestId:N}: {action} OK ({sw.ElapsedMilliseconds}ms)");
+            else
+                await LogAsync($"Request {requestId:N}: {action} FAILED ({sw.ElapsedMilliseconds}ms) — {error}");
+
             await SendResponseAsync(requestId, success, result, error, ct);
         }
         catch (Exception ex)
         {
+            await LogAsync($"Error handling message: {ex.Message}");
             System.Diagnostics.Debug.WriteLine(
                 $"[SharpClaw] Error handling message: {ex.Message}",
                 "SharpClaw.VS2026");
@@ -222,13 +311,18 @@ internal sealed class SharpClawBridgeClient
         var filePath = GetRequiredString(parameters, "filePath");
         var fullPath = ResolvePath(filePath);
 
+        int? startLine = GetOptionalInt(parameters, "startLine");
+        int? endLine = GetOptionalInt(parameters, "endLine");
+        await LogAsync($"  read_file: path={filePath}, resolved={fullPath}"
+            + (startLine.HasValue || endLine.HasValue
+                ? $", lines {startLine ?? 1}-{endLine?.ToString() ?? "EOF"}"
+                : ", full file"));
+
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"File not found: {filePath}");
 
-        var lines = await File.ReadAllLinesAsync(fullPath, ct);
-
-        int? startLine = GetOptionalInt(parameters, "startLine");
-        int? endLine = GetOptionalInt(parameters, "endLine");
+        var lines = File.ReadAllLines(fullPath);
+        await LogAsync($"  read_file: {lines.Length} total lines");
 
         if (startLine.HasValue || endLine.HasValue)
         {
@@ -238,7 +332,9 @@ internal sealed class SharpClawBridgeClient
             if (start >= lines.Length)
                 return string.Empty;
 
-            return string.Join(Environment.NewLine, lines.Skip(start).Take(end - start));
+            var slice = lines.Skip(start).Take(end - start).ToArray();
+            await LogAsync($"  read_file: returning {slice.Length} lines (range {start + 1}-{start + slice.Length})");
+            return string.Join(Environment.NewLine, slice);
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -250,16 +346,22 @@ internal sealed class SharpClawBridgeClient
         var content = GetRequiredString(parameters, "content");
         var fullPath = ResolvePath(filePath);
 
+        bool existed = File.Exists(fullPath);
+        await LogAsync($"  write_file: path={filePath}, resolved={fullPath}");
+        await LogAsync($"  write_file: existed={existed}, content length={content.Length} chars");
+        await LogAsync($"  write_file: preview={Truncate(content, 200)}");
+
         var dir = Path.GetDirectoryName(fullPath);
         if (dir is not null)
             Directory.CreateDirectory(dir);
 
-        await File.WriteAllTextAsync(fullPath, content, ct);
+        File.WriteAllText(fullPath, content);
         return $"File written: {filePath}";
     }
 
     private async Task<string?> GetOpenFilesAsync(CancellationToken ct)
     {
+        await LogAsync("  get_open_files: querying DTE...");
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
 
         var dteObj = await _package.GetServiceAsync(typeof(EnvDTE.DTE));
@@ -277,11 +379,13 @@ internal sealed class SharpClawBridgeClient
             });
         }
 
+        await LogAsync($"  get_open_files: {files.Count} documents open");
         return JsonSerializer.Serialize(files, JsonOptions);
     }
 
     private async Task<string?> GetSelectionAsync(CancellationToken ct)
     {
+        await LogAsync("  get_selection: querying DTE...");
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
 
         var dteObj = await _package.GetServiceAsync(typeof(EnvDTE.DTE));
@@ -293,17 +397,22 @@ internal sealed class SharpClawBridgeClient
 
         if (activeDoc is null)
         {
+            await LogAsync("  get_selection: no active document");
             return JsonSerializer.Serialize(
                 new { file = (string?)null }, JsonOptions);
         }
 
         var selection = activeDoc.Selection as EnvDTE.TextSelection;
+        var relPath = GetRelativePath(activeDoc.FullName);
+        var selText = selection?.Text ?? string.Empty;
+        await LogAsync($"  get_selection: file={relPath}, line={selection?.CurrentLine ?? 0}, col={selection?.CurrentColumn ?? 0}, selected={selText.Length} chars");
+
         return JsonSerializer.Serialize(new
         {
-            file = GetRelativePath(activeDoc.FullName),
+            file = relPath,
             line = selection?.CurrentLine ?? 0,
             column = selection?.CurrentColumn ?? 0,
-            selectedText = selection?.Text ?? string.Empty
+            selectedText = selText
         }, JsonOptions);
     }
 
@@ -313,24 +422,32 @@ internal sealed class SharpClawBridgeClient
         var content = GetOptionalString(parameters, "content") ?? string.Empty;
         var fullPath = ResolvePath(filePath);
 
+        await LogAsync($"  create_file: path={filePath}, resolved={fullPath}");
+        await LogAsync($"  create_file: content length={content.Length} chars");
+        if (content.Length > 0)
+            await LogAsync($"  create_file: preview={Truncate(content, 200)}");
+
         var dir = Path.GetDirectoryName(fullPath);
         if (dir is not null)
             Directory.CreateDirectory(dir);
 
-        await File.WriteAllTextAsync(fullPath, content, ct);
+        File.WriteAllText(fullPath, content);
         return $"File created: {filePath}";
     }
 
-    private Task<string?> DeleteFileAsync(JsonElement? parameters, CancellationToken ct)
+    private async Task<string?> DeleteFileAsync(JsonElement? parameters, CancellationToken ct)
     {
         var filePath = GetRequiredString(parameters, "filePath");
         var fullPath = ResolvePath(filePath);
+
+        await LogAsync($"  delete_file: path={filePath}, resolved={fullPath}");
 
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"File not found: {filePath}");
 
         File.Delete(fullPath);
-        return Task.FromResult<string?>($"File deleted: {filePath}");
+        await LogAsync($"  delete_file: deleted successfully");
+        return $"File deleted: {filePath}";
     }
 
     private async Task<string?> ApplyEditAsync(JsonElement? parameters, CancellationToken ct)
@@ -341,10 +458,13 @@ internal sealed class SharpClawBridgeClient
         var newText = GetRequiredString(parameters, "newText");
         var fullPath = ResolvePath(filePath);
 
+        await LogAsync($"  apply_edit: path={filePath}, resolved={fullPath}");
+        await LogAsync($"  apply_edit: lines {startLine}-{endLine}, newText length={newText.Length} chars");
+
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"File not found: {filePath}");
 
-        var lines = (await File.ReadAllLinesAsync(fullPath, ct)).ToList();
+        var lines = File.ReadAllLines(fullPath).ToList();
         int start = Math.Max(1, startLine) - 1;             // 0-based
         int end = Math.Min(lines.Count, endLine);            // inclusive
 
@@ -354,14 +474,19 @@ internal sealed class SharpClawBridgeClient
                 $"Start line {startLine} exceeds file length ({lines.Count}).");
 
         int removeCount = Math.Max(0, end - start);
+        var removedLines = lines.GetRange(start, removeCount);
+        await LogAsync($"  apply_edit: removing {removeCount} lines (was: {Truncate(string.Join("\n", removedLines), 300)})");
         lines.RemoveRange(start, removeCount);
 
         var replacement = newText.Split('\n')
             .Select(l => l.TrimEnd('\r'))
             .ToArray();
+        await LogAsync($"  apply_edit: inserting {replacement.Length} lines at position {start + 1}");
+        await LogAsync($"  apply_edit: new content={Truncate(newText, 300)}");
         lines.InsertRange(start, replacement);
 
-        await File.WriteAllLinesAsync(fullPath, lines, ct);
+        File.WriteAllLines(fullPath, lines);
+        await LogAsync($"  apply_edit: file now {lines.Count} total lines");
         return $"Applied edit to {filePath} (lines {startLine}-{endLine}).";
     }
 
@@ -378,6 +503,7 @@ internal sealed class SharpClawBridgeClient
         JsonElement? parameters, CancellationToken ct)
     {
         var filePath = GetOptionalString(parameters, "filePath");
+        await LogAsync($"  get_diagnostics: filter={filePath ?? "(all files)"}");
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
 
@@ -386,6 +512,7 @@ internal sealed class SharpClawBridgeClient
             return "[]";
 
         var diagnostics = CollectDiagnostics(dte, filePath);
+        await LogAsync($"  get_diagnostics: {diagnostics.Count} items returned");
         return JsonSerializer.Serialize(diagnostics, JsonOptions);
     }
 
@@ -406,6 +533,10 @@ internal sealed class SharpClawBridgeClient
                         ?? $"Proposed changes: {filePath}";
         var fullPath = ResolvePath(filePath);
 
+        await LogAsync($"  show_diff: path={filePath}, resolved={fullPath}");
+        await LogAsync($"  show_diff: title={diffTitle}, proposed length={proposedContent.Length} chars");
+        await LogAsync($"  show_diff: proposed preview={Truncate(proposedContent, 300)}");
+
         // Left side: original file or empty temp when the file is new.
         var ext = Path.GetExtension(filePath);
         string leftPath;
@@ -421,7 +552,7 @@ internal sealed class SharpClawBridgeClient
             leftPath = Path.Combine(
                 Path.GetTempPath(),
                 $"sharpclaw_orig_{Guid.NewGuid():N}{ext}");
-            await File.WriteAllTextAsync(leftPath, string.Empty, ct);
+            File.WriteAllText(leftPath, string.Empty);
             leftLabel = $"{filePath} (new file)";
         }
 
@@ -429,7 +560,7 @@ internal sealed class SharpClawBridgeClient
         var rightPath = Path.Combine(
             Path.GetTempPath(),
             $"sharpclaw_proposed_{Guid.NewGuid():N}{ext}");
-        await File.WriteAllTextAsync(rightPath, proposedContent, ct);
+        File.WriteAllText(rightPath, proposedContent);
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
 
@@ -466,6 +597,7 @@ internal sealed class SharpClawBridgeClient
     /// </summary>
     private async Task<string?> RunBuildAsync(CancellationToken ct)
     {
+        await LogAsync("  run_build: starting solution build...");
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
 
         var dteObj = await _package.GetServiceAsync(typeof(EnvDTE.DTE));
@@ -505,6 +637,8 @@ internal sealed class SharpClawBridgeClient
         int failedProjects = solutionBuild.LastBuildInfo;
         var diagnostics = CollectDiagnostics(dte, filePathFilter: null, maxPerCategory: 50);
 
+        await LogAsync($"  run_build: {(failedProjects == 0 ? "succeeded" : $"FAILED ({failedProjects} projects)")}, {diagnostics.Count} diagnostics");
+
         return JsonSerializer.Serialize(new
         {
             succeeded = failedProjects == 0,
@@ -528,6 +662,8 @@ internal sealed class SharpClawBridgeClient
     {
         var command = GetRequiredString(parameters, "command");
         var workingDirectory = GetOptionalString(parameters, "workingDirectory");
+        await LogAsync($"  run_terminal: command={Truncate(command, 300)}");
+        await LogAsync($"  run_terminal: workingDirectory={workingDirectory ?? "(default)"}");
 
         string workDir;
         if (workingDirectory is not null)
@@ -566,23 +702,27 @@ internal sealed class SharpClawBridgeClient
         // Kill the process tree on cancellation / timeout.
         using var killReg = token.Register(() =>
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            try { process.Kill(); } catch { }
         });
 
         // Read stdout and stderr concurrently to avoid deadlocks.
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(token);
-        var stderrTask = process.StandardError.ReadToEndAsync(token);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
 
-        await process.WaitForExitAsync(token);
+        await Task.Run(() => process.WaitForExit(), token);
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
         const int maxLen = 100_000;
         if (stdout.Length > maxLen)
-            stdout = stdout[..maxLen] + $"\n... (truncated, {stdout.Length} total chars)";
+            stdout = stdout.Substring(0, maxLen) + $"\n... (truncated, {stdout.Length} total chars)";
         if (stderr.Length > maxLen)
-            stderr = stderr[..maxLen] + $"\n... (truncated, {stderr.Length} total chars)";
+            stderr = stderr.Substring(0, maxLen) + $"\n... (truncated, {stderr.Length} total chars)";
+
+        await LogAsync($"  run_terminal: exitCode={process.ExitCode}, stdout={stdout.Length} chars, stderr={stderr.Length} chars");
+        if (process.ExitCode != 0 && stderr.Length > 0)
+            await LogAsync($"  run_terminal: stderr preview={Truncate(stderr, 300)}");
 
         return JsonSerializer.Serialize(new
         {
@@ -718,7 +858,7 @@ internal sealed class SharpClawBridgeClient
             if (result.MessageType == WebSocketMessageType.Close)
                 return null;
 
-            await ms.WriteAsync(buffer.AsMemory(0, result.Count), ct);
+            await ms.WriteAsync(buffer, 0, result.Count, ct);
         }
         while (!result.EndOfMessage);
 
@@ -754,7 +894,13 @@ internal sealed class SharpClawBridgeClient
             ? Path.GetDirectoryName(_workspacePath)!
             : _workspacePath;
 
-        try { return Path.GetRelativePath(baseDir, fullPath); }
+        try
+        {
+            var baseUri = new Uri(baseDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar);
+            var fullUri = new Uri(fullPath);
+            return Uri.UnescapeDataString(baseUri.MakeRelativeUri(fullUri).ToString())
+                      .Replace('/', Path.DirectorySeparatorChar);
+        }
         catch { return fullPath; }
     }
 
@@ -785,5 +931,52 @@ internal sealed class SharpClawBridgeClient
         if (parameters is null || !parameters.Value.TryGetProperty(name, out var prop))
             return null;
         return prop.ValueKind == JsonValueKind.Null ? null : prop.GetInt32();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // API key
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Reads the API key written by <c>ApiKeyProvider</c> on backend startup.
+    /// </summary>
+    private static string ReadApiKey(string apiKeyFilePath)
+    {
+        if (!File.Exists(apiKeyFilePath))
+            throw new InvalidOperationException(
+                $"API key file not found at '{apiKeyFilePath}'. " +
+                "Ensure the SharpClaw backend is running.");
+
+        return File.ReadAllText(apiKeyFilePath).Trim();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Logging helpers
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Writes a message to the SharpClaw Output Window pane via the
+    /// owning package. Fire-and-forget safe — swallows exceptions so
+    /// a logging failure never breaks the connection flow.
+    /// </summary>
+    private async Task LogAsync(string message)
+    {
+        try
+        {
+            await _package.WriteOutputAsync(message);
+        }
+        catch
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[SharpClaw] {message}", "SharpClaw.VS2026");
+        }
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (value is null) return null;
+        return value.Length <= maxLength
+            ? value
+            : value.Substring(0, maxLength) + "...";
     }
 }
