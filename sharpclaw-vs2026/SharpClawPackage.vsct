@@ -29,7 +29,7 @@
     </Buttons>
 
     <Bitmaps>
-      <Bitmap guid="guidImages" href="Resources\Icon.png" usedList="bmpPic1, bmpPic2"/>
+      <Bitmap guid="guidImages" href="Resources\CommandIcons.bmp" usedList="bmpPic1, bmpPic2"/>
     </Bitmaps>
   </Commands>
 

@@ -24,12 +24,11 @@ internal sealed class ConnectCommand
 
     public static ConnectCommand? Instance { get; private set; }
 
-    public static async Task InitializeAsync(SharpClawPackage package)
+    public static async Task InitializeAsync(SharpClawPackage package, OleMenuCommandService commandService)
     {
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(package.DisposalToken);
 
-        var commandService = await package.GetServiceAsync(typeof(IMenuCommandService)) as OleMenuCommandService;
-        Instance = new ConnectCommand(package, commandService!);
+        Instance = new ConnectCommand(package, commandService);
     }
 
     private void Execute(object? sender, EventArgs e)
@@ -37,7 +36,30 @@ internal sealed class ConnectCommand
         ThreadHelper.ThrowIfNotOnUIThread();
         _ = _package.JoinableTaskFactory.RunAsync(async () =>
         {
-            await _package.ConnectAsync();
+            try
+            {
+                if (_package.IsConnected)
+                {
+                    await _package.SetStatusBarTextAsync("SharpClaw: Already connected");
+                    await _package.WriteOutputAsync("Connect requested but already connected.");
+                    return;
+                }
+
+                await _package.SetStatusBarTextAsync("SharpClaw: Connecting…");
+                await _package.WriteOutputAsync("Connecting to SharpClaw backend…");
+
+                await _package.ConnectAsync();
+
+                await _package.SetStatusBarTextAsync("SharpClaw: Connected ✓");
+                await _package.WriteOutputAsync("Connected to SharpClaw backend.");
+            }
+            catch (Exception ex)
+            {
+                var detail = ex.InnerException?.Message ?? ex.Message;
+                await _package.SetStatusBarTextAsync("SharpClaw: Connection failed");
+                await _package.WriteOutputAsync(
+                    $"Connection failed: {detail} — is the SharpClaw backend running?");
+            }
         });
     }
 }

@@ -45,8 +45,8 @@
     <PackageVersion Include="System.Management" Version="10.0.5" />
     <PackageVersion Include="System.ServiceProcess.ServiceController" Version="10.0.5" />
     <!-- VS 2026 VSIX extension (classic in-proc model) -->
-    <PackageVersion Include="Microsoft.VisualStudio.SDK" Version="17.0.32112.339" />
-    <PackageVersion Include="Microsoft.VSSDK.BuildTools" Version="17.14.2120" />
+    <PackageVersion Include="Microsoft.VisualStudio.SDK" Version="17.12.40392" />
+    <PackageVersion Include="Microsoft.VSSDK.BuildTools" Version="17.12.2069" />
     <PackageVersion Include="System.Text.Json" Version="9.0.5" />
     <!-- VS 2026 VSIX extension (new out-of-proc model, SharpClaw.VisualStudio2026) -->
     <PackageVersion Include="Microsoft.VisualStudio.Extensibility" Version="17.14.54" />

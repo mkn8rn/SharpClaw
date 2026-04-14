@@ -24,12 +24,11 @@ internal sealed class DisconnectCommand
 
     public static DisconnectCommand? Instance { get; private set; }
 
-    public static async Task InitializeAsync(SharpClawPackage package)
+    public static async Task InitializeAsync(SharpClawPackage package, OleMenuCommandService commandService)
     {
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(package.DisposalToken);
 
-        var commandService = await package.GetServiceAsync(typeof(IMenuCommandService)) as OleMenuCommandService;
-        Instance = new DisconnectCommand(package, commandService!);
+        Instance = new DisconnectCommand(package, commandService);
     }
 
     private void Execute(object? sender, EventArgs e)
@@ -37,7 +36,28 @@ internal sealed class DisconnectCommand
         ThreadHelper.ThrowIfNotOnUIThread();
         _ = _package.JoinableTaskFactory.RunAsync(async () =>
         {
-            await _package.DisconnectAsync();
+            try
+            {
+                if (!_package.IsConnected)
+                {
+                    await _package.SetStatusBarTextAsync("SharpClaw: Not connected");
+                    await _package.WriteOutputAsync("Disconnect requested but not connected.");
+                    return;
+                }
+
+                await _package.SetStatusBarTextAsync("SharpClaw: Disconnecting…");
+                await _package.WriteOutputAsync("Disconnecting from SharpClaw backend…");
+
+                await _package.DisconnectAsync();
+
+                await _package.SetStatusBarTextAsync("SharpClaw: Disconnected");
+                await _package.WriteOutputAsync("Disconnected from SharpClaw backend.");
+            }
+            catch (Exception ex)
+            {
+                await _package.SetStatusBarTextAsync("SharpClaw: Disconnect failed");
+                await _package.WriteOutputAsync($"Disconnect failed: {ex.Message}");
+            }
         });
     }
 }
