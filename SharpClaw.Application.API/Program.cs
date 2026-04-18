@@ -333,12 +333,29 @@ try
         Log.Warning(ex, "External module scan failed — continuing without external modules");
     }
 
+    // Load external modules defined in .env ExternalModules section
+    var envExternalLoadedCount = 0;
+    try
+    {
+        using var envExtScope = app.Services.CreateScope();
+        var moduleSvc = envExtScope.ServiceProvider.GetRequiredService<ModuleService>();
+        var envModules = await moduleSvc.LoadExternalModulesFromConfigAsync(app.Configuration, app.Services);
+        envExternalLoadedCount = envModules.Count;
+        foreach (var ext in envModules)
+            Log.Information("Module '{ModuleId}' ({DisplayName}) loaded [env-external, v{Version}]",
+                ext.ModuleId, ext.DisplayName, ext.Version ?? "unknown");
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Env-configured external module load failed — continuing");
+    }
+
     // Module startup summary
-    var totalLoaded = initializedCount + externalLoadedCount;
+    var totalLoaded = initializedCount + externalLoadedCount + envExternalLoadedCount;
     Log.Information(
-        "Module startup complete: {TotalLoaded} loaded ({BundledInit} bundled, {ExternalLoaded} external), " +
+        "Module startup complete: {TotalLoaded} loaded ({BundledInit} bundled, {ExternalLoaded} external, {EnvExternalLoaded} env-external), " +
         "{FailedInit} failed, {Disabled} disabled, {Excluded} excluded",
-        totalLoaded, initializedCount, externalLoadedCount,
+        totalLoaded, initializedCount, externalLoadedCount, envExternalLoadedCount,
         failedInitCount, disabledBundledCount, excludedModules.Count);
 
     // Seed mk8.shell base env on first startup
