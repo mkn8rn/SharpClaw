@@ -361,6 +361,7 @@ try
     app.UseMiddleware<ExceptionHandlingMiddleware>();
     app.UseSerilogRequestLogging();
     app.UseCors();
+    app.UseRouting();
     app.UseMiddleware<ApiKeyMiddleware>();
     app.UseMiddleware<JwtSessionMiddleware>();
     app.UseWebSockets();

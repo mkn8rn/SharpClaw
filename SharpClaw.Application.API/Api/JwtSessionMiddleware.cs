@@ -87,7 +87,7 @@ public sealed class JwtSessionMiddleware(
         }
 
         // Enforce authentication on non-exempt paths (skipped when disabled via .env).
-        if (!_disabled && !IsExemptPath(context.Request.Path))
+        if (!_disabled && !IsExemptPath(context.Request.Path) && !EndpointMetadataHelper.IsAnonymousAllowed(context))
         {
             var session = context.RequestServices.GetRequiredService<SessionService>();
             if (session.UserId is null && !IsGatewayAuthenticated(context))

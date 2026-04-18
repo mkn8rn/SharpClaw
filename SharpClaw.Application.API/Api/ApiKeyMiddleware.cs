@@ -12,7 +12,9 @@ public sealed class ApiKeyMiddleware(RequestDelegate next, ApiKeyProvider keyPro
     public async Task InvokeAsync(HttpContext context)
     {
         // /echo is an unauthenticated liveness check.
-        if (_disabled || context.Request.Path.Equals("/echo", StringComparison.OrdinalIgnoreCase))
+        if (_disabled
+            || context.Request.Path.Equals("/echo", StringComparison.OrdinalIgnoreCase)
+            || EndpointMetadataHelper.IsAnonymousAllowed(context))
         {
             await next(context);
             return;

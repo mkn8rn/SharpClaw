@@ -4,11 +4,25 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- NuGet package metadata -->
+    <IsPackable>true</IsPackable>
+    <PackageId>SharpClaw.Contracts</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>mkn8rn</Authors>
+    <Description>Contracts and interfaces for building SharpClaw external modules. Provides ISharpClawModule, DTOs, and shared abstractions.</Description>
+    <PackageTags>sharpclaw;modules;contracts;sdk</PackageTags>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <RepositoryUrl>https://github.com/mkn8rn/SharpClaw</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/mkn8rn/SharpClaw</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="DTOs\Conversations\" />
-    <Folder Include="DTOs\Shell\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="LICENSE" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
