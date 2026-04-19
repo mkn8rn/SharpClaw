@@ -135,6 +135,7 @@ internal static class TerminalUI
         ("ApprovedByPermittedAgent",   "Only with approval from an agent that has clearance to act"),
         ("ApprovedByWhitelistedUser",  "Only with approval from a user"),
         ("ApprovedBySameLevelUser",    "Only with approval from a user that can grant the permission"),
+        ("Restricted",                 "Hard denied - action is blocked regardless of other layers"),
     ];
 
     // ── Helpers ──────────────────────────────────────────────────

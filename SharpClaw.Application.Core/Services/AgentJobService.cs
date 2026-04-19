@@ -143,7 +143,8 @@ public sealed class AgentJobService(
 
         var caller = new ActionCaller(session.UserId, request.CallerAgentId);
         var result = await DispatchPermissionCheckAsync(
-            agentId, job.ResourceId, caller, ct, job.ActionKey);
+            agentId, job.ResourceId, caller, ct, job.ActionKey,
+            channelPsId: ch.PermissionSetId, contextPsId: ch.AgentContext?.PermissionSetId);
 
         job.EffectiveClearance = result.EffectiveClearance;
 
@@ -206,8 +207,15 @@ public sealed class AgentJobService(
         }
 
         var approver = new ActionCaller(session.UserId, request.ApproverAgentId);
+
+        var approvalCh = await db.Channels
+            .Include(c => c.AgentContext)
+            .FirstOrDefaultAsync(c => c.Id == job.ChannelId, ct);
+
         var result = await DispatchPermissionCheckAsync(
-            job.AgentId, job.ResourceId, approver, ct, job.ActionKey);
+            job.AgentId, job.ResourceId, approver, ct, job.ActionKey,
+            channelPsId: approvalCh?.PermissionSetId,
+            contextPsId: approvalCh?.AgentContext?.PermissionSetId);
 
         switch (result.Verdict)
         {
@@ -825,7 +833,8 @@ public sealed class AgentJobService(
     /// </summary>
     private async Task<AgentActionResult> DispatchModulePermissionCheckAsync(
         Guid agentId, Guid? resourceId, ActionCaller caller,
-        string? actionKey, CancellationToken ct)
+        string? actionKey, CancellationToken ct,
+        Guid? channelPsId = null, Guid? contextPsId = null)
     {
         if (string.IsNullOrWhiteSpace(actionKey))
             return AgentActionResult.Denied("Module action requires an ActionKey to resolve permissions.");
@@ -857,7 +866,8 @@ public sealed class AgentJobService(
         if (!string.IsNullOrWhiteSpace(descriptor.DelegateTo))
         {
             var result = actions.TryEvaluateByDelegateNameAsync(
-                descriptor.DelegateTo, agentId, resourceId, caller, ct);
+                descriptor.DelegateTo, agentId, resourceId, caller, ct,
+                channelPsId: channelPsId, contextPsId: contextPsId);
             if (result is not null) return await result;
 
             return AgentActionResult.Denied(
@@ -928,9 +938,11 @@ public sealed class AgentJobService(
     private Task<AgentActionResult> DispatchPermissionCheckAsync(
         Guid agentId, Guid? resourceId,
         ActionCaller caller, CancellationToken ct,
-        string? actionKey = null)
+        string? actionKey = null,
+        Guid? channelPsId = null, Guid? contextPsId = null)
     {
-        return DispatchModulePermissionCheckAsync(agentId, resourceId, caller, actionKey, ct);
+        return DispatchModulePermissionCheckAsync(agentId, resourceId, caller, actionKey, ct,
+            channelPsId, contextPsId);
     }
 
     /// <summary>

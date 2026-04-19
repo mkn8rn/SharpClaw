@@ -38,13 +38,14 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     /// </summary>
     public Task<AgentActionResult> EvaluateGlobalFlagByKeyAsync(
         string flagKey, Guid agentId, ActionCaller caller,
-        Func<Task>? onApproved = null, CancellationToken ct = default)
+        Func<Task>? onApproved = null, CancellationToken ct = default,
+        Guid? channelPsId = null, Guid? contextPsId = null)
         => EvaluateGlobalFlagAsync(
             agentId, caller,
             ps => ps.GlobalFlags.Any(f => f.FlagKey == flagKey),
             ps => ps.GlobalFlags.FirstOrDefault(f => f.FlagKey == flagKey)
                     ?.Clearance ?? PermissionClearance.Unset,
-            flagKey, onApproved, ct);
+            flagKey, onApproved, ct, channelPsId, contextPsId);
 
     // ═══════════════════════════════════════════════════════════════
     // Core evaluation engine
@@ -62,7 +63,9 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
         Func<PermissionSetDB, PermissionClearance> getFlagClearance,
         string flagDescription,
         Func<Task>? onApproved,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? channelPsId = null,
+        Guid? contextPsId = null)
     {
         var agentPerms = await LoadAgentPermissionsAsync(agentId, ct);
         if (agentPerms is null)
@@ -71,11 +74,13 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
         if (!hasFlag(agentPerms))
             return AgentActionResult.Denied($"Agent does not have permission to {flagDescription}.");
 
-        var effective = ResolveClearance(getFlagClearance(agentPerms));
+        var roleClearance = getFlagClearance(agentPerms);
+        var (effective, blockingLayer) = await ResolveClearanceAcrossLayersAsync(
+            hasFlag, getFlagClearance, channelPsId, contextPsId, roleClearance, ct);
 
         var result = await EvaluateCallerClearanceAsync(
             agentPerms, effective, caller,
-            callerPerms => hasFlag(callerPerms), ct);
+            callerPerms => hasFlag(callerPerms), ct, blockingLayer);
 
         if (result.Verdict == ClearanceVerdict.Approved && onApproved is not null)
             await onApproved();
@@ -107,7 +112,9 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
         ActionCaller caller,
         string resourceDescription,
         Func<Task>? onApproved = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Guid? channelPsId = null,
+        Guid? contextPsId = null)
     {
         var agentPerms = await LoadAgentPermissionsAsync(agentId, ct);
         if (agentPerms is null)
@@ -133,12 +140,21 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
             return AgentActionResult.Denied($"Agent does not have {resourceDescription}.");
         }
 
-        var effective = ResolveClearance(access.Clearance);
+        var (effective, blockingLayer) = await ResolveClearanceAcrossLayersAsync(
+            ps => HasResourceGrant(ps, resourceType, resourceId),
+            ps =>
+            {
+                var a = ps.ResourceAccesses.FirstOrDefault(x =>
+                    x.ResourceType == resourceType
+                    && (x.ResourceId == resourceId || x.ResourceId == WellKnownIds.AllResources));
+                return a?.Clearance ?? PermissionClearance.Unset;
+            },
+            channelPsId, contextPsId, access.Clearance, ct);
 
         var result = await EvaluateCallerClearanceAsync(
             agentPerms, effective, caller,
             callerPerms => HasResourceGrant(callerPerms, resourceType, resourceId),
-            ct);
+            ct, blockingLayer);
 
         if (result.Verdict == ClearanceVerdict.Approved && onApproved is not null)
             await onApproved();
@@ -166,13 +182,20 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
         PermissionClearance effectiveClearance,
         ActionCaller caller,
         Func<PermissionSetDB, bool> callerHasSamePermission,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? blockingLayer = null)
     {
-        // ── Level 0: Unset / Denied — no approval path ────────
+        // ── Level 6: Restricted — hard deny, no approval path ──────
+        if (effectiveClearance == PermissionClearance.Restricted)
+            return AgentActionResult.Denied(
+                $"Permission is restricted (hard denied) at the {blockingLayer ?? "unknown"} layer. "
+                + "No approval path exists.");
+
+        // ── Level 0: Unset — all layers were unset ────────────────
         if (effectiveClearance == PermissionClearance.Unset)
             return AgentActionResult.Denied(
-                "Permission clearance is not configured (Unset). "
-                + "An admin must explicitly set a clearance level.");
+                "Permission clearance is unset across all layers. "
+                + "An admin must set a clearance level on at least one layer.");
 
         // ── Level 5: independent ─────────────────────────────────
         if (effectiveClearance == PermissionClearance.Independent)
@@ -296,17 +319,20 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     /// </summary>
     public Task<AgentActionResult>? TryEvaluateByDelegateNameAsync(
         string delegateName, Guid agentId, Guid? resourceId,
-        ActionCaller caller, CancellationToken ct = default)
+        ActionCaller caller, CancellationToken ct = default,
+        Guid? channelPsId = null, Guid? contextPsId = null)
     {
         var flagKey = registry.ResolveGlobalFlag(delegateName);
         if (flagKey is not null)
-            return EvaluateGlobalFlagByKeyAsync(flagKey, agentId, caller, ct: ct);
+            return EvaluateGlobalFlagByKeyAsync(flagKey, agentId, caller, ct: ct,
+                channelPsId: channelPsId, contextPsId: contextPsId);
 
         var resourceType = registry.ResolveResourceType(delegateName);
         if (resourceType is not null && resourceId.HasValue)
             return EvaluateResourceAccessAsync(
                 agentId, resourceId.Value, resourceType, caller,
-                $"{resourceType} access", ct: ct);
+                $"{resourceType} access", ct: ct,
+                channelPsId: channelPsId, contextPsId: contextPsId);
 
         return null;
     }
@@ -335,11 +361,48 @@ public sealed class AgentActionService(SharpClawDbContext db, ModuleRegistry reg
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Returns the per-permission clearance as-is. <see cref="PermissionClearance.Unset"/>
-    /// is preserved — the caller (<see cref="EvaluateCallerClearanceAsync"/>) treats it
-    /// as a hard deny.
+    /// Resolves the effective clearance by cascading through permission layers.
+    /// <see cref="PermissionClearance.Restricted"/> at any layer is a hard deny
+    /// that short-circuits immediately.
+    /// <see cref="PermissionClearance.Unset"/> causes the system to fall through
+    /// to the next layer.  If every layer is <c>Unset</c>, the final result is
+    /// <c>Unset</c> (denied by <see cref="EvaluateCallerClearanceAsync"/>).
+    /// Returns the effective clearance and, when <c>Restricted</c>, the name of
+    /// the layer that blocked.
     /// </summary>
-    private static PermissionClearance ResolveClearance(
-        PermissionClearance perPermission) =>
-        perPermission;
+    private async Task<(PermissionClearance Clearance, string? BlockingLayer)> ResolveClearanceAcrossLayersAsync(
+        Func<PermissionSetDB, bool> hasGrant,
+        Func<PermissionSetDB, PermissionClearance> getClearance,
+        Guid? channelPsId, Guid? contextPsId,
+        PermissionClearance roleClearance,
+        CancellationToken ct)
+    {
+        // Channel layer
+        if (channelPsId.HasValue)
+        {
+            var ps = await LoadPermissionSetAsync(channelPsId.Value, ct);
+            if (ps is not null && hasGrant(ps))
+            {
+                var cl = getClearance(ps);
+                if (cl == PermissionClearance.Restricted) return (PermissionClearance.Restricted, "channel");
+                if (cl != PermissionClearance.Unset) return (cl, null);
+            }
+        }
+
+        // Context layer
+        if (contextPsId.HasValue)
+        {
+            var ps = await LoadPermissionSetAsync(contextPsId.Value, ct);
+            if (ps is not null && hasGrant(ps))
+            {
+                var cl = getClearance(ps);
+                if (cl == PermissionClearance.Restricted) return (PermissionClearance.Restricted, "context");
+                if (cl != PermissionClearance.Unset) return (cl, null);
+            }
+        }
+
+        // Role layer (already resolved by caller)
+        if (roleClearance == PermissionClearance.Restricted) return (PermissionClearance.Restricted, "role");
+        return (roleClearance, null);
+    }
 }

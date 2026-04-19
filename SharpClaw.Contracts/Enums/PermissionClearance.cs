@@ -9,18 +9,11 @@ namespace SharpClaw.Contracts.Enums;
 public enum PermissionClearance
 {
     /// <summary>
-    /// No clearance has been configured. The grant row exists but is inert —
-    /// the action is denied and no approval path exists until an admin
-    /// explicitly sets a clearance level.
+    /// No clearance has been configured — soft deny.  The system cascades
+    /// to the next permission layer (channel → context → role).  If every
+    /// layer is <c>Unset</c>, the action is denied.
     /// </summary>
     Unset = 0,
-
-    /// <summary>
-    /// Explicit denial. Behaviorally identical to <see cref="Unset"/> — the
-    /// action is denied outright. Use this when the intent is to deliberately
-    /// deny rather than "not yet configured."
-    /// </summary>
-    Denied = 0,
 
     /// <summary>
     /// Requires approval from a user who holds the same permission.
@@ -67,5 +60,13 @@ public enum PermissionClearance
     /// <summary>
     /// The agent can act independently without any external approval.
     /// </summary>
-    Independent = 5
+    Independent = 5,
+
+    /// <summary>
+    /// Hard deny.  The action is denied outright and the system does
+    /// <b>not</b> cascade to the next permission layer.  Use this when
+    /// a specific layer must block the action regardless of what parent
+    /// layers allow.
+    /// </summary>
+    Restricted = 6
 }

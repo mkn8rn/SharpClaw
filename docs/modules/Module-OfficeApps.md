@@ -307,7 +307,7 @@ or via the `oa_register_document` / `oa_create_workbook` tools.
 | `canCreateDocumentSessions` | `oa_register_document`, `oa_create_workbook` |
 
 The `createDocumentSessionsClearance` override defaults to `Unset`
-(action denied, no approval path).
+(cascades to parent layer; denied if no layer sets a concrete clearance).
 
 ### Per-resource arrays
 

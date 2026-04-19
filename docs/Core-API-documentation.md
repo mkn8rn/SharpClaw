@@ -116,12 +116,13 @@ Permission checks, job submission (`POST /channels/{id}/jobs`), and the CLI
 
 | Value | Int | Description |
 |-------|-----|-------------|
-| `Unset` | 0 | Falls back to the group-level default |
+| `Unset` | 0 | Cascade — skip this layer and fall back to the next (channel → context → role). Denied if no layer provides a concrete clearance. |
 | `ApprovedBySameLevelUser` | 1 | Requires approval from a same-level user |
 | `ApprovedByWhitelistedUser` | 2 | Requires approval from a whitelisted user |
 | `ApprovedByPermittedAgent` | 3 | Requires approval from an agent with the same permission |
 | `ApprovedByWhitelistedAgent` | 4 | Requires approval from a whitelisted agent |
 | `Independent` | 5 | Agent can act without any external approval |
+| `Restricted` | 6 | Hard deny — action is blocked at this layer regardless of other layers. No approval path exists. |
 
 ### AgentJobStatus
 
@@ -3202,14 +3203,21 @@ channel add --agent #3 --no-tools "My Channel"
 When an agent action is submitted as a job, the permission system
 evaluates it through two stages:
 
-### Stage 1 — Agent capability check
+### Stage 1 — Clearance cascade & agent capability check
 
-The agent's **role permission set** is checked to determine whether the
-agent has the grant at all and what clearance level it requires.
+The system resolves the **effective clearance** by cascading across three
+layers in order: **channel PS → context PS → agent role PS**.
 
+At each layer:
+- `Restricted` (6) → **hard deny** immediately. The error message identifies the blocking layer. No further layers are consulted.
+- Any of 1–5 → **use this clearance**. First concrete value wins.
+- `Unset` (0) or absent → **skip**, move to the next layer.
+
+If all layers are `Unset` or absent → **denied** ("unset across all layers").
+
+Once the effective clearance is resolved:
 - `Independent` (5) → **approved immediately**, no further checks.
-- Any other clearance level → proceeds to Stage 2.
-- No matching grant → **denied**.
+- Any other clearance level (1–4) → proceeds to Stage 2.
 
 ### Stage 2 — Channel / context pre-authorisation
 
