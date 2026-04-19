@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using LLama.Native;
@@ -15,6 +16,7 @@ using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Infrastructure.Logging;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
@@ -61,11 +63,37 @@ try
     builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(
         new ModuleLogSinkProvider(moduleLogService));
 
+    // Encryption key — resolved early so Infrastructure can use it for JSON file encryption.
+    var encryptionKeyBase64 = builder.Configuration["Encryption:Key"]
+        ?? PersistentKeyStore.GetOrCreate("encryption-key");
+    byte[] encryptionKey;
+    try
+    {
+        encryptionKey = Convert.FromBase64String(encryptionKeyBase64);
+    }
+    catch (FormatException ex)
+    {
+        throw new InvalidOperationException(
+            "Encryption:Key is not valid Base64. " +
+            "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.",
+            ex);
+    }
+
+    if (encryptionKey.Length != 32)
+    {
+        throw new InvalidOperationException(
+            $"Encryption:Key must be exactly 256 bits (32 bytes) after Base64 decoding. " +
+            $"Got {encryptionKey.Length} bytes. " +
+            "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.");
+    }
+
     // Infrastructure
     builder.Services.AddInfrastructure(StorageMode.JsonFile, configureJsonFile: opts =>
     {
         if (!string.IsNullOrEmpty(dataDir))
             opts.DataDirectory = dataDir;
+        opts.EncryptAtRest = builder.Configuration
+            .GetValue("Encryption:EncryptDatabase", defaultValue: true);
     });
 
     // CORS
@@ -91,11 +119,11 @@ try
     builder.Services.AddScoped<SessionService>();
 
     // Domain services
-    var encryptionKeyBase64 = builder.Configuration["Encryption:Key"]
-        ?? PersistentKeyStore.GetOrCreate("encryption-key");
     var encryptionOptions = new EncryptionOptions
     {
-        Key = Convert.FromBase64String(encryptionKeyBase64)
+        Key = encryptionKey,
+        EncryptProviderKeys = builder.Configuration
+            .GetValue("Encryption:EncryptProviderKeys", defaultValue: true),
     };
     builder.Services.AddSingleton(encryptionOptions);
 

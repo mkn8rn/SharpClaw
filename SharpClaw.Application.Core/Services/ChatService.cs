@@ -18,8 +18,10 @@ using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Infrastructure.Persistence.JSON;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
@@ -27,6 +29,7 @@ namespace SharpClaw.Application.Services;
 public sealed class ChatService(
     SharpClawDbContext db,
     EncryptionOptions encryptionOptions,
+    ColdEntityStore coldStore,
     ProviderApiClientFactory clientFactory,
     IHttpClientFactory httpClientFactory,
     AgentJobService jobService,
@@ -117,7 +120,7 @@ public sealed class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = isLocal ? "local" : ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey!, encryptionOptions.Key);
+        var apiKey = isLocal ? "local" : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
         if (client is LocalInferenceApiClient lic)
             lic.CurrentModelId = model.Id;
@@ -234,14 +237,12 @@ public sealed class ChatService(
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
         Guid channelId, Guid? threadId = null, int limit = 50, CancellationToken ct = default)
     {
-        var query = threadId is not null
-            ? db.ChatMessages.Where(m => m.ThreadId == threadId)
-            : db.ChatMessages.Where(m => m.ChannelId == channelId);
+        var messages = await coldStore.QueryAsync<ChatMessageDB>(
+            m => threadId is not null ? m.ThreadId == threadId : m.ChannelId == channelId,
+            limit,
+            ct);
 
-        return await query
-            .OrderByDescending(m => m.CreatedAt)
-            .ThenByDescending(m => m.Id)
-            .Take(limit)
+        return messages
             .OrderBy(m => m.CreatedAt)
             .ThenBy(m => m.Id)
             .Select(m => new ChatMessageResponse(
@@ -249,7 +250,7 @@ public sealed class ChatService(
                 m.SenderUserId, m.SenderUsername,
                 m.SenderAgentId, m.SenderAgentName,
                 m.ClientType != null ? m.ClientType.ToString() : null))
-            .ToListAsync(ct);
+            .ToList();
     }
 
     private static ChatMessageResponse ToMessageResponse(ChatMessageDB m) =>
@@ -265,26 +266,18 @@ public sealed class ChatService(
     public async Task<ChannelCostResponse> GetChannelCostAsync(
         Guid channelId, CancellationToken ct = default)
     {
-        var rows = await db.ChatMessages
-            .Where(m => m.ChannelId == channelId && m.PromptTokens != null)
-            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
-            .Select(g => new
-            {
-                g.Key.SenderAgentId,
-                g.Key.SenderAgentName,
-                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
-                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
-            })
-            .ToListAsync(ct);
+        var messages = await coldStore.QueryAllAsync<ChatMessageDB>(
+            m => m.ChannelId == channelId && m.PromptTokens != null, ct);
 
-        var breakdown = rows
-            .Where(r => r.SenderAgentId.HasValue)
-            .Select(r => new AgentTokenBreakdown(
-                r.SenderAgentId!.Value,
-                r.SenderAgentName ?? "Unknown",
-                r.PromptTokens,
-                r.CompletionTokens,
-                r.PromptTokens + r.CompletionTokens))
+        var breakdown = messages
+            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
+            .Where(g => g.Key.SenderAgentId.HasValue)
+            .Select(g => new AgentTokenBreakdown(
+                g.Key.SenderAgentId!.Value,
+                g.Key.SenderAgentName ?? "Unknown",
+                g.Sum(m => m.PromptTokens!.Value),
+                g.Sum(m => m.CompletionTokens ?? 0),
+                g.Sum(m => m.PromptTokens!.Value) + g.Sum(m => m.CompletionTokens ?? 0)))
             .OrderByDescending(b => b.TotalTokens)
             .ToList();
 
@@ -303,26 +296,18 @@ public sealed class ChatService(
             .AnyAsync(t => t.Id == threadId && t.ChannelId == channelId, ct);
         if (!threadExists) return null;
 
-        var rows = await db.ChatMessages
-            .Where(m => m.ThreadId == threadId && m.PromptTokens != null)
-            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
-            .Select(g => new
-            {
-                g.Key.SenderAgentId,
-                g.Key.SenderAgentName,
-                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
-                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
-            })
-            .ToListAsync(ct);
+        var rows = await coldStore.QueryAllAsync<ChatMessageDB>(
+            m => m.ThreadId == threadId && m.PromptTokens != null, ct);
 
         var breakdown = rows
-            .Where(r => r.SenderAgentId.HasValue)
-            .Select(r => new AgentTokenBreakdown(
-                r.SenderAgentId!.Value,
-                r.SenderAgentName ?? "Unknown",
-                r.PromptTokens,
-                r.CompletionTokens,
-                r.PromptTokens + r.CompletionTokens))
+            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
+            .Where(g => g.Key.SenderAgentId.HasValue)
+            .Select(g => new AgentTokenBreakdown(
+                g.Key.SenderAgentId!.Value,
+                g.Key.SenderAgentName ?? "Unknown",
+                g.Sum(m => m.PromptTokens!.Value),
+                g.Sum(m => m.CompletionTokens ?? 0),
+                g.Sum(m => m.PromptTokens!.Value) + g.Sum(m => m.CompletionTokens ?? 0)))
             .OrderByDescending(b => b.TotalTokens)
             .ToList();
 
@@ -344,23 +329,16 @@ public sealed class ChatService(
         var agent = await db.Agents.FindAsync([agentId], ct);
         if (agent is null) return null;
 
-        var rows = await db.ChatMessages
-            .Where(m => m.SenderAgentId == agentId && m.PromptTokens != null)
-            .GroupBy(m => m.ChannelId)
-            .Select(g => new
-            {
-                ChannelId = g.Key,
-                PromptTokens = g.Sum(m => m.PromptTokens!.Value),
-                CompletionTokens = g.Sum(m => m.CompletionTokens ?? 0)
-            })
-            .ToListAsync(ct);
+        var messages = await coldStore.QueryAllAsync<ChatMessageDB>(
+            m => m.SenderAgentId == agentId && m.PromptTokens != null, ct);
 
-        var channelBreakdown = rows
-            .Select(r => new AgentChannelTokenBreakdown(
-                r.ChannelId,
-                r.PromptTokens,
-                r.CompletionTokens,
-                r.PromptTokens + r.CompletionTokens))
+        var channelBreakdown = messages
+            .GroupBy(m => m.ChannelId)
+            .Select(g => new AgentChannelTokenBreakdown(
+                g.Key,
+                g.Sum(m => m.PromptTokens!.Value),
+                g.Sum(m => m.CompletionTokens ?? 0),
+                g.Sum(m => m.PromptTokens!.Value) + g.Sum(m => m.CompletionTokens ?? 0)))
             .OrderByDescending(b => b.TotalTokens)
             .ToList();
 
@@ -427,14 +405,15 @@ public sealed class ChatService(
         var maxMessages = thread?.MaxMessages ?? MaxHistoryMessages;
         var maxChars = thread?.MaxCharacters ?? MaxHistoryCharacters;
 
-        // Fetch up to maxMessages most-recent messages, chronologically.
-        var messages = await db.ChatMessages
-            .Where(m => m.ThreadId == threadId)
-            .OrderByDescending(m => m.CreatedAt)
-            .Take(maxMessages)
+        var cold = await coldStore.QueryAsync<ChatMessageDB>(
+            m => m.ThreadId == threadId,
+            maxMessages,
+            ct);
+
+        var messages = cold
             .OrderBy(m => m.CreatedAt)
             .Select(m => new ChatCompletionMessage(m.Role, m.Content))
-            .ToListAsync(ct);
+            .ToList();
 
         // Trim oldest messages until the total character count fits.
         var totalChars = 0;
@@ -842,7 +821,7 @@ public sealed class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = isLocal ? "local" : ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey!, encryptionOptions.Key);
+        var apiKey = isLocal ? "local" : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
         if (client is LocalInferenceApiClient streamLic)
             streamLic.CurrentModelId = model.Id;

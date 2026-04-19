@@ -8,8 +8,8 @@ using Microsoft.Extensions.Options;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.SearchEngines;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
@@ -42,10 +42,14 @@ public sealed class SearchEngineService(
         };
 
         if (!string.IsNullOrWhiteSpace(request.ApiKey))
-            engine.EncryptedApiKey = ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key);
+            engine.EncryptedApiKey = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key)
+                : request.ApiKey;
 
         if (!string.IsNullOrWhiteSpace(request.SecondaryKey))
-            engine.EncryptedSecondaryKey = ApiKeyEncryptor.Encrypt(request.SecondaryKey, encryptionOptions.Key);
+            engine.EncryptedSecondaryKey = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.SecondaryKey, encryptionOptions.Key)
+                : request.SecondaryKey;
 
         db.SearchEngines.Add(engine);
         await db.SaveChangesAsync(ct);
@@ -82,12 +86,16 @@ public sealed class SearchEngineService(
         if (request.ApiKey is not null)
             engine.EncryptedApiKey = string.IsNullOrWhiteSpace(request.ApiKey)
                 ? null
-                : ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key);
+                : encryptionOptions.EncryptProviderKeys
+                    ? ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key)
+                    : request.ApiKey;
 
         if (request.SecondaryKey is not null)
             engine.EncryptedSecondaryKey = string.IsNullOrWhiteSpace(request.SecondaryKey)
                 ? null
-                : ApiKeyEncryptor.Encrypt(request.SecondaryKey, encryptionOptions.Key);
+                : encryptionOptions.EncryptProviderKeys
+                    ? ApiKeyEncryptor.Encrypt(request.SecondaryKey, encryptionOptions.Key)
+                    : request.SecondaryKey;
 
         await db.SaveChangesAsync(ct);
         return ToResponse(engine);
@@ -186,11 +194,11 @@ public sealed class SearchEngineService(
         CancellationToken ct = default)
     {
         var apiKey = engine.EncryptedApiKey is not null
-            ? ApiKeyEncryptor.Decrypt(engine.EncryptedApiKey, encryptionOptions.Key)
+            ? ApiKeyEncryptor.DecryptOrPassthrough(engine.EncryptedApiKey, encryptionOptions.Key)
             : null;
 
         var secondaryKey = engine.EncryptedSecondaryKey is not null
-            ? ApiKeyEncryptor.Decrypt(engine.EncryptedSecondaryKey, encryptionOptions.Key)
+            ? ApiKeyEncryptor.DecryptOrPassthrough(engine.EncryptedSecondaryKey, encryptionOptions.Key)
             : null;
 
         using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };

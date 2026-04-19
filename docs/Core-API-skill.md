@@ -436,6 +436,14 @@ Step 4 — Chat without a thread on the same channel is one-shot (no history).
   This sees no prior messages.
 
 ────────────────────────────────────────
+ENCRYPTION & KEY MANAGEMENT
+────────────────────────────────────────
+Provider API keys encrypted at rest with AES-256-GCM.
+Key resolution: Encryption:Key in Core .env (Base64, exactly 32 bytes decoded) → auto-generated via PersistentKeyStore at %LOCALAPPDATA%/SharpClaw/.encryption-key if unset.
+Startup validation: invalid Base64 or wrong key length → backend crashes with clear error message.
+⚠️ Changing/losing the key makes previously encrypted provider API keys permanently unreadable.
+
+────────────────────────────────────────
 ENV FILE MANAGEMENT
 ────────────────────────────────────────
 Two .env files (JSON-with-comments, loaded into IConfiguration):
@@ -448,7 +456,7 @@ GET  /env/core/auth  → { authorised: bool }  (pre-check — is caller allowed 
 GET  /env/core       → { content: "raw JSON string" }  (403 if not authorised, 404 if file missing)
 PUT  /env/core       { content }  → { saved: true }  (403 if not authorised)
 
-Core .env keys: Encryption:Key, Jwt:Secret, Jwt:AccessTokenLifetime, Jwt:RefreshTokenLifetime, ConnectionStrings:Postgres, Api:ListenUrl, Admin:Username, Admin:Password, Admin:ReconcilePermissions, Browser:Executable, Browser:Arguments, Local:GpuLayerCount, Local:ContextSize, Local:KeepLoaded, Local:IdleCooldownMinutes, EnvEditor:AllowNonAdmin, Backend:Enabled, Auth:DisableApiKeyCheck, Auth:DisableAccessTokenCheck, Agent:DisableCustomProviderParameters.
+Core .env keys: Encryption:Key (AES-256-GCM, 32-byte Base64; auto-generated if unset; invalid value crashes backend), Jwt:Secret,
 Interface .env keys: Api:Url (default http://127.0.0.1:48923), Backend:Enabled (default true).
 
 Changes to Core .env require a backend restart to take effect.

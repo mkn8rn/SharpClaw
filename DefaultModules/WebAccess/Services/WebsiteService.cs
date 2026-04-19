@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Websites;
-using SharpClaw.Application.Services;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
@@ -48,8 +48,9 @@ public sealed class WebsiteService(
         };
 
         if (!string.IsNullOrWhiteSpace(request.Credentials))
-            website.EncryptedCredentials =
-                ApiKeyEncryptor.Encrypt(request.Credentials, encryptionOptions.Key);
+            website.EncryptedCredentials = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.Credentials, encryptionOptions.Key)
+                : request.Credentials;
 
         db.Websites.Add(website);
         await db.SaveChangesAsync(ct);
@@ -102,7 +103,9 @@ public sealed class WebsiteService(
         if (request.Credentials is not null)
             website.EncryptedCredentials = string.IsNullOrWhiteSpace(request.Credentials)
                 ? null
-                : ApiKeyEncryptor.Encrypt(request.Credentials, encryptionOptions.Key);
+                : encryptionOptions.EncryptProviderKeys
+                    ? ApiKeyEncryptor.Encrypt(request.Credentials, encryptionOptions.Key)
+                    : request.Credentials;
 
         await db.SaveChangesAsync(ct);
         return ToResponse(website);

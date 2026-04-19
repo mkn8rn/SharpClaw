@@ -6,6 +6,7 @@ using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Infrastructure.Persistence.JSON;
 
 namespace SharpClaw.Application.Services;
 
@@ -14,7 +15,7 @@ namespace SharpClaw.Application.Services;
 /// Definitions are parsed on creation so validation errors surface
 /// immediately rather than at execution time.
 /// </summary>
-public sealed class TaskService(SharpClawDbContext db)
+public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore)
 {
     // ═══════════════════════════════════════════════════════════════
     // Definitions
@@ -177,37 +178,56 @@ public sealed class TaskService(SharpClawDbContext db)
     public async Task<TaskInstanceResponse?> GetInstanceAsync(
         Guid id, CancellationToken ct = default)
     {
+        // Try EF first (current session), then cold store (previous sessions)
         var instance = await db.TaskInstances
             .Include(i => i.TaskDefinition)
             .Include(i => i.LogEntries.OrderBy(l => l.CreatedAt))
             .FirstOrDefaultAsync(i => i.Id == id, ct);
 
-        if (instance is null) return null;
-        return ToInstanceResponse(instance, instance.TaskDefinition.Name);
+        if (instance is not null)
+            return ToInstanceResponse(instance, instance.TaskDefinition.Name);
+
+        // Cold store fallback — TaskDefinition is hot (in EF), load separately
+        var coldInstance = await coldStore.FindAsync<TaskInstanceDB>(id, ct);
+        if (coldInstance is null) return null;
+
+        var definition = await db.TaskDefinitions.FindAsync([coldInstance.TaskDefinitionId], ct);
+        var defName = definition?.Name ?? "(unknown)";
+
+        coldInstance.LogEntries = (await coldStore.QueryAllAsync<TaskExecutionLogDB>(
+            l => l.TaskInstanceId == id, ct)).ToList();
+
+        return ToInstanceResponse(coldInstance, defName);
     }
 
     public async Task<IReadOnlyList<TaskInstanceSummaryResponse>> ListInstancesAsync(
         Guid? taskDefinitionId = null,
         CancellationToken ct = default)
     {
-        var query = db.TaskInstances
-            .Include(i => i.TaskDefinition)
-            .AsQueryable();
+        // Cold store holds all previous-session instances
+        var instances = await coldStore.QueryAllAsync<TaskInstanceDB>(
+            taskDefinitionId is not null
+                ? i => i.TaskDefinitionId == taskDefinitionId.Value
+                : _ => true,
+            ct);
 
-        if (taskDefinitionId is not null)
-            query = query.Where(i => i.TaskDefinitionId == taskDefinitionId.Value);
+        // Build a lookup for task definition names (hot entities in EF)
+        var defIds = instances.Select(i => i.TaskDefinitionId).Distinct().ToList();
+        var defNames = await db.TaskDefinitions
+            .Where(d => defIds.Contains(d.Id))
+            .ToDictionaryAsync(d => d.Id, d => d.Name, ct);
 
-        return await query
+        return instances
             .OrderByDescending(i => i.CreatedAt)
             .Select(i => new TaskInstanceSummaryResponse(
                 i.Id,
                 i.TaskDefinitionId,
-                i.TaskDefinition.Name,
+                defNames.GetValueOrDefault(i.TaskDefinitionId, "(unknown)"),
                 i.Status,
                 i.CreatedAt,
                 i.StartedAt,
                 i.CompletedAt))
-            .ToListAsync(ct);
+            .ToList();
     }
 
     /// <summary>
@@ -215,8 +235,14 @@ public sealed class TaskService(SharpClawDbContext db)
     /// </summary>
     public async Task<bool> CancelInstanceAsync(Guid id, CancellationToken ct = default)
     {
+        // Try EF first (current session), then cold store fallback
         var instance = await db.TaskInstances.FindAsync([id], ct);
-        if (instance is null) return false;
+        if (instance is null)
+        {
+            instance = await coldStore.FindAsync<TaskInstanceDB>(id, ct);
+            if (instance is null) return false;
+            db.TaskInstances.Attach(instance);
+        }
 
         if (instance.Status is not (TaskInstanceStatus.Queued or TaskInstanceStatus.Running or TaskInstanceStatus.Paused))
             return false;
@@ -255,16 +281,16 @@ public sealed class TaskService(SharpClawDbContext db)
         DateTimeOffset? since = null,
         CancellationToken ct = default)
     {
-        var query = db.TaskOutputEntries
-            .Where(o => o.TaskInstanceId == instanceId);
+        var entries = await coldStore.QueryAllAsync<TaskOutputEntryDB>(
+            since is not null
+                ? o => o.TaskInstanceId == instanceId && o.CreatedAt > since.Value
+                : o => o.TaskInstanceId == instanceId,
+            ct);
 
-        if (since is not null)
-            query = query.Where(o => o.CreatedAt > since.Value);
-
-        return await query
+        return entries
             .OrderBy(o => o.Sequence)
             .Select(o => new TaskOutputEntryResponse(o.Id, o.Sequence, o.Data, o.CreatedAt))
-            .ToListAsync(ct);
+            .ToList();
     }
 
     // ═══════════════════════════════════════════════════════════════

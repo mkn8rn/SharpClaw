@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
@@ -47,7 +48,7 @@ public sealed class ProviderCostService(
         if (client is IProviderCostClient costClient
             && !string.IsNullOrEmpty(provider.EncryptedApiKey))
         {
-            var apiKey = ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey, encryptionOptions.Key);
+            var apiKey = ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
             using var httpClient = httpClientFactory.CreateClient();
 
             var result = await costClient.GetCostsAsync(httpClient, apiKey, periodStart, periodEnd, ct);

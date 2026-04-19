@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Services;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.DatabaseAccess.Services;
 using SharpClaw.Modules.DatabaseAccess.Handlers;
 using SharpClaw.Contracts.DTOs.Databases;
@@ -445,7 +445,7 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         var timeout = Int(parameters, "timeout") ?? 30;
         timeout = Math.Clamp(timeout, 1, 120);
 
-        var connectionString = ApiKeyEncryptor.Decrypt(
+        var connectionString = ApiKeyEncryptor.DecryptOrPassthrough(
             entity.EncryptedConnectionString, encOpts.Key);
 
         return await ExecuteQueryAsync(entity.DatabaseType, connectionString, query, timeout, ct);

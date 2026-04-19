@@ -23,6 +23,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Infrastructure.Persistence.JSON;
 
 namespace SharpClaw.Application.Services;
 
@@ -34,6 +35,7 @@ namespace SharpClaw.Application.Services;
 /// </summary>
 public sealed class AgentJobService(
     SharpClawDbContext db,
+    ColdEntityStore coldStore,
     AgentActionService actions,
     ILiveTranscriptionOrchestrator orchestrator,
     SessionService session,
@@ -377,14 +379,19 @@ public sealed class AgentJobService(
     public async Task<IReadOnlyList<AgentJobResponse>> ListAsync(
         Guid channelId, CancellationToken ct = default)
     {
-        var jobs = await db.AgentJobs
-            .Include(j => j.LogEntries)
-            .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-            .Where(j => j.ChannelId == channelId)
-            .OrderByDescending(j => j.CreatedAt)
-            .ToListAsync(ct);
+        var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
+            j => j.ChannelId == channelId, ct);
 
-        return jobs.Select(ToResponse).ToList();
+        // Load related log entries and segments from disk.
+        foreach (var job in jobs)
+        {
+            job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
+                l => l.AgentJobId == job.Id, ct);
+            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
+                s => s.AgentJobId == job.Id, ct)).OrderBy(s => s.StartTime).ToList();
+        }
+
+        return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
     }
 
     /// <summary>
@@ -395,30 +402,37 @@ public sealed class AgentJobService(
     public async Task<IReadOnlyList<AgentJobSummaryResponse>> ListSummariesAsync(
         Guid channelId, CancellationToken ct = default)
     {
-        return await db.AgentJobs
-            .Where(j => j.ChannelId == channelId)
+        var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
+            j => j.ChannelId == channelId, ct);
+
+        return jobs
             .OrderByDescending(j => j.CreatedAt)
             .Select(j => new AgentJobSummaryResponse(
                 j.Id, j.ChannelId, j.AgentId,
                 j.ActionKey, j.ResourceId, j.Status,
                 j.CreatedAt, j.StartedAt, j.CompletedAt))
-            .ToListAsync(ct);
+            .ToList();
     }
 
     /// <summary>List transcription jobs, optionally filtered by input audio.</summary>
     public async Task<IReadOnlyList<AgentJobResponse>> ListTranscriptionJobsAsync(
         Guid? inputAudioId = null, CancellationToken ct = default)
     {
-        var query = db.AgentJobs
-            .Include(j => j.LogEntries)
-            .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio"));
+        var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
+            j => j.ActionKey != null
+                 && j.ActionKey.StartsWith("transcribe_from_audio")
+                 && (inputAudioId is null || j.ResourceId == inputAudioId),
+            ct);
 
-        if (inputAudioId is not null)
-            query = query.Where(j => j.ResourceId == inputAudioId);
+        foreach (var job in jobs)
+        {
+            job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
+                l => l.AgentJobId == job.Id, ct);
+            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
+                s => s.AgentJobId == job.Id, ct)).OrderBy(s => s.StartTime).ToList();
+        }
 
-        var jobs = await query.OrderByDescending(j => j.CreatedAt).ToListAsync(ct);
-        return jobs.Select(ToResponse).ToList();
+        return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
     }
 
     /// <summary>Returns the session user ID, or <c>null</c> if not authenticated.</summary>
@@ -579,10 +593,19 @@ public sealed class AgentJobService(
     public async Task<IReadOnlyList<TranscriptionSegmentResponse>> GetSegmentsSinceAsync(
         Guid jobId, DateTimeOffset since, CancellationToken ct = default)
     {
+        // Try EF first for current-session segments, fall back to cold store.
         var segments = await db.TranscriptionSegments
             .Where(s => s.AgentJobId == jobId && s.Timestamp > since)
             .OrderBy(s => s.StartTime)
             .ToListAsync(ct);
+
+        if (segments.Count == 0)
+        {
+            segments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
+                s => s.AgentJobId == jobId && s.Timestamp > since, ct))
+                .OrderBy(s => s.StartTime)
+                .ToList();
+        }
 
         return segments.Select(s => new TranscriptionSegmentResponse(
             s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp)).ToList();
@@ -1230,11 +1253,28 @@ public sealed class AgentJobService(
         return descriptor?.DelegateTo;
     }
 
-    private async Task<AgentJobDB?> LoadJobAsync(Guid jobId, CancellationToken ct) =>
-        await db.AgentJobs
+    private async Task<AgentJobDB?> LoadJobAsync(Guid jobId, CancellationToken ct)
+    {
+        // Try EF first (current-session entities still tracked).
+        var job = await db.AgentJobs
             .Include(j => j.LogEntries)
             .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+        if (job is not null)
+            return job;
+
+        // Fall back to cold store for entities from previous sessions.
+        job = await coldStore.FindAsync<AgentJobDB>(jobId, ct);
+        if (job is not null)
+        {
+            job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
+                l => l.AgentJobId == jobId, ct);
+            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
+                s => s.AgentJobId == jobId, ct)).OrderBy(s => s.StartTime).ToList();
+        }
+
+        return job;
+    }
 
     private static void AddLog(AgentJobDB job, string message, string level = "Info")
     {
@@ -1321,9 +1361,25 @@ public sealed class AgentJobService(
     {
         if (jobIds.Count == 0) return;
 
+        // Jobs being recorded are from the current session (just executed),
+        // so they should be in EF. Fall back to cold store + re-attach if
+        // a restart happened mid-flight.
         var jobs = await db.AgentJobs
             .Where(j => jobIds.Contains(j.Id))
             .ToListAsync(ct);
+
+        if (jobs.Count == 0)
+        {
+            foreach (var id in jobIds)
+            {
+                var cold = await coldStore.FindAsync<AgentJobDB>(id, ct);
+                if (cold is not null)
+                {
+                    db.AgentJobs.Attach(cold);
+                    jobs.Add(cold);
+                }
+            }
+        }
 
         if (jobs.Count == 0) return;
 

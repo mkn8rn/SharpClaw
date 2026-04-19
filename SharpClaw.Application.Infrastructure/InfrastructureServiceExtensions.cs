@@ -24,6 +24,7 @@ public static class InfrastructureServiceExtensions
                 configureJsonFile?.Invoke(jsonOptions);
                 services.AddSingleton(jsonOptions);
                 services.AddScoped<JsonFilePersistenceService>();
+                services.AddSingleton<ColdEntityStore>();
                 services.AddDbContext<SharpClawDbContext>(options =>
                     options.UseInMemoryDatabase("SharpClaw"));
                 break;
@@ -52,6 +53,7 @@ public static class InfrastructureServiceExtensions
         {
             await jsonSync.LoadAsync();
             await jsonSync.RecompactIfNeededAsync();
+            await jsonSync.EncryptIfNeededAsync();
         }
     }
 }

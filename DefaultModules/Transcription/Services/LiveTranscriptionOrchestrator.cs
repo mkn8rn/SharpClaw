@@ -9,6 +9,7 @@ using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Modules.Transcription.Audio;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -154,7 +155,7 @@ public sealed class LiveTranscriptionOrchestrator(
                 if (string.IsNullOrEmpty(model.Provider.EncryptedApiKey))
                     throw new InvalidOperationException("Provider does not have an API key configured.");
 
-                apiKey = ApiKeyEncryptor.Decrypt(model.Provider.EncryptedApiKey, encryptionOptions.Key);
+                apiKey = ApiKeyEncryptor.DecryptOrPassthrough(model.Provider.EncryptedApiKey, encryptionOptions.Key);
                 modelName = model.Name;
             }
         }
