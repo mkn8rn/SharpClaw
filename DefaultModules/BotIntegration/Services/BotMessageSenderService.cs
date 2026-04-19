@@ -3,8 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
-using SharpClaw.Application.Services;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.BotIntegration.Services;
@@ -48,7 +48,7 @@ public sealed class BotMessageSenderService(
         if (bot.EncryptedBotToken is null)
             throw new InvalidOperationException($"Bot integration '{bot.Name}' has no token configured.");
 
-        var token = ApiKeyEncryptor.Decrypt(bot.EncryptedBotToken, encryptionOptions.Key);
+        var token = ApiKeyEncryptor.DecryptOrPassthrough(bot.EncryptedBotToken, encryptionOptions.Key);
 
         var platformConfig = bot.PlatformConfig is not null
             ? JsonSerializer.Deserialize<Dictionary<string, string>>(bot.PlatformConfig, _jsonOptions)

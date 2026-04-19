@@ -4,6 +4,7 @@ using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -31,7 +32,9 @@ public sealed class ProviderService(
             ProviderType = request.ProviderType,
             ApiEndpoint = request.ProviderType == ProviderType.Custom ? request.ApiEndpoint : null,
             EncryptedApiKey = request.ApiKey is not null
-                ? ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key)
+                ? encryptionOptions.EncryptProviderKeys
+                    ? ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key)
+                    : request.ApiKey
                 : null
         };
 
@@ -89,7 +92,9 @@ public sealed class ProviderService(
         var provider = await db.Providers.FindAsync([providerId], ct)
             ?? throw new ArgumentException($"Provider {providerId} not found.");
 
-        provider.EncryptedApiKey = ApiKeyEncryptor.Encrypt(apiKey, encryptionOptions.Key);
+        provider.EncryptedApiKey = encryptionOptions.EncryptProviderKeys
+            ? ApiKeyEncryptor.Encrypt(apiKey, encryptionOptions.Key)
+            : apiKey;
         await db.SaveChangesAsync(ct);
     }
 
@@ -144,7 +149,9 @@ public sealed class ProviderService(
         using var httpClient = httpClientFactory.CreateClient();
         var accessToken = await authClient.PollForAccessTokenAsync(httpClient, session, ct);
 
-        provider.EncryptedApiKey = ApiKeyEncryptor.Encrypt(accessToken, encryptionOptions.Key);
+        provider.EncryptedApiKey = encryptionOptions.EncryptProviderKeys
+            ? ApiKeyEncryptor.Encrypt(accessToken, encryptionOptions.Key)
+            : accessToken;
         await db.SaveChangesAsync(ct);
     }
 
@@ -199,7 +206,7 @@ public sealed class ProviderService(
         if (string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
 
-        var apiKey = ApiKeyEncryptor.Decrypt(provider.EncryptedApiKey, encryptionOptions.Key);
+        var apiKey = ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
         var client = clientFactory.GetClient(provider.ProviderType, provider.ApiEndpoint);
 
         using var httpClient = httpClientFactory.CreateClient();

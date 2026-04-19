@@ -3,8 +3,8 @@ using SharpClaw.Application.Infrastructure.Models;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
-using SharpClaw.Application.Services;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.BotIntegration.Services;
@@ -49,7 +49,9 @@ public sealed class BotIntegrationService(
         };
 
         if (!string.IsNullOrWhiteSpace(request.BotToken))
-            bot.EncryptedBotToken = ApiKeyEncryptor.Encrypt(request.BotToken, encryptionOptions.Key);
+            bot.EncryptedBotToken = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.BotToken, encryptionOptions.Key)
+                : request.BotToken;
 
         if (!string.IsNullOrWhiteSpace(request.PlatformConfig))
             bot.PlatformConfig = request.PlatformConfig;
@@ -71,7 +73,9 @@ public sealed class BotIntegrationService(
         {
             bot.EncryptedBotToken = string.IsNullOrWhiteSpace(request.BotToken)
                 ? null
-                : ApiKeyEncryptor.Encrypt(request.BotToken, encryptionOptions.Key);
+                : encryptionOptions.EncryptProviderKeys
+                    ? ApiKeyEncryptor.Encrypt(request.BotToken, encryptionOptions.Key)
+                    : request.BotToken;
         }
         if (request.DefaultChannelId.HasValue)
         {
@@ -144,7 +148,7 @@ public sealed class BotIntegrationService(
         if (b is null) return (false, null, null, null, null);
 
         var token = b.EncryptedBotToken is not null
-            ? ApiKeyEncryptor.Decrypt(b.EncryptedBotToken, encryptionOptions.Key)
+            ? ApiKeyEncryptor.DecryptOrPassthrough(b.EncryptedBotToken, encryptionOptions.Key)
             : null;
 
         return (b.Enabled, token, b.DefaultChannelId, b.DefaultThreadId, b.PlatformConfig);

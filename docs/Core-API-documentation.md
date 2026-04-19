@@ -56,6 +56,7 @@ fastest way to make that happen.
 - [Task definitions & instances](#task-definitions--instances)
 - [Token cost tracking](#token-cost-tracking)
 - [Provider cost](#provider-cost)
+- [Encryption & key management](#encryption--key-management)
 - [Env file management](#env-file-management)
 - [Custom chat header](#custom-chat-header)
 - [Tool awareness sets](#tool-awareness-sets)
@@ -2742,6 +2743,49 @@ expose a billing API. The field is `null` when all providers are tracked.
 
 ---
 
+## Encryption & key management
+
+SharpClaw encrypts provider API keys at rest using **AES-256-GCM**.
+
+### Key resolution
+
+At startup the encryption key is resolved in order:
+
+1. **Explicit** — `Encryption:Key` in the Core `.env` (Base64-encoded,
+   exactly 256 bits / 32 bytes after decoding).
+2. **Auto-generated** — if no key is configured, SharpClaw generates a
+   cryptographically secure 256-bit key via
+   `RandomNumberGenerator.GetBytes(32)`, persists it to
+   `%LOCALAPPDATA%/SharpClaw/.encryption-key`, and reuses it on
+   subsequent startups.
+
+On Linux/macOS the generated key file is restricted to owner-only
+permissions (`600`).
+
+### Startup validation
+
+If `Encryption:Key` is set in the Core `.env`, SharpClaw validates it
+**before** the server accepts any requests:
+
+- **Invalid Base64** — the backend crashes immediately with:
+  `Encryption:Key is not valid Base64.`
+- **Wrong key length** — the backend crashes immediately with:
+  `Encryption:Key must be exactly 256 bits (32 bytes) after Base64 decoding. Got N bytes.`
+
+Both errors advise removing the key from `.env` to fall back to
+auto-generation.
+
+> ⚠️ **Changing or losing the encryption key makes all previously
+> encrypted provider API keys permanently unreadable.** Re-enter them
+> after a key change.
+
+> 💡 For most deployments, leave `Encryption:Key` unset and let
+> SharpClaw auto-generate and persist the key. Only set it explicitly
+> when you need a deterministic key across multiple instances or backup
+> scenarios.
+
+---
+
 ## Env file management
 
 SharpClaw manages two `.env` configuration files:
@@ -2821,7 +2865,7 @@ Overwrite the Core `.env` file with new content.
 
 | Key | Description |
 |-----|-------------|
-| `Encryption:Key` | AES-GCM key for encrypting provider API keys at rest |
+| `Encryption:Key` | AES-256-GCM key for encrypting provider API keys at rest. Must be exactly 256 bits (32 bytes) Base64-encoded. If empty/unset, auto-generated at `%LOCALAPPDATA%/SharpClaw/.encryption-key`. **Invalid values crash the backend at startup.** ⚠️ Changing this key makes previously encrypted API keys unreadable. |
 | `Jwt:Secret` | HMAC signing key for JWT access tokens |
 | `Jwt:AccessTokenLifetime` | Access token lifetime (e.g. `"00:30:00"`) |
 | `Jwt:RefreshTokenLifetime` | Refresh token lifetime (e.g. `"30.00:00:00"`) |

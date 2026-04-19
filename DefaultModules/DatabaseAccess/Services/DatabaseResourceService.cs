@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Databases;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
@@ -111,8 +111,9 @@ public sealed class DatabaseResourceService(
         {
             Name = request.Name,
             DatabaseType = request.DatabaseType,
-            EncryptedConnectionString = ApiKeyEncryptor.Encrypt(
-                request.ConnectionString, encryptionOptions.Key),
+            EncryptedConnectionString = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.ConnectionString, encryptionOptions.Key)
+                : request.ConnectionString,
             Description = request.Description,
             SkillId = request.SkillId,
         };
@@ -160,8 +161,9 @@ public sealed class DatabaseResourceService(
         if (request.Name is not null) entity.Name = request.Name;
         if (request.DatabaseType is not null) entity.DatabaseType = request.DatabaseType.Value;
         if (request.ConnectionString is not null)
-            entity.EncryptedConnectionString = ApiKeyEncryptor.Encrypt(
-                request.ConnectionString, encryptionOptions.Key);
+            entity.EncryptedConnectionString = encryptionOptions.EncryptProviderKeys
+                ? ApiKeyEncryptor.Encrypt(request.ConnectionString, encryptionOptions.Key)
+                : request.ConnectionString;
         if (request.Description is not null) entity.Description = request.Description;
         if (request.SkillId is not null) entity.SkillId = request.SkillId;
 
@@ -201,7 +203,7 @@ public sealed class DatabaseResourceService(
             .FirstOrDefaultAsync(e => e.Id == externalDatabaseId, ct);
         if (entity is null) return null;
 
-        return ApiKeyEncryptor.Decrypt(
+        return ApiKeyEncryptor.DecryptOrPassthrough(
             entity.EncryptedConnectionString, encryptionOptions.Key);
     }
 

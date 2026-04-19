@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Entities;
+using SharpClaw.Contracts.Persistence;
 
 namespace SharpClaw.Infrastructure.Persistence.JSON;
 
@@ -14,6 +15,7 @@ namespace SharpClaw.Infrastructure.Persistence.JSON;
 public sealed class JsonFilePersistenceService(
     SharpClawDbContext context,
     JsonFileOptions options,
+    EncryptionOptions encryptionOptions,
     ILogger<JsonFilePersistenceService> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -67,6 +69,9 @@ public sealed class JsonFilePersistenceService(
                 continue;
 
             var clrType = entityType.ClrType;
+
+            if (options.ColdEntityTypes.Contains(clrType))
+                continue;
             var entityDir = GetEntityDirectory(clrType);
 
             if (!Directory.Exists(entityDir))
@@ -83,7 +88,7 @@ public sealed class JsonFilePersistenceService(
             {
                 try
                 {
-                    var json = await File.ReadAllTextAsync(file, ct);
+                    var json = await ReadJsonAsync(file, ct);
                     return (Json: json, File: file, Error: (Exception?)null);
                 }
                 catch (Exception ex)
@@ -220,8 +225,8 @@ public sealed class JsonFilePersistenceService(
                     activeIds.Add($"{id}.json");
 
                     var filePath = Path.Combine(entityDir, $"{id}.json");
-                    var json = SerializeEntity(entity, clrType, navProps);
-                    await File.WriteAllTextAsync(filePath, json, ct);
+                    var json = SerializeEntityToBytes(entity, clrType, navProps);
+                    await WriteBytesAsync(filePath, json, ct);
                 }
 
                 // Remove orphan files for entities that no longer exist
@@ -288,8 +293,8 @@ public sealed class JsonFilePersistenceService(
                     if (entity is not null)
                     {
                         var navProps = GetNavigations().GetValueOrDefault(clrType);
-                        var json = SerializeEntity(entity, clrType, navProps);
-                        await File.WriteAllTextAsync(filePath, json, ct);
+                        var bytes = SerializeEntityToBytes(entity, clrType, navProps);
+                        await WriteBytesAsync(filePath, bytes, ct);
                     }
                 }
             }
@@ -311,6 +316,19 @@ public sealed class JsonFilePersistenceService(
 
                 await FlushJoinTableAsync(entityType, ct);
             }
+        }
+
+        // Detach flushed entities from the change tracker to release
+        // property-snapshot memory. The InMemory store retains the data
+        // for queries; only the tracker's duplicate copies are freed.
+        foreach (var (clrType, id, state) in entityChanges)
+        {
+            if (state == EntityState.Deleted)
+                continue;
+            var entry = context.ChangeTracker.Entries()
+                .FirstOrDefault(e => e.Entity is BaseEntity be && be.Id == id);
+            if (entry is not null)
+                entry.State = EntityState.Detached;
         }
     }
 
@@ -357,7 +375,7 @@ public sealed class JsonFilePersistenceService(
                 }
 
                 var json = JsonSerializer.Serialize(rowList, JsonOptions);
-                await File.WriteAllTextAsync(filePath, json, ct);
+                await WriteJsonAsync(filePath, json, ct);
             }
             else if (File.Exists(filePath))
             {
@@ -387,7 +405,7 @@ public sealed class JsonFilePersistenceService(
 
         try
         {
-            var json = await File.ReadAllTextAsync(filePath, ct);
+            var json = await ReadJsonAsync(filePath, ct);
             var rows = JsonSerializer.Deserialize<List<Dictionary<string, Guid>>>(json, JsonOptions);
             if (rows is null || rows.Count == 0)
                 return;
@@ -451,6 +469,64 @@ public sealed class JsonFilePersistenceService(
                 navProps[i]!.SetValue(entity, saved[i]);
         }
     }
+
+    /// <summary>
+    /// Serializes an entity directly to UTF-8 bytes, avoiding the
+    /// intermediate <see cref="string"/> allocation. Navigation properties
+    /// are temporarily nulled using the same snapshot/restore pattern.
+    /// </summary>
+    private static byte[] SerializeEntityToBytes(
+        object entity, Type clrType,
+        List<System.Reflection.PropertyInfo>? navProps)
+    {
+        if (navProps is null || navProps.Count == 0)
+            return JsonSerializer.SerializeToUtf8Bytes(entity, clrType, JsonOptions);
+
+        var saved = new object?[navProps.Count];
+        for (var i = 0; i < navProps.Count; i++)
+        {
+            saved[i] = navProps[i]!.GetValue(entity);
+            navProps[i]!.SetValue(entity, null);
+        }
+
+        try
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(entity, clrType, JsonOptions);
+        }
+        finally
+        {
+            for (var i = 0; i < navProps.Count; i++)
+                navProps[i]!.SetValue(entity, saved[i]);
+        }
+    }
+
+    /// <summary>
+    /// One-time migration: re-encrypts all JSON data files on disk.
+    /// A <c>.encrypted</c> sentinel prevents repeat runs.
+    /// </summary>
+    public async Task EncryptIfNeededAsync(CancellationToken ct = default)
+    {
+        if (!options.EncryptAtRest)
+            return;
+
+        var sentinelPath = Path.Combine(options.DataDirectory, ".encrypted");
+        if (File.Exists(sentinelPath))
+            return;
+
+        logger.LogInformation("Encrypting JSON data files (one-time migration)...");
+        await FlushAsync(ct);
+        await File.WriteAllTextAsync(sentinelPath, DateTimeOffset.UtcNow.ToString("O"), ct);
+        logger.LogInformation("JSON data files encrypted successfully.");
+    }
+
+    private Task WriteJsonAsync(string path, string json, CancellationToken ct)
+        => JsonFileEncryption.WriteJsonAsync(path, json, encryptionOptions.Key, options.EncryptAtRest, ct);
+
+    private Task WriteBytesAsync(string path, byte[] utf8Json, CancellationToken ct)
+        => JsonFileEncryption.WriteBytesAsync(path, utf8Json, encryptionOptions.Key, options.EncryptAtRest, ct);
+
+    private Task<string> ReadJsonAsync(string path, CancellationToken ct)
+        => JsonFileEncryption.ReadJsonAsync(path, encryptionOptions.Key, ct);
 
     private void DetachAll()
     {
