@@ -1,0 +1,278 @@
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+
+namespace SharpClaw.Infrastructure.Persistence.JSON;
+
+/// <summary>
+/// Manages sharded on-disk index files (<c>_index_{Property}.json</c>) that map
+/// foreign key values to entity file IDs for cold entity types. Each indexed
+/// property gets its own shard file so that updates only rewrite the affected
+/// shard, eliminating the serialization bottleneck on entity types with many
+/// indexed properties (RGAP-8).
+/// <para>
+/// Each shard is a JSON dictionary:
+/// <c>{ "&lt;guid&gt;": ["id1","id2"] }</c>
+/// where the key is the foreign key value.
+/// </para>
+/// </summary>
+internal sealed class ColdEntityIndex
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
+    /// <summary>
+    /// Foreign key property names that are indexed for each cold entity type.
+    /// Only properties that appear in query predicates are worth indexing.
+    /// </summary>
+    internal static readonly Dictionary<string, string[]> IndexedProperties = new()
+    {
+        ["ChatMessageDB"] = ["ChannelId", "ThreadId", "SenderAgentId"],
+        ["AgentJobDB"] = ["ChannelId", "AgentId"],
+        ["AgentJobLogEntryDB"] = ["AgentJobId"],
+        ["TranscriptionSegmentDB"] = ["AgentJobId"],
+        ["TaskInstanceDB"] = ["TaskDefinitionId", "ChannelId"],
+        ["TaskExecutionLogDB"] = ["TaskInstanceId"],
+        ["TaskOutputEntryDB"] = ["TaskInstanceId"],
+    };
+
+    /// <summary>
+    /// Returns the shard file path for a given property:
+    /// <c>{entityDir}/_index_{propertyName}.json</c>.
+    /// </summary>
+    internal static string GetShardPath(IPersistenceFileSystem fs, string entityDir, string propertyName)
+        => fs.CombinePath(entityDir, $"_index_{propertyName}.json");
+
+    /// <summary>
+    /// Updates the sharded index files for a given entity directory after an entity
+    /// is added, modified, or deleted. Only dirty shards are rewritten.
+    /// </summary>
+    public static async Task UpdateIndexAsync(
+        IPersistenceFileSystem fs,
+        string entityDir,
+        string entityTypeName,
+        Guid entityId,
+        object? entity,
+        bool deleted,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (!IndexedProperties.TryGetValue(entityTypeName, out var propNames))
+            return;
+
+        var type = entity?.GetType();
+        var idStr = entityId.ToString();
+
+        foreach (var propName in propNames)
+        {
+            var shardPath = GetShardPath(fs, entityDir, propName);
+            var shard = await LoadShardAsync(fs, shardPath, logger, ct);
+            var dirty = false;
+
+            // Remove old entries for this entity across all keys in this shard
+            foreach (var ids in shard.Values)
+            {
+                if (ids.Remove(idStr))
+                    dirty = true;
+            }
+
+            // Add new entry if not deleted
+            if (!deleted && entity is not null && type is not null)
+            {
+                var prop = type.GetProperty(propName);
+                var value = prop?.GetValue(entity);
+                if (value is not null)
+                {
+                    var key = value.ToString()!;
+                    if (!shard.TryGetValue(key, out var ids))
+                    {
+                        ids = [];
+                        shard[key] = ids;
+                    }
+                    if (!ids.Contains(idStr))
+                    {
+                        ids.Add(idStr);
+                        dirty = true;
+                    }
+                }
+            }
+
+            if (!dirty)
+                continue;
+
+            // Prune empty keys
+            var emptyKeys = shard.Where(kv => kv.Value.Count == 0).Select(kv => kv.Key).ToList();
+            foreach (var k in emptyKeys)
+                shard.Remove(k);
+
+            await SaveShardAsync(fs, shardPath, shard, ct);
+        }
+    }
+
+    /// <summary>
+    /// Looks up entity IDs from the sharded index for a given foreign key filter.
+    /// Returns <c>null</c> if no shard exists or the key is not found,
+    /// signaling the caller should fall back to a full scan.
+    /// </summary>
+    public static async Task<HashSet<Guid>?> LookupAsync(
+        IPersistenceFileSystem fs,
+        string entityDir,
+        string propertyName,
+        Guid value,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var shardPath = GetShardPath(fs, entityDir, propertyName);
+        if (!fs.FileExists(shardPath))
+            return null;
+
+        var shard = await LoadShardAsync(fs, shardPath, logger, ct);
+        var key = value.ToString();
+
+        if (!shard.TryGetValue(key, out var ids))
+            return null;
+
+        var result = new HashSet<Guid>();
+        foreach (var idStr in ids)
+        {
+            if (Guid.TryParse(idStr, out var id))
+                result.Add(id);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Rebuilds the sharded indexes from scratch by scanning all entity files in the directory.
+    /// Used during startup or when indexes are corrupted.
+    /// </summary>
+    public static async Task RebuildIndexAsync(
+        IPersistenceFileSystem fs,
+        string entityDir,
+        string entityTypeName,
+        Type entityClrType,
+        byte[] encryptionKey,
+        JsonSerializerOptions deserializeOptions,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (!IndexedProperties.TryGetValue(entityTypeName, out var propNames))
+            return;
+
+        var files = fs.GetFiles(entityDir, "*.json")
+            .Where(f => !fs.GetFileName(f).StartsWith('_'))
+            .ToArray();
+
+        if (files.Length == 0)
+            return;
+
+        // Build per-property shards in memory
+        var shards = new Dictionary<string, Dictionary<string, List<string>>>();
+        foreach (var propName in propNames)
+            shards[propName] = new Dictionary<string, List<string>>();
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var json = await JsonFileEncryption.ReadJsonAsync(fs, file, encryptionKey, ct);
+                var entity = JsonSerializer.Deserialize(json, entityClrType, deserializeOptions);
+                if (entity is null) continue;
+
+                var idProp = entityClrType.GetProperty("Id");
+                if (idProp?.GetValue(entity) is not Guid entityId)
+                    continue;
+
+                foreach (var propName in propNames)
+                {
+                    var prop = entityClrType.GetProperty(propName);
+                    if (prop is null) continue;
+
+                    var value = prop.GetValue(entity);
+                    if (value is null) continue;
+
+                    var key = value.ToString()!;
+                    var shard = shards[propName];
+                    if (!shard.TryGetValue(key, out var ids))
+                    {
+                        ids = [];
+                        shard[key] = ids;
+                    }
+                    ids.Add(entityId.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to index cold entity from {Path}", file);
+            }
+        }
+
+        // Write each shard
+        var totalKeys = 0;
+        foreach (var (propName, shard) in shards)
+        {
+            totalKeys += shard.Count;
+            var shardPath = GetShardPath(fs, entityDir, propName);
+            await SaveShardAsync(fs, shardPath, shard, ct);
+        }
+
+        // Clean up legacy monolithic _index.json if present
+        var legacyPath = fs.CombinePath(entityDir, "_index.json");
+        if (fs.FileExists(legacyPath))
+        {
+            fs.DeleteFile(legacyPath);
+            logger.LogInformation("Removed legacy _index.json for {Type}", entityTypeName);
+        }
+
+        logger.LogInformation("Rebuilt cold index for {Type}: {Shards} shards, {Keys} keys, {Files} files",
+            entityTypeName, propNames.Length, totalKeys, files.Length);
+    }
+
+    /// <summary>
+    /// Cleans up leftover <c>.tmp</c> files in the given directory.
+    /// These are artifacts of interrupted <see cref="AtomicFileWriter"/> writes.
+    /// </summary>
+    public static void CleanupTempFiles(IPersistenceFileSystem fs, string directory, ILogger logger)
+    {
+        var tmpFiles = fs.GetFiles(directory, "*.tmp");
+        foreach (var tmp in tmpFiles)
+        {
+            try
+            {
+                fs.DeleteFile(tmp);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete orphan temp file {Path}", tmp);
+            }
+        }
+        if (tmpFiles.Length > 0)
+            logger.LogInformation("Cleaned up {Count} orphan .tmp files in {Dir}", tmpFiles.Length, directory);
+    }
+
+    private static async Task<Dictionary<string, List<string>>> LoadShardAsync(
+        IPersistenceFileSystem fs, string shardPath, ILogger logger, CancellationToken ct)
+    {
+        if (!fs.FileExists(shardPath))
+            return new Dictionary<string, List<string>>();
+
+        try
+        {
+            var json = await fs.ReadAllTextAsync(shardPath, ct);
+            return JsonSerializer.Deserialize<Dictionary<string, List<string>>>(json) ?? [];
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to read index shard {Path}, rebuilding", shardPath);
+            return new Dictionary<string, List<string>>();
+        }
+    }
+
+    private static async Task SaveShardAsync(
+        IPersistenceFileSystem fs, string shardPath, Dictionary<string, List<string>> shard,
+        CancellationToken ct, bool fsync = true)
+    {
+        var json = JsonSerializer.Serialize(shard, JsonOptions);
+        await AtomicFileWriter.WriteTextAsync(fs, shardPath, json, fsync, ct);
+    }
+}

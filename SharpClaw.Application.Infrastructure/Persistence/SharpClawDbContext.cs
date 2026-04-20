@@ -592,9 +592,44 @@ public class SharpClawDbContext(
 
         if (!SuppressJsonFlush)
         {
-            var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
-            if (jsonSync is not null && (entityChanges.Count > 0 || joinTableChanges.Count > 0))
-                await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+            if (entityChanges.Count > 0 || joinTableChanges.Count > 0)
+            {
+                var jsonOpts = serviceProvider?.GetService<JsonFileOptions>();
+                var flushQueue = serviceProvider?.GetService<FlushQueue>();
+
+                // Phase K: Async flush path — enqueue intent + overlay.
+                if (jsonOpts?.AsyncFlush == true && flushQueue is not null)
+                {
+                    var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
+                    var serialized = new Dictionary<(string TypeName, Guid Id), byte[]>();
+
+                    if (jsonSync is not null)
+                    {
+                        foreach (var (clrType, id, state) in entityChanges)
+                        {
+                            if (state == EntityState.Deleted)
+                                continue;
+
+                            var entity = Find(clrType, id);
+                            if (entity is not null)
+                            {
+                                var bytes = JsonSerializer.SerializeToUtf8Bytes(entity, clrType, ColdEntityStore.JsonOptions);
+                                serialized[(clrType.Name, id)] = bytes;
+                            }
+                        }
+                    }
+
+                    var intent = new FlushQueue.FlushIntent(entityChanges, joinTableChanges, serialized);
+                    await flushQueue.EnqueueAsync(intent, cancellationToken);
+                }
+                else
+                {
+                    // Synchronous flush path (original behavior).
+                    var jsonSync = serviceProvider?.GetService<JsonFilePersistenceService>();
+                    if (jsonSync is not null)
+                        await jsonSync.FlushChangesAsync(entityChanges, joinTableChanges, cancellationToken);
+                }
+            }
         }
 
         return result;

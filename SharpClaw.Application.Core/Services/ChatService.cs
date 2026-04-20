@@ -237,10 +237,14 @@ public sealed class ChatService(
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
         Guid channelId, Guid? threadId = null, int limit = 50, CancellationToken ct = default)
     {
+        var indexFilter = threadId is not null
+            ? new ColdEntityStore.IndexFilter("ThreadId", threadId.Value)
+            : new ColdEntityStore.IndexFilter("ChannelId", channelId);
         var messages = await coldStore.QueryAsync<ChatMessageDB>(
             m => threadId is not null ? m.ThreadId == threadId : m.ChannelId == channelId,
             limit,
-            ct);
+            ct,
+            indexFilter);
 
         return messages
             .OrderBy(m => m.CreatedAt)
@@ -267,7 +271,8 @@ public sealed class ChatService(
         Guid channelId, CancellationToken ct = default)
     {
         var messages = await coldStore.QueryAllAsync<ChatMessageDB>(
-            m => m.ChannelId == channelId && m.PromptTokens != null, ct);
+            m => m.ChannelId == channelId && m.PromptTokens != null, ct,
+            new ColdEntityStore.IndexFilter("ChannelId", channelId));
 
         var breakdown = messages
             .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
@@ -297,7 +302,8 @@ public sealed class ChatService(
         if (!threadExists) return null;
 
         var rows = await coldStore.QueryAllAsync<ChatMessageDB>(
-            m => m.ThreadId == threadId && m.PromptTokens != null, ct);
+            m => m.ThreadId == threadId && m.PromptTokens != null, ct,
+            new ColdEntityStore.IndexFilter("ThreadId", threadId));
 
         var breakdown = rows
             .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
@@ -330,7 +336,8 @@ public sealed class ChatService(
         if (agent is null) return null;
 
         var messages = await coldStore.QueryAllAsync<ChatMessageDB>(
-            m => m.SenderAgentId == agentId && m.PromptTokens != null, ct);
+            m => m.SenderAgentId == agentId && m.PromptTokens != null, ct,
+            new ColdEntityStore.IndexFilter("SenderAgentId", agentId));
 
         var channelBreakdown = messages
             .GroupBy(m => m.ChannelId)
@@ -408,7 +415,8 @@ public sealed class ChatService(
         var cold = await coldStore.QueryAsync<ChatMessageDB>(
             m => m.ThreadId == threadId,
             maxMessages,
-            ct);
+            ct,
+            new ColdEntityStore.IndexFilter("ThreadId", threadId));
 
         var messages = cold
             .OrderBy(m => m.CreatedAt)
