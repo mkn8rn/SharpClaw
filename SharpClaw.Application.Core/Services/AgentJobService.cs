@@ -380,15 +380,18 @@ public sealed class AgentJobService(
         Guid channelId, CancellationToken ct = default)
     {
         var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
-            j => j.ChannelId == channelId, ct);
+            j => j.ChannelId == channelId, ct,
+            new ColdEntityStore.IndexFilter("ChannelId", channelId));
 
         // Load related log entries and segments from disk.
         foreach (var job in jobs)
         {
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
-                l => l.AgentJobId == job.Id, ct);
+                l => l.AgentJobId == job.Id, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", job.Id));
             job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == job.Id, ct)).OrderBy(s => s.StartTime).ToList();
+                s => s.AgentJobId == job.Id, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", job.Id))).OrderBy(s => s.StartTime).ToList();
         }
 
         return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
@@ -403,7 +406,8 @@ public sealed class AgentJobService(
         Guid channelId, CancellationToken ct = default)
     {
         var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
-            j => j.ChannelId == channelId, ct);
+            j => j.ChannelId == channelId, ct,
+            new ColdEntityStore.IndexFilter("ChannelId", channelId));
 
         return jobs
             .OrderByDescending(j => j.CreatedAt)
@@ -427,9 +431,11 @@ public sealed class AgentJobService(
         foreach (var job in jobs)
         {
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
-                l => l.AgentJobId == job.Id, ct);
+                l => l.AgentJobId == job.Id, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", job.Id));
             job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == job.Id, ct)).OrderBy(s => s.StartTime).ToList();
+                s => s.AgentJobId == job.Id, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", job.Id))).OrderBy(s => s.StartTime).ToList();
         }
 
         return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
@@ -602,7 +608,8 @@ public sealed class AgentJobService(
         if (segments.Count == 0)
         {
             segments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == jobId && s.Timestamp > since, ct))
+                s => s.AgentJobId == jobId && s.Timestamp > since, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", jobId)))
                 .OrderBy(s => s.StartTime)
                 .ToList();
         }
@@ -1264,13 +1271,15 @@ public sealed class AgentJobService(
             return job;
 
         // Fall back to cold store for entities from previous sessions.
-        job = await coldStore.FindAsync<AgentJobDB>(jobId, ct);
+        job = (await coldStore.FindAsync<AgentJobDB>(jobId, ct)).ValueOrDefault;
         if (job is not null)
         {
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
-                l => l.AgentJobId == jobId, ct);
+                l => l.AgentJobId == jobId, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", jobId));
             job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == jobId, ct)).OrderBy(s => s.StartTime).ToList();
+                s => s.AgentJobId == jobId, ct,
+                new ColdEntityStore.IndexFilter("AgentJobId", jobId))).OrderBy(s => s.StartTime).ToList();
         }
 
         return job;
@@ -1372,7 +1381,7 @@ public sealed class AgentJobService(
         {
             foreach (var id in jobIds)
             {
-                var cold = await coldStore.FindAsync<AgentJobDB>(id, ct);
+                var cold = (await coldStore.FindAsync<AgentJobDB>(id, ct)).ValueOrDefault;
                 if (cold is not null)
                 {
                     db.AgentJobs.Attach(cold);

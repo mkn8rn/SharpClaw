@@ -14,13 +14,34 @@ namespace SharpClaw.Infrastructure.Persistence.JSON;
 /// Writes still flow through EF + <see cref="JsonFilePersistenceService"/>;
 /// this class is read-only.
 /// </para>
+/// <para>
+/// <b>Phase F (RGAP-14):</b> Read operations use exponential backoff retries
+/// (3 attempts: 100 ms → 500 ms → 2 s) for transient I/O errors. Files that
+/// remain unreadable after all retries are quarantined to
+/// <c>_quarantine/{entityType}/</c>.
+/// </para>
+/// <para>
+/// <b>Phase F (RGAP-15):</b> Public read methods return <see cref="ReadResult{T}"/>
+/// so callers can distinguish "entity doesn't exist" from "entity exists but is
+/// unreadable" and surface meaningful diagnostics instead of silent nulls.
+/// </para>
+/// <para>
+/// When an on-disk <c>_index_{property}.json</c> exists for the entity type
+/// (maintained by <see cref="ColdEntityIndex"/>), callers can pass an
+/// <see cref="IndexFilter"/> to narrow reads to only the files that match a
+/// foreign key, avoiding O(N) full-directory scans.
+/// </para>
 /// </summary>
 public sealed class ColdEntityStore(
+    IPersistenceFileSystem fs,
     JsonFileOptions options,
     EncryptionOptions encryptionOptions,
-    ILogger<ColdEntityStore> logger)
+    ILogger<ColdEntityStore> logger,
+    DirectoryLockManager? directoryLockManager = null,
+    ISnapshotFallback? snapshotFallback = null,
+    FlushQueue? flushQueue = null)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -30,110 +51,234 @@ public sealed class ColdEntityStore(
     };
 
     /// <summary>
-    /// Loads a single cold entity by its primary key.
-    /// Returns <c>null</c> when the file does not exist on disk.
+    /// Hint for <see cref="QueryAsync{T}"/> / <see cref="QueryAllAsync{T}"/>
+    /// to use the on-disk index instead of scanning every file.
     /// </summary>
-    public async Task<T?> FindAsync<T>(Guid id, CancellationToken ct = default)
+    public readonly record struct IndexFilter(string PropertyName, Guid Value);
+
+    /// <summary>
+    /// Loads a single cold entity by its primary key.
+    /// Returns <see cref="ReadResult{T}.NotFound"/> when the file does not exist,
+    /// <see cref="ReadResult{T}.Corrupted"/> when the file is unreadable (quarantined),
+    /// or <see cref="ReadResult{T}.IoError"/> on persistent I/O failure.
+    /// </summary>
+    public async Task<ReadResult<T>> FindAsync<T>(Guid id, CancellationToken ct = default)
         where T : BaseEntity
     {
-        var path = Path.Combine(options.DataDirectory, typeof(T).Name, $"{id}.json");
-        if (!File.Exists(path))
-            return null;
+        // Phase K (RGAP-4): Check write-through overlay before disk.
+        if (flushQueue is not null && flushQueue.Overlay.TryGetValue((typeof(T).Name, id), out var overlayBytes))
+        {
+            if (overlayBytes is null)
+                return new ReadResult<T>.NotFound(); // Tombstone — entity was deleted.
+
+            try
+            {
+                var entity = JsonSerializer.Deserialize<T>(overlayBytes, JsonOptions);
+                return entity is not null
+                    ? new ReadResult<T>.Success(entity)
+                    : new ReadResult<T>.NotFound();
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to deserialize {Type} {Id} from overlay, falling through to disk", typeof(T).Name, id);
+            }
+        }
+
+        var dir = fs.CombinePath(options.DataDirectory, typeof(T).Name);
+        var path = fs.CombinePath(dir, $"{id}.json");
+        if (!fs.FileExists(path))
+            return new ReadResult<T>.NotFound();
+
+        using var _ = directoryLockManager is not null
+            ? await directoryLockManager.AcquireAsync(dir, ct)
+            : null;
+
+        var readResult = await QuarantineService.ReadBytesWithRetryAsync(
+            fs, path, dir, encryptionOptions.Key, logger, ct,
+            snapshotFallback, options.DataDirectory);
+
+        if (!readResult.IsSuccess)
+        {
+            return readResult.Outcome == QuarantineService.ReadBytesOutcome.IoError
+                ? new ReadResult<T>.IoError(readResult.Exception!, readResult.FilePath!)
+                : new ReadResult<T>.Corrupted(readResult.Exception!, readResult.FilePath!);
+        }
+
+        // Phase J: Optional read-time checksum verification.
+        if (options.EnableChecksums && options.VerifyChecksumsOnRead)
+        {
+            var fileName = fs.GetFileName(path);
+            var valid = await ChecksumManifest.VerifyFileAsync(
+                fs, dir, fileName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct);
+            if (!valid)
+            {
+                readResult.Dispose();
+                QuarantineService.MoveToQuarantine(fs, path, dir, logger);
+                return new ReadResult<T>.Corrupted(
+                    new InvalidOperationException("Checksum mismatch — silent corruption detected"), path);
+            }
+        }
 
         try
         {
-            var json = await JsonFileEncryption.ReadJsonAsync(path, encryptionOptions.Key, ct);
-            return JsonSerializer.Deserialize<T>(json, JsonOptions);
+            using (readResult)
+            {
+                var entity = JsonSerializer.Deserialize<T>(readResult.Data!.Span, JsonOptions);
+                return entity is not null
+                    ? new ReadResult<T>.Success(entity)
+                    : new ReadResult<T>.Corrupted(
+                        new InvalidOperationException("Deserialization returned null"), path);
+            }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to read cold entity {Type} {Id}", typeof(T).Name, id);
-            return null;
+            QuarantineService.MoveToQuarantine(fs, path, dir, logger);
+            return new ReadResult<T>.Corrupted(ex, path);
         }
     }
 
     /// <summary>
-    /// Scans all files for the given entity type, deserializes each, and
-    /// returns those matching <paramref name="predicate"/>, ordered by
+    /// Queries cold entities matching <paramref name="predicate"/>, ordered by
     /// <see cref="BaseEntity.CreatedAt"/> descending, limited to
     /// <paramref name="limit"/> results, then re-sorted chronologically.
     /// </summary>
-    /// <remarks>
-    /// This is O(N) over all files in the entity directory. For high-volume
-    /// types (e.g. ChatMessageDB), on-disk index files should be added in
-    /// a follow-up to avoid scanning every file.
-    /// </remarks>
+    /// <param name="predicate">Filter applied after deserialization.</param>
+    /// <param name="limit">Maximum results.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="indexFilter">
+    /// Optional index hint. When provided and an index shard exists,
+    /// only the files matching the indexed foreign key are read.
+    /// </param>
     public async Task<List<T>> QueryAsync<T>(
         Func<T, bool> predicate,
         int limit,
-        CancellationToken ct = default) where T : BaseEntity
+        CancellationToken ct = default,
+        IndexFilter? indexFilter = null) where T : BaseEntity
     {
-        var dir = Path.Combine(options.DataDirectory, typeof(T).Name);
-        if (!Directory.Exists(dir))
-            return [];
-
-        var files = Directory.GetFiles(dir, "*.json");
-        if (files.Length == 0)
-            return [];
-
-        var readTasks = files.Select(async file =>
-        {
-            try
-            {
-                var json = await JsonFileEncryption.ReadJsonAsync(file, encryptionOptions.Key, ct);
-                return JsonSerializer.Deserialize<T>(json, JsonOptions);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to read cold entity from {Path}", file);
-                return null;
-            }
-        });
-
-        var entities = await Task.WhenAll(readTasks);
+        var entities = await ReadEntitiesAsync<T>(indexFilter, ct);
         return entities
-            .Where(e => e is not null && predicate(e))
-            .OrderByDescending(e => e!.CreatedAt)
+            .Where(predicate)
+            .OrderByDescending(e => e.CreatedAt)
             .Take(limit)
-            .OrderBy(e => e!.CreatedAt)
-            .ToList()!;
+            .OrderBy(e => e.CreatedAt)
+            .ToList();
     }
 
     /// <summary>
-    /// Variant of <see cref="QueryAsync{T}"/> that returns all matching
-    /// entities without a limit, ordered chronologically.
+    /// Returns all matching entities without a limit, ordered chronologically.
     /// </summary>
     public async Task<List<T>> QueryAllAsync<T>(
         Func<T, bool> predicate,
-        CancellationToken ct = default) where T : BaseEntity
+        CancellationToken ct = default,
+        IndexFilter? indexFilter = null) where T : BaseEntity
     {
-        var dir = Path.Combine(options.DataDirectory, typeof(T).Name);
-        if (!Directory.Exists(dir))
+        var entities = await ReadEntitiesAsync<T>(indexFilter, ct);
+        return entities
+            .Where(predicate)
+            .OrderBy(e => e.CreatedAt)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Core read logic shared by both query methods. Reads files with retry and
+    /// quarantine; failed files are logged and skipped (never surface as nulls).
+    /// When an index filter is provided, uses <see cref="ColdEntityIndex.LookupAsync"/>
+    /// to read only matching files; otherwise falls back to a full directory scan.
+    /// </summary>
+    private async Task<List<T>> ReadEntitiesAsync<T>(
+        IndexFilter? indexFilter, CancellationToken ct) where T : BaseEntity
+    {
+        var dir = fs.CombinePath(options.DataDirectory, typeof(T).Name);
+        if (!fs.DirectoryExists(dir))
             return [];
 
-        var files = Directory.GetFiles(dir, "*.json");
+        using var _ = directoryLockManager is not null
+            ? await directoryLockManager.AcquireAsync(dir, ct)
+            : null;
+
+        string[] files;
+
+        if (indexFilter is { } filter)
+        {
+            var indexedIds = await ColdEntityIndex.LookupAsync(
+                fs, dir, filter.PropertyName, filter.Value, logger, ct);
+
+            if (indexedIds is not null)
+            {
+                files = indexedIds
+                    .Select(id => fs.CombinePath(dir, $"{id}.json"))
+                    .Where(fs.FileExists)
+                    .ToArray();
+            }
+            else
+            {
+                files = GetEntityFiles(dir);
+            }
+        }
+        else
+        {
+            files = GetEntityFiles(dir);
+        }
+
         if (files.Length == 0)
             return [];
 
+        var results = new List<T>(files.Length);
+        var verifyChecksums = options.EnableChecksums && options.VerifyChecksumsOnRead;
         var readTasks = files.Select(async file =>
         {
+            var readResult = await QuarantineService.ReadBytesWithRetryAsync(
+                fs, file, dir, encryptionOptions.Key, logger, ct,
+                snapshotFallback, options.DataDirectory);
+
+            if (!readResult.IsSuccess)
+                return null;
+
+            // Phase J: Optional read-time checksum verification.
+            if (verifyChecksums)
+            {
+                var fName = fs.GetFileName(file);
+                var valid = await ChecksumManifest.VerifyFileAsync(
+                    fs, dir, fName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct);
+                if (!valid)
+                {
+                    readResult.Dispose();
+                    QuarantineService.MoveToQuarantine(fs, file, dir, logger);
+                    return null;
+                }
+            }
+
             try
             {
-                var json = await JsonFileEncryption.ReadJsonAsync(file, encryptionOptions.Key, ct);
-                return JsonSerializer.Deserialize<T>(json, JsonOptions);
+                using (readResult)
+                    return JsonSerializer.Deserialize<T>(readResult.Data!.Span, JsonOptions);
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to read cold entity from {Path}", file);
+                logger.LogWarning(ex, "Failed to deserialize cold entity from {Path}; quarantining", file);
+                QuarantineService.MoveToQuarantine(fs, file, dir, logger);
                 return null;
             }
         });
 
-        var entities = await Task.WhenAll(readTasks);
-        return entities
-            .Where(e => e is not null && predicate(e))
-            .OrderBy(e => e!.CreatedAt)
-            .ToList()!;
+        foreach (var entity in await Task.WhenAll(readTasks))
+        {
+            if (entity is not null)
+                results.Add(entity);
+        }
+
+        return results;
+    }
+
+    private string[] GetEntityFiles(string dir)
+    {
+        return fs.GetFiles(dir, "*.json")
+            .Where(f =>
+            {
+                var name = fs.GetFileName(f);
+                return !name.StartsWith('_');
+            })
+            .ToArray();
     }
 
     /// <summary>

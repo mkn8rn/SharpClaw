@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
@@ -13,10 +14,13 @@ namespace SharpClaw.Infrastructure.Persistence.JSON;
 /// keeping the InMemory EFC database in sync with the file system.
 /// </summary>
 public sealed class JsonFilePersistenceService(
+    IPersistenceFileSystem fs,
     SharpClawDbContext context,
     JsonFileOptions options,
     EncryptionOptions encryptionOptions,
-    ILogger<JsonFilePersistenceService> logger)
+    ILogger<JsonFilePersistenceService> logger,
+    DirectoryLockManager? directoryLockManager = null,
+    TransactionQueue? transactionQueue = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -57,7 +61,10 @@ public sealed class JsonFilePersistenceService(
     /// </summary>
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        Directory.CreateDirectory(options.DataDirectory);
+        fs.CreateDirectory(options.DataDirectory);
+
+        // Phase D: Clean up orphan .tmp files left by interrupted writes.
+        CleanupAllTempFiles();
 
         var navigations = GetNavigations();
 
@@ -74,11 +81,11 @@ public sealed class JsonFilePersistenceService(
                 continue;
             var entityDir = GetEntityDirectory(clrType);
 
-            if (!Directory.Exists(entityDir))
+            if (!fs.DirectoryExists(entityDir))
                 continue;
 
             var navProps = navigations.GetValueOrDefault(clrType);
-            var files = Directory.GetFiles(entityDir, "*.json");
+            var files = fs.GetFiles(entityDir, "*.json");
 
             if (files.Length == 0)
                 continue;
@@ -167,14 +174,14 @@ public sealed class JsonFilePersistenceService(
     /// </summary>
     public async Task RecompactIfNeededAsync(CancellationToken ct = default)
     {
-        var sentinelPath = Path.Combine(options.DataDirectory, ".compacted");
-        if (File.Exists(sentinelPath))
+        var sentinelPath = fs.CombinePath(options.DataDirectory, ".compacted");
+        if (fs.FileExists(sentinelPath))
             return;
 
         logger.LogInformation("Recompacting JSON data files (one-time migration)...");
         await FlushAsync(ct);
 
-        await File.WriteAllTextAsync(sentinelPath, DateTimeOffset.UtcNow.ToString("O"), ct);
+        await fs.WriteAllTextAsync(sentinelPath, DateTimeOffset.UtcNow.ToString("O"), ct);
         logger.LogInformation("JSON data files recompacted successfully.");
     }
 
@@ -193,7 +200,7 @@ public sealed class JsonFilePersistenceService(
     /// </summary>
     public async Task FlushAsync(CancellationToken ct = default)
     {
-        Directory.CreateDirectory(options.DataDirectory);
+        fs.CreateDirectory(options.DataDirectory);
 
         foreach (var entityType in context.Model.GetEntityTypes())
         {
@@ -205,7 +212,12 @@ public sealed class JsonFilePersistenceService(
 
             var clrType = entityType.ClrType;
             var entityDir = GetEntityDirectory(clrType);
-            Directory.CreateDirectory(entityDir);
+
+            using var _ = directoryLockManager is not null
+                ? await directoryLockManager.AcquireAsync(entityDir, ct)
+                : null;
+
+            fs.CreateDirectory(entityDir);
 
             try
             {
@@ -224,16 +236,16 @@ public sealed class JsonFilePersistenceService(
                     var id = ((BaseEntity)entity).Id;
                     activeIds.Add($"{id}.json");
 
-                    var filePath = Path.Combine(entityDir, $"{id}.json");
+                    var filePath = fs.CombinePath(entityDir, $"{id}.json");
                     var json = SerializeEntityToBytes(entity, clrType, navProps);
                     await WriteBytesAsync(filePath, json, ct);
                 }
 
                 // Remove orphan files for entities that no longer exist
-                foreach (var file in Directory.GetFiles(entityDir, "*.json"))
+                foreach (var file in fs.GetFiles(entityDir, "*.json"))
                 {
-                    if (!activeIds.Contains(Path.GetFileName(file)))
-                        File.Delete(file);
+                    if (!activeIds.Contains(fs.GetFileName(file)))
+                        fs.DeleteFile(file);
                 }
 
                 logger.LogDebug("Flushed {Count} {Type} to {Path}", entities.Count, clrType.Name, entityDir);
@@ -269,42 +281,109 @@ public sealed class JsonFilePersistenceService(
         IReadOnlySet<string> joinTableChanges,
         CancellationToken ct = default)
     {
-        Directory.CreateDirectory(options.DataDirectory);
-
-        foreach (var (clrType, id, state) in entityChanges)
+        // Phase A′: Write transaction manifest BEFORE any entity files (RGAP-10).
+        string? manifestPath = null;
+        if (transactionQueue is not null)
         {
-            var entityDir = GetEntityDirectory(clrType);
-            Directory.CreateDirectory(entityDir);
-            var filePath = Path.Combine(entityDir, $"{id}.json");
+            manifestPath = await transactionQueue.EnqueueAsync(entityChanges, joinTableChanges, ct);
+        }
 
-            try
+        try
+        {
+            await FlushChangesInternalAsync(entityChanges, joinTableChanges, ct);
+        }
+        catch
+        {
+            // Manifest stays in pending/ for crash recovery replay.
+            throw;
+        }
+
+        // Success — dequeue the manifest.
+        if (manifestPath is not null)
+            transactionQueue!.Dequeue(manifestPath);
+    }
+
+    /// <summary>
+    /// The actual file-writing logic, extracted so it can be called both
+    /// from normal <see cref="FlushChangesAsync"/> and from transaction replay.
+    /// </summary>
+    internal async Task FlushChangesInternalAsync(
+        IReadOnlyList<(Type ClrType, Guid Id, EntityState State)> entityChanges,
+        IReadOnlySet<string> joinTableChanges,
+        CancellationToken ct = default)
+    {
+        fs.CreateDirectory(options.DataDirectory);
+
+        // Phase C: Two-phase commit — stage all writes, then atomically commit.
+        var twoPhase = new TwoPhaseCommit(fs, options.FsyncOnWrite);
+
+        // Phase J: Collect per-directory checksum changes to batch-update after commit.
+        Dictionary<string, List<(string FileName, ReadOnlyMemory<byte> Data, bool Deleted)>>? checksumChanges =
+            options.EnableChecksums ? new(StringComparer.OrdinalIgnoreCase) : null;
+
+        // Group entity changes by directory so each directory lock is acquired once.
+        var byDir = entityChanges.GroupBy(e => GetEntityDirectory(e.ClrType));
+
+        foreach (var group in byDir)
+        {
+            var dirPath = group.Key;
+            using var _ = directoryLockManager is not null
+                ? await directoryLockManager.AcquireAsync(dirPath, ct)
+                : null;
+
+            fs.CreateDirectory(dirPath);
+
+            foreach (var (clrType, id, state) in group)
             {
-                if (state == EntityState.Deleted)
+                var filePath = fs.CombinePath(dirPath, $"{id}.json");
+                var fileName = $"{id}.json";
+
+                try
                 {
-                    if (File.Exists(filePath))
-                        File.Delete(filePath);
-                }
-                else
-                {
-                    // After base.SaveChangesAsync the entity is tracked as
-                    // Unchanged.  Find returns the local (tracked) instance
-                    // first, falling back to the InMemory store.
-                    var entity = context.Find(clrType, id);
-                    if (entity is not null)
+                    if (state == EntityState.Deleted)
                     {
-                        var navProps = GetNavigations().GetValueOrDefault(clrType);
-                        var bytes = SerializeEntityToBytes(entity, clrType, navProps);
-                        await WriteBytesAsync(filePath, bytes, ct);
+                        twoPhase.StageDelete(filePath);
+                        checksumChanges?.GetOrAdd(dirPath).Add((fileName, ReadOnlyMemory<byte>.Empty, Deleted: true));
+
+                        // Remove from on-disk index for cold entity types
+                        if (options.ColdEntityTypes.Contains(clrType))
+                        {
+                            await ColdEntityIndex.UpdateIndexAsync(
+                                fs, dirPath, clrType.Name, id, entity: null,
+                                deleted: true, logger, ct);
+                        }
+                    }
+                    else
+                    {
+                        var entity = context.Find(clrType, id);
+                        if (entity is not null)
+                        {
+                            var navProps = GetNavigations().GetValueOrDefault(clrType);
+                            var bytes = SerializeEntityToBytes(entity, clrType, navProps);
+                            var prepared = JsonFileEncryption.PrepareBytes(
+                                bytes, encryptionOptions.Key, options.EncryptAtRest);
+                            await twoPhase.StageAsync(filePath, prepared, ct);
+                            checksumChanges?.GetOrAdd(dirPath).Add((fileName, prepared, Deleted: false));
+
+                            // Update on-disk index for cold entity types
+                            if (options.ColdEntityTypes.Contains(clrType))
+                            {
+                                await ColdEntityIndex.UpdateIndexAsync(
+                                    fs, dirPath, clrType.Name, id, entity,
+                                    deleted: false, logger, ct);
+                            }
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to flush {Type} {Id} to {Path}",
-                    clrType.Name, id, filePath);
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to stage {Type} {Id} to {Path}",
+                        clrType.Name, id, filePath);
+                }
             }
         }
 
+        // Stage join table writes inside the two-phase envelope.
         if (joinTableChanges.Count > 0)
         {
             foreach (var entityType in context.Model.GetEntityTypes())
@@ -314,13 +393,46 @@ public sealed class JsonFilePersistenceService(
                 if (!joinTableChanges.Contains(entityType.Name))
                     continue;
 
-                await FlushJoinTableAsync(entityType, ct);
+                await StageJoinTableAsync(twoPhase, entityType, checksumChanges, ct);
+            }
+        }
+
+        // Commit: write marker → rename all .tmp → final → delete marker.
+        await twoPhase.CommitAsync(options.DataDirectory, ct);
+
+        // Phase J: Batch-update checksum manifests after successful commit.
+        if (checksumChanges is { Count: > 0 })
+        {
+            foreach (var (dir, changes) in checksumChanges)
+            {
+                try
+                {
+                    await ChecksumManifest.UpdateChecksumsAsync(
+                        fs, dir, changes, encryptionOptions.Key, options.FsyncOnWrite, logger, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to update checksum manifest for {Dir}", dir);
+                }
+            }
+        }
+
+        // Phase H: Append entity change events to the event log after commit.
+        if (options.EnableEventLog)
+        {
+            try
+            {
+                var eventLog = new EventLog(fs, options, encryptionOptions.Key, logger);
+                await eventLog.AppendAsync(entityChanges, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to append events to event log");
             }
         }
 
         // Detach flushed entities from the change tracker to release
-        // property-snapshot memory. The InMemory store retains the data
-        // for queries; only the tracker's duplicate copies are freed.
+        // property-snapshot memory.
         foreach (var (clrType, id, state) in entityChanges)
         {
             if (state == EntityState.Deleted)
@@ -333,10 +445,10 @@ public sealed class JsonFilePersistenceService(
     }
 
     private string GetEntityDirectory(Type entityType)
-        => Path.Combine(options.DataDirectory, entityType.Name);
+        => fs.CombinePath(options.DataDirectory, entityType.Name);
 
     private string GetJoinTableDirectory(string tableName)
-        => Path.Combine(options.DataDirectory, tableName);
+        => fs.CombinePath(options.DataDirectory, tableName);
 
     /// <summary>
     /// Flushes a shared-type (many-to-many join table) entity to a single
@@ -347,7 +459,13 @@ public sealed class JsonFilePersistenceService(
     {
         var tableName = entityType.Name;
         var tableDir = GetJoinTableDirectory(tableName);
-        Directory.CreateDirectory(tableDir);
+
+        // RGAP-11: Acquire per-join-table directory lock.
+        using var _ = directoryLockManager is not null
+            ? await directoryLockManager.AcquireAsync(tableDir, ct)
+            : null;
+
+        fs.CreateDirectory(tableDir);
 
         try
         {
@@ -358,7 +476,7 @@ public sealed class JsonFilePersistenceService(
             var dbSet = context.Set<Dictionary<string, object>>(tableName);
             var rows = await dbSet.ToListAsync(ct);
 
-            var filePath = Path.Combine(tableDir, "_rows.json");
+            var filePath = fs.CombinePath(tableDir, "_rows.json");
 
             if (rows.Count > 0)
             {
@@ -377,9 +495,9 @@ public sealed class JsonFilePersistenceService(
                 var json = JsonSerializer.Serialize(rowList, JsonOptions);
                 await WriteJsonAsync(filePath, json, ct);
             }
-            else if (File.Exists(filePath))
+            else if (fs.FileExists(filePath))
             {
-                File.Delete(filePath);
+                fs.DeleteFile(filePath);
             }
 
             logger.LogDebug("Flushed {Count} {Table} join rows", rows.Count, tableName);
@@ -391,6 +509,69 @@ public sealed class JsonFilePersistenceService(
     }
 
     /// <summary>
+    /// Stages a join table write into the two-phase commit envelope.
+    /// </summary>
+    private async Task StageJoinTableAsync(
+        TwoPhaseCommit twoPhase,
+        IEntityType entityType,
+        Dictionary<string, List<(string FileName, ReadOnlyMemory<byte> Data, bool Deleted)>>? checksumChanges,
+        CancellationToken ct)
+    {
+        var tableName = entityType.Name;
+        var tableDir = GetJoinTableDirectory(tableName);
+
+        using var _ = directoryLockManager is not null
+            ? await directoryLockManager.AcquireAsync(tableDir, ct)
+            : null;
+
+        fs.CreateDirectory(tableDir);
+
+        try
+        {
+            var fkProperties = entityType.GetProperties()
+                .Where(p => p.IsForeignKey())
+                .ToList();
+
+            var dbSet = context.Set<Dictionary<string, object>>(tableName);
+            var rows = await dbSet.ToListAsync(ct);
+
+            var filePath = fs.CombinePath(tableDir, "_rows.json");
+
+            if (rows.Count > 0)
+            {
+                var rowList = new List<Dictionary<string, Guid>>(rows.Count);
+                foreach (var row in rows)
+                {
+                    var dict = new Dictionary<string, Guid>(fkProperties.Count);
+                    foreach (var fk in fkProperties)
+                    {
+                        if (row.TryGetValue(fk.Name, out var val) && val is Guid g)
+                            dict[fk.Name] = g;
+                    }
+                    rowList.Add(dict);
+                }
+
+                var json = JsonSerializer.Serialize(rowList, JsonOptions);
+                var prepared = JsonFileEncryption.PrepareJson(
+                    json, encryptionOptions.Key, options.EncryptAtRest);
+                await twoPhase.StageAsync(filePath, prepared, ct);
+                checksumChanges?.GetOrAdd(tableDir).Add(("_rows.json", prepared, Deleted: false));
+            }
+            else
+            {
+                twoPhase.StageDelete(filePath);
+                checksumChanges?.GetOrAdd(tableDir).Add(("_rows.json", ReadOnlyMemory<byte>.Empty, Deleted: true));
+            }
+
+            logger.LogDebug("Staged {Count} {Table} join rows", rows.Count, tableName);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to stage join table {Table}", tableName);
+        }
+    }
+
+    /// <summary>
     /// Loads a shared-type (many-to-many join table) entity from its
     /// <c>_rows.json</c> file and adds each row to the context.
     /// </summary>
@@ -398,9 +579,9 @@ public sealed class JsonFilePersistenceService(
     {
         var tableName = entityType.Name;
         var tableDir = GetJoinTableDirectory(tableName);
-        var filePath = Path.Combine(tableDir, "_rows.json");
+        var filePath = fs.CombinePath(tableDir, "_rows.json");
 
-        if (!File.Exists(filePath))
+        if (!fs.FileExists(filePath))
             return;
 
         try
@@ -471,16 +652,27 @@ public sealed class JsonFilePersistenceService(
     }
 
     /// <summary>
-    /// Serializes an entity directly to UTF-8 bytes, avoiding the
-    /// intermediate <see cref="string"/> allocation. Navigation properties
-    /// are temporarily nulled using the same snapshot/restore pattern.
+    /// Serializes an entity directly to UTF-8 bytes using a pooled
+    /// <see cref="ArrayBufferWriter{T}"/>, avoiding intermediate
+    /// <c>byte[]</c> allocations. Navigation properties are temporarily
+    /// nulled using the same snapshot/restore pattern.
     /// </summary>
+    [ThreadStatic]
+    private static ArrayBufferWriter<byte>? t_bufferWriter;
+
     private static byte[] SerializeEntityToBytes(
         object entity, Type clrType,
         List<System.Reflection.PropertyInfo>? navProps)
     {
+        var writer = t_bufferWriter ??= new ArrayBufferWriter<byte>(4096);
+        writer.ResetWrittenCount();
+
         if (navProps is null || navProps.Count == 0)
-            return JsonSerializer.SerializeToUtf8Bytes(entity, clrType, JsonOptions);
+        {
+            using var jsonWriter = new Utf8JsonWriter(writer);
+            JsonSerializer.Serialize(jsonWriter, entity, clrType, JsonOptions);
+            return writer.WrittenSpan.ToArray();
+        }
 
         var saved = new object?[navProps.Count];
         for (var i = 0; i < navProps.Count; i++)
@@ -491,7 +683,9 @@ public sealed class JsonFilePersistenceService(
 
         try
         {
-            return JsonSerializer.SerializeToUtf8Bytes(entity, clrType, JsonOptions);
+            using var jsonWriter = new Utf8JsonWriter(writer);
+            JsonSerializer.Serialize(jsonWriter, entity, clrType, JsonOptions);
+            return writer.WrittenSpan.ToArray();
         }
         finally
         {
@@ -509,24 +703,69 @@ public sealed class JsonFilePersistenceService(
         if (!options.EncryptAtRest)
             return;
 
-        var sentinelPath = Path.Combine(options.DataDirectory, ".encrypted");
-        if (File.Exists(sentinelPath))
+        var sentinelPath = fs.CombinePath(options.DataDirectory, ".encrypted");
+        if (fs.FileExists(sentinelPath))
             return;
 
         logger.LogInformation("Encrypting JSON data files (one-time migration)...");
         await FlushAsync(ct);
-        await File.WriteAllTextAsync(sentinelPath, DateTimeOffset.UtcNow.ToString("O"), ct);
+        await fs.WriteAllTextAsync(sentinelPath, DateTimeOffset.UtcNow.ToString("O"), ct);
         logger.LogInformation("JSON data files encrypted successfully.");
     }
 
     private Task WriteJsonAsync(string path, string json, CancellationToken ct)
-        => JsonFileEncryption.WriteJsonAsync(path, json, encryptionOptions.Key, options.EncryptAtRest, ct);
+        => JsonFileEncryption.WriteJsonAsync(fs, path, json, encryptionOptions.Key, options.EncryptAtRest, options.FsyncOnWrite, ct);
 
     private Task WriteBytesAsync(string path, byte[] utf8Json, CancellationToken ct)
-        => JsonFileEncryption.WriteBytesAsync(path, utf8Json, encryptionOptions.Key, options.EncryptAtRest, ct);
+        => JsonFileEncryption.WriteBytesAsync(fs, path, utf8Json, encryptionOptions.Key, options.EncryptAtRest, options.FsyncOnWrite, ct);
 
     private Task<string> ReadJsonAsync(string path, CancellationToken ct)
-        => JsonFileEncryption.ReadJsonAsync(path, encryptionOptions.Key, ct);
+        => JsonFileEncryption.ReadJsonAsync(fs, path, encryptionOptions.Key, ct);
+
+    /// <summary>
+    /// Replays a transaction manifest by re-flushing the described entity changes.
+    /// During replay the entities may or may not exist in the InMemory store
+    /// (they were already committed by <c>base.SaveChangesAsync</c> before crash).
+    /// For Added/Modified states, we attempt to find and re-serialize the entity;
+    /// if the entity is not found (e.g., the InMemory store was lost on restart),
+    /// the manifest is left for the next <see cref="LoadAsync"/> cycle to pick up
+    /// naturally since <see cref="LoadAsync"/> reads from the disk files that may
+    /// already be partially written.
+    /// </summary>
+    internal async Task ReplayManifestAsync(TransactionManifest manifest, CancellationToken ct)
+    {
+        var entityChanges = new List<(Type ClrType, Guid Id, EntityState State)>();
+
+        foreach (var entry in manifest.EntityChanges)
+        {
+            var clrType = ResolveEntityType(entry.EntityType);
+            if (clrType is null)
+            {
+                logger.LogWarning(
+                    "Unknown entity type {TypeName} in manifest (seq {Sequence}), skipping",
+                    entry.EntityType, manifest.Sequence);
+                continue;
+            }
+
+            entityChanges.Add((clrType, entry.Id, entry.State));
+        }
+
+        var joinTableChanges = new HashSet<string>(manifest.JoinTableChanges);
+
+        await FlushChangesInternalAsync(entityChanges, joinTableChanges, ct);
+    }
+
+    /// <summary>
+    /// Resolves an entity CLR type by its <see cref="Type.Name"/>.
+    /// Searches the EF model for a matching entity type.
+    /// </summary>
+    private Type? ResolveEntityType(string typeName)
+    {
+        return context.Model.GetEntityTypes()
+            .Where(e => !e.HasSharedClrType)
+            .Select(e => e.ClrType)
+            .FirstOrDefault(t => t.Name == typeName);
+    }
 
     private void DetachAll()
     {
@@ -546,5 +785,137 @@ public sealed class JsonFilePersistenceService(
 
         public override void Write(Utf8JsonWriter writer, Guid value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value);
+    }
+
+    /// <summary>
+    /// Cleans up orphan <c>.tmp</c> files from all subdirectories under
+    /// <see cref="JsonFileOptions.DataDirectory"/>. Called on startup before
+    /// loading entities.
+    /// </summary>
+    private void CleanupAllTempFiles()
+    {
+        if (!fs.DirectoryExists(options.DataDirectory))
+            return;
+
+        ColdEntityIndex.CleanupTempFiles(fs, options.DataDirectory, logger);
+        foreach (var subDir in fs.GetDirectories(options.DataDirectory))
+            ColdEntityIndex.CleanupTempFiles(fs, subDir, logger);
+    }
+
+    /// <summary>
+    /// Rebuilds cold entity indexes in parallel across entity types.
+    /// Each entity type directory is rebuilt concurrently via <see cref="Task.WhenAll"/>.
+    /// </summary>
+    public async Task RebuildColdIndexesAsync(CancellationToken ct = default)
+    {
+        var tasks = new List<Task>();
+        foreach (var coldType in options.ColdEntityTypes)
+        {
+            var entityDir = GetEntityDirectory(coldType);
+            if (!fs.DirectoryExists(entityDir))
+                continue;
+
+            tasks.Add(ColdEntityIndex.RebuildIndexAsync(
+                fs, entityDir, coldType.Name, coldType,
+                encryptionOptions.Key, ColdEntityStore.JsonOptions,
+                logger, ct));
+        }
+
+        if (tasks.Count > 0)
+            await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// Post-load FK validation: scans all loaded (hot) entities for dangling
+    /// foreign key references and logs warnings. Does not modify data.
+    /// </summary>
+    public void ValidateForeignKeys()
+    {
+        var warnings = 0;
+
+        foreach (var entityType in context.Model.GetEntityTypes())
+        {
+            if (entityType.HasSharedClrType)
+                continue;
+
+            foreach (var fk in entityType.GetForeignKeys())
+            {
+                var principalType = fk.PrincipalEntityType.ClrType;
+
+                // Skip validation for cold entity types (their FK targets aren't in memory)
+                if (options.ColdEntityTypes.Contains(principalType))
+                    continue;
+
+                var principalSet = GetEntitySetAsQueryable(principalType);
+                if (principalSet is null)
+                    continue;
+
+                var principalIds = new HashSet<Guid>(
+                    principalSet.Cast<object>()
+                        .Select(e => ((BaseEntity)e).Id));
+
+                var dependentSet = GetEntitySetAsQueryable(entityType.ClrType);
+                if (dependentSet is null)
+                    continue;
+
+                foreach (var fkProp in fk.Properties)
+                {
+                    var clrProp = fkProp.PropertyInfo;
+                    if (clrProp is null)
+                        continue;
+
+                    foreach (var entity in dependentSet.Cast<object>())
+                    {
+                        var fkValue = clrProp.GetValue(entity);
+                        if (fkValue is null || fkValue is Guid g && g == Guid.Empty)
+                            continue;
+
+                        if (fkValue is Guid fkGuid && !principalIds.Contains(fkGuid))
+                        {
+                            var entityId = ((BaseEntity)entity).Id;
+                            logger.LogWarning(
+                                "Dangling FK: {Type}.{Property} = {Value} on entity {Id} references missing {PrincipalType}",
+                                entityType.ClrType.Name, fkProp.Name, fkGuid, entityId, principalType.Name);
+                            warnings++;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (warnings > 0)
+            logger.LogWarning("FK validation found {Count} dangling reference(s)", warnings);
+        else
+            logger.LogDebug("FK validation passed — no dangling references");
+    }
+
+    private IQueryable<object>? GetEntitySetAsQueryable(Type clrType)
+    {
+        try
+        {
+            return (IQueryable<object>)context
+                .GetType()
+                .GetMethod(nameof(DbContext.Set), Type.EmptyTypes)!
+                .MakeGenericMethod(clrType)
+                .Invoke(context, null)!;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+file static class DictionaryListExtensions
+{
+    internal static List<TValue> GetOrAdd<TKey, TValue>(
+        this Dictionary<TKey, List<TValue>> dict, TKey key) where TKey : notnull
+    {
+        if (!dict.TryGetValue(key, out var list))
+        {
+            list = [];
+            dict[key] = list;
+        }
+        return list;
     }
 }

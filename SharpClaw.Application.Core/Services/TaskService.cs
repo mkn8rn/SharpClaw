@@ -188,14 +188,15 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             return ToInstanceResponse(instance, instance.TaskDefinition.Name);
 
         // Cold store fallback — TaskDefinition is hot (in EF), load separately
-        var coldInstance = await coldStore.FindAsync<TaskInstanceDB>(id, ct);
+        var coldInstance = (await coldStore.FindAsync<TaskInstanceDB>(id, ct)).ValueOrDefault;
         if (coldInstance is null) return null;
 
         var definition = await db.TaskDefinitions.FindAsync([coldInstance.TaskDefinitionId], ct);
         var defName = definition?.Name ?? "(unknown)";
 
         coldInstance.LogEntries = (await coldStore.QueryAllAsync<TaskExecutionLogDB>(
-            l => l.TaskInstanceId == id, ct)).ToList();
+            l => l.TaskInstanceId == id, ct,
+            new ColdEntityStore.IndexFilter("TaskInstanceId", id))).ToList();
 
         return ToInstanceResponse(coldInstance, defName);
     }
@@ -209,7 +210,10 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             taskDefinitionId is not null
                 ? i => i.TaskDefinitionId == taskDefinitionId.Value
                 : _ => true,
-            ct);
+            ct,
+            taskDefinitionId is not null
+                ? new ColdEntityStore.IndexFilter("TaskDefinitionId", taskDefinitionId.Value)
+                : null);
 
         // Build a lookup for task definition names (hot entities in EF)
         var defIds = instances.Select(i => i.TaskDefinitionId).Distinct().ToList();
@@ -239,7 +243,7 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
         var instance = await db.TaskInstances.FindAsync([id], ct);
         if (instance is null)
         {
-            instance = await coldStore.FindAsync<TaskInstanceDB>(id, ct);
+            instance = (await coldStore.FindAsync<TaskInstanceDB>(id, ct)).ValueOrDefault;
             if (instance is null) return false;
             db.TaskInstances.Attach(instance);
         }
@@ -285,7 +289,8 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             since is not null
                 ? o => o.TaskInstanceId == instanceId && o.CreatedAt > since.Value
                 : o => o.TaskInstanceId == instanceId,
-            ct);
+            ct,
+            new ColdEntityStore.IndexFilter("TaskInstanceId", instanceId));
 
         return entries
             .OrderBy(o => o.Sequence)

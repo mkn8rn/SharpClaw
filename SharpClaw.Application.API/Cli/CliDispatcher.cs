@@ -219,6 +219,7 @@ public static class CliDispatcher
             "module" => await HandleModuleCommand(args, sp),
             "tools" => await HandleToolAwarenessSetCommand(args, sp),
             "bio" => await HandleBioCommand(args, sp),
+            "health" => await HandleHealthCommand(sp),
             "me" => await AuthHandlers.Me(
                 sp.GetRequiredService<SessionService>(),
                 sp.GetRequiredService<AuthService>()),
@@ -2913,6 +2914,9 @@ public static class CliDispatcher
               register <user> <pass>          login <user> <pass>          logout
               me                               Show current user profile & role
 
+            System:
+              health                           Show persistence health status
+
             Provider:  provider <sub> [args]    (add, get, list, update, delete)
               provider add <name> <type> [endpoint]
                 Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,
@@ -3043,6 +3047,27 @@ public static class CliDispatcher
                             $"              {prefix}{alias,-28} (alias)");
                 }
             }
+        }
+
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> HandleHealthCommand(IServiceProvider sp)
+    {
+        var healthCheck = sp.GetRequiredService<SharpClaw.Infrastructure.Persistence.JSON.JsonPersistenceHealthCheck>();
+        var result = await healthCheck.CheckAsync();
+
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine();
+        foreach (var entry in result.Entries)
+        {
+            var icon = entry.Status switch
+            {
+                SharpClaw.Infrastructure.Persistence.JSON.HealthStatus.Healthy => "✓",
+                SharpClaw.Infrastructure.Persistence.JSON.HealthStatus.Degraded => "⚠",
+                _ => "✗"
+            };
+            Console.WriteLine($"  {icon} {entry.Name,-26} {entry.Description}");
         }
 
         return Results.Ok();
