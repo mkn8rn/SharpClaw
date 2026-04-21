@@ -78,9 +78,23 @@ public sealed class AnthropicApiClient : IProviderApiClient
             Content = content,
             Usage = result?.Usage is { } u
                 ? new TokenUsage(u.InputTokens, u.OutputTokens)
-                : null
+                : null,
+            FinishReason = MapAnthropicStopReason(result?.StopReason, hasToolCalls: false),
         };
     }
+
+    /// <summary>
+    /// Maps Anthropic <c>stop_reason</c> to the normalised
+    /// <see cref="FinishReason"/>.
+    /// </summary>
+    private static FinishReason MapAnthropicStopReason(string? raw, bool hasToolCalls) => raw switch
+    {
+        "end_turn" => hasToolCalls ? FinishReason.ToolCalls : FinishReason.Stop,
+        "stop_sequence" => FinishReason.Stop,
+        "max_tokens" => FinishReason.Length,
+        "tool_use" => FinishReason.ToolCalls,
+        _ => hasToolCalls ? FinishReason.ToolCalls : FinishReason.Unknown,
+    };
 
     private static void AddAuthHeaders(HttpRequestMessage request, string apiKey)
     {
@@ -124,7 +138,8 @@ public sealed class AnthropicApiClient : IProviderApiClient
 
     private sealed record MessagesResponse(
         [property: JsonPropertyName("content")] List<ContentBlock>? Content,
-        [property: JsonPropertyName("usage")] AntUsage? Usage = null);
+        [property: JsonPropertyName("usage")] AntUsage? Usage = null,
+        [property: JsonPropertyName("stop_reason")] string? StopReason = null);
 
     private sealed class AntUsage
     {
@@ -194,7 +209,8 @@ public sealed class AnthropicApiClient : IProviderApiClient
         return new ChatCompletionResult
         {
             Content = content,
-            ToolCalls = toolCalls
+            ToolCalls = toolCalls,
+            FinishReason = MapAnthropicStopReason(result?.StopReason, toolCalls.Count > 0),
         };
     }
 
@@ -459,6 +475,7 @@ public sealed class AnthropicApiClient : IProviderApiClient
         string? currentToolId = null;
         string? currentToolName = null;
         System.Text.StringBuilder? currentToolArgs = null;
+        string? streamStopReason = null;
 
         while (true)
         {
@@ -502,6 +519,14 @@ public sealed class AnthropicApiClient : IProviderApiClient
                     currentToolArgs = null;
                     break;
 
+                case "message_delta" when evt.Delta?.StopReason is { } sr:
+                    streamStopReason = sr;
+                    break;
+
+                case "message_start" when evt.Message?.StopReason is { } msr:
+                    streamStopReason = msr;
+                    break;
+
                 case "message_stop":
                     goto done;
             }
@@ -517,7 +542,8 @@ public sealed class AnthropicApiClient : IProviderApiClient
         yield return ChatStreamChunk.Final(new ChatCompletionResult
         {
             Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
-            ToolCalls = resultToolCalls
+            ToolCalls = resultToolCalls,
+            FinishReason = MapAnthropicStopReason(streamStopReason, resultToolCalls.Count > 0),
         });
     }
 
@@ -552,6 +578,12 @@ public sealed class AnthropicApiClient : IProviderApiClient
         [JsonPropertyName("type")] public string? Type { get; set; }
         [JsonPropertyName("delta")] public AntStreamDelta? Delta { get; set; }
         [JsonPropertyName("content_block")] public AntStreamContentBlock? ContentBlock { get; set; }
+        [JsonPropertyName("message")] public AntStreamMessage? Message { get; set; }
+    }
+
+    private sealed class AntStreamMessage
+    {
+        [JsonPropertyName("stop_reason")] public string? StopReason { get; set; }
     }
 
     private sealed class AntStreamDelta
@@ -559,6 +591,7 @@ public sealed class AnthropicApiClient : IProviderApiClient
         [JsonPropertyName("type")] public string? Type { get; set; }
         [JsonPropertyName("text")] public string? Text { get; set; }
         [JsonPropertyName("partial_json")] public string? PartialJson { get; set; }
+        [JsonPropertyName("stop_reason")] public string? StopReason { get; set; }
     }
 
     private sealed class AntStreamContentBlock

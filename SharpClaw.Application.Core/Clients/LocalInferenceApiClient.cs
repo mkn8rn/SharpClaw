@@ -150,6 +150,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         {
             Content = content,
             Usage = BuildUsage(loaded, prompt, completionTokens),
+            FinishReason = InferLocalFinishReason(completionTokens, maxCompletionTokens, hasToolCalls: false),
         };
     }
 
@@ -182,7 +183,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
 
         using var pipeline = BuildSamplingPipeline(
             completionParameters,
-            new Grammar(LlamaSharpToolGrammar.Build(), "root"));
+            new Grammar(ResolveToolGrammar(completionParameters), "root"));
 
         var inferParams = new InferenceParams
         {
@@ -208,6 +209,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
             Content = envelope.Content,
             ToolCalls = envelope.ToolCalls,
             Usage = BuildUsage(loaded, prompt, completionTokens),
+            FinishReason = InferLocalFinishReason(completionTokens, maxCompletionTokens, envelope.ToolCalls.Count > 0),
         };
     }
 
@@ -243,7 +245,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
 
         using var pipeline = BuildSamplingPipeline(
             completionParameters,
-            new Grammar(LlamaSharpToolGrammar.Build(), "root"));
+            new Grammar(ResolveToolGrammar(completionParameters), "root"));
 
         var inferParams = new InferenceParams
         {
@@ -270,6 +272,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         var holdback = new StringBuilder();
         var fullBuffer = new StringBuilder(); // complete raw envelope
         var textContent = new StringBuilder(); // streamed text (message mode)
+        var walker = new EnvelopeStreamWalker();
 
         var completionTokens = 0;
         await foreach (var token in executor.InferAsync(prompt, inferParams, ct))
@@ -277,9 +280,14 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
             fullBuffer.Append(token);
             completionTokens++;
 
-            // Once mode is known and it's tool_calls, just accumulate.
+            // Once mode is known and it's tool_calls, feed the walker
+            // so consumers receive incremental id/name/args deltas.
             if (isToolCallsMode == true)
+            {
+                foreach (var d in walker.Feed(token))
+                    yield return ChatStreamChunk.ToolCall(d);
                 continue;
+            }
 
             holdback.Append(token);
             var text = holdback.ToString();
@@ -291,6 +299,11 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
                 {
                     isToolCallsMode = true;
                     holdback.Clear();
+                    // Replay everything buffered so far through the walker
+                    // so it can lock onto the "calls":[ opener that may
+                    // already be in-flight.
+                    foreach (var d in walker.Feed(fullBuffer.ToString()))
+                        yield return ChatStreamChunk.ToolCall(d);
                     continue;
                 }
 
@@ -398,22 +411,29 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         await mmLock.WaitAsync(ct);
         try
         {
-            // Pick the last message that carries an image.
-            var imageMsg = messages.LastOrDefault(m => m.HasImage);
-            var imageBytes = imageMsg?.ImageBase64 is { } b64
-                ? Convert.FromBase64String(b64)
-                : null;
-
-            // Stage image into the MTMD context before inference.
-            if (imageBytes is not null)
-                clipModel.LoadMedia(imageBytes);
+            // Phase 4 — stage every image that appears in the turn, up to the
+            // configured cap (Local__MaxImagesPerTurn, default 8). MtmdWeights
+            // supports additive staging: each LoadMedia call appends another
+            // image to the projector context. ClearMedia wipes them all.
+            var maxImages = ResolveMaxImagesPerTurn();
+            var imagesStaged = 0;
+            foreach (var msg in messages)
+            {
+                if (!msg.HasImage || msg.ImageBase64 is not { } b64)
+                    continue;
+                if (imagesStaged >= maxImages)
+                    break;
+                clipModel.LoadMedia(Convert.FromBase64String(b64));
+                imagesStaged++;
+            }
 
             try
             {
                 using var ctx = loaded.CreateContext();
                 var executor = new InteractiveExecutor(ctx, clipModel, null);
 
-                var history = LlamaSharpToolPromptBuilder.Build(systemPrompt, messages, tools);
+                var history = LlamaSharpToolPromptBuilder.Build(
+                    systemPrompt, messages, tools, imagesStaged);
                 var prompt = ApplyTemplate(loaded.Weights, history);
                 var antiPrompts = BuildAntiPrompts(loaded.Weights, completionParameters?.Stop);
 
@@ -421,7 +441,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
 
                 using var pipeline = BuildSamplingPipeline(
                     completionParameters,
-                    new Grammar(LlamaSharpToolGrammar.Build(), "root"));
+                    new Grammar(ResolveToolGrammar(completionParameters), "root"));
 
                 var inferParams = new InferenceParams
                 {
@@ -447,11 +467,12 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
                     Content = envelope.Content,
                     ToolCalls = envelope.ToolCalls,
                     Usage = BuildUsage(loaded, prompt, completionTokens),
+                    FinishReason = InferLocalFinishReason(completionTokens, maxCompletionTokens, envelope.ToolCalls.Count > 0),
                 };
             }
             finally
             {
-                if (imageBytes is not null)
+                if (imagesStaged > 0)
                     clipModel.ClearMedia();
             }
         }
@@ -462,6 +483,37 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
     }
 
     // ── Helpers ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves the per-turn multimodal image cap from the
+    /// <c>Local__MaxImagesPerTurn</c> environment variable, falling back
+    /// to <see cref="DefaultMaxImagesPerTurn"/>. Values less than 1 are
+    /// treated as 1 (at least the last image staged).
+    /// </summary>
+    private static int ResolveMaxImagesPerTurn()
+    {
+        var raw = Environment.GetEnvironmentVariable("Local__MaxImagesPerTurn");
+        if (int.TryParse(raw, out var n) && n > 0)
+            return n;
+        return DefaultMaxImagesPerTurn;
+    }
+
+    private const int DefaultMaxImagesPerTurn = 8;
+
+    /// <summary>
+    /// Maps local inference signals into a <see cref="FinishReason"/>.
+    /// Tool calls always win; otherwise if we exhausted the caller's
+    /// max-token budget we report <see cref="FinishReason.Length"/>;
+    /// otherwise the envelope arrived naturally via the stop sampler,
+    /// which we normalise as <see cref="FinishReason.Stop"/>.
+    /// </summary>
+    private static FinishReason InferLocalFinishReason(int completionTokens, int? maxCompletionTokens, bool hasToolCalls)
+    {
+        if (hasToolCalls) return FinishReason.ToolCalls;
+        if (maxCompletionTokens is int cap && completionTokens >= cap)
+            return FinishReason.Length;
+        return FinishReason.Stop;
+    }
 
     /// <summary>
     /// Validates that a KV-cache context can be allocated for <paramref name="loaded"/>
@@ -740,6 +792,19 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
             Debug.WriteLine(
                 "ResponseFormat ignored on tool-calling path — tool envelope grammar takes precedence.",
                 "SharpClaw.CLI");
+    }
+
+    /// <summary>
+    /// Compiles the tool-envelope GBNF grammar for this call, specialised
+    /// by <see cref="CompletionParameters.ToolChoice"/> and
+    /// <see cref="CompletionParameters.ParallelToolCalls"/>. Defaults to
+    /// the cached auto/parallel grammar when no policy is specified.
+    /// </summary>
+    private static string ResolveToolGrammar(CompletionParameters? p)
+    {
+        var choice = p?.ToolChoice ?? ToolChoice.Auto;
+        var parallel = p?.ParallelToolCalls ?? true;
+        return LlamaSharpToolGrammar.Build(choice, parallel);
     }
 
     // ── Sampling pipeline ─────────────────────────────────────────

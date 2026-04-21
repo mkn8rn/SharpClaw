@@ -34,6 +34,32 @@ public sealed class ChatCompletionResult
     /// the provider does not include usage data in the response.
     /// </summary>
     public TokenUsage? Usage { get; init; }
+
+    /// <summary>
+    /// Why generation stopped, normalised across providers. Defaults to
+    /// <see cref="FinishReason.Unknown"/> when the provider does not
+    /// report one. See <see cref="FinishReason"/> for the mapping table.
+    /// </summary>
+    public FinishReason FinishReason { get; init; } = FinishReason.Unknown;
+}
+
+/// <summary>
+/// Reason a completion stopped generating. Cross-provider normalised
+/// form of OpenAI <c>finish_reason</c>, Anthropic <c>stop_reason</c>,
+/// and Google <c>finishReason</c>.
+/// </summary>
+public enum FinishReason
+{
+    /// <summary>Provider did not report a reason.</summary>
+    Unknown = 0,
+    /// <summary>Natural end of turn / stop sequence hit.</summary>
+    Stop,
+    /// <summary>Hit max tokens before natural stop.</summary>
+    Length,
+    /// <summary>Model emitted one or more tool calls.</summary>
+    ToolCalls,
+    /// <summary>Provider content filter halted generation.</summary>
+    ContentFilter,
 }
 
 /// <summary>
@@ -45,13 +71,39 @@ public sealed record TokenUsage(int PromptTokens, int CompletionTokens)
 }
 
 /// <summary>
-/// A single chunk from a streaming chat completion. Either a text delta
-/// or a final result containing accumulated tool calls.
+/// A fragment of a streamed tool call. Providers emit one or more of
+/// these per tool call as <c>id</c>, <c>name</c>, and <c>arguments</c>
+/// become available on the wire. Multiple fragments for the same
+/// <see cref="Index"/> describe the same logical call — consumers
+/// should concatenate <see cref="ArgumentsFragment"/> values in order.
+/// <para>
+/// Mirrors the OpenAI streaming <c>tool_calls</c> delta shape: the
+/// first fragment carries <see cref="Id"/> and <see cref="Name"/>,
+/// subsequent fragments carry only <see cref="ArgumentsFragment"/>
+/// slices of the JSON arguments blob.
+/// </para>
+/// </summary>
+public sealed record ChatToolCallDelta(
+    int Index,
+    string? Id,
+    string? Name,
+    string? ArgumentsFragment);
+
+/// <summary>
+/// A single chunk from a streaming chat completion. Can be either a
+/// text delta (<see cref="Delta"/>), a partial tool-call delta
+/// (<see cref="ToolCallDelta"/>), or the final result containing the
+/// accumulated tool calls and usage (<see cref="Finished"/>).
 /// </summary>
 public sealed class ChatStreamChunk
 {
-    /// <summary>Partial text token. <see langword="null"/> on the final chunk.</summary>
+    /// <summary>Partial text token. <see langword="null"/> when this is
+    /// a tool-call delta or the final chunk.</summary>
     public string? Delta { get; init; }
+
+    /// <summary>Partial tool-call delta. <see langword="null"/> for text
+    /// chunks and the final chunk.</summary>
+    public ChatToolCallDelta? ToolCallDelta { get; init; }
 
     /// <summary>
     /// Set on the final chunk only. Contains the complete list of tool
@@ -59,9 +111,13 @@ public sealed class ChatStreamChunk
     /// </summary>
     public ChatCompletionResult? Finished { get; init; }
 
+    public bool IsToolCallDelta => ToolCallDelta is not null;
     public bool IsFinished => Finished is not null;
 
     public static ChatStreamChunk Text(string delta) => new() { Delta = delta };
+
+    public static ChatStreamChunk ToolCall(ChatToolCallDelta delta) =>
+        new() { ToolCallDelta = delta };
 
     public static ChatStreamChunk Final(ChatCompletionResult result) =>
         new() { Finished = result };

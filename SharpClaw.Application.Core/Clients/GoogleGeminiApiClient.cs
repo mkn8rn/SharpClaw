@@ -138,6 +138,7 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
         var contentBuilder = new StringBuilder();
         var toolCalls = new List<ChatToolCall>();
         TokenUsage? usage = null;
+        string? streamFinishReason = null;
 
         while (true)
         {
@@ -165,6 +166,7 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
                 usage = new TokenUsage(um.PromptTokenCount, um.CandidatesTokenCount);
 
             var candidate = chunk.Candidates?.FirstOrDefault();
+            if (candidate?.FinishReason is { } fr) streamFinishReason = fr;
             if (candidate?.Content?.Parts is not { } parts) continue;
 
             foreach (var part in parts)
@@ -189,7 +191,8 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
         {
             Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
             ToolCalls = toolCalls,
-            Usage = usage
+            Usage = usage,
+            FinishReason = MapGeminiFinishReason(streamFinishReason, toolCalls.Count > 0),
         });
     }
 
@@ -413,9 +416,27 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
         {
             Content = textParts.Count > 0 ? string.Join("", textParts) : null,
             ToolCalls = toolCalls,
-            Usage = usage
+            Usage = usage,
+            FinishReason = MapGeminiFinishReason(candidate.FinishReason, toolCalls.Count > 0),
         };
     }
+
+    /// <summary>
+    /// Maps the Gemini <c>finishReason</c> string onto the normalised
+    /// <see cref="FinishReason"/>. When tool calls are present a stop
+    /// finish is promoted to <see cref="FinishReason.ToolCalls"/>.
+    /// </summary>
+    private static FinishReason MapGeminiFinishReason(string? raw, bool hasToolCalls) => raw switch
+    {
+        "STOP" => hasToolCalls ? FinishReason.ToolCalls : FinishReason.Stop,
+        "MAX_TOKENS" => FinishReason.Length,
+        "SAFETY" => FinishReason.ContentFilter,
+        "RECITATION" => FinishReason.ContentFilter,
+        "PROHIBITED_CONTENT" => FinishReason.ContentFilter,
+        "BLOCKLIST" => FinishReason.ContentFilter,
+        "SPII" => FinishReason.ContentFilter,
+        _ => hasToolCalls ? FinishReason.ToolCalls : FinishReason.Unknown,
+    };
 
     // ── Helpers ───────────────────────────────────────────────────
 
@@ -508,7 +529,8 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
         [property: JsonPropertyName("usageMetadata")] GeminiUsageMetadata? UsageMetadata);
 
     private sealed record GeminiCandidate(
-        [property: JsonPropertyName("content")] GeminiContent? Content);
+        [property: JsonPropertyName("content")] GeminiContent? Content,
+        [property: JsonPropertyName("finishReason")] string? FinishReason = null);
 
     private sealed record GeminiContent(
         [property: JsonPropertyName("parts")] List<GeminiPart>? Parts,

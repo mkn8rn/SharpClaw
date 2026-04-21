@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Application.Core.LocalInference;
 
 namespace SharpClaw.Application.Core.Clients;
 
@@ -82,10 +83,32 @@ public sealed record CompletionParameters
     /// </summary>
     public string? ReasoningEffort { get; init; }
 
+    /// <summary>
+    /// Tool-selection policy for this turn. Mirrors OpenAI's
+    /// <c>tool_choice</c>: <see cref="ToolChoiceMode.Auto"/> (default
+    /// when <see langword="null"/>), <see cref="ToolChoiceMode.None"/>,
+    /// <see cref="ToolChoiceMode.Required"/>, or
+    /// <see cref="ToolChoiceMode.Named"/> with a function name.
+    /// <para>
+    /// LlamaSharp enforces this by compiling a tailored GBNF grammar
+    /// (<see cref="LlamaSharpToolGrammar"/>); OpenAI-compatible
+    /// providers forward it on the wire.
+    /// </para>
+    /// </summary>
+    public ToolChoice? ToolChoice { get; init; }
+
+    /// <summary>
+    /// When set to <see langword="false"/>, the provider must emit at
+    /// most one tool call per turn. Defaults to the provider's own
+    /// default (<see langword="true"/> on OpenAI and LlamaSharp).
+    /// </summary>
+    public bool? ParallelToolCalls { get; init; }
+
     /// <summary>Returns <see langword="true"/> when all fields are null.</summary>
     public bool IsEmpty =>
         Temperature is null && TopP is null && TopK is null &&
         FrequencyPenalty is null && PresencePenalty is null &&
         Stop is null && Seed is null && ResponseFormat is null &&
-        ReasoningEffort is null;
+        ReasoningEffort is null &&
+        ToolChoice is null && ParallelToolCalls is null;
 }

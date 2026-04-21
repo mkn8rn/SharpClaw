@@ -97,7 +97,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         await response.EnsureSuccessOrThrowAsync(ct);
 
         var result = await response.Content.ReadFromJsonAsync<CompletionResponse>(ct);
-        var content = result?.Choices?.FirstOrDefault()?.Message?.Content
+        var choice = result?.Choices?.FirstOrDefault();
+        var content = choice?.Message?.Content
             ?? throw new InvalidOperationException("No response content from provider.");
 
         return new ChatCompletionResult
@@ -105,7 +106,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Content = content,
             Usage = result?.Usage is { } u
                 ? new TokenUsage(u.PromptTokens, u.CompletionTokens)
-                : null
+                : null,
+            FinishReason = MapOpenAiFinishReason(choice?.FinishReason),
         };
     }
 
@@ -149,7 +151,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Model = model,
             Messages = payloadMessages,
             MaxTokens = maxCompletionTokens,
-            ParallelToolCalls = true,
+            ParallelToolCalls = completionParameters?.ParallelToolCalls ?? true,
+            ToolChoice = MapToolChoice(completionParameters?.ToolChoice),
             Tools = tools.Select(t => new OaiToolDefinitionPayload
             {
                 Function = new OaiFunctionDefinitionPayload
@@ -196,7 +199,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             ToolCalls = toolCalls,
             Usage = result?.Usage is { } u
                 ? new TokenUsage(u.PromptTokens, u.CompletionTokens)
-                : null
+                : null,
+            FinishReason = MapOpenAiFinishReason(choice.FinishReason),
         };
     }
 
@@ -284,7 +288,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Model = model,
             Messages = payloadMessages,
             MaxTokens = maxCompletionTokens,
-            ParallelToolCalls = true,
+            ParallelToolCalls = completionParameters?.ParallelToolCalls ?? true,
+            ToolChoice = MapToolChoice(completionParameters?.ToolChoice),
             Tools = tools.Select(t => new OaiToolDefinitionPayload
             {
                 Function = new OaiFunctionDefinitionPayload
@@ -322,6 +327,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         // Accumulate tool calls by index
         var toolCallAccumulator = new Dictionary<int, (string Id, string Name, System.Text.StringBuilder Args)>();
         TokenUsage? streamUsage = null;
+        string? streamFinishReason = null;
 
         while (true)
         {
@@ -349,6 +355,7 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
                 streamUsage = new TokenUsage(su.PromptTokens, su.CompletionTokens);
 
             var choice = streamChunk.Choices?.FirstOrDefault();
+            if (choice?.FinishReason is { } fr) streamFinishReason = fr;
             if (choice?.Delta is null) continue;
 
             // Accumulate text deltas
@@ -396,9 +403,25 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         {
             Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
             ToolCalls = toolCalls,
-            Usage = streamUsage
+            Usage = streamUsage,
+            FinishReason = MapOpenAiFinishReason(streamFinishReason),
         });
     }
+
+    /// <summary>
+    /// Maps an OpenAI-compatible <c>finish_reason</c> wire value onto the
+    /// normalised <see cref="FinishReason"/> enum. Unknown/missing values
+    /// collapse to <see cref="FinishReason.Unknown"/>.
+    /// </summary>
+    private protected static FinishReason MapOpenAiFinishReason(string? raw) => raw switch
+    {
+        "stop" => FinishReason.Stop,
+        "length" => FinishReason.Length,
+        "tool_calls" => FinishReason.ToolCalls,
+        "function_call" => FinishReason.ToolCalls,
+        "content_filter" => FinishReason.ContentFilter,
+        _ => FinishReason.Unknown,
+    };
 
     /// <summary>
     /// Resolves the API key to use for requests. Override in subclasses that
@@ -515,7 +538,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [property: JsonPropertyName("usage")] OaiUsage? Usage = null);
 
     private sealed record CompletionChoice(
-        [property: JsonPropertyName("message")] CompletionMessagePayload? Message);
+        [property: JsonPropertyName("message")] CompletionMessagePayload? Message,
+        [property: JsonPropertyName("finish_reason")] string? FinishReason = null);
 
     private sealed class OaiUsage
     {
@@ -531,6 +555,25 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    /// <summary>
+    /// Maps a provider-neutral <see cref="ToolChoice"/> to the OpenAI
+    /// <c>tool_choice</c> wire shape (string for auto/none/required,
+    /// nested object for a pinned function). Returns <see langword="null"/>
+    /// when the field should be omitted (default auto).
+    /// </summary>
+    private static object? MapToolChoice(LocalInference.ToolChoice? choice) => choice?.Mode switch
+    {
+        null or LocalInference.ToolChoiceMode.Auto => null,
+        LocalInference.ToolChoiceMode.None     => "none",
+        LocalInference.ToolChoiceMode.Required => "required",
+        LocalInference.ToolChoiceMode.Named    => new
+        {
+            type = "function",
+            function = new { name = choice.NamedFunction },
+        },
+        _ => null,
+    };
+
     // Request
 
     private sealed class OaiToolCompletionRequest
@@ -542,6 +585,9 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
         [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; }
+        [JsonPropertyName("tool_choice")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public object? ToolChoice { get; init; }
         [JsonPropertyName("temperature")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public float? Temperature { get; init; }
@@ -684,6 +730,9 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; init; }
         [JsonPropertyName("parallel_tool_calls")] public bool ParallelToolCalls { get; init; }
+        [JsonPropertyName("tool_choice")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public object? ToolChoice { get; init; }
         [JsonPropertyName("temperature")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public float? Temperature { get; init; }
@@ -846,6 +895,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
             Model = model,
             Input = input,
             Tools = respTools.Count > 0 ? respTools : null,
+            ParallelToolCalls = completionParameters?.ParallelToolCalls,
+            ToolChoice = MapToolChoice(completionParameters?.ToolChoice),
             MaxOutputTokens = maxCompletionTokens,
             Stream = true,
             Temperature = completionParameters?.Temperature,
@@ -877,6 +928,8 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         // Map output_index → call_id for providers that omit call_id from delta/done events
         var outputIndexToCallId = new Dictionary<int, string>();
         TokenUsage? respUsage = null;
+        string? respStatus = null;
+        string? respIncompleteReason = null;
 
         while (true)
         {
@@ -976,6 +1029,14 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
                 case "response.completed":
                     if (evt.Response?.Usage is { } respU)
                         respUsage = new TokenUsage(respU.InputTokens, respU.OutputTokens);
+                    respStatus = evt.Response?.Status;
+                    respIncompleteReason = evt.Response?.IncompleteDetails?.Reason;
+                    break;
+                case "response.incomplete":
+                    respStatus = evt.Response?.Status ?? "incomplete";
+                    respIncompleteReason = evt.Response?.IncompleteDetails?.Reason;
+                    if (evt.Response?.Usage is { } respU2)
+                        respUsage = new TokenUsage(respU2.InputTokens, respU2.OutputTokens);
                     break;
             }
         }
@@ -994,8 +1055,32 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         {
             Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
             ToolCalls = toolCalls,
-            Usage = respUsage
+            Usage = respUsage,
+            FinishReason = MapResponsesApiFinishReason(respStatus, respIncompleteReason, toolCalls.Count > 0),
         });
+    }
+
+    /// <summary>
+    /// Maps Responses API <c>status</c> + <c>incomplete_details.reason</c>
+    /// into the normalised <see cref="FinishReason"/>. Tool calls on a
+    /// completed response surface as <see cref="FinishReason.ToolCalls"/>.
+    /// </summary>
+    private protected static FinishReason MapResponsesApiFinishReason(string? status, string? incompleteReason, bool hasToolCalls)
+    {
+        if (string.Equals(status, "incomplete", StringComparison.Ordinal))
+        {
+            return incompleteReason switch
+            {
+                "max_output_tokens" => FinishReason.Length,
+                "content_filter" => FinishReason.ContentFilter,
+                _ => FinishReason.Unknown,
+            };
+        }
+
+        if (string.Equals(status, "completed", StringComparison.Ordinal))
+            return hasToolCalls ? FinishReason.ToolCalls : FinishReason.Stop;
+
+        return hasToolCalls ? FinishReason.ToolCalls : FinishReason.Unknown;
     }
 
     /// <summary>
@@ -1060,6 +1145,12 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
         [JsonPropertyName("model")] public required string Model { get; init; }
         [JsonPropertyName("input")] public required List<object> Input { get; init; }
         [JsonPropertyName("tools")] public List<RespToolDefinition>? Tools { get; init; }
+        [JsonPropertyName("parallel_tool_calls")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? ParallelToolCalls { get; init; }
+        [JsonPropertyName("tool_choice")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public object? ToolChoice { get; init; }
         [JsonPropertyName("stream")] public bool Stream { get; init; }
         [JsonPropertyName("max_output_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -1111,6 +1202,13 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     private sealed class RespCompletedResponse
     {
         [JsonPropertyName("usage")] public RespUsage? Usage { get; set; }
+        [JsonPropertyName("status")] public string? Status { get; set; }
+        [JsonPropertyName("incomplete_details")] public RespIncompleteDetails? IncompleteDetails { get; set; }
+    }
+
+    private sealed class RespIncompleteDetails
+    {
+        [JsonPropertyName("reason")] public string? Reason { get; set; }
     }
 
     private sealed class RespUsage

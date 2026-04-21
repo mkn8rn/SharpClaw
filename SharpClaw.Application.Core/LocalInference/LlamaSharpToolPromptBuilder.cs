@@ -31,14 +31,20 @@ internal static class LlamaSharpToolPromptBuilder
     /// tool definitions, injecting the envelope system-prompt suffix and
     /// formatting prior tool round-trips as envelope JSON.
     /// </summary>
+    /// <param name="imageCount">
+    /// Number of images staged into the MTMD projector for this turn.
+    /// When greater than zero, a short notice is appended to the system
+    /// prompt so the model is aware of the attached visual inputs.
+    /// </param>
     public static ChatHistory Build(
         string? systemPrompt,
         IReadOnlyList<ToolAwareMessage> messages,
-        IReadOnlyList<ChatToolDefinition> tools)
+        IReadOnlyList<ChatToolDefinition> tools,
+        int imageCount = 0)
     {
         var history = new ChatHistory();
 
-        var systemContent = BuildSystemPrompt(systemPrompt, tools);
+        var systemContent = BuildSystemPrompt(systemPrompt, tools, imageCount);
         history.AddMessage(AuthorRole.System, systemContent);
 
         foreach (var msg in messages)
@@ -69,7 +75,7 @@ internal static class LlamaSharpToolPromptBuilder
     // ── System prompt ─────────────────────────────────────────────
 
     private static string BuildSystemPrompt(
-        string? systemPrompt, IReadOnlyList<ChatToolDefinition> tools)
+        string? systemPrompt, IReadOnlyList<ChatToolDefinition> tools, int imageCount)
     {
         var sb = new StringBuilder();
 
@@ -77,6 +83,14 @@ internal static class LlamaSharpToolPromptBuilder
         {
             sb.Append(systemPrompt);
             sb.Append("\n\n");
+        }
+
+        if (imageCount > 0)
+        {
+            sb.Append("## Visual context\n\n");
+            sb.Append(imageCount == 1
+                ? "You have been shown 1 image in this turn. Refer to it naturally in your response.\n\n"
+                : $"You have been shown {imageCount} images in this turn, in the order they appear in the conversation. Refer to them naturally in your response.\n\n");
         }
 
         sb.AppendLine("## Tool calling");
