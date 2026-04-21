@@ -92,11 +92,12 @@ public sealed class JwtSessionMiddleware(
             var session = context.RequestServices.GetRequiredService<SessionService>();
             if (session.UserId is null && !IsGatewayAuthenticated(context))
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-
                 if (tokenExpired)
                 {
-                    // Machine-readable expiry signal for third-party clients
+                    // 419 Authentication Timeout: the token was valid but has since expired or been
+                    // server-side invalidated. Clients should refresh via POST /auth/refresh.
+                    // Distinct from 401 (no/bad token) and 423 (missing API key).
+                    context.Response.StatusCode = 419;
                     context.Response.Headers["WWW-Authenticate"] = """Bearer error="invalid_token", error_description="The access token has expired" """.Trim();
                     context.Response.ContentType = "application/json";
                     await context.Response.WriteAsync(
@@ -104,7 +105,13 @@ public sealed class JwtSessionMiddleware(
                 }
                 else
                 {
-                    await context.Response.WriteAsync("Authentication required.");
+                    // 401 Unauthorized: no Bearer token was provided, or the token is malformed /
+                    // has an invalid signature. The client needs to log in.
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    context.Response.Headers["WWW-Authenticate"] = """Bearer error="invalid_token", error_description="No valid access token was provided" """.Trim();
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(
+                        $$"""{"error":"{{AuthErrorCodes.InvalidAccessToken}}","message":"A valid Bearer access token is required. Log in via POST /auth/login to obtain one."}""");
                 }
                 return;
             }
