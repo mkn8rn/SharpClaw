@@ -85,12 +85,14 @@ public static class InfrastructureServiceExtensions
                     "with EFC 10 compatibility. Not yet available.");
         }
 
-        // Register migration gate and service for relational providers only.
-        if (mode != StorageMode.JsonFile)
-        {
-            services.AddSingleton<MigrationGate>();
-            services.AddSingleton<MigrationService>();
-        }
+        // Register migration gate and service for all storage modes so that
+        // the /admin/db/* endpoints can always bind their DI parameters.
+        // In JsonFile mode the service is effectively a no-op (InMemory
+        // provider has no pending migrations), but it must still be
+        // resolvable — otherwise minimal-API parameter binding infers the
+        // type as [FromBody] and fails endpoint construction on GET routes.
+        services.AddSingleton<MigrationGate>();
+        services.AddSingleton<MigrationService>();
 
         return services;
     }

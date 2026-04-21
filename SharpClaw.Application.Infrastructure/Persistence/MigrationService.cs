@@ -34,6 +34,9 @@ public sealed class MigrationService(
 
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+            if (!db.Database.IsRelational())
+                return MigrationResult.NoPending();
+
             var pending = (await db.Database.GetPendingMigrationsAsync(ct)).ToList();
 
             if (pending.Count == 0)
@@ -54,11 +57,15 @@ public sealed class MigrationService(
 
     /// <summary>
     /// Returns the current migration gate state plus applied/pending migration lists.
+    /// Returns empty lists for non-relational providers (e.g. InMemory/JsonFile).
     /// </summary>
     public async Task<MigrationStatusResult> GetStatusAsync(CancellationToken ct = default)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+        if (!db.Database.IsRelational())
+            return new(gate.State, [], []);
+
         var applied = (await db.Database.GetAppliedMigrationsAsync(ct)).ToList();
         var pending = (await db.Database.GetPendingMigrationsAsync(ct)).ToList();
         return new(gate.State, applied, pending);
