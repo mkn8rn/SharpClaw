@@ -498,11 +498,36 @@ internal static class LlamaSharpJsonSchemaConverter
 
         private string EmitString(JsonElement schema, string pointer, string hint)
         {
-            if (schema.TryGetProperty("pattern", out _))
-                TrackUnsupported($"{pointer}/pattern");
+            // Phase 5 — honour a supported `format` keyword by emitting
+            // a specialised rule from LlamaSharpStringFormatGrammars.
+            // Unsupported formats still track as unsupported so the
+            // conversion report explains which keys were ignored.
             if (schema.TryGetProperty("format", out var fmt) &&
-                fmt.ValueKind == JsonValueKind.String)
-                TrackUnsupported($"{pointer}/format ({fmt.GetString()})");
+                fmt.ValueKind == JsonValueKind.String &&
+                fmt.GetString() is { Length: > 0 } fmtName)
+            {
+                var fragment = LlamaSharpStringFormatGrammars.TryGet(fmtName);
+                if (fragment is not null)
+                {
+                    foreach (var (helperHint, helperBody) in fragment.Helpers)
+                        EmitNamedRule(helperHint, helperBody);
+                    return EmitNamedRule(hint + "-" + Sanitize(fmtName), fragment.TopBody);
+                }
+                TrackUnsupported($"{pointer}/format ({fmtName})");
+            }
+
+            // Pattern keyword: pass through to a trivial-regex probe. If
+            // the pattern can be turned into a safe, anchored regular
+            // grammar, we use it; otherwise fall back to the generic
+            // string primitive and record as unsupported.
+            if (schema.TryGetProperty("pattern", out var patternEl) &&
+                patternEl.ValueKind == JsonValueKind.String &&
+                patternEl.GetString() is { Length: > 0 } pattern)
+            {
+                if (LlamaSharpRegexToGrammar.TryConvert(pattern, out var patternBody))
+                    return EmitNamedRule(hint + "-pat", patternBody);
+                TrackUnsupported($"{pointer}/pattern");
+            }
 
             var min = TryGetInt(schema, "minLength") ?? 0;
             var max = TryGetInt(schema, "maxLength");

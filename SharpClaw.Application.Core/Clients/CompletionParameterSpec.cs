@@ -82,6 +82,17 @@ public sealed record CompletionParameterSpec
 
     public string[] ValidReasoningEffortValues { get; init; } = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
+    // ── Tool choice / parallel tool calls ────────────────────────
+
+    /// <summary>
+    /// When <see langword="true"/>, the provider honours the full
+    /// <c>tool_choice</c> surface (<c>auto</c>, <c>none</c>,
+    /// <c>required</c>, named function) and <c>parallel_tool_calls</c>.
+    /// OpenAI-compatible providers forward the fields on the wire;
+    /// LlamaSharp enforces them by compiling a tailored GBNF grammar.
+    /// </summary>
+    public bool SupportsToolChoice { get; init; }
+
     // ═════════════════════════════════════════════════════════════
     // Provider catalogue
     // ═════════════════════════════════════════════════════════════
@@ -113,6 +124,7 @@ public sealed record CompletionParameterSpec
         SupportsSeed = true,
         SupportsResponseFormat = true,
         SupportsReasoningEffort = true,
+        SupportsToolChoice = true,
     };
 
     private static readonly Dictionary<ProviderType, CompletionParameterSpec> Specs = new()
@@ -143,6 +155,7 @@ public sealed record CompletionParameterSpec
             SupportsResponseFormat = true,   // Chat Completions only
             SupportsReasoningEffort = true,  // Responses API / o-series & gpt-5
             ValidReasoningEffortValues = ["none", "minimal", "low", "medium", "high", "xhigh"],
+            SupportsToolChoice = true,
         },
 
         // ─────────────────────────────────────────────────────────
@@ -567,6 +580,7 @@ public sealed record CompletionParameterSpec
             OnlyJsonObjectResponseFormat = false,
             SupportsReasoningEffort = true,
             ReasoningEffortInformationalOnly = true,
+            SupportsToolChoice = true,
         },
 
         // ─────────────────────────────────────────────────────────
