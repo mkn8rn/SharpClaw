@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
@@ -97,7 +98,7 @@ public sealed class JsonFilePersistenceService(
             {
                 try
                 {
-                    var json = await ReadJsonAsync(file, ct);
+                    var json = await ReadJsonWithQuarantineAsync(file, entityDir, ct);
                     return (Json: json, File: file, Error: (Exception?)null);
                 }
                 catch (Exception ex)
@@ -600,7 +601,7 @@ public sealed class JsonFilePersistenceService(
 
         try
         {
-            var json = await ReadJsonAsync(filePath, ct);
+            var json = await ReadJsonWithQuarantineAsync(filePath, tableDir, ct);
             var rows = JsonSerializer.Deserialize<List<Dictionary<string, Guid>>>(json, JsonOptions);
             if (rows is null || rows.Count == 0)
                 return;
@@ -740,6 +741,22 @@ public sealed class JsonFilePersistenceService(
 
     private Task<string> ReadJsonAsync(string path, CancellationToken ct)
         => JsonFileEncryption.ReadJsonAsync(fs, path, encryptionOptions.Key, ct);
+
+    private async Task<string> ReadJsonWithQuarantineAsync(string path, string entityDir, CancellationToken ct)
+    {
+        using var readResult = await QuarantineService.ReadBytesWithRetryAsync(
+            fs,
+            path,
+            entityDir,
+            encryptionOptions.Key,
+            logger,
+            ct);
+
+        if (!readResult.IsSuccess)
+            throw readResult.Exception ?? new InvalidOperationException($"Failed to read persisted JSON file '{path}'.");
+
+        return Encoding.UTF8.GetString(readResult.Data!.Span);
+    }
 
     /// <summary>
     /// Replays a transaction manifest by re-flushing the described entity changes.
