@@ -296,7 +296,9 @@ internal sealed class PermissionEditorBuilder
         var idBlock = new TextBlock
         {
             Text = idText, FontFamily = TerminalUI.Mono, FontSize = 11,
-            // Amber foreground signals that wildcard rows are locked/immutable.
+            // Amber foreground signals that wildcard rows are special (can't
+            // be removed), even though their clearance is adjustable like any
+            // other grant. Colour is a visual marker, not a lock indicator.
             Foreground = isWildcard ? TerminalUI.Brush(0xFFAA00) : TerminalUI.Brush(0xE0E0E0),
             VerticalAlignment = VerticalAlignment.Center,
             MinWidth = _grantClearance ? 140 : 80, Tag = resId,
@@ -311,9 +313,10 @@ internal sealed class PermissionEditorBuilder
                 Text = "Clearance:", FontFamily = TerminalUI.Mono, FontSize = 9,
                 Foreground = TerminalUI.Brush(0x808080), VerticalAlignment = VerticalAlignment.Center,
             });
+            // Wildcard clearance IS editable — operators need to tune clearance
+            // over time without being stuck at whatever level the row was
+            // first granted with.
             var clrCombo = TerminalUI.MakeClearanceCombo(clearance);
-            // Wildcard clearance is immutable — lock the combo.
-            if (isWildcard) clrCombo.IsEnabled = false;
             row.Children.Add(clrCombo);
         }
 

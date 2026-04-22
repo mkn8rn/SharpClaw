@@ -495,11 +495,24 @@ try
 
     await app.StartAsync();
 
-    // Suppress console logging during interactive mode (file logging continues).
-    // CLI command/response logs go to System.Diagnostics.Debug (VS Output > Debug pane).
-    consoleLevelSwitch.MinimumLevel = Serilog.Events.LogEventLevel.Fatal;
+    // Interactive-mode console logging discipline: when the REPL is actually
+    // running, we suppress console logging so Serilog output doesn't scroll
+    // over the user's prompt. CLI command/response logs still go to
+    // System.Diagnostics.Debug (VS Output > Debug pane).
+    //
+    // In headless mode (stdin redirected or closed), RunInteractiveAsync
+    // skips the REPL and just waits on the cancellation token. Console
+    // logging must stay visible there — stdout is the only feedback channel
+    // for containers, CI runs, systemd units, and detached child processes.
+    // See bug #1 in docs/internal/local-inference-pipeline-debug-report.md.
+    var interactive = !Console.IsInputRedirected;
+    if (interactive)
+        consoleLevelSwitch.MinimumLevel = Serilog.Events.LogEventLevel.Fatal;
+
     await CliDispatcher.RunInteractiveAsync(app.Services, app.Lifetime.ApplicationStopping);
-    consoleLevelSwitch.MinimumLevel = Serilog.Events.LogEventLevel.Information;
+
+    if (interactive)
+        consoleLevelSwitch.MinimumLevel = Serilog.Events.LogEventLevel.Information;
 
     await app.StopAsync();
 }

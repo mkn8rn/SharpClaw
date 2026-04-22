@@ -132,10 +132,13 @@ internal static class LlamaSharpToolGrammar
 
         var sb = new StringBuilder();
         AppendRootAndMode(sb, modeVal, callsArr);
-        sb.Append("call-obj  ::= \"{\" ws \"\\\"id\\\"\"   ws \":\" ws string \",\" ws\n");
-        sb.Append($"                   \"\\\"name\\\"\"  ws \":\" ws {nameTerminal} \",\" ws\n");
-        sb.Append("                   \"\\\"args\\\"\"  ws \":\" ws obj\n");
-        sb.Append("               \"}\"\n\n");
+        // Single-line rule body — see AppendRootAndMode for why.
+        sb.Append(
+            "call-obj  ::= \"{\" ws " +
+            "\"\\\"id\\\"\" ws \":\" ws string \",\" ws " +
+            $"\"\\\"name\\\"\" ws \":\" ws {nameTerminal} \",\" ws " +
+            "\"\\\"args\\\"\" ws \":\" ws obj " +
+            "\"}\"\n\n");
         AppendJsonPrimitives(sb);
         return sb.ToString();
     }
@@ -193,7 +196,8 @@ internal static class LlamaSharpToolGrammar
         sb.Append("call-obj  ::= ");
         for (int j = 0; j < fragments.Count; j++)
         {
-            if (j > 0) sb.Append("\n            | ");
+            // Single-line alternation list — see BuildCallsArr for why.
+            if (j > 0) sb.Append(" | ");
             sb.Append($"call-obj-{j}");
         }
         sb.Append("\n\n");
@@ -202,10 +206,13 @@ internal static class LlamaSharpToolGrammar
         {
             var (name, argsRule, _) = fragments[j];
             var literal = EscapeForJsonInsideGbnf(name);
-            sb.Append($"call-obj-{j} ::= \"{{\" ws \"\\\"id\\\"\" ws \":\" ws string \",\" ws\n");
-            sb.Append($"                   \"\\\"name\\\"\" ws \":\" ws \"\\\"{literal}\\\"\" \",\" ws\n");
-            sb.Append($"                   \"\\\"args\\\"\" ws \":\" ws {argsRule}\n");
-            sb.Append("               \"}\"\n\n");
+            // Single-line rule body — see AppendRootAndMode for why.
+            sb.Append(
+                $"call-obj-{j} ::= \"{{\" ws " +
+                "\"\\\"id\\\"\" ws \":\" ws string \",\" ws " +
+                $"\"\\\"name\\\"\" ws \":\" ws \"\\\"{literal}\\\"\" \",\" ws " +
+                $"\"\\\"args\\\"\" ws \":\" ws {argsRule} " +
+                "\"}\"\n\n");
         }
 
         foreach (var (_, _, schemaBody) in fragments)
@@ -237,6 +244,10 @@ internal static class LlamaSharpToolGrammar
     }
 
     private static string BuildCallsArr(ToolChoice choice, bool parallelCalls, bool singleCallOnly) =>
+        // All bodies are emitted on a single physical line. llama.cpp's GBNF
+        // parser does not reliably treat whitespace-then-'|' on a new line as
+        // a continuation of the previous rule's alternation; see bug #4 in
+        // docs/internal/local-inference-pipeline-debug-report.md.
         choice.Mode switch
         {
             // None: must be empty — enforced also when refusal mode applies
@@ -245,9 +256,9 @@ internal static class LlamaSharpToolGrammar
                 "\"[\" ws \"]\"",
             // Auto: allow empty (message/refusal branch) or a populated array.
             ToolChoiceMode.Auto when parallelCalls =>
-                "\"[\" ws \"]\"\n            | \"[\" ws call-obj ( ws \",\" ws call-obj )* ws \"]\"",
+                "\"[\" ws \"]\" | \"[\" ws call-obj ( ws \",\" ws call-obj )* ws \"]\"",
             ToolChoiceMode.Auto =>
-                "\"[\" ws \"]\"\n            | \"[\" ws call-obj ws \"]\"",
+                "\"[\" ws \"]\" | \"[\" ws call-obj ws \"]\"",
             _ when singleCallOnly =>
                 "\"[\" ws call-obj ws \"]\"",
             _ =>
@@ -256,10 +267,19 @@ internal static class LlamaSharpToolGrammar
 
     private static void AppendRootAndMode(StringBuilder sb, string modeVal, string callsArr)
     {
-        sb.Append("root   ::= \"{\" ws \"\\\"mode\\\"\" ws \":\" ws mode-val \",\" ws\n");
-        sb.Append("               \"\\\"text\\\"\" ws \":\" ws string     \",\" ws\n");
-        sb.Append("               \"\\\"calls\\\"\" ws \":\" ws calls-arr\n");
-        sb.Append("           \"}\"\n\n");
+        // The root rule is emitted on a single physical line. llama.cpp's GBNF
+        // parser (see llama-grammar.cpp::parse_rule) only treats a new line as
+        // a continuation of the previous rule when that line begins with an
+        // alternation bar '|'. Split-across-lines sequences terminate the rule
+        // at the first newline, which made the parser try to read "text" as a
+        // new rule LHS and fail with: expecting name at "\"text\"" ws ":" ws string.
+        // See docs/internal/local-inference-pipeline-debug-report.md bug #4.
+        sb.Append(
+            "root   ::= \"{\" ws " +
+            "\"\\\"mode\\\"\" ws \":\" ws mode-val \",\" ws " +
+            "\"\\\"text\\\"\" ws \":\" ws string \",\" ws " +
+            "\"\\\"calls\\\"\" ws \":\" ws calls-arr " +
+            "\"}\"\n\n");
         sb.Append($"mode-val ::= {modeVal}\n\n");
         sb.Append($"calls-arr ::= {callsArr}\n\n");
     }
@@ -267,16 +287,13 @@ internal static class LlamaSharpToolGrammar
     private static void AppendJsonPrimitives(StringBuilder sb)
     {
         sb.Append("# ── JSON primitives ──────────────────────────────────────────\n\n");
-        sb.Append("obj    ::= \"{\" ws \"}\"\n");
-        sb.Append("         | \"{\" ws kv-pair ( ws \",\" ws kv-pair )* ws \"}\"\n\n");
+        // Single-line alternations — see bug #4 and BuildCallsArr.
+        sb.Append("obj    ::= \"{\" ws \"}\" | \"{\" ws kv-pair ( ws \",\" ws kv-pair )* ws \"}\"\n\n");
         sb.Append("kv-pair ::= string ws \":\" ws value\n\n");
         sb.Append("value  ::= string | number | obj | arr | \"true\" | \"false\" | \"null\"\n\n");
-        sb.Append("arr    ::= \"[\" ws \"]\"\n");
-        sb.Append("         | \"[\" ws value ( ws \",\" ws value )* ws \"]\"\n\n");
+        sb.Append("arr    ::= \"[\" ws \"]\" | \"[\" ws value ( ws \",\" ws value )* ws \"]\"\n\n");
         sb.Append("string ::= \"\\\"\" char* \"\\\"\"\n\n");
-        sb.Append("char   ::= [^\"\\\\]\n");
-        sb.Append("         | \"\\\\\" ( \"\\\"\" | \"\\\\\" | \"/\" | \"b\" | \"f\" | \"n\" | \"r\" | \"t\" )\n");
-        sb.Append("         | \"\\\\\" \"u\" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]\n\n");
+        sb.Append("char   ::= [^\"\\\\] | \"\\\\\" ( \"\\\"\" | \"\\\\\" | \"/\" | \"b\" | \"f\" | \"n\" | \"r\" | \"t\" ) | \"\\\\\" \"u\" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]\n\n");
         sb.Append("number ::= \"-\"? ( \"0\" | [1-9] [0-9]* ) ( \".\" [0-9]+ )? ( [eE] [+-]? [0-9]+ )?\n\n");
         sb.Append("integer ::= \"-\"? ( \"0\" | [1-9] [0-9]* )\n\n");
         sb.Append("boolean ::= \"true\" | \"false\"\n\n");

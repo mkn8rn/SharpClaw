@@ -45,6 +45,16 @@ public sealed class LocalModelService(
     /// (LlamaSharp + Whisper). The GGUF architecture header is probed after download
     /// to skip providers that are clearly incompatible; a null member in the response
     /// means that provider was skipped, not that an error occurred.
+    /// <para>
+    /// NOTE: Unlike <see cref="DownloadAndRegisterAsync"/>, this path does NOT yet
+    /// create a placeholder DB row before the download starts, so
+    /// <c>GET /models/local</c> will still return an empty list for the duration of
+    /// a download submitted via the both-providers endpoint. Fixing this requires
+    /// either (a) creating placeholders for both target providers up front and
+    /// deleting the one that ends up architecture-incompatible, or (b) probing
+    /// architecture via a partial range-download before committing placeholders.
+    /// See bug #2 in docs/internal/local-inference-pipeline-debug-report.md.
+    /// </para>
     /// </summary>
     public async Task<BothModelsResponse> DownloadAndRegisterBothAsync(
         DownloadModelRequest request,
@@ -76,9 +86,214 @@ public sealed class LocalModelService(
         IProgress<double>? progress,
         CancellationToken ct)
     {
-        var downloaded = await DownloadFileAsync(request, progress, ct);
-        var modelName  = request.Name ?? Path.GetFileNameWithoutExtension(downloaded.Target.Filename);
-        return await RegisterModelAsync(downloaded, modelName, provider, defaultCapability, ct);
+        // Phase A: resolve the download target and persist a placeholder row
+        // BEFORE starting the download. Previously the model + file rows were
+        // only created after DownloadAsync returned, which meant GET
+        // /models/local returned an empty list for the entire duration of a
+        // multi-GB download — zero visibility into in-flight downloads. See
+        // bug #2 in docs/internal/local-inference-pipeline-debug-report.md.
+        var target = await ResolveDownloadTargetAsync(request, ct);
+        var modelName = request.Name ?? Path.GetFileNameWithoutExtension(target.Target.Filename);
+
+        var (modelId, fileId) = await CreateOrReuseDownloadPlaceholderAsync(
+            modelName, provider, defaultCapability, target, ct);
+
+        // Phase B: download. Wrap the caller's IProgress so progress updates
+        // flow both to the caller and into the DB. DB writes are throttled
+        // to whole-percent increments to avoid thrashing the persistence
+        // layer on fast connections.
+        var dbProgress = new ThrottledDbProgressWriter(db, fileId, progress);
+        try
+        {
+            await downloadManager.DownloadAsync(target.DownloadUrl, target.DestPath, dbProgress, ct);
+        }
+        catch
+        {
+            // Phase C (error): flip to Failed so the row is observable as
+            // a failed attempt rather than silently stuck in Downloading.
+            await MarkDownloadFailedAsync(fileId, ct);
+            throw;
+        }
+
+        // Phase C (success): finalise the placeholder into a Ready row.
+        return await FinaliseDownloadAsync(modelId, fileId, target, ct);
+    }
+
+    /// <summary>
+    /// Resolves the HuggingFace / direct URL to a concrete download target
+    /// without actually downloading anything. Splits the "resolve" work out
+    /// of <see cref="DownloadFileAsync"/> so callers can use the resolved
+    /// target to create a placeholder DB row before the download begins.
+    /// </summary>
+    private async Task<ResolvedDownloadTarget> ResolveDownloadTargetAsync(
+        DownloadModelRequest request,
+        CancellationToken ct)
+    {
+        var files = await urlResolver.ResolveAsync(request.Url, ct);
+        if (files.Count == 0)
+            throw new ArgumentException("No downloadable GGUF files found at the URL.");
+
+        var target = request.Quantization is not null
+            ? files.FirstOrDefault(f =>
+                f.Quantization?.Equals(request.Quantization, StringComparison.OrdinalIgnoreCase) == true)
+              ?? files[0]
+            : files[0];
+
+        var sourceFolder = ModelDownloadManager.ResolveSourceFolder(request.Url);
+        var destPath = downloadManager.GetModelPath(sourceFolder, target.Filename);
+        return new ResolvedDownloadTarget(target, target.DownloadUrl, destPath, request.Url);
+    }
+
+    /// <summary>
+    /// Creates the <see cref="ModelDB"/> and <see cref="LocalModelFileDB"/>
+    /// rows for an in-progress download, or reuses them if a matching
+    /// combination already exists (e.g. re-download after
+    /// <see cref="LocalModelStatus.Failed"/>).
+    /// Returns <c>(modelId, fileId)</c> so later phases don't have to re-query.
+    /// </summary>
+    private async Task<(Guid ModelId, Guid FileId)> CreateOrReuseDownloadPlaceholderAsync(
+        string modelName,
+        ProviderDB provider,
+        ModelCapability defaultCapability,
+        ResolvedDownloadTarget target,
+        CancellationToken ct)
+    {
+        var model = await db.Models
+            .FirstOrDefaultAsync(m => m.Name == modelName && m.ProviderId == provider.Id, ct);
+        if (model is null)
+        {
+            var capabilities = ProviderService.InferCapabilities(modelName);
+            if (capabilities == ModelCapability.None)
+                capabilities = defaultCapability;
+            model = new ModelDB { Name = modelName, ProviderId = provider.Id, Capabilities = capabilities };
+            db.Models.Add(model);
+        }
+
+        var file = await db.LocalModelFiles
+            .FirstOrDefaultAsync(f => f.ModelId == model.Id, ct);
+        if (file is null)
+        {
+            file = new LocalModelFileDB
+            {
+                ModelId = model.Id,
+                SourceUrl = target.RequestUrl,
+                FilePath = target.DestPath,
+                FileSizeBytes = 0,
+                Quantization = target.Target.Quantization,
+                Status = LocalModelStatus.Downloading,
+                DownloadProgress = 0.0,
+            };
+            db.LocalModelFiles.Add(file);
+        }
+        else if (file.Status == LocalModelStatus.Downloading)
+        {
+            // A prior download is already in flight for this (model, provider)
+            // pairing. Refuse rather than race — the caller can poll status
+            // instead.
+            throw new InvalidOperationException(
+                $"A download for model '{modelName}' is already in progress.");
+        }
+        else
+        {
+            // Re-download after Ready or Failed: reset the row to Downloading
+            // and let the fresh download overwrite the file.
+            file.SourceUrl = target.RequestUrl;
+            file.FilePath = target.DestPath;
+            file.Quantization = target.Target.Quantization;
+            file.Status = LocalModelStatus.Downloading;
+            file.DownloadProgress = 0.0;
+            file.FileSizeBytes = 0;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return (model.Id, file.Id);
+    }
+
+    private async Task MarkDownloadFailedAsync(Guid fileId, CancellationToken ct)
+    {
+        // Use a dedicated scope: the enclosing ct may be cancelled. Even so
+        // we want the row to reflect Failed, so pass CancellationToken.None
+        // for the write itself.
+        var file = await db.LocalModelFiles.FirstOrDefaultAsync(f => f.Id == fileId, CancellationToken.None);
+        if (file is null) return;
+        file.Status = LocalModelStatus.Failed;
+        await db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    private async Task<ModelResponse> FinaliseDownloadAsync(
+        Guid modelId, Guid fileId, ResolvedDownloadTarget target, CancellationToken ct)
+    {
+        var model = await db.Models.FirstAsync(m => m.Id == modelId, ct);
+        var file = await db.LocalModelFiles.FirstAsync(f => f.Id == fileId, ct);
+
+        file.FilePath = target.DestPath;
+        file.FileSizeBytes = new FileInfo(target.DestPath).Length;
+        file.Status = LocalModelStatus.Ready;
+        file.DownloadProgress = 1.0;
+        file.Quantization = target.Target.Quantization;
+
+        await db.SaveChangesAsync(ct);
+
+        var provider = await db.Providers.FirstAsync(p => p.Id == model.ProviderId, ct);
+        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.Capabilities);
+    }
+
+    private sealed record ResolvedDownloadTarget(
+        ResolvedModelFile Target, string DownloadUrl, string DestPath, string RequestUrl);
+
+    /// <summary>
+    /// Wraps the caller's <see cref="IProgress{Double}"/> (if any) and also
+    /// flushes whole-percent progress updates to the persisted
+    /// <see cref="LocalModelFileDB"/> row so that <c>GET /models/local</c>
+    /// clients can observe download progress in real time.
+    /// <para>
+    /// Whole-percent throttling keeps DB write pressure bounded on fast
+    /// connections. Final "100%" is not written here — callers finalise via
+    /// <c>FinaliseDownloadAsync</c>.
+    /// </para>
+    /// </summary>
+    private sealed class ThrottledDbProgressWriter(
+        SharpClawDbContext db,
+        Guid fileId,
+        IProgress<double>? inner) : IProgress<double>
+    {
+        private int _lastWrittenPct = -1;
+
+        public void Report(double value)
+        {
+            inner?.Report(value);
+
+            // Clamp to [0, 1) — final 1.0 is persisted by FinaliseDownloadAsync.
+            if (value < 0) value = 0;
+            if (value >= 1) return;
+
+            var pct = (int)(value * 100);
+            if (pct <= _lastWrittenPct) return;
+            _lastWrittenPct = pct;
+
+            // Fire-and-forget is acceptable here: the next increment will
+            // overwrite any dropped write, and the finalise step is
+            // authoritative for the terminal state.
+            _ = UpdateAsync(value);
+        }
+
+        private async Task UpdateAsync(double value)
+        {
+            try
+            {
+                var file = await db.LocalModelFiles
+                    .FirstOrDefaultAsync(f => f.Id == fileId);
+                if (file is null) return;
+                file.DownloadProgress = value;
+                await db.SaveChangesAsync();
+            }
+            catch
+            {
+                // Persistence errors during a long download must not abort
+                // the download itself. The finalise step will settle the
+                // row regardless.
+            }
+        }
     }
 
     private async Task<DownloadedFile> DownloadFileAsync(

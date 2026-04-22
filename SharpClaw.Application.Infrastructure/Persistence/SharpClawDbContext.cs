@@ -685,21 +685,38 @@ public class SharpClawDbContext(
 
     /// <summary>
     /// Returns <c>true</c> when a <see cref="ResourceAccessDB"/> wildcard row
-    /// has had one of its data-carrying properties actually changed.
-    /// Audit timestamps and shadow properties are intentionally excluded so
-    /// that unrelated EF bookkeeping does not trip the immutability guard.
+    /// has had one of its identity-carrying properties actually changed.
+    /// <para>
+    /// The wildcard guard blocks changes to what the grant <i>is</i>
+    /// (its resource type / id / sub-type) — repointing a wildcard grant at a
+    /// different resource category would silently widen or narrow its reach
+    /// in ways an operator almost certainly didn't intend.
+    /// </para>
+    /// <para>
+    /// It intentionally does NOT block changes to clearance-and-disposition
+    /// properties (<see cref="ResourceAccessDB.Clearance"/>,
+    /// <see cref="ResourceAccessDB.AccessLevel"/>,
+    /// <see cref="ResourceAccessDB.IsDefault"/>). Those are the knobs an
+    /// operator legitimately tunes over time — e.g. promoting a granted
+    /// wildcard from <see cref="PermissionClearance.Unset"/> to
+    /// <see cref="PermissionClearance.Independent"/>, or demoting an
+    /// overly-permissive clearance to a lower level — and there is no
+    /// operational reason a wildcard grant should be forever frozen at its
+    /// original clearance.
+    /// </para>
+    /// <para>
+    /// Audit timestamps and shadow properties are excluded so that unrelated
+    /// EF bookkeeping does not trip the guard.
+    /// </para>
     /// </summary>
     private static bool WildcardGrantDataChanged(EntityEntry entry)
     {
-        ReadOnlySpan<string> dataProperties =
+        ReadOnlySpan<string> identityProperties =
         [
-            nameof(ResourceAccessDB.Clearance),
-            nameof(ResourceAccessDB.SubType),
             nameof(ResourceAccessDB.ResourceType),
-            nameof(ResourceAccessDB.AccessLevel),
-            nameof(ResourceAccessDB.IsDefault),
+            nameof(ResourceAccessDB.SubType),
         ];
-        foreach (var prop in dataProperties)
+        foreach (var prop in identityProperties)
         {
             if (!Equals(entry.OriginalValues[prop], entry.CurrentValues[prop]))
                 return true;
