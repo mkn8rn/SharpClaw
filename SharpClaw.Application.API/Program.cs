@@ -124,6 +124,8 @@ try
 
     builder.Host.UseSerilog();
 
+    builder.Services.AddSingleton(sessionLogs);
+
     // Module log capture — feeds per-module ring buffers for the /modules/{id}/logs API.
     var moduleLogService = new ModuleLogService();
     builder.Services.AddSingleton(moduleLogService);
