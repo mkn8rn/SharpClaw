@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
@@ -52,10 +53,43 @@ public static class CliDispatcher
         ["login", "register", "help", "--help", "-h"];
 
     /// <summary>
+    /// <summary>
     /// Runs an interactive REPL alongside the API server.
+    /// <para>
+    /// When stdin is not a TTY (redirected, closed, or the host is a
+    /// non-interactive service/container), the REPL is skipped and this
+    /// method waits on the cancellation token instead. This prevents the
+    /// bug where a launched-detached API process immediately reads EOF
+    /// from its closed stdin, `Console.ReadLine` returns null, and the
+    /// whole host shuts down a beat after startup — see bug #1 in
+    /// docs/internal/local-inference-pipeline-debug-report.md.
+    /// </para>
+    /// <para>
+    /// Returns whether the REPL actually ran. Callers (specifically
+    /// <c>Program.cs</c>) use this to decide whether to suppress console
+    /// logging for the duration of the REPL: in headless mode we want
+    /// console logging to stay visible because stdout is the only
+    /// feedback channel.
+    /// </para>
     /// </summary>
-    public static async Task RunInteractiveAsync(IServiceProvider services, CancellationToken ct)
+    public static async Task<bool> RunInteractiveAsync(IServiceProvider services, CancellationToken ct)
     {
+        if (Console.IsInputRedirected)
+        {
+            Log.Information(
+                "stdin is redirected; skipping interactive REPL. " +
+                "API will run until cancelled (Ctrl+C or host shutdown).");
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown path.
+            }
+            return false;
+        }
+
         Console.WriteLine();
         Console.WriteLine("Type 'help' for available commands, 'exit' to quit.");
         Console.WriteLine("Log in with: login <username> <password>");
@@ -144,6 +178,8 @@ public static class CliDispatcher
 
             Console.WriteLine();
         }
+
+        return true;
     }
 
     private static string[] ParseArgs(string input)

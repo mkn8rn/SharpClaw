@@ -100,11 +100,19 @@ public sealed class SeedingService(
         // Wildcard grants — access to ALL resources of each type.
         // WellKnownIds.AllResources is recognised as a universal match
         // by AgentActionService and is immutable at runtime.
+        //
+        // IMPORTANT: Clearance MUST be set to Independent. ResourceAccessDB
+        // defaults Clearance to Unset, and EvaluateResourceAccessAsync treats
+        // Unset as "grant is inert, deny." Without this the Admin role has
+        // wildcard rows that look right in the DB but always deny at runtime.
+        // Previously shipped without this line, causing every agent tool call
+        // against a resource type to be denied despite the role's wildcard.
         ResourceAccesses = [.. moduleRegistry.GetAllRegisteredResourceTypes()
             .Select(rt => new ResourceAccessDB
             {
                 ResourceType = rt,
                 ResourceId = WellKnownIds.AllResources,
+                Clearance = PermissionClearance.Independent,
             })],
     };
 
@@ -154,15 +162,30 @@ public sealed class SeedingService(
 
         foreach (var rt in allResourceTypes)
         {
-            if (!ps.ResourceAccesses.Any(a =>
-                    a.ResourceType == rt && a.ResourceId == WellKnownIds.AllResources))
+            // Two sub-tasks, matching the GlobalFlags loop above:
+            //   1. Add a wildcard row for any module-registered ResourceType
+            //      the admin PS doesn't have yet.
+            //   2. Upgrade any existing wildcard row whose Clearance is not
+            //      Independent (e.g. Unset, left over from the shipped-broken
+            //      seed that forgot to set Clearance on wildcard grants) so
+            //      the grant is actually effective rather than inert.
+            var existingAccess = ps.ResourceAccesses.FirstOrDefault(a =>
+                a.ResourceType == rt && a.ResourceId == WellKnownIds.AllResources);
+
+            if (existingAccess is null)
             {
                 ps.ResourceAccesses.Add(new ResourceAccessDB
                 {
                     PermissionSetId = psId,
                     ResourceType = rt,
                     ResourceId = WellKnownIds.AllResources,
+                    Clearance = PermissionClearance.Independent,
                 });
+                changed = true;
+            }
+            else if (existingAccess.Clearance != PermissionClearance.Independent)
+            {
+                existingAccess.Clearance = PermissionClearance.Independent;
                 changed = true;
             }
         }

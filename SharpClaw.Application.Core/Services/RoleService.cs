@@ -305,6 +305,11 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
             var key = (access.ResourceType, access.ResourceId);
             if (!requestedMap.TryGetValue(key, out var newClearance))
             {
+                // Wildcard grants cannot be silently removed by omission from
+                // the request payload — that would be a footgun where a partial
+                // update accidentally revokes universal access. Operators who
+                // genuinely want to demote a wildcard should do so through a
+                // dedicated explicit path, not by leaving it out of a PUT body.
                 if (access.ResourceId == WellKnownIds.AllResources)
                     throw new InvalidOperationException(
                         $"Wildcard grant for '{access.ResourceType}' is immutable and cannot be removed.");
@@ -313,10 +318,11 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
             }
             else if (access.Clearance != newClearance)
             {
-                if (access.ResourceId == WellKnownIds.AllResources)
-                    throw new InvalidOperationException(
-                        $"Clearance of wildcard grant for '{access.ResourceType}' is immutable and cannot be changed.");
-
+                // Clearance on a wildcard grant IS adjustable — operators
+                // legitimately need to tune clearance over time (e.g. raise
+                // from Unset to Independent, lower from Independent to a
+                // restricted level). The wildcard's identity (ResourceType,
+                // ResourceId) stays immutable; only the disposition changes.
                 access.Clearance = newClearance;
             }
             // else: unchanged — leave the row untouched, no EF state change.
