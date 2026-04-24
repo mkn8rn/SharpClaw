@@ -8,7 +8,6 @@ using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Application.Infrastructure.Models.Messages;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Application.Infrastructure.Models.Tasks;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Entities;
@@ -34,7 +33,6 @@ public class SharpClawDbContext(
     public DbSet<RoleDB> Roles => Set<RoleDB>();
     public DbSet<PermissionSetDB> PermissionSets => Set<PermissionSetDB>();
     public DbSet<RefreshTokenDB> RefreshTokens => Set<RefreshTokenDB>();
-    public DbSet<MemoryDB> Memories => Set<MemoryDB>();
     public DbSet<ProviderDB> Providers => Set<ProviderDB>();
     public DbSet<ModelDB> Models => Set<ModelDB>();
     public DbSet<AgentDB> Agents => Set<AgentDB>();
@@ -44,17 +42,6 @@ public class SharpClawDbContext(
     public DbSet<ChatMessageDB> ChatMessages => Set<ChatMessageDB>();
     public DbSet<ScheduledJobDB> ScheduledTasks => Set<ScheduledJobDB>();
 
-    // ── Permission resources & grants ─────────────────────────────
-    public DbSet<SkillDB> Skills => Set<SkillDB>();
-    public DbSet<SystemUserDB> SystemUsers => Set<SystemUserDB>();
-    public DbSet<InternalDatabaseDB> InternalDatabases => Set<InternalDatabaseDB>();
-    public DbSet<ExternalDatabaseDB> ExternalDatabases => Set<ExternalDatabaseDB>();
-    public DbSet<WebsiteDB> Websites => Set<WebsiteDB>();
-    public DbSet<SearchEngineDB> SearchEngines => Set<SearchEngineDB>();
-    public DbSet<ContainerDB> Containers => Set<ContainerDB>();
-    public DbSet<InputAudioDB> InputAudios => Set<InputAudioDB>();
-    public DbSet<DisplayDeviceDB> DisplayDevices => Set<DisplayDeviceDB>();
-    public DbSet<EditorSessionDB> EditorSessions => Set<EditorSessionDB>();
     public DbSet<TranscriptionSegmentDB> TranscriptionSegments => Set<TranscriptionSegmentDB>();
     public DbSet<ClearanceUserWhitelistEntryDB> ClearanceUserWhitelistEntries => Set<ClearanceUserWhitelistEntryDB>();
     public DbSet<ClearanceAgentWhitelistEntryDB> ClearanceAgentWhitelistEntries => Set<ClearanceAgentWhitelistEntryDB>();
@@ -64,16 +51,7 @@ public class SharpClawDbContext(
     public DbSet<ToolAwarenessSetDB> ToolAwarenessSets => Set<ToolAwarenessSetDB>();
     public DbSet<LocalModelFileDB> LocalModelFiles => Set<LocalModelFileDB>();
 
-    // ── Bot integrations ──────────────────────────────────────────
-    public DbSet<BotIntegrationDB> BotIntegrations => Set<BotIntegrationDB>();
-
-    // ── Document sessions ─────────────────────────────────────────
-    public DbSet<DocumentSessionDB> DocumentSessions => Set<DocumentSessionDB>();
-
-    // ── Native applications ───────────────────────────────────────
-    public DbSet<NativeApplicationDB> NativeApplications => Set<NativeApplicationDB>();
-
-    // ── Generic resource access (§3.10) ───────────────────────────
+    // ── Generic resource access (§3.10)
     public DbSet<ResourceAccessDB> ResourceAccesses => Set<ResourceAccessDB>();
 
     // ── Generic global flags (§12.4.2) ────────────────────────────
@@ -88,6 +66,7 @@ public class SharpClawDbContext(
     public DbSet<TaskInstanceDB> TaskInstances => Set<TaskInstanceDB>();
     public DbSet<TaskExecutionLogDB> TaskExecutionLogs => Set<TaskExecutionLogDB>();
     public DbSet<TaskOutputEntryDB> TaskOutputEntries => Set<TaskOutputEntryDB>();
+    public DbSet<TaskTriggerBindingDB> TaskTriggerBindings => Set<TaskTriggerBindingDB>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -305,106 +284,6 @@ public class SharpClawDbContext(
 
             e.Property(f => f.Clearance).HasConversion<string>();
         });
-        // ── Skills ───────────────────────────────────────────────
-        modelBuilder.Entity<SkillDB>(e =>
-        {
-            e.HasIndex(s => s.Name).IsUnique();
-        });
-
-        // ── System users ─────────────────────────────────────────
-        modelBuilder.Entity<SystemUserDB>(e =>
-        {
-            e.HasIndex(s => s.Username).IsUnique();
-            e.HasOne(s => s.Skill)
-                .WithMany()
-                .HasForeignKey(s => s.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Databases ─────────────────────────────────────────────
-        modelBuilder.Entity<InternalDatabaseDB>(e =>
-        {
-            e.HasIndex(s => s.Name).IsUnique();
-            e.Property(s => s.DatabaseType).HasConversion<string>();
-            e.HasOne(s => s.Skill)
-                .WithMany()
-                .HasForeignKey(s => s.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        modelBuilder.Entity<ExternalDatabaseDB>(e =>
-        {
-            e.HasIndex(s => s.Name).IsUnique();
-            e.Property(s => s.DatabaseType).HasConversion<string>();
-            e.HasOne(s => s.Skill)
-                .WithMany()
-                .HasForeignKey(s => s.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Websites ─────────────────────────────────────────────
-        modelBuilder.Entity<WebsiteDB>(e =>
-        {
-            e.HasIndex(w => w.Name).IsUnique();
-            e.HasOne(w => w.Skill)
-                .WithMany()
-                .HasForeignKey(w => w.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Search engines ───────────────────────────────────────
-        modelBuilder.Entity<SearchEngineDB>(e =>
-        {
-            e.HasIndex(s => s.Name).IsUnique();
-            e.Property(s => s.Type).HasConversion<string>();
-            e.HasOne(s => s.Skill)
-                .WithMany()
-                .HasForeignKey(s => s.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Containers ───────────────────────────────────────────
-        modelBuilder.Entity<ContainerDB>(e =>
-        {
-            e.HasIndex(c => c.Name).IsUnique();
-            e.Property(c => c.Type).HasConversion<string>();
-            e.HasOne(c => c.Skill)
-                .WithMany()
-                .HasForeignKey(c => c.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Input audios ─────────────────────────────────────────
-        modelBuilder.Entity<InputAudioDB>(e =>
-        {
-            e.HasIndex(d => d.Name).IsUnique();
-            e.HasOne(d => d.Skill)
-                .WithMany()
-                .HasForeignKey(d => d.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Display devices ──────────────────────────────────────
-        modelBuilder.Entity<DisplayDeviceDB>(e =>
-        {
-            e.HasIndex(d => d.Name).IsUnique();
-            e.HasOne(d => d.Skill)
-                .WithMany()
-                .HasForeignKey(d => d.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ── Editor sessions ──────────────────────────────────────
-        modelBuilder.Entity<EditorSessionDB>(e =>
-        {
-            e.HasIndex(s => s.Name).IsUnique();
-            e.Property(s => s.EditorType).HasConversion<string>();
-            e.HasOne(s => s.Skill)
-                .WithMany()
-                .HasForeignKey(s => s.SkillId)
-                .OnDelete(DeleteBehavior.SetNull);
-        });
-
         // ── Generic resource access (§3.10) ──────────────────────
         modelBuilder.Entity<ResourceAccessDB>(entity =>
         {
@@ -485,6 +364,10 @@ public class SharpClawDbContext(
                 .WithOne(i => i.TaskDefinition)
                 .HasForeignKey(i => i.TaskDefinitionId)
                 .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(d => d.TriggerBindings)
+                .WithOne(t => t.TaskDefinition)
+                .HasForeignKey(t => t.TaskDefinitionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<TaskInstanceDB>(e =>
@@ -502,25 +385,6 @@ public class SharpClawDbContext(
                 .WithOne(o => o.TaskInstance)
                 .HasForeignKey(o => o.TaskInstanceId)
                 .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // ── Bot integrations ──────────────────────────────────
-        modelBuilder.Entity<BotIntegrationDB>(e =>
-        {
-            e.HasIndex(b => b.BotType).IsUnique();
-            e.Property(b => b.BotType).HasConversion<string>();
-        });
-
-        // ── Document sessions ─────────────────────────────────────
-        modelBuilder.Entity<DocumentSessionDB>(e =>
-        {
-            e.Property(d => d.DocumentType).HasConversion<string>();
-        });
-
-        // ── Native applications ───────────────────────────────────
-        modelBuilder.Entity<NativeApplicationDB>(e =>
-        {
-            // No unique constraints or special config needed
         });
 
         // ── Module state & config ─────────────────────────────────

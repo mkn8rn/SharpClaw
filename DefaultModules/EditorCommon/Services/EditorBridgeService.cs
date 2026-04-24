@@ -6,7 +6,6 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.EditorCommon.Services;
 
@@ -144,7 +143,7 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
                 session.ConnectionId = connectionId;
                 sessionId = session.Id;
 
-                var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+                var db = scope.ServiceProvider.GetRequiredService<EditorCommonDbContext>();
                 await db.SaveChangesAsync(ct);
             }
 
@@ -200,7 +199,7 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
                 try
                 {
                     using var scope = scopeFactory.CreateScope();
-                    var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+                    var db = scope.ServiceProvider.GetRequiredService<EditorCommonDbContext>();
                     var session = await db.EditorSessions.FindAsync(sessionId.Value);
                     if (session is not null)
                     {

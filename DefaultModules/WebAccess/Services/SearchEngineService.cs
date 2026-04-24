@@ -5,12 +5,11 @@ using System.Text.Json;
 using System.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.SearchEngines;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.WebAccess.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.WebAccess.Services;
@@ -20,7 +19,7 @@ namespace SharpClaw.Modules.WebAccess.Services;
 /// the appropriate provider API based on <see cref="SearchEngineType"/>.
 /// </summary>
 public sealed class SearchEngineService(
-    SharpClawDbContext db,
+    WebAccessDbContext db,
     EncryptionOptions encryptionOptions)
 {
     /// <summary>Maximum response body size (1 MB) to prevent memory exhaustion.</summary>
@@ -131,7 +130,6 @@ public sealed class SearchEngineService(
                         "query_search_engine requires a targetId (search engine resource GUID).")));
 
         var engine = await db.SearchEngines
-            .Include(e => e.Skill)
             .FirstOrDefaultAsync(e => e.Id == resourceId, ct)
             ?? throw new InvalidOperationException(
                 $"Search engine {resourceId} not found.");
@@ -158,9 +156,6 @@ public sealed class SearchEngineService(
             topic: parameters.TryGetProperty("topic", out var tp) ? tp.GetString() : null,
             category: parameters.TryGetProperty("category", out var cat) ? cat.GetString() : null,
             ct: ct);
-
-        if (engine.Skill is { SkillText.Length: > 0 } skill)
-            result = $"[Search Engine Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
 
         return result;
     }

@@ -50,10 +50,14 @@
   <Folder Name="/Solution Items/Docs/">
     <File Path="docs/Core-API-documentation.md" />
     <File Path="docs/Core-API-skill.md" />
+    <File Path="docs/Core-CLI-documentation.md" />
+    <File Path="docs/Core-CLI-skill.md" />
     <File Path="docs/Database-Configuration.md" />
     <File Path="docs/Gateway-documentation.md" />
     <File Path="docs/Gateway-skill.md" />
     <File Path="docs/Provider-Parameters.md" />
+    <File Path="docs/Tasks-documentation.md" />
+    <File Path="docs/Tasks-skill.md" />
   </Folder>
   <Folder Name="/Solution Items/Docs/Modules/">
     <File Path="docs/modules/Module-AgentOrchestration-skill.md" />

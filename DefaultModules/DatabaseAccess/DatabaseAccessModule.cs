@@ -5,16 +5,16 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.DatabaseAccess.Services;
 using SharpClaw.Modules.DatabaseAccess.Handlers;
+using SharpClaw.Modules.DatabaseAccess.Triggers;
 using SharpClaw.Contracts.DTOs.Databases;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
+using SharpClaw.Contracts.Tasks;
+using SharpClaw.Modules.DatabaseAccess.Models;
 
 namespace SharpClaw.Modules.DatabaseAccess;
 
@@ -36,6 +36,8 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     public void ConfigureServices(IServiceCollection services)
     {
         services.AddScoped<DatabaseResourceService>();
+        services.AddSingleton<IDatabaseQueryExecutor, DatabaseQueryExecutor>();
+        services.AddSingleton<ITaskTriggerSource, QueryRowsTriggerSource>();
     }
 
     public void MapEndpoints(object app)
@@ -58,13 +60,23 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     [
         new("DbInternal", "InternalDatabase", "AccessInternalDatabaseAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<DatabaseAccessDbContext>();
             return await db.InternalDatabases.Select(d => d.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<DatabaseAccessDbContext>();
+            return await db.InternalDatabases.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
         }),
         new("DbExternal", "ExternalDatabase", "AccessExternalDatabaseAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<DatabaseAccessDbContext>();
             return await db.ExternalDatabases.Select(d => d.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<DatabaseAccessDbContext>();
+            return await db.ExternalDatabases.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -414,7 +426,7 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         AgentJobContext job, JsonElement parameters,
         IServiceProvider sp, CancellationToken ct)
     {
-        var dbCtx = sp.GetRequiredService<SharpClawDbContext>();
+        var dbCtx = sp.GetRequiredService<DatabaseAccessDbContext>();
         var encOpts = sp.GetRequiredService<EncryptionOptions>();
 
         var entity = await ResolveInternalDatabaseAsync(job.ResourceId, dbCtx, ct);
@@ -435,7 +447,7 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         AgentJobContext job, JsonElement parameters,
         IServiceProvider sp, CancellationToken ct)
     {
-        var dbCtx = sp.GetRequiredService<SharpClawDbContext>();
+        var dbCtx = sp.GetRequiredService<DatabaseAccessDbContext>();
         var encOpts = sp.GetRequiredService<EncryptionOptions>();
 
         var entity = await ResolveExternalDatabaseAsync(job.ResourceId, dbCtx, ct);
@@ -547,7 +559,7 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     // ═══════════════════════════════════════════════════════════════
 
     private static async Task<InternalDatabaseDB> ResolveInternalDatabaseAsync(
-        Guid? resourceId, SharpClawDbContext db, CancellationToken ct)
+        Guid? resourceId, DatabaseAccessDbContext db, CancellationToken ct)
     {
         if (!resourceId.HasValue)
             throw new InvalidOperationException(
@@ -560,7 +572,7 @@ public sealed class DatabaseAccessModule : ISharpClawModule
     }
 
     private static async Task<ExternalDatabaseDB> ResolveExternalDatabaseAsync(
-        Guid? resourceId, SharpClawDbContext db, CancellationToken ct)
+        Guid? resourceId, DatabaseAccessDbContext db, CancellationToken ct)
     {
         if (!resourceId.HasValue)
             throw new InvalidOperationException(

@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
@@ -43,8 +42,6 @@ public sealed class SeedingService(
         var adminRole = await SeedAdminRoleAsync(db, ct);
         await SeedAdminUserAsync(db, adminRole, ct);
         await SeedWellKnownProvidersAsync(db, ct);
-        await SeedDefaultDisplayDeviceAsync(db, ct);
-        await SeedWellKnownSearchEnginesAsync(db, ct);
     }
 
     private async Task<RoleDB> SeedAdminRoleAsync(SharpClawDbContext db, CancellationToken ct)
@@ -266,74 +263,5 @@ public sealed class SeedingService(
         _                       => pt.ToString(),
     };
 
-    private async Task SeedDefaultDisplayDeviceAsync(SharpClawDbContext db, CancellationToken ct)
-    {
-        var exists = await db.DisplayDevices
-            .AnyAsync(d => d.DeviceIdentifier == "display-0", ct);
-        if (exists)
-            return;
-
-        logger.LogInformation("Seeding default display device.");
-
-        db.DisplayDevices.Add(new DisplayDeviceDB
-        {
-            Name = "Primary Display",
-            DeviceIdentifier = "display-0",
-            DisplayIndex = 0,
-            Description = "System primary display"
-        });
-
-        await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>
-    /// Seeds one <see cref="SearchEngineDB"/> entry per well-known
-    /// <see cref="SearchEngineType"/> (excluding <c>Custom</c>).
-    /// API keys are left empty — users supply them after first run.
-    /// </summary>
-    private async Task SeedWellKnownSearchEnginesAsync(SharpClawDbContext db, CancellationToken ct)
-    {
-        var existing = await db.SearchEngines
-            .Select(e => e.Type)
-            .ToHashSetAsync(ct);
-
-        var defaultEndpoints = new Dictionary<SearchEngineType, string>
-        {
-            [SearchEngineType.Google] = "https://www.googleapis.com/customsearch/v1",
-            [SearchEngineType.Bing] = "https://api.bing.microsoft.com/v7.0/search",
-            [SearchEngineType.DuckDuckGo] = "https://api.duckduckgo.com/",
-            [SearchEngineType.Brave] = "https://api.search.brave.com/res/v1/web/search",
-            [SearchEngineType.SearXNG] = "https://searx.be/search",
-            [SearchEngineType.Tavily] = "https://api.tavily.com/search",
-            [SearchEngineType.Serper] = "https://google.serper.dev/search",
-            [SearchEngineType.Kagi] = "https://kagi.com/api/v0/search",
-            [SearchEngineType.YouDotCom] = "https://api.ydc-index.io/search",
-            [SearchEngineType.Mojeek] = "https://www.mojeek.com/search",
-            [SearchEngineType.Yandex] = "https://yandex.com/search/xml",
-            [SearchEngineType.Baidu] = "https://api.baidu.com/search",
-        };
-
-        var toSeed = Enum.GetValues<SearchEngineType>()
-            .Where(t => t != SearchEngineType.Custom && !existing.Contains(t))
-            .ToList();
-
-        if (toSeed.Count == 0)
-            return;
-
-        logger.LogInformation("Seeding {Count} well-known search engine(s): {Types}.",
-            toSeed.Count, string.Join(", ", toSeed));
-
-        foreach (var type in toSeed)
-        {
-            db.SearchEngines.Add(new SearchEngineDB
-            {
-                Name = type.ToString(),
-                Type = type,
-                Endpoint = defaultEndpoints.GetValueOrDefault(type, string.Empty),
-            });
-        }
-
-        await db.SaveChangesAsync(ct);
-    }
-
-}

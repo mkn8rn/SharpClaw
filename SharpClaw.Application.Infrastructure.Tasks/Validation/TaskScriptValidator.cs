@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Application.Infrastructure.Tasks.Validation;
 
@@ -74,6 +76,8 @@ public sealed class TaskScriptValidator
         {
             ValidateStep(step, context, diagnostics);
         }
+
+        ValidateRequirements(definition, diagnostics);
 
         return new TaskScriptValidationResult(
             diagnostics.All(d => d.Severity != TaskDiagnosticSeverity.Error),
@@ -204,6 +208,164 @@ public sealed class TaskScriptValidator
             {
                 ValidateStep(nested, context, diagnostics);
             }
+        }
+    }
+
+    private static void ValidateRequirements(
+        TaskScriptDefinition definition,
+        List<TaskDiagnostic> diagnostics)
+    {
+        var seen = new HashSet<(TaskRequirementKind, string?, string?, string?)>();
+
+        foreach (var req in definition.Requirements)
+        {
+            // TASK407: duplicate requirement tuple
+            var key = (req.Kind, req.Value, req.CapabilityValue, req.ParameterName);
+            if (!seen.Add(key))
+            {
+                diagnostics.Add(new TaskDiagnostic(
+                    TaskDiagnosticSeverity.Warning,
+                    "TASK407",
+                    $"Duplicate requirement '{req.Kind}' with the same arguments is redundant.",
+                    req.Line));
+                continue;
+            }
+
+            switch (req.Kind)
+            {
+                case TaskRequirementKind.RequiresPlatform:
+                {
+                    // TASK401: platform value must be a valid TaskPlatform flag name
+                    if (string.IsNullOrWhiteSpace(req.Value) ||
+                        !Enum.TryParse<TaskPlatform>(req.Value, ignoreCase: false, out var platform))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK401",
+                            $"RequiresPlatform value '{req.Value}' is not a valid TaskPlatform name. " +
+                            "Expected one of: Windows, Linux, MacOS, AnyDesktop.",
+                            req.Line));
+                        break;
+                    }
+
+                    // TASK402: current host must satisfy the declared platform
+                    var hostSatisfies =
+                        (platform.HasFlag(TaskPlatform.Windows) && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) ||
+                        (platform.HasFlag(TaskPlatform.Linux)   && RuntimeInformation.IsOSPlatform(OSPlatform.Linux))   ||
+                        (platform.HasFlag(TaskPlatform.MacOS)   && RuntimeInformation.IsOSPlatform(OSPlatform.OSX));
+
+                    if (!hostSatisfies)
+                    {
+                        var severity = req.Severity == TaskDiagnosticSeverity.Warning
+                            ? TaskDiagnosticSeverity.Warning
+                            : TaskDiagnosticSeverity.Error;
+                        diagnostics.Add(new TaskDiagnostic(
+                            severity,
+                            "TASK402",
+                            $"RequiresPlatform '{req.Value}' is not satisfied on the current host.",
+                            req.Line));
+                    }
+                    break;
+                }
+
+                case TaskRequirementKind.RequiresProvider:
+                    // TASK403: provider value must not be blank
+                    if (string.IsNullOrWhiteSpace(req.Value))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK403",
+                            "RequiresProvider must specify a non-empty provider type name.",
+                            req.Line));
+                    }
+                    break;
+
+                case TaskRequirementKind.RequiresModelCapability:
+                    // TASK404: capability name must not be blank
+                    if (string.IsNullOrWhiteSpace(req.CapabilityValue))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK404",
+                            "RequiresModelCapability must specify a non-empty capability name.",
+                            req.Line));
+                    }
+                    break;
+
+                case TaskRequirementKind.RequiresCapabilityParameter:
+                    // TASK404: capability name must not be blank
+                    if (string.IsNullOrWhiteSpace(req.CapabilityValue))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK404",
+                            "RequiresCapabilityParameter must specify a non-empty capability name.",
+                            req.Line));
+                    }
+
+                    // TASK405/TASK406: parameter must exist and be string or Guid
+                    ValidateParameterReference(req, definition, diagnostics);
+                    break;
+
+                case TaskRequirementKind.ModelIdParameter:
+                    // TASK405/TASK406: parameter must exist and be string or Guid
+                    ValidateParameterReference(req, definition, diagnostics);
+                    break;
+
+                case TaskRequirementKind.RequiresPermission:
+                    // TASK408: permission flag key must not be blank
+                    if (string.IsNullOrWhiteSpace(req.Value))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK408",
+                            "RequiresPermission must specify a non-empty permission flag key.",
+                            req.Line));
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static void ValidateParameterReference(
+        TaskRequirementDefinition req,
+        TaskScriptDefinition definition,
+        List<TaskDiagnostic> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(req.ParameterName))
+        {
+            diagnostics.Add(new TaskDiagnostic(
+                TaskDiagnosticSeverity.Error,
+                "TASK405",
+                $"{req.Kind} must specify the name of the parameter it is bound to.",
+                req.Line));
+            return;
+        }
+
+        var param = definition.Parameters
+            .FirstOrDefault(p => string.Equals(p.Name, req.ParameterName, StringComparison.Ordinal));
+
+        if (param is null)
+        {
+            diagnostics.Add(new TaskDiagnostic(
+                TaskDiagnosticSeverity.Error,
+                "TASK405",
+                $"{req.Kind} references parameter '{req.ParameterName}' which is not declared on the task.",
+                req.Line));
+            return;
+        }
+
+        // TASK406: bound parameter must be string or Guid
+        var baseType = param.TypeName.TrimEnd('?');
+        if (!string.Equals(baseType, "string", StringComparison.Ordinal) &&
+            !string.Equals(baseType, "Guid",   StringComparison.Ordinal))
+        {
+            diagnostics.Add(new TaskDiagnostic(
+                TaskDiagnosticSeverity.Error,
+                "TASK406",
+                $"{req.Kind} is bound to parameter '{req.ParameterName}' of type '{param.TypeName}'. " +
+                "Only string or Guid parameters may be used as model/capability selectors.",
+                req.Line));
         }
     }
 

@@ -14,7 +14,6 @@ using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Application.Infrastructure.Models.Messages;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
@@ -43,7 +42,7 @@ public sealed class AgentJobService(
     ModuleMetricsCollector metricsCollector,
     ModuleEventDispatcher eventDispatcher,
     IServiceScopeFactory serviceScopeFactory,
-    IConfiguration configuration)
+    IConfiguration configuration) : ITranscriptionSegmentPublisher
 {
     private readonly ModuleEventDispatcher _eventDispatcher = eventDispatcher;
     private readonly IConfiguration _configuration = configuration;

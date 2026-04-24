@@ -1,3 +1,5 @@
+using SharpClaw.Contracts.Tasks;
+
 namespace SharpClaw.Application.Infrastructure.Tasks.Models;
 
 /// <summary>
@@ -49,4 +51,18 @@ public sealed record TaskScriptDefinition
     /// results to the task via the <c>task_output</c> tool.
     /// </summary>
     public string? AgentOutputFormat { get; init; }
+
+    /// <summary>
+    /// Environment requirements declared via <c>[RequiresProvider]</c>,
+    /// <c>[RequiresModule]</c>, <c>[RequiresPlatform]</c>, <c>[ModelId]</c>, etc.
+    /// Populated by the parser; checked by <c>TaskPreflightChecker</c>.
+    /// </summary>
+    public IReadOnlyList<TaskRequirementDefinition> Requirements { get; init; } = [];
+
+    /// <summary>
+    /// Self-registration trigger bindings declared via <c>[Schedule]</c>,
+    /// <c>[OnEvent]</c>, <c>[OnFileChanged]</c>, etc.
+    /// Populated by the parser; persisted as JSON on <c>TaskDefinitionDB</c>.
+    /// </summary>
+    public IReadOnlyList<TaskTriggerDefinition> TriggerDefinitions { get; init; } = [];
 }

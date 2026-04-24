@@ -42,6 +42,8 @@ public sealed record TaskDefinitionResponse(
     string? OutputTypeName,
     bool IsActive,
     IReadOnlyList<TaskParameterResponse> Parameters,
+    IReadOnlyList<TaskRequirementResponse> Requirements,
+    IReadOnlyList<TaskTriggerResponse> Triggers,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     string? CustomId = null);
@@ -52,6 +54,35 @@ public sealed record TaskParameterResponse(
     string? Description,
     string? DefaultValue,
     bool IsRequired);
+
+/// <summary>
+/// A single environment requirement declared on a task definition,
+/// surfaced so callers can check prerequisites before starting an instance.
+/// </summary>
+public sealed record TaskRequirementResponse(
+    string Kind,
+    string Severity,
+    string? Value,
+    string? CapabilityValue,
+    string? ParameterName);
+
+/// <summary>
+/// A single self-registration trigger binding surfaced on a task definition response.
+/// </summary>
+public sealed record TaskTriggerResponse(
+    string Kind,
+    string? TriggerValue,
+    string? Filter,
+    bool IsEnabled);
+
+/// <summary>
+/// A registered trigger source exposed to clients for discovery.
+/// </summary>
+public sealed record TaskTriggerSourceResponse(
+    string? SourceName,
+    IReadOnlyList<string> SupportedKinds,
+    string Type,
+    bool IsCustom);
 
 public sealed record TaskInstanceResponse(
     Guid Id,
@@ -90,6 +121,24 @@ public sealed record TaskOutputEntryResponse(
 public sealed record TaskValidationResponse(
     bool IsValid,
     IReadOnlyList<TaskDiagnosticResponse> Diagnostics);
+
+/// <summary>
+/// The aggregated outcome of a task preflight check, as returned by
+/// <c>GET /tasks/{id}/preflight</c>.
+/// </summary>
+public sealed record TaskPreflightResponse(
+    bool IsBlocked,
+    IReadOnlyList<TaskPreflightFindingResponse> Findings);
+
+/// <summary>
+/// A single finding from a task preflight check.
+/// </summary>
+public sealed record TaskPreflightFindingResponse(
+    string RequirementKind,
+    string Severity,
+    bool Passed,
+    string Message,
+    string? ParameterName = null);
 
 public sealed record TaskDiagnosticResponse(
     string Severity,

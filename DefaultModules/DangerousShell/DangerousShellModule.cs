@@ -1,12 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
-
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.DangerousShell.Models;
 
 namespace SharpClaw.Modules.DangerousShell;
 
@@ -26,7 +24,10 @@ public sealed class DangerousShellModule : ISharpClawModule
     // DI Registration
     // ═══════════════════════════════════════════════════════════════
 
-    public void ConfigureServices(IServiceCollection services) { }
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddDbContext<DangerousShellDbContext>();
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Contracts
@@ -43,8 +44,13 @@ public sealed class DangerousShellModule : ISharpClawModule
     [
         new("DsShell", "DangerousShell", "UnsafeExecuteAsDangerousShellAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<DangerousShellDbContext>();
             return await db.SystemUsers.Select(s => s.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<DangerousShellDbContext>();
+            return await db.SystemUsers.Select(s => new ValueTuple<Guid, string>(s.Id, s.Username)).ToListAsync(ct);
         }),
     ];
 

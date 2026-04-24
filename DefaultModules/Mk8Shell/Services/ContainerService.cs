@@ -1,14 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Mk8.Shell.Models;
 using Mk8.Shell.Startup;
-using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Services;
-using SharpClaw.Application.Infrastructure.Models.Access;
-using SharpClaw.Application.Infrastructure.Models.Clearance;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Contracts.Modules;
+using SharpClaw.Modules.Mk8Shell.Models;
 
 namespace SharpClaw.Modules.Mk8Shell.Services;
 
@@ -17,7 +13,7 @@ namespace SharpClaw.Modules.Mk8Shell.Services;
 /// <see cref="Mk8SandboxRegistrar"/>, and local sync from
 /// <c>%APPDATA%/mk8.shell/sandboxes.json</c>.
 /// </summary>
-public sealed class ContainerService(SharpClawDbContext db, SessionService session, ModuleRegistry moduleRegistry)
+public sealed class ContainerService(Mk8ShellDbContext db, IContainerProvisioner provisioner)
 {
     // ═══════════════════════════════════════════════════════════════
     // Create
@@ -29,18 +25,18 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
     /// before saving to the database.
     /// </summary>
     public async Task<ContainerResponse> CreateAsync(
-        CreateContainerRequest request, CancellationToken ct = default)
+        CreateContainerRequest request, Guid? userId, CancellationToken ct = default)
     {
         return request.Type switch
         {
-            ContainerType.Mk8Shell => await CreateMk8ShellAsync(request, ct),
+            ContainerType.Mk8Shell => await CreateMk8ShellAsync(request, userId, ct),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(request), $"Unsupported container type: {request.Type}"),
         };
     }
 
     private async Task<ContainerResponse> CreateMk8ShellAsync(
-        CreateContainerRequest request, CancellationToken ct)
+        CreateContainerRequest request, Guid? userId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Path))
             throw new ArgumentException(
@@ -52,7 +48,6 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
         var sandboxDir = Path.Combine(
             Path.GetFullPath(request.Path), sandboxName);
 
-        // Check for duplicate in database.
         var exists = await db.Containers.AnyAsync(
             c => c.Type == ContainerType.Mk8Shell
                  && c.SandboxName == sandboxName, ct);
@@ -62,15 +57,8 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
                 $"An mk8shell container with sandbox name '{sandboxName}' " +
                 "already exists in the database.");
 
-        // Provision sandbox via mk8.shell.startup.
-        // This validates the name (English letters + digits only),
-        // creates the directory, writes .env + .signed.env, registers
-        // in local %APPDATA%/mk8.shell, and starts the OS-level
-        // container immediately — the sandbox is containerized from
-        // this point forward.
         await Mk8SandboxRegistrar.RegisterAsync(sandboxName, sandboxDir, ct: ct);
 
-        // Save to SharpClaw database.
         var container = new ContainerDB
         {
             Name = $"mk8shell:{sandboxName}",
@@ -82,68 +70,16 @@ public sealed class ContainerService(SharpClawDbContext db, SessionService sessi
         db.Containers.Add(container);
         await db.SaveChangesAsync(ct);
 
-        // Create an owner role for this container. The role's permission
-        // set grants Independent clearance for this specific container
-        // and nothing else. Assigned to the creating user.
-        await CreateOwnerRoleAsync(container, ct);
+        await provisioner.CreateOwnerRoleAsync(
+            container.Id,
+            container.Name,
+            "AccessContainerAsync",
+            "ExecuteAsSafeShellAsync",
+            ContainerType.Mk8Shell,
+            userId,
+            ct);
 
         return ToResponse(container);
-    }
-
-    /// <summary>
-    /// Creates a "<c>[container name] Owner</c>" role with a permission set
-    /// granting <see cref="PermissionClearance.Independent"/> clearance for
-    /// the specific container and nothing else. Assigns the role to the
-    /// current session user.
-    /// </summary>
-    private async Task CreateOwnerRoleAsync(
-        ContainerDB container, CancellationToken ct)
-    {
-        var permissionSet = new PermissionSetDB
-        {
-            ResourceAccesses =
-            [
-                new ResourceAccessDB
-                {
-                    ResourceType = moduleRegistry.ResolveResourceType("AccessContainerAsync")!,
-                    ResourceId = container.Id,
-                    Clearance = PermissionClearance.Independent,
-                },
-                new ResourceAccessDB
-                {
-                    ResourceType = moduleRegistry.ResolveResourceType("ExecuteAsSafeShellAsync")!,
-                    ResourceId = container.Id,
-                    Clearance = PermissionClearance.Independent,
-                    SubType = SafeShellType.Mk8Shell.ToString(),
-                },
-            ],
-        };
-
-        db.PermissionSets.Add(permissionSet);
-        await db.SaveChangesAsync(ct);
-
-        var role = new RoleDB
-        {
-            Name = $"{container.Name} Owner",
-            PermissionSetId = permissionSet.Id,
-        };
-
-        db.Roles.Add(role);
-        await db.SaveChangesAsync(ct);
-
-        // Assign the role to the creating user if they don't already
-        // have one. Users with an existing role (e.g. Admin) already
-        // have access through their current permission set — overwriting
-        // would downgrade them.
-        if (session.UserId is { } userId)
-        {
-            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
-            if (user is not null && user.RoleId is null)
-            {
-                user.RoleId = role.Id;
-                await db.SaveChangesAsync(ct);
-            }
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════

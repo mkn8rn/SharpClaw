@@ -2,8 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
-using System.Collections.Immutable;
-
+using SharpClaw.Contracts.Tasks;
 namespace SharpClaw.Application.Infrastructure.Tasks.Parsing;
 
 /// <summary>
@@ -23,6 +22,32 @@ namespace SharpClaw.Application.Infrastructure.Tasks.Parsing;
 /// </summary>
 public sealed class TaskScriptParser
 {
+    // ── Module extension registry ─────────────────────────────────
+
+    private static readonly Dictionary<string, (TaskStepKind Kind, string ModuleId)> _moduleStepKinds = [];
+    private static readonly Dictionary<string, (TaskTriggerKind Kind, string ModuleId)> _moduleEventTriggers = [];
+    private static readonly HashSet<string> _moduleSingleArgMethods = [];
+    private static readonly Lock _registryLock = new();
+
+    /// <summary>
+    /// Register a module's parser extension. Safe to call multiple times
+    /// (duplicate method names for the same module are ignored).
+    /// Call from <c>ISharpClawModule.ConfigureServices</c>.
+    /// </summary>
+    public static void RegisterModule(ITaskParserModuleExtension extension)
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        lock (_registryLock)
+        {
+            foreach (var (method, entry) in extension.StepKindMappings)
+                _moduleStepKinds.TryAdd(method, entry);
+            foreach (var (method, entry) in extension.EventTriggerMappings)
+                _moduleEventTriggers.TryAdd(method, entry);
+            foreach (var method in extension.SingleArgExpressionMethods)
+                _moduleSingleArgMethods.Add(method);
+        }
+    }
+
     /// <summary>
     /// Parse a task script .cs file into its structured definition.
     /// </summary>
@@ -99,6 +124,12 @@ public sealed class TaskScriptParser
         // Extract [ToolCall("name")] methods
         var toolCallHooks = ExtractToolCallHooks(taskClass, diagnostics);
 
+        // Extract environment requirements ([RequiresProvider], [ModelId], etc.)
+        var requirements = ExtractRequirements(taskClass, parameters, diagnostics);
+
+        // Extract self-registration trigger bindings ([Schedule], [OnEvent], etc.)
+        var triggerDefinitions = ExtractTriggerDefinitions(taskClass, diagnostics);
+
         // Find entry point: public async Task RunAsync(CancellationToken ct)
         var entryPoint = taskClass.Members
             .OfType<MethodDeclarationSyntax>()
@@ -154,7 +185,9 @@ public sealed class TaskScriptParser
             OutputType = outputType,
             Steps = steps,
             ToolCallHooks = toolCallHooks,
-            AgentOutputFormat = agentOutputFormat
+            AgentOutputFormat = agentOutputFormat,
+            Requirements = requirements,
+            TriggerDefinitions = triggerDefinitions,
         };
 
         return new TaskScriptParseResult(definition, diagnostics);
@@ -220,7 +253,777 @@ public sealed class TaskScriptParser
         return null;
     }
 
-    // ── [ToolCall] hook extraction ────────────────────────────────
+    // ── Requirement extraction ────────────────────────────────────
+
+    /// <summary>
+    /// Walk the class-level attributes and collect all requirement declarations:
+    /// [RequiresProvider], [RequiresModule], [RecommendsModule], [RequiresPlatform],
+    /// [RequiresModel], [RequiresModelCapability], [RequiresPermission].
+    /// Property-level annotations ([ModelId], [RequiresCapability]) are appended
+    /// after the class-level pass (this method is called with the pre-extracted
+    /// parameters so their names are already available).
+    /// </summary>
+    private static IReadOnlyList<TaskRequirementDefinition> ExtractRequirements(
+        ClassDeclarationSyntax classSyntax,
+        IReadOnlyList<TaskParameterDefinition> parameters,
+        List<TaskDiagnostic> diagnostics)
+    {
+        var requirements = new List<TaskRequirementDefinition>();
+
+        // ── class-level attributes ────────────────────────────────
+        foreach (var attr in classSyntax.AttributeLists.SelectMany(al => al.Attributes))
+        {
+            var attrName = attr.Name.ToString();
+            var line = GetLine(attr);
+
+            switch (attrName)
+            {
+                case "RequiresProvider" or "RequiresProviderAttribute":
+                {
+                    var value = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RequiresProvider,
+                        Severity = TaskDiagnosticSeverity.Error,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "RequiresModelCapability" or "RequiresModelCapabilityAttribute":
+                {
+                    var cap = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind            = TaskRequirementKind.RequiresModelCapability,
+                        Severity        = TaskDiagnosticSeverity.Error,
+                        CapabilityValue = cap,
+                        Line            = line,
+                    });
+                    break;
+                }
+
+                case "RequiresModel" or "RequiresModelAttribute":
+                {
+                    var value = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RequiresModel,
+                        Severity = TaskDiagnosticSeverity.Error,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "RequiresModule" or "RequiresModuleAttribute":
+                {
+                    var value = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RequiresModule,
+                        Severity = TaskDiagnosticSeverity.Error,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "RecommendsModule" or "RecommendsModuleAttribute":
+                {
+                    var value = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RecommendsModule,
+                        Severity = TaskDiagnosticSeverity.Warning,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "RequiresPlatform" or "RequiresPlatformAttribute":
+                {
+                    // Argument may be:
+                    //   a string literal:       [RequiresPlatform("Windows")]
+                    //   a member-access:        [RequiresPlatform(TaskPlatform.Windows)]
+                    //   a bitwise-or expr:      [RequiresPlatform(TaskPlatform.Windows | TaskPlatform.Linux)]
+                    // For string literals use the parsed token value (unquoted).
+                    // For enum / bitwise expressions strip the "TaskPlatform." prefix.
+                    string? value;
+                    var firstArg = attr.ArgumentList?.Arguments.FirstOrDefault();
+                    if (firstArg?.Expression is LiteralExpressionSyntax platformLit &&
+                        platformLit.Token.Value is string literalValue)
+                    {
+                        value = literalValue;
+                    }
+                    else
+                    {
+                        var rawArg = firstArg?.Expression.ToString();
+                        value = rawArg?
+                            .Replace("TaskPlatform.", string.Empty)
+                            .Replace(" ", string.Empty);
+                    }
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RequiresPlatform,
+                        Severity = TaskDiagnosticSeverity.Error,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "RequiresPermission" or "RequiresPermissionAttribute":
+                {
+                    var value = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind     = TaskRequirementKind.RequiresPermission,
+                        Severity = TaskDiagnosticSeverity.Error,
+                        Value    = value,
+                        Line     = line,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // ── property-level annotations ────────────────────────────
+        foreach (var property in classSyntax.Members.OfType<PropertyDeclarationSyntax>())
+        {
+            if (!property.Modifiers.Any(SyntaxKind.PublicKeyword))
+                continue;
+
+            var propName = property.Identifier.Text;
+            var propLine = GetLine(property);
+
+            foreach (var attr in property.AttributeLists.SelectMany(al => al.Attributes))
+            {
+                var attrName = attr.Name.ToString();
+
+                if (attrName is "ModelId" or "ModelIdAttribute")
+                {
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind          = TaskRequirementKind.ModelIdParameter,
+                        Severity      = TaskDiagnosticSeverity.Error,
+                        ParameterName = propName,
+                        Line          = propLine,
+                    });
+                }
+                else if (attrName is "RequiresCapability" or "RequiresCapabilityAttribute")
+                {
+                    var cap = ExtractFirstStringArg(attr);
+                    requirements.Add(new TaskRequirementDefinition
+                    {
+                        Kind            = TaskRequirementKind.RequiresCapabilityParameter,
+                        Severity        = TaskDiagnosticSeverity.Error,
+                        CapabilityValue = cap,
+                        ParameterName   = propName,
+                        Line            = propLine,
+                    });
+                }
+            }
+        }
+
+        return requirements;
+    }
+
+    // ── Trigger definitions ───────────────────────────────────────
+
+    private static IReadOnlyList<TaskTriggerDefinition> ExtractTriggerDefinitions(
+        ClassDeclarationSyntax classSyntax,
+        List<TaskDiagnostic> diagnostics)
+    {
+        var triggers = new List<TaskTriggerDefinition>();
+        TriggerConcurrency? concurrencyOverride = null;
+        int concurrencyCount = 0;
+        bool hasWebhook = false;
+
+        // First pass: detect [OnWebhook] presence for TASK428 check
+        foreach (var attr in classSyntax.AttributeLists.SelectMany(al => al.Attributes))
+        {
+            if (attr.Name.ToString() is "OnWebhook" or "OnWebhookAttribute")
+                hasWebhook = true;
+        }
+
+        // Second pass: collect [WebhookSecret] without [OnWebhook] warning
+        foreach (var attr in classSyntax.AttributeLists.SelectMany(al => al.Attributes))
+        {
+            if (attr.Name.ToString() is "WebhookSecret" or "WebhookSecretAttribute" && !hasWebhook)
+            {
+                diagnostics.Add(new TaskDiagnostic(
+                    TaskDiagnosticSeverity.Warning,
+                    "TASK428",
+                    "[WebhookSecret] is present but no [OnWebhook] attribute was found on this class.",
+                    GetLine(attr)));
+            }
+        }
+
+        foreach (var attr in classSyntax.AttributeLists.SelectMany(al => al.Attributes))
+        {
+            var attrName = attr.Name.ToString();
+            var line = GetLine(attr);
+
+            switch (attrName)
+            {
+                case "Schedule" or "ScheduleAttribute":
+                {
+                    var cron = ExtractFirstStringArg(attr);
+                    var tz   = GetNamedStringArg(attr, "Timezone");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind           = TriggerKind.Cron,
+                        CronExpression = cron,
+                        CronTimezone   = tz,
+                        Line           = line,
+                    });
+                    break;
+                }
+
+                case "OnEvent" or "OnEventAttribute":
+                {
+                    var eventType = ExtractFirstStringArg(attr);
+                    var filter    = GetNamedStringArg(attr, "Filter");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.Event,
+                        EventType   = eventType,
+                        EventFilter = filter,
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnFileChanged" or "OnFileChangedAttribute":
+                {
+                    var path    = ExtractFirstStringArg(attr);
+                    var pattern = GetNamedStringArg(attr, "Pattern");
+                    var events  = GetNamedEnumArg<FileWatchEvent>(attr, "Events") ?? FileWatchEvent.Any;
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.FileChanged,
+                        WatchPath   = path,
+                        FilePattern = pattern,
+                        FileEvents  = events,
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnProcessStarted" or "OnProcessStartedAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.ProcessStarted,
+                        ProcessName = ExtractFirstStringArg(attr),
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnProcessStopped" or "OnProcessStoppedAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.ProcessStopped,
+                        ProcessName = ExtractFirstStringArg(attr),
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnWebhook" or "OnWebhookAttribute":
+                {
+                    var route   = ExtractFirstStringArg(attr);
+                    var secret  = GetNamedStringArg(attr, "Secret");
+                    var sigHdr  = GetNamedStringArg(attr, "SignatureHeader");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind                   = TriggerKind.Webhook,
+                        WebhookRoute           = route,
+                        WebhookSecretEnvVar    = secret,
+                        WebhookSignatureHeader = sigHdr,
+                        Line                   = line,
+                    });
+                    break;
+                }
+
+                case "OnHostReachable" or "OnHostReachableAttribute":
+                {
+                    var host = ExtractFirstStringArg(attr);
+                    var port = GetNamedIntArg(attr, "Port");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind     = TriggerKind.HostReachable,
+                        HostName = host,
+                        HostPort = port,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "OnHostUnreachable" or "OnHostUnreachableAttribute":
+                {
+                    var host = ExtractFirstStringArg(attr);
+                    var port = GetNamedIntArg(attr, "Port");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind     = TriggerKind.HostUnreachable,
+                        HostName = host,
+                        HostPort = port,
+                        Line     = line,
+                    });
+                    break;
+                }
+
+                case "OnTaskCompleted" or "OnTaskCompletedAttribute":
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind           = TriggerKind.TaskCompleted,
+                        SourceTaskName = ExtractFirstStringArg(attr),
+                        Line           = line,
+                    });
+                    break;
+
+                case "OnTaskFailed" or "OnTaskFailedAttribute":
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind           = TriggerKind.TaskFailed,
+                        SourceTaskName = ExtractFirstStringArg(attr),
+                        Line           = line,
+                    });
+                    break;
+
+                case "OnWindowFocused" or "OnWindowFocusedAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.WindowFocused,
+                        ProcessName = ExtractFirstStringArg(attr),
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnWindowBlurred" or "OnWindowBlurredAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.WindowBlurred,
+                        ProcessName = ExtractFirstStringArg(attr),
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnHotkey" or "OnHotkeyAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    var combo = ExtractFirstStringArg(attr);
+                    if (!IsHotkeyComboValid(combo))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK429",
+                            $"[OnHotkey] key combination \"{combo}\" could not be parsed. " +
+                            "Expected format: \"Modifier+Key\" (e.g. \"Ctrl+Shift+F10\").",
+                            line));
+                    }
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.Hotkey,
+                        HotkeyCombo = combo,
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnSystemIdle" or "OnSystemIdleAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind        = TriggerKind.SystemIdle,
+                        IdleMinutes = GetNamedIntArg(attr, "Minutes") ?? ExtractFirstIntArg(attr),
+                        Line        = line,
+                    });
+                    break;
+                }
+
+                case "OnSystemActive" or "OnSystemActiveAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind = TriggerKind.SystemActive,
+                        Line = line,
+                    });
+                    break;
+                }
+
+                case "OnScreenLocked" or "OnScreenLockedAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind = TriggerKind.ScreenLocked,
+                        Line = line,
+                    });
+                    break;
+                }
+
+                case "OnScreenUnlocked" or "OnScreenUnlockedAttribute":
+                {
+                    EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind = TriggerKind.ScreenUnlocked,
+                        Line = line,
+                    });
+                    break;
+                }
+
+                case "OnNetworkChanged" or "OnNetworkChangedAttribute":
+                {
+                    var ssid  = GetNamedStringArg(attr, "Ssid");
+                    var state = GetNamedEnumArg<NetworkState>(attr, "State") ?? NetworkState.Any;
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind         = TriggerKind.NetworkChanged,
+                        NetworkSsid  = ssid,
+                        NetworkState = state,
+                        Line         = line,
+                    });
+                    break;
+                }
+
+                case "OnDeviceConnected" or "OnDeviceConnectedAttribute":
+                {
+                    var devClass   = GetNamedStringArg(attr, "Class");
+                    var devPattern = GetNamedStringArg(attr, "Pattern");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind              = TriggerKind.DeviceConnected,
+                        DeviceClass       = devClass,
+                        DeviceNamePattern = devPattern,
+                        Line              = line,
+                    });
+                    break;
+                }
+
+                case "OnDeviceDisconnected" or "OnDeviceDisconnectedAttribute":
+                {
+                    var devClass   = GetNamedStringArg(attr, "Class");
+                    var devPattern = GetNamedStringArg(attr, "Pattern");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind              = TriggerKind.DeviceDisconnected,
+                        DeviceClass       = devClass,
+                        DeviceNamePattern = devPattern,
+                        Line              = line,
+                    });
+                    break;
+                }
+
+                case "OnQueryReturnsRows" or "OnQueryReturnsRowsAttribute":
+                {
+                    var query    = ExtractFirstStringArg(attr);
+                    var interval = GetNamedIntArg(attr, "PollInterval");
+                    if (!IsSelectCountQuery(query))
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Warning,
+                            "TASK431",
+                            "[OnQueryReturnsRows] query should be a SELECT COUNT(*) expression " +
+                            "to avoid unintended side-effects.",
+                            line));
+                    }
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind                 = TriggerKind.QueryReturnsRows,
+                        SqlQuery             = query,
+                        QueryPollIntervalSecs = interval,
+                        Line                 = line,
+                    });
+                    break;
+                }
+
+                case "OnMetricThreshold" or "OnMetricThresholdAttribute":
+                {
+                    var source    = ExtractFirstStringArg(attr);
+                    var threshold = GetNamedDoubleArg(attr, "Threshold");
+                    var direction = GetNamedEnumArg<ThresholdDirection>(attr, "Direction") ?? ThresholdDirection.Either;
+                    var interval  = GetNamedIntArg(attr, "PollInterval");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind                  = TriggerKind.MetricThreshold,
+                        MetricSource          = source,
+                        MetricThreshold       = threshold,
+                        MetricDirection       = direction,
+                        MetricPollIntervalSecs = interval,
+                        Line                  = line,
+                    });
+                    break;
+                }
+
+                case "OnStartup" or "OnStartupAttribute":
+                    triggers.Add(new TaskTriggerDefinition { Kind = TriggerKind.Startup, Line = line });
+                    break;
+
+                case "OnShutdown" or "OnShutdownAttribute":
+                    triggers.Add(new TaskTriggerDefinition { Kind = TriggerKind.Shutdown, Line = line });
+                    break;
+
+                case "OsShortcut" or "OsShortcutAttribute":
+                {
+                    var label    = ExtractFirstStringArg(attr);
+                    var icon     = GetNamedStringArg(attr, "Icon");
+                    var category = GetNamedStringArg(attr, "Category");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind             = TriggerKind.OsShortcut,
+                        ShortcutLabel    = label,
+                        ShortcutIcon     = icon,
+                        ShortcutCategory = category,
+                        Line             = line,
+                    });
+                    break;
+                }
+
+                case "OnTrigger" or "OnTriggerAttribute":
+                {
+                    var sourceName = ExtractFirstStringArg(attr);
+                    var filter     = GetNamedStringArg(attr, "Filter");
+                    triggers.Add(new TaskTriggerDefinition
+                    {
+                        Kind               = TriggerKind.Custom,
+                        CustomSourceName   = sourceName,
+                        CustomSourceFilter = filter,
+                        Line               = line,
+                    });
+                    break;
+                }
+
+                case "ConcurrencyPolicy" or "ConcurrencyPolicyAttribute":
+                {
+                    concurrencyCount++;
+                    if (concurrencyCount > 1)
+                    {
+                        diagnostics.Add(new TaskDiagnostic(
+                            TaskDiagnosticSeverity.Error,
+                            "TASK421",
+                            "More than one [ConcurrencyPolicy] attribute found on the same class.",
+                            line));
+                    }
+                    else
+                    {
+                        concurrencyOverride = GetNamedEnumArg<TriggerConcurrency>(attr, "Policy")
+                                           ?? ExtractFirstEnumArg<TriggerConcurrency>(attr);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Apply concurrency override to all collected triggers
+        if (concurrencyOverride.HasValue)
+        {
+            for (var i = 0; i < triggers.Count; i++)
+                triggers[i] = triggers[i] with { Concurrency = concurrencyOverride.Value };
+        }
+
+        return triggers;
+    }
+
+    // ── Platform-compatibility helper ─────────────────────────────
+
+    private static readonly HashSet<string> PlatformIncompatibleOnMacOs =
+    [
+        "OnProcessStarted", "OnProcessStartedAttribute",
+        "OnProcessStopped",  "OnProcessStoppedAttribute",
+        "OnWindowFocused",   "OnWindowFocusedAttribute",
+        "OnWindowBlurred",   "OnWindowBlurredAttribute",
+        "OnHotkey",          "OnHotkeyAttribute",
+        "OnSystemIdle",      "OnSystemIdleAttribute",
+        "OnSystemActive",    "OnSystemActiveAttribute",
+        "OnScreenLocked",    "OnScreenLockedAttribute",
+        "OnScreenUnlocked",  "OnScreenUnlockedAttribute",
+    ];
+
+    private static void EmitPlatformWarningIfNeeded(
+        string attrName,
+        int line,
+        List<TaskDiagnostic> diagnostics)
+    {
+        if (PlatformIncompatibleOnMacOs.Contains(attrName))
+        {
+            diagnostics.Add(new TaskDiagnostic(
+                TaskDiagnosticSeverity.Warning,
+                "TASK420",
+                $"[{attrName.Replace("Attribute", "")}] is not supported on macOS and will be ignored at runtime on that platform.",
+                line));
+        }
+    }
+
+    // ── Hotkey validation ─────────────────────────────────────────
+
+    private static readonly HashSet<string> KnownModifiers =
+        ["Ctrl", "Alt", "Shift", "Win", "Meta", "Control", "Windows"];
+
+    private static readonly HashSet<string> KnownKeys =
+        ["F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
+         "A","B","C","D","E","F","G","H","I","J","K","L","M",
+         "N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
+         "0","1","2","3","4","5","6","7","8","9",
+         "Space","Enter","Tab","Escape","Backspace","Delete","Insert",
+         "Home","End","PageUp","PageDown","Up","Down","Left","Right",
+         "NumPad0","NumPad1","NumPad2","NumPad3","NumPad4",
+         "NumPad5","NumPad6","NumPad7","NumPad8","NumPad9",
+         "Multiply","Add","Subtract","Divide","Decimal",
+         "OemSemicolon","OemPlus","OemComma","OemMinus","OemPeriod",
+         "OemOpenBrackets","OemCloseBrackets","OemPipe","OemQuotes","OemBackslash",
+         "PrintScreen","Pause","ScrollLock","CapsLock","NumLock"];
+
+    private static bool IsHotkeyComboValid(string? combo)
+    {
+        if (string.IsNullOrWhiteSpace(combo))
+            return false;
+
+        var parts = combo.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+            return false;
+
+        // Last part must be a key; all preceding parts must be modifiers
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            if (!KnownModifiers.Contains(parts[i]))
+                return false;
+        }
+
+        return KnownKeys.Contains(parts[^1]);
+    }
+
+    // ── Query validation ──────────────────────────────────────────
+
+    private static bool IsSelectCountQuery(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return false;
+
+        var normalized = query.Replace('\n', ' ').Replace('\r', ' ');
+        var upper = normalized.Trim().ToUpperInvariant();
+        return upper.StartsWith("SELECT COUNT(", StringComparison.Ordinal);
+    }
+
+    // ── Named-argument helpers ────────────────────────────────────
+
+    private static string? GetNamedStringArg(AttributeSyntax attr, string name)
+    {
+        var arg = attr.ArgumentList?.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == name);
+        if (arg?.Expression is LiteralExpressionSyntax lit && lit.Token.Value is string s)
+            return s;
+        return null;
+    }
+
+    private static int? GetNamedIntArg(AttributeSyntax attr, string name)
+    {
+        var arg = attr.ArgumentList?.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == name);
+        if (arg?.Expression is LiteralExpressionSyntax lit && lit.Token.Value is int i)
+            return i;
+        return null;
+    }
+
+    private static double? GetNamedDoubleArg(AttributeSyntax attr, string name)
+    {
+        var arg = attr.ArgumentList?.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == name);
+        if (arg?.Expression is LiteralExpressionSyntax lit)
+        {
+            if (lit.Token.Value is double d) return d;
+            if (lit.Token.Value is float  f) return f;
+            if (lit.Token.Value is int    i) return i;
+        }
+        return null;
+    }
+
+    private static T? GetNamedEnumArg<T>(AttributeSyntax attr, string name) where T : struct, Enum
+    {
+        var arg = attr.ArgumentList?.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == name);
+        if (arg is null)
+            return null;
+        return ParseEnumExpression<T>(arg.Expression);
+    }
+
+    private static T? ExtractFirstEnumArg<T>(AttributeSyntax attr) where T : struct, Enum
+    {
+        var arg = attr.ArgumentList?.Arguments.FirstOrDefault();
+        if (arg is null)
+            return null;
+        return ParseEnumExpression<T>(arg.Expression);
+    }
+
+    private static int? ExtractFirstIntArg(AttributeSyntax attr)
+    {
+        var arg = attr.ArgumentList?.Arguments.FirstOrDefault();
+        if (arg?.Expression is LiteralExpressionSyntax lit && lit.Token.Value is int i)
+            return i;
+        return null;
+    }
+
+    private static T? ParseEnumExpression<T>(ExpressionSyntax expr) where T : struct, Enum
+    {
+        // Handle string literal: [ConcurrencyPolicy("Queue")]
+        if (expr is LiteralExpressionSyntax lit && lit.Token.Value is string s)
+        {
+            if (Enum.TryParse<T>(s, ignoreCase: true, out var v)) return v;
+            return null;
+        }
+
+        // Handle member access: TriggerConcurrency.Queue or just Queue
+        var text = expr.ToString();
+        var memberName = text.Contains('.') ? text[(text.LastIndexOf('.') + 1)..] : text;
+
+        // Handle bitwise OR for [Flags] enums: FileWatchEvent.Created | FileWatchEvent.Changed
+        if (text.Contains('|'))
+        {
+            var parts = text.Split('|', StringSplitOptions.TrimEntries);
+            var result = 0;
+            foreach (var part in parts)
+            {
+                var pName = part.Contains('.') ? part[(part.LastIndexOf('.') + 1)..] : part;
+                if (Enum.TryParse<T>(pName, ignoreCase: true, out var pv))
+                    result |= Convert.ToInt32(pv);
+            }
+            return (T)(object)result;
+        }
+
+        if (Enum.TryParse<T>(memberName, ignoreCase: true, out var parsed))
+            return parsed;
+
+        return null;
+    }
+
+    /// <summary>Extracts the first string literal argument from an attribute, or null.</summary>
+    private static string? ExtractFirstStringArg(AttributeSyntax attr)
+    {
+        if (attr.ArgumentList?.Arguments.Count > 0 &&
+            attr.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax lit &&
+            lit.Token.Value is string s)
+        {
+            return s;
+        }
+        return null;
+    }
 
     private static IReadOnlyList<TaskToolCallHook> ExtractToolCallHooks(
         ClassDeclarationSyntax classSyntax,
@@ -754,10 +1557,10 @@ public sealed class TaskScriptParser
 
         // Single-arg context methods: store first arg as Expression
         if (kind is TaskStepKind.Emit or TaskStepKind.Log or
-            TaskStepKind.StartTranscription or TaskStepKind.StopTranscription or
             TaskStepKind.WaitUntilStopped or
             TaskStepKind.FindModel or TaskStepKind.FindProvider or TaskStepKind.FindAgent or
-            TaskStepKind.CreateThread)
+            TaskStepKind.CreateThread ||
+            _moduleSingleArgMethods.Contains(methodName))
         {
             step = step with { Expression = ExtractFirstArgText(invocation) };
         }
@@ -957,34 +1760,36 @@ public sealed class TaskScriptParser
 
     // ── Lookup tables ─────────────────────────────────────────────
 
-    private static TaskStepKind? ResolveContextApiKind(string methodName) => methodName switch
+    private static TaskStepKind? ResolveContextApiKind(string methodName)
     {
-        "Chat"                  => TaskStepKind.Chat,
-        "ChatStream"            => TaskStepKind.ChatStream,
-        "StartTranscription"    => TaskStepKind.StartTranscription,
-        "StopTranscription"     => TaskStepKind.StopTranscription,
-        "GetDefaultInputAudio" => TaskStepKind.GetDefaultInputAudio,
-        "Emit"                  => TaskStepKind.Emit,
-        "ParseResponse"         => TaskStepKind.ParseResponse,
-        "WaitUntilStopped"      => TaskStepKind.WaitUntilStopped,
-        "Log"                   => TaskStepKind.Log,
-        "HttpGet" or "HttpPost" or "HttpPut" or "HttpDelete"
-                                => TaskStepKind.HttpRequest,
-        "FindModel"             => TaskStepKind.FindModel,
-        "FindProvider"          => TaskStepKind.FindProvider,
-        "FindAgent"             => TaskStepKind.FindAgent,
-        "CreateAgent"           => TaskStepKind.CreateAgent,
-        "CreateThread"          => TaskStepKind.CreateThread,
-        "ChatToThread"          => TaskStepKind.ChatToThread,
-        _                       => null
-    };
+        TaskStepKind? builtin = methodName switch
+        {
+            "Chat"         => TaskStepKind.Chat,
+            "ChatStream"   => TaskStepKind.ChatStream,
+            "Emit"         => TaskStepKind.Emit,
+            "ParseResponse" => TaskStepKind.ParseResponse,
+            "WaitUntilStopped" => TaskStepKind.WaitUntilStopped,
+            "Log"          => TaskStepKind.Log,
+            "HttpGet" or "HttpPost" or "HttpPut" or "HttpDelete"
+                           => TaskStepKind.HttpRequest,
+            "FindModel"    => TaskStepKind.FindModel,
+            "FindProvider" => TaskStepKind.FindProvider,
+            "FindAgent"    => TaskStepKind.FindAgent,
+            "CreateAgent"  => TaskStepKind.CreateAgent,
+            "CreateThread" => TaskStepKind.CreateThread,
+            "ChatToThread" => TaskStepKind.ChatToThread,
+            _              => null
+        };
+        if (builtin is not null) return builtin;
+        return _moduleStepKinds.TryGetValue(methodName, out var entry) ? entry.Kind : null;
+    }
 
-    private static TaskTriggerKind? ResolveEventTrigger(string? methodName) => methodName switch
+    private static TaskTriggerKind? ResolveEventTrigger(string? methodName)
     {
-        "OnTranscriptionSegment" => TaskTriggerKind.TranscriptionSegment,
-        "OnTimer"                => TaskTriggerKind.Timer,
-        _                        => null
-    };
+        if (methodName is null) return null;
+        if (methodName == "OnTimer") return TaskTriggerKind.Timer;
+        return _moduleEventTriggers.TryGetValue(methodName, out var entry) ? entry.Kind : null;
+    }
 
     private static string? ResolveHttpMethod(string methodName) => methodName switch
     {

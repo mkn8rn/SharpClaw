@@ -438,19 +438,8 @@ public sealed partial class HeaderTagProcessor(
             "threads" => Cast(await db.ChatThreads.ToListAsync(ct)),
             "roles" => Cast(await db.Roles.ToListAsync(ct)),
             "users" => Cast(await db.Users.ToListAsync(ct)),
-            "containers" => Cast(await db.Containers.ToListAsync(ct)),
-            "websites" => Cast(await db.Websites.ToListAsync(ct)),
-            "searchengines" => Cast(await db.SearchEngines.ToListAsync(ct)),
-            "inputaudios" => Cast(await db.InputAudios.ToListAsync(ct)),
-            "displaydevices" => Cast(await db.DisplayDevices.ToListAsync(ct)),
-            "editorsessions" => Cast(await db.EditorSessions.ToListAsync(ct)),
-            "skills" => Cast(await db.Skills.ToListAsync(ct)),
-            "systemusers" => Cast(await db.SystemUsers.ToListAsync(ct)),
-            "internaldatabases" => Cast(await db.InternalDatabases.ToListAsync(ct)),
-            "externaldatabases" => Cast(await db.ExternalDatabases.ToListAsync(ct)),
             "scheduledtasks" or "scheduledjobs" => Cast(await db.ScheduledTasks.ToListAsync(ct)),
             "tasks" or "taskdefinitions" => Cast(await db.TaskDefinitions.ToListAsync(ct)),
-            "botintegrations" => Cast(await db.BotIntegrations.ToListAsync(ct)),
             _ => null
         };
 

@@ -5,15 +5,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
-using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.Transcription.Clients;
 using SharpClaw.Modules.Transcription.Handlers;
 using SharpClaw.Modules.Transcription.LocalInference;
+using SharpClaw.Modules.Transcription.Models;
 using SharpClaw.Modules.Transcription.Services;
 
 namespace SharpClaw.Modules.Transcription;
@@ -22,7 +21,7 @@ namespace SharpClaw.Modules.Transcription;
 /// Default module: live audio transcription, input audio device management,
 /// and STT provider integration. Windows only (WASAPI audio capture).
 /// </summary>
-public sealed class TranscriptionModule : ISharpClawModule
+public sealed class TranscriptionModule : ISharpClawModule, ITaskParserAware
 {
     public string Id => "sharpclaw_transcription";
     public string DisplayName => "Transcription";
@@ -31,6 +30,8 @@ public sealed class TranscriptionModule : ISharpClawModule
     // ═══════════════════════════════════════════════════════════════
     // DI Registration
     // ═══════════════════════════════════════════════════════════════
+
+    public ITaskParserModuleExtension ParserExtension => TranscriptionParserExtension.Instance;
 
     public void ConfigureServices(IServiceCollection services)
     {
@@ -52,8 +53,6 @@ public sealed class TranscriptionModule : ISharpClawModule
         services.AddScoped<TranscriptionService>();
 
         // Shared services this module may also need
-        services.TryAddScoped<DefaultResourceSetService>();
-        services.TryAddScoped<ToolAwarenessSetService>();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -78,8 +77,13 @@ public sealed class TranscriptionModule : ISharpClawModule
     [
         new("TrAudio", "InputAudio", "AccessInputAudioAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<TranscriptionDbContext>();
             return await db.InputAudios.Select(a => a.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<TranscriptionDbContext>();
+            return await db.InputAudios.Select(a => new ValueTuple<Guid, string>(a.Id, a.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -276,7 +280,7 @@ public sealed class TranscriptionModule : ISharpClawModule
     public async Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
     {
         using var scope = services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<TranscriptionDbContext>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<TranscriptionModule>>();
 
         var exists = await db.InputAudios
@@ -310,28 +314,9 @@ public sealed class TranscriptionModule : ISharpClawModule
 
         // Reconcile transcription jobs left in Executing/Queued from a previous session.
         // No orchestrator loops survive a restart, so these are guaranteed stale.
-        using var scope = services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
-
-        var staleJobs = await db.AgentJobs
-            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio")
-                && (j.Status == AgentJobStatus.Executing || j.Status == AgentJobStatus.Queued))
-            .ToListAsync(ct);
-
-        if (staleJobs.Count > 0)
-        {
-            var logger = scope.ServiceProvider.GetRequiredService<ILogger<TranscriptionModule>>();
-            logger.LogInformation("Reconciling {Count} stale transcription job(s) from previous session.", staleJobs.Count);
-
-            var now = DateTimeOffset.UtcNow;
-            foreach (var job in staleJobs)
-            {
-                job.Status = AgentJobStatus.Cancelled;
-                job.CompletedAt = now;
-            }
-
-            await db.SaveChangesAsync(ct);
-        }
+        var sink = services.GetService<ITranscriptionJobSink>();
+        if (sink is not null)
+            await sink.CancelStaleTranscriptionJobsAsync(ct);
     }
 
     // ═══════════════════════════════════════════════════════════════

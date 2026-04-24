@@ -1,13 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 
-using SharpClaw.Application.Infrastructure.Models.Jobs;
-using SharpClaw.Application.Infrastructure.Models.Messages;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Transcription;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Modules.Transcription.Clients;
+using SharpClaw.Modules.Transcription.Models;
 
 namespace SharpClaw.Modules.Transcription.Services;
 
@@ -18,7 +16,10 @@ namespace SharpClaw.Modules.Transcription.Services;
 /// job/permission system.  This service owns the transcription-specific
 /// DTO mapping so the core stays free of transcription knowledge.
 /// </summary>
-public sealed class TranscriptionService(SharpClawDbContext db, IAudioCaptureProvider capture)
+public sealed class TranscriptionService(
+    TranscriptionDbContext db,
+    IAudioCaptureProvider capture,
+    IAgentJobReader jobReader)
 {
     // ═══════════════════════════════════════════════════════════════
     // Input audio CRUD
@@ -138,16 +139,17 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
     // Transcription job queries
     // ═══════════════════════════════════════════════════════════════
 
+    private const string TranscriptionActionPrefix = "transcribe_from_audio";
+
     /// <summary>
-    /// Retrieves a single transcription job by ID and maps it to the
-    /// transcription-specific DTO that includes segments and computed stats.
-    /// Returns <c>null</c> if the job does not exist or is not a
+    /// Retrieves a single transcription job by ID.
+    /// Returns <see langword="null"/> if the job does not exist or is not a
     /// transcription job.
     /// </summary>
     public async Task<TranscriptionJobResponse?> GetTranscriptionJobAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        var job = await LoadTranscriptionJobAsync(jobId, ct);
+        var job = await jobReader.GetJobAsync(jobId, ct);
         if (job is null || !IsTranscriptionAction(job.ActionKey))
             return null;
 
@@ -155,55 +157,37 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
     }
 
     /// <summary>
-    /// Lists all transcription jobs, optionally filtered by input audio
-    /// device.  Returns the full transcription DTO with segments.
+    /// Lists all transcription jobs, optionally filtered by input audio device.
     /// </summary>
     public async Task<IReadOnlyList<TranscriptionJobResponse>> ListTranscriptionJobsAsync(
         Guid? inputAudioId = null, CancellationToken ct = default)
     {
-        var query = db.AgentJobs
-            .Include(j => j.LogEntries)
-            .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio"));
-
-        if (inputAudioId is not null)
-            query = query.Where(j => j.ResourceId == inputAudioId);
-
-        var jobs = await query.OrderByDescending(j => j.CreatedAt).ToListAsync(ct);
+        var jobs = await jobReader.ListJobsByActionPrefixAsync(
+            TranscriptionActionPrefix, inputAudioId, ct);
         return jobs.Select(ToTranscriptionResponse).ToList();
     }
 
     /// <summary>
-    /// Lists lightweight transcription job summaries — no segments or
-    /// heavy payloads.  Suitable for dropdowns and list views.
+    /// Lists lightweight transcription job summaries — no segments or heavy payloads.
     /// </summary>
     public async Task<IReadOnlyList<TranscriptionJobSummaryResponse>> ListTranscriptionJobSummariesAsync(
         Guid? inputAudioId = null, CancellationToken ct = default)
     {
-        var query = db.AgentJobs
-            .Include(j => j.TranscriptionSegments)
-            .Where(j => j.ActionKey != null && j.ActionKey.StartsWith("transcribe_from_audio"));
-
-        if (inputAudioId is not null)
-            query = query.Where(j => j.ResourceId == inputAudioId);
-
-        var jobs = await query.OrderByDescending(j => j.CreatedAt).ToListAsync(ct);
-        return jobs.Select(ToTranscriptionSummary).ToList();
+        var summaries = await jobReader.ListJobSummariesByActionPrefixAsync(
+            TranscriptionActionPrefix, inputAudioId, ct);
+        return summaries.Select(ToTranscriptionSummary).ToList();
     }
 
     /// <summary>
-    /// Retrieves transcription segments for a job, optionally filtered
-    /// by timestamp.  Standalone polling alternative to WebSocket/SSE
-    /// streaming.
+    /// Retrieves transcription segments for a job, optionally filtered by timestamp.
+    /// Standalone polling alternative to WebSocket/SSE streaming.
     /// </summary>
     public async Task<IReadOnlyList<TranscriptionSegmentResponse>?> GetSegmentsAsync(
         Guid jobId, DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        var jobExists = await db.AgentJobs
-            .AnyAsync(j => j.Id == jobId
-                && j.ActionKey != null
-                && j.ActionKey.StartsWith("transcribe_from_audio"), ct);
-        if (!jobExists)
+        var exists = await jobReader.JobExistsWithActionPrefixAsync(
+            jobId, TranscriptionActionPrefix, ct);
+        if (!exists)
             return null;
 
         var threshold = since ?? DateTimeOffset.MinValue;
@@ -216,28 +200,17 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Transcription job mapping
+    // Mapping — AgentJobResponse → transcription-specific DTOs
     // ═══════════════════════════════════════════════════════════════
 
-    private static TranscriptionJobResponse ToTranscriptionResponse(AgentJobDB job)
+    private static TranscriptionJobResponse ToTranscriptionResponse(AgentJobResponse job)
     {
-        var segments = job.TranscriptionSegments
-            .OrderBy(s => s.StartTime)
-            .Select(ToSegmentResponse)
-            .ToList();
-
+        var segments = job.Segments ?? [];
         var finalized = segments.Count(s => !s.IsProvisional);
         var provisional = segments.Count(s => s.IsProvisional);
         var duration = segments.Count > 0
             ? segments.Max(s => s.EndTime) - segments.Min(s => s.StartTime)
             : (double?)null;
-
-        var jobCost = job.PromptTokens is not null || job.CompletionTokens is not null
-            ? new TokenUsageResponse(
-                job.PromptTokens ?? 0,
-                job.CompletionTokens ?? 0,
-                (job.PromptTokens ?? 0) + (job.CompletionTokens ?? 0))
-            : null;
 
         return new TranscriptionJobResponse(
             Id: job.Id,
@@ -249,10 +222,7 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
             EffectiveClearance: job.EffectiveClearance,
             ResultData: job.ResultData,
             ErrorLog: job.ErrorLog,
-            Logs: job.LogEntries
-                .OrderBy(l => l.CreatedAt)
-                .Select(l => new AgentJobLogResponse(l.Message, l.Level, l.CreatedAt))
-                .ToList(),
+            Logs: job.Logs,
             CreatedAt: job.CreatedAt,
             StartedAt: job.StartedAt,
             CompletedAt: job.CompletedAt,
@@ -261,24 +231,16 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
             TranscriptionMode: job.TranscriptionMode,
             WindowSeconds: job.WindowSeconds,
             StepSeconds: job.StepSeconds,
-            Segments: segments,
+            Segments: [.. segments],
             TotalSegments: segments.Count,
             FinalizedSegments: finalized,
             ProvisionalSegments: provisional,
             TranscribedDurationSeconds: duration,
-            JobCost: jobCost);
+            JobCost: job.JobCost);
     }
 
-    private static TranscriptionJobSummaryResponse ToTranscriptionSummary(AgentJobDB job)
-    {
-        var total = job.TranscriptionSegments.Count;
-        var finalized = job.TranscriptionSegments.Count(s => !s.IsProvisional);
-        var provisional = total - finalized;
-        var duration = total > 0
-            ? job.TranscriptionSegments.Max(s => s.EndTime) - job.TranscriptionSegments.Min(s => s.StartTime)
-            : (double?)null;
-
-        return new TranscriptionJobSummaryResponse(
+    private static TranscriptionJobSummaryResponse ToTranscriptionSummary(AgentJobSummaryResponse job) =>
+        new(
             Id: job.Id,
             ChannelId: job.ChannelId,
             AgentId: job.AgentId,
@@ -288,28 +250,18 @@ public sealed class TranscriptionService(SharpClawDbContext db, IAudioCapturePro
             CreatedAt: job.CreatedAt,
             StartedAt: job.StartedAt,
             CompletedAt: job.CompletedAt,
-            TranscriptionModelId: job.TranscriptionModelId,
-            Language: job.Language,
-            TranscriptionMode: job.TranscriptionMode,
-            TotalSegments: total,
-            FinalizedSegments: finalized,
-            ProvisionalSegments: provisional,
-            TranscribedDurationSeconds: duration);
-    }
+            TranscriptionModelId: null,
+            Language: null,
+            TranscriptionMode: null,
+            TotalSegments: 0,
+            FinalizedSegments: 0,
+            ProvisionalSegments: 0,
+            TranscribedDurationSeconds: null);
 
     private static TranscriptionSegmentResponse ToSegmentResponse(TranscriptionSegmentDB s) =>
         new(s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp, s.IsProvisional);
 
-    private static async Task<AgentJobDB?> LoadTranscriptionJobAsync(
-        SharpClawDbContext db, Guid jobId, CancellationToken ct) =>
-        await db.AgentJobs
-            .Include(j => j.LogEntries)
-            .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
-            .FirstOrDefaultAsync(j => j.Id == jobId, ct);
-
-    private Task<AgentJobDB?> LoadTranscriptionJobAsync(Guid jobId, CancellationToken ct) =>
-        LoadTranscriptionJobAsync(db, jobId, ct);
-
     private static bool IsTranscriptionAction(string? actionKey) =>
-        actionKey is not null && actionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase);
+        actionKey is not null
+        && actionKey.StartsWith(TranscriptionActionPrefix, StringComparison.OrdinalIgnoreCase);
 }

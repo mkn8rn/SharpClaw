@@ -1,4 +1,5 @@
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Contracts.Tasks;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 

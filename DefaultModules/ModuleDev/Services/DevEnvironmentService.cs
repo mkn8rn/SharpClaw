@@ -3,8 +3,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
@@ -13,7 +11,9 @@ namespace SharpClaw.Modules.ModuleDev.Services;
 /// Queries the local development environment: installed SDKs, runtimes,
 /// global tools, contracts assembly info, and loaded module metadata.
 /// </summary>
-internal sealed class DevEnvironmentService(ModuleRegistry registry)
+internal sealed class DevEnvironmentService(
+    IModuleInfoProvider moduleInfoProvider,
+    IModuleLifecycleManager lifecycleManager)
 {
     internal sealed record DevEnvironmentInfo(
         IReadOnlyList<string> DotnetSdks,
@@ -80,18 +80,15 @@ internal sealed class DevEnvironmentService(ModuleRegistry registry)
         var modules = new List<RegisteredModuleInfo>();
         var contracts = new List<AvailableContractInfo>();
 
-        foreach (var mod in registry.GetAllModules())
+        foreach (var mod in moduleInfoProvider.GetAllModules())
         {
-            var exported = mod.ExportedContracts
-                .Select(c => c.ContractName)
-                .ToList();
-            modules.Add(new RegisteredModuleInfo(mod.Id, mod.ToolPrefix, exported));
+            modules.Add(new RegisteredModuleInfo(mod.Id, mod.ToolPrefix, mod.ExportedContractNames));
 
-            foreach (var export in mod.ExportedContracts)
+            foreach (var contractName in mod.ExportedContractNames)
             {
                 contracts.Add(new AvailableContractInfo(
-                    export.ContractName,
-                    export.ServiceType.FullName ?? export.ServiceType.Name,
+                    contractName,
+                    contractName,
                     mod.Id));
             }
         }
@@ -105,7 +102,7 @@ internal sealed class DevEnvironmentService(ModuleRegistry registry)
             HostVersion: hostVersion,
             RegisteredModules: modules,
             AvailableContracts: contracts,
-            ExternalModulesDir: ModuleService.ResolveExternalModulesDir());
+            ExternalModulesDir: lifecycleManager.ExternalModulesDir);
     }
 
     /// <summary>

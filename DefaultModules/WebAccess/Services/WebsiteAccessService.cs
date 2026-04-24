@@ -2,14 +2,11 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.WebAccess.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.WebAccess.Services;
@@ -19,7 +16,7 @@ namespace SharpClaw.Modules.WebAccess.Services;
 /// content-type allow-listing, redirect origin pinning, and response size capping.
 /// </summary>
 public sealed class WebsiteAccessService(
-    SharpClawDbContext db,
+    WebAccessDbContext db,
     IConfiguration configuration,
     ILogger<WebsiteAccessService> logger)
 {
@@ -70,7 +67,6 @@ public sealed class WebsiteAccessService(
                 "AccessWebsite requires a ResourceId (Website).");
 
         var website = await db.Websites
-            .Include(w => w.Skill)
             .FirstOrDefaultAsync(w => w.Id == job.ResourceId.Value, ct)
             ?? throw new InvalidOperationException(
                 $"Website {job.ResourceId} not found.");
@@ -89,9 +85,6 @@ public sealed class WebsiteAccessService(
                 => await AccessBrowserAsync(job, url, mode, ct),
             _ => await AccessCliAsync(url, ct),
         };
-
-        if (website.Skill is { SkillText.Length: > 0 } skill)
-            result = $"[Website Skill: {skill.Name}]\n{skill.SkillText}\n\n---\n\n{result}";
 
         return result ?? "(empty response)";
     }

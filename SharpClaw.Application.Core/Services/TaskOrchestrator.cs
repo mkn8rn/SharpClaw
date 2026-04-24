@@ -10,11 +10,13 @@ using SharpClaw.Application.Infrastructure.Models.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Compilation;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
@@ -37,7 +39,8 @@ public sealed class TaskOrchestrator(
     AgentJobService agentJobService,
     IHttpClientFactory httpClientFactory,
     IServiceScopeFactory scopeFactory,
-    TaskRuntimeHost runtimeHost)
+    TaskRuntimeHost runtimeHost,
+    ModuleRegistry moduleRegistry)
 {
     private readonly ChatService _chatService = chatService;
     private readonly AgentJobService _agentJobService = agentJobService;
@@ -378,8 +381,14 @@ public sealed class TaskOrchestrator(
 
             case TaskStepKind.GetDefaultInputAudio:
             {
-                var device = await db.InputAudios.FirstOrDefaultAsync(context.CancellationToken);
-                var deviceId = device?.Id ?? Guid.Empty;
+                Guid deviceId = Guid.Empty;
+                var descriptor = moduleRegistry.GetResourceTypeDescriptor("TrAudio");
+                if (descriptor?.LoadLookupItems is not null)
+                {
+                    await using var scope = scopeFactory.CreateAsyncScope();
+                    var items = await descriptor.LoadLookupItems(scope.ServiceProvider, context.CancellationToken);
+                    deviceId = items.Count > 0 ? items[0].Id : Guid.Empty;
+                }
 
                 if (step.ResultVariable is not null)
                     context.Variables[step.ResultVariable] = deviceId.ToString();

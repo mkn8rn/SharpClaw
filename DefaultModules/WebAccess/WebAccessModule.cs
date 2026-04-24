@@ -5,10 +5,11 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using Microsoft.EntityFrameworkCore;
 
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.WebAccess.Handlers;
 using SharpClaw.Modules.WebAccess.Services;
+using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Modules.WebAccess;
 
@@ -49,13 +50,23 @@ public sealed class WebAccessModule : ISharpClawModule
     [
         new("WaWebsite", "WebsiteAccess", "AccessWebsiteAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<WebAccessDbContext>();
             return await db.Websites.Select(w => w.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<WebAccessDbContext>();
+            return await db.Websites.Select(w => new ValueTuple<Guid, string>(w.Id, w.Name)).ToListAsync(ct);
         }),
         new("WaSearch", "SearchEngineAccess", "QuerySearchEngineAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<WebAccessDbContext>();
             return await db.SearchEngines.Select(s => s.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<WebAccessDbContext>();
+            return await db.SearchEngines.Select(s => new ValueTuple<Guid, string>(s.Id, s.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -417,8 +428,49 @@ public sealed class WebAccessModule : ISharpClawModule
     public Task InitializeAsync(IServiceProvider services, CancellationToken ct)
         => Task.CompletedTask;
 
-    public Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
-        => Task.CompletedTask;
+    public async Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
+    {
+        var db = services.GetRequiredService<WebAccessDbContext>();
+
+        var existing = await db.SearchEngines
+            .Select(e => e.Type)
+            .ToHashSetAsync(ct);
+
+        var defaultEndpoints = new Dictionary<SearchEngineType, string>
+        {
+            [SearchEngineType.Google]    = "https://www.googleapis.com/customsearch/v1",
+            [SearchEngineType.Bing]      = "https://api.bing.microsoft.com/v7.0/search",
+            [SearchEngineType.DuckDuckGo] = "https://api.duckduckgo.com/",
+            [SearchEngineType.Brave]     = "https://api.search.brave.com/res/v1/web/search",
+            [SearchEngineType.SearXNG]   = "https://searx.be/search",
+            [SearchEngineType.Tavily]    = "https://api.tavily.com/search",
+            [SearchEngineType.Serper]    = "https://google.serper.dev/search",
+            [SearchEngineType.Kagi]      = "https://kagi.com/api/v0/search",
+            [SearchEngineType.YouDotCom] = "https://api.ydc-index.io/search",
+            [SearchEngineType.Mojeek]    = "https://www.mojeek.com/search",
+            [SearchEngineType.Yandex]    = "https://yandex.com/search/xml",
+            [SearchEngineType.Baidu]     = "https://api.baidu.com/search",
+        };
+
+        var toSeed = Enum.GetValues<SearchEngineType>()
+            .Where(t => t != SearchEngineType.Custom && !existing.Contains(t))
+            .ToList();
+
+        if (toSeed.Count == 0)
+            return;
+
+        foreach (var type in toSeed)
+        {
+            db.SearchEngines.Add(new Models.SearchEngineDB
+            {
+                Name = type.ToString(),
+                Type = type,
+                Endpoint = defaultEndpoints.GetValueOrDefault(type, string.Empty),
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
 
     public Task ShutdownAsync() => Task.CompletedTask;
 

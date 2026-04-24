@@ -1,8 +1,7 @@
 using System.Runtime.InteropServices;
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.ComputerUse.Models;
 
 namespace SharpClaw.Modules.ComputerUse.Services;
 
@@ -11,7 +10,7 @@ namespace SharpClaw.Modules.ComputerUse.Services;
 /// execution is handled by the Computer Use module via the
 /// job/permission system.
 /// </summary>
-public sealed class DisplayDeviceService(SharpClawDbContext db)
+public sealed class DisplayDeviceService(ComputerUseDbContext db)
 {
     // ═══════════════════════════════════════════════════════════════
     // CRUD

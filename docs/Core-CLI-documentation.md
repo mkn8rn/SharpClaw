@@ -553,7 +553,10 @@ task update <id> <sourceFilePath>
 task activate <id>
 task deactivate <id>
 task delete <id>
+task preflight <taskId> [--param key=value ...]
 ```
+
+`preflight` evaluates declared requirements without creating an instance.
 
 ### Instances
 
@@ -590,6 +593,28 @@ task listen <instanceId>
 Streams live task output events to the terminal. Event types: `[output]`,
 `[log]`, `[status]`, `[done]`. Press Ctrl+C to stop listening without
 stopping the instance.
+
+### Scheduling, triggers, and shortcuts
+
+```text
+task schedule list
+task schedule get <jobId>
+task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <name>]
+task schedule update <jobId> --cron <expr> [--timezone <tz>]
+task schedule pause <jobId>
+task schedule resume <jobId>
+task schedule delete <jobId>
+task schedule preview <expr> [--timezone <tz>] [--count N]
+task trigger-sources
+task triggers enable <taskId>
+task triggers disable <taskId>
+task shortcuts install <taskId>
+task shortcuts remove <taskId>
+```
+
+Use `task schedule preview` before creating a cron entry if you want to inspect
+the next few fire times. Use `task trigger-sources` to discover built-in and
+custom trigger sources available on the current host.
 
 ---
 

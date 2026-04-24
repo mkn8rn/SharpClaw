@@ -18,6 +18,8 @@ runtime.
 - [Writing a task script](#writing-a-task-script)
   - [Minimal example](#minimal-example)
   - [Attributes](#attributes)
+  - [Requirements and preflight attributes](#requirements-and-preflight-attributes)
+  - [Trigger attributes](#trigger-attributes)
   - [Parameters](#parameters)
   - [Data types and the output type](#data-types-and-the-output-type)
   - [The entry point](#the-entry-point)
@@ -27,13 +29,17 @@ runtime.
   - [AgentOutput format hints](#agentoutput-format-hints)
 - [Validation diagnostic codes](#validation-diagnostic-codes)
 - [Compilation diagnostic codes](#compilation-diagnostic-codes)
+- [Preflight and requirement checks](#preflight-and-requirement-checks)
 - [Execution lifecycle](#execution-lifecycle)
 - [Permissions](#permissions)
 - [Agent tool exposure](#agent-tool-exposure)
 - [Scheduling](#scheduling)
+- [Trigger system](#trigger-system)
+- [CLI reference](#cli-reference)
 - [REST API reference](#rest-api-reference)
   - [Task definitions](#task-definitions)
   - [Task instances](#task-instances)
+  - [Task trigger and shortcut endpoints](#task-trigger-and-shortcut-endpoints)
   - [SSE streaming](#sse-streaming)
   - [Response shapes](#response-shapes)
 - [Practical examples](#practical-examples)
@@ -97,6 +103,78 @@ The class name is arbitrary; the canonical task name comes from `[Task(...)]`.
 | `[ToolCall("name")]` | Method | No | Marks a public method as an inline agent tool. See [Tool-call methods](#tool-call-methods-toolcall). |
 | `[AgentOutput("format")]` | Method | No | Hints to the agent how to interpret the method's return value (`json`, `markdown`, `text`). |
 | `[Output]` | Data type class | No | Marks a nested class as the structured output type. At most one `[Output]` class per task. The instance's `outputSnapshotJson` reflects the last `Emit` of this type. |
+
+---
+
+### Requirements and preflight attributes
+
+Tasks can declare runtime prerequisites directly on the class and on selected
+parameters. These are parsed into structured requirement records, returned in the
+ definition response, and enforced by the preflight checker before instance creation.
+
+```csharp
+[Task("vision-report")]
+[RequiresProvider("OpenAI")]
+[RequiresModelCapability("Vision")]
+[RequiresModule("transcription")]
+[RequiresPermission("CanExecuteTasks")]
+public class VisionReportTask
+{
+    [ModelId]
+    [RequiresCapability("Vision")]
+    public string Model { get; set; } = "gpt-4.1";
+
+    public async Task RunAsync(CancellationToken ct) { }
+}
+```
+
+Supported requirement attributes:
+
+| Attribute | Meaning |
+|---|---|
+| `[RequiresProvider("Name")]` | A configured provider with a usable key must exist. |
+| `[RequiresModelCapability("Capability")]` | At least one model with the named capability must exist. |
+| `[RequiresModel("NameOrCustomId")]` | A specific model must exist. |
+| `[RequiresModule("module-id")]` | A module must be enabled. |
+| `[RecommendsModule("module-id")]` | A non-blocking recommendation shown as a warning. |
+| `[RequiresPlatform(TaskPlatform.Windows | TaskPlatform.Linux)]` | Restricts the task to supported host platforms. |
+| `[RequiresPermission("PermissionKey")]` | Requires a matching permission/global flag for the caller agent. |
+| `[ModelId]` | Marks a parameter as a model lookup parameter for preflight checks. |
+| `[RequiresCapability("Capability")]` | Requires the model referenced by that parameter to expose the named capability. |
+
+---
+
+### Trigger attributes
+
+Tasks can self-register triggers directly on the class. Cron triggers become
+scheduled jobs. Other triggers become runtime trigger bindings watched by the
+trigger host service.
+
+```csharp
+[Task("notify-on-change")]
+[Schedule("0 */15 * * *", Timezone = "UTC")]
+[OnFileChanged("C:\\watch", Pattern = "*.pdf")]
+[OnTrigger("MyCustomSource", Filter = "important")]
+[ConcurrencyPolicy(TriggerConcurrency.SkipIfRunning)]
+public class NotifyOnChangeTask
+{
+    public async Task RunAsync(CancellationToken ct) { }
+}
+```
+
+Common trigger attributes:
+
+| Attribute | Purpose |
+|---|---|
+| `[Schedule("cron")]` | Register a cron-based scheduled job. |
+| `[OnEvent("EventType")]` | Fire on a SharpClaw event bus event. |
+| `[OnFileChanged(path, Pattern = "...")]` | Fire when files change under a watched path. |
+| `[OnProcessStarted("name")]` / `[OnProcessStopped("name")]` | Fire on process lifecycle events. |
+| `[OnWebhook("/route")]` | Expose the task as a webhook target. |
+| `[OnStartup]` / `[OnShutdown]` | Fire on application lifecycle transitions. |
+| `[OsShortcut("Label")]` | Install an OS launcher shortcut for the task. |
+| `[OnTrigger("SourceName")]` | Bind to a custom module-provided trigger source. |
+| `[ConcurrencyPolicy(...)]` | Control what happens when a trigger fires while a prior instance is still running. |
 
 ---
 
@@ -334,6 +412,24 @@ against the definition's parameter schema.
 
 ---
 
+## Preflight and requirement checks
+
+Before a task instance is created, SharpClaw can evaluate the declared requirement
+set without starting execution.
+
+- API: `GET /tasks/{taskId}/preflight?param.Model=my-model`
+- CLI: `task preflight <taskId> [--param key=value ...]`
+
+The preflight result returns:
+
+- `isBlocked` — `true` when any error-severity requirement failed
+- `findings[]` — one row per requirement, including pass/fail, severity, and message
+
+Preflight also runs automatically during instance creation. If a blocking check
+fails, the API returns `422 Unprocessable Entity` with the same structured result.
+
+---
+
 ## Execution lifecycle
 
 An instance moves through a defined set of statuses:
@@ -397,16 +493,97 @@ pipeline — without any hardcoded wiring.
 
 ## Scheduling
 
-Tasks can be launched on a schedule through `ScheduledJobDB`. A scheduled
-job entry may reference a `TaskDefinitionId` along with a
-`ParameterValuesJson` dictionary and an optional `CallerAgentId` for audit
-purposes. When the scheduler fires the job it calls
-`TaskService.CreateInstanceAsync` and immediately starts the orchestrator,
-exactly as if a user had called `POST /tasks/{id}/instances` with
-`channelId` set.
+Tasks can be launched on a schedule through scheduled jobs. SharpClaw now supports
+both interval-based repetition and cron expressions, including optional timezones,
+previewing future fire times, pausing/resuming jobs, and missed-fire handling.
 
-Scheduled jobs are managed through the job scheduler endpoints; see the
-[Core API reference](Core-API-documentation.md) for the scheduler section.
+Common scheduling flows:
+
+- declare `[Schedule("0 9 * * 1-5", Timezone = "UTC")]` in the task source
+- create a scheduled job explicitly through the scheduler endpoints or CLI
+- preview future executions before saving a cron expression
+
+Useful scheduler operations:
+
+- API preview: `GET /scheduled-jobs/preview?expression=...&timezone=...&count=10`
+- API preview existing job: `GET /scheduled-jobs/{id}/preview?count=10`
+- CLI preview: `task schedule preview "0 9 * * 1-5" [--timezone UTC] [--count 10]`
+- CLI create/update: `task schedule create ...`, `task schedule update ...`
+- CLI pause/resume: `task schedule pause <jobId>`, `task schedule resume <jobId>`
+
+When the scheduler fires a job it calls `TaskService.CreateInstanceAsync` and then
+starts the orchestrator, the same as a normal manual task launch.
+
+---
+
+## Trigger system
+
+The trigger system lets a task definition register itself with runtime watchers.
+
+- `TaskTriggerRegistrar` persists trigger bindings extracted from task source
+- `TaskTriggerHostService` starts and reloads the active watcher set
+- built-in sources cover events, file changes, host reachability, network changes,
+  lifecycle events, metrics, query polling, and more
+- module authors can register custom `ITaskTriggerSource` implementations and bind
+  tasks to them with `[OnTrigger("SourceName")]`
+
+Useful trigger-related endpoints:
+
+- `GET /tasks/trigger-sources`
+- `POST /tasks/{taskId}/triggers/enable`
+- `POST /tasks/{taskId}/triggers/disable`
+- `POST /tasks/{taskId}/shortcuts/install`
+- `DELETE /tasks/{taskId}/shortcuts`
+
+Webhook triggers are exposed under `/webhooks/tasks/{route}` and can optionally
+validate HMAC signatures when a secret environment variable is configured.
+
+---
+
+## CLI reference
+
+Definition and instance commands:
+
+```text
+task create <sourceFilePath>
+task list
+task get <id>
+task update <id> <sourceFilePath>
+task activate <id>
+task deactivate <id>
+task delete <id>
+task preflight <taskId> [--param key=value ...]
+task create-queued <taskId> [channelId] [--param key=value ...]
+task start <taskId> [channelId] [--param key=value ...]
+task run <taskId> [channelId] [--param key=value ...]
+task start-instance <instanceId>
+task instances <taskId>
+task instance <instanceId>
+task outputs <instanceId> [--since <timestamp>]
+task cancel <instanceId>
+task stop <instanceId>
+task pause <instanceId>
+task resume <instanceId>
+task listen <instanceId>
+```
+
+Scheduling, triggers, and shortcuts:
+
+```text
+task schedule list
+task schedule get <jobId>
+task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <name>]
+task schedule update <jobId> --cron <expr> [--timezone <tz>]
+task schedule pause <jobId>
+task schedule resume <jobId>
+task schedule delete <jobId>
+task schedule preview <expr> [--timezone <tz>] [--count N]
+task trigger-sources
+task triggers enable <taskId>
+task triggers disable <taskId>
+task shortcuts install <taskId>
+task shortcuts remove <taskId>
+```
 
 ---
 
@@ -476,6 +653,25 @@ Delete a definition. Running instances are cancelled first.
 
 **Response `204`:** Deleted.
 **Response `404`:** Not found.
+
+---
+
+#### `GET /tasks/{taskId}/preflight`
+
+Runs requirement checks without creating an instance.
+
+Query parameters are passed as `param.<name>=value`.
+
+**Response `200`:** `TaskPreflightResponse`
+
+---
+
+#### `GET /tasks/trigger-sources`
+
+Lists all registered trigger sources, including built-in and custom module-provided
+sources.
+
+**Response `200`:** `TaskTriggerSourceResponse[]`
 
 ---
 
@@ -568,6 +764,43 @@ timestamp. Useful for polling a running instance.
 
 ---
 
+### Task trigger and shortcut endpoints
+
+#### `POST /tasks/{taskId}/triggers/enable`
+
+Enable all persisted trigger bindings for a task definition.
+
+**Response `200`:** `{ "enabled": number }`
+
+---
+
+#### `POST /tasks/{taskId}/triggers/disable`
+
+Disable all persisted trigger bindings for a task definition.
+
+**Response `200`:** `{ "disabled": number }`
+
+---
+
+#### `POST /tasks/{taskId}/shortcuts/install`
+
+Install or refresh the first `OsShortcut` trigger binding for the task.
+
+**Response `204`**
+**Response `404`:** Task not found.
+**Response `422`:** Task has no `OsShortcut` trigger.
+
+---
+
+#### `DELETE /tasks/{taskId}/shortcuts`
+
+Remove installed shortcut artifacts for the task.
+
+**Response `204`**
+**Response `404`:** Task not found.
+
+---
+
 ### SSE streaming
 
 #### `GET /tasks/{taskId}/instances/{instanceId}/stream`
@@ -610,6 +843,23 @@ data:{"type":"Output","sequence":1,"timestamp":"2025-01-01T00:00:00Z","data":"..
       "isRequired": true
     }
   ],
+  "requirements": [
+    {
+      "kind": "RequiresProvider",
+      "severity": "Error",
+      "value": "OpenAI",
+      "capabilityValue": null,
+      "parameterName": null
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "Custom",
+      "triggerValue": "my-source",
+      "filter": "important",
+      "isEnabled": true
+    }
+  ],
   "createdAt": "datetime",
   "updatedAt": "datetime",
   "customId": "string | null"
@@ -618,6 +868,37 @@ data:{"type":"Output","sequence":1,"timestamp":"2025-01-01T00:00:00Z","data":"..
 
 `outputTypeName` is the name of the `[Output]`-marked class, if any.
 `isActive` controls whether the definition is surfaced to agents as a tool.
+
+`requirements` is the parsed requirement list used by preflight checks.
+`triggers` is the parsed trigger list surfaced in a client-friendly shape.
+
+#### `TaskPreflightResponse`
+
+```json
+{
+  "isBlocked": true,
+  "findings": [
+    {
+      "requirementKind": "RequiresProvider",
+      "severity": "Error",
+      "passed": false,
+      "message": "Provider 'OpenAI' is not configured.",
+      "parameterName": null
+    }
+  ]
+}
+```
+
+#### `TaskTriggerSourceResponse`
+
+```json
+{
+  "sourceName": "my-source",
+  "supportedKinds": ["Custom"],
+  "type": "MyCustomTriggerSource",
+  "isCustom": true
+}
+```
 
 #### `TaskInstanceResponse`
 

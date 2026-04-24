@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API.Routing;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Application.Core.Modules;
 
 namespace SharpClaw.Application.API.Handlers;
 
@@ -19,56 +19,20 @@ public static class ResourceHandlers
     /// <summary>
     /// Returns lightweight <c>[{id, name}]</c> items for the resource type
     /// that backs a given permission access category.  The <paramref name="type"/>
-    /// value matches the <see cref="ResourceAccessDB.ResourceType"/> discriminator
-    /// (e.g. <c>TrAudio</c>, <c>Container</c>).
+    /// value matches the <see cref="SharpClaw.Contracts.Models.ResourceAccessDB.ResourceType"/> discriminator
+    /// (e.g. <c>TrAudio</c>, <c>Container</c>).  Delegates to the owning module's
+    /// <c>LoadLookupItems</c> callback registered via <see cref="SharpClaw.Contracts.Modules.ModuleResourceTypeDescriptor"/>.
     /// </summary>
     [MapGet("/lookup/{type}")]
-    public static async Task<IResult> LookupByAccessType(string type, SharpClawDbContext db)
+    public static async Task<IResult> LookupByAccessType(
+        string type, ModuleRegistry registry, IServiceScopeFactory scopeFactory, CancellationToken ct)
     {
-        IQueryable<ResourceItem>? query = type switch
-        {
-            "DsShell" => db.SystemUsers
-                .Select(e => new ResourceItem(e.Id, e.Username)),
-            "Mk8Shell" or "Container" => db.Containers
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "WaWebsite" => db.Websites
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "WaSearch" => db.SearchEngines
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "DbInternal" => db.InternalDatabases
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "DbExternal" => db.ExternalDatabases
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "TrAudio" => db.InputAudios
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "CuDisplay" => db.DisplayDevices
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "EditorSession" => db.EditorSessions
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AoAgent" => db.Agents
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AoTask" => db.ScheduledTasks
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AoSkill" => db.Skills
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AoAgentHeader" => db.Agents
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "AoChannelHeader" => db.Channels
-                .Select(e => new ResourceItem(e.Id, e.Title ?? e.Id.ToString())),
-            "OaDocument" => db.DocumentSessions
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "CuNativeApp" => db.NativeApplications
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            "BiChannel" => db.BotIntegrations
-                .Select(e => new ResourceItem(e.Id, e.Name)),
-            _ => null,
-        };
-
-        if (query is null)
+        var descriptor = registry.GetResourceTypeDescriptor(type);
+        if (descriptor?.LoadLookupItems is null)
             return Results.BadRequest(new { error = $"Unknown resource type '{type}'." });
 
-        return Results.Ok(await query.OrderBy(r => r.Name).ToListAsync());
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var items = await descriptor.LoadLookupItems(scope.ServiceProvider, ct);
+        return Results.Ok(items.OrderBy(i => i.Name).Select(i => new { id = i.Id, name = i.Name }));
     }
-
-    private sealed record ResourceItem(Guid Id, string Name);
 }

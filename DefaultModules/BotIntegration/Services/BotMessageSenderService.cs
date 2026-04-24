@@ -4,7 +4,6 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.BotIntegration.Services;
@@ -16,7 +15,7 @@ namespace SharpClaw.Modules.BotIntegration.Services;
 /// <see cref="BotIntegrationDB"/>.
 /// </summary>
 public sealed class BotMessageSenderService(
-    SharpClawDbContext db,
+    BotIntegrationDbContext db,
     EncryptionOptions encryptionOptions,
     IHttpClientFactory httpClientFactory)
 {

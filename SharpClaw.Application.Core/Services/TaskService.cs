@@ -1,10 +1,11 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Infrastructure.Models.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.JSON;
 
@@ -15,7 +16,7 @@ namespace SharpClaw.Application.Services;
 /// Definitions are parsed on creation so validation errors surface
 /// immediately rather than at execution time.
 /// </summary>
-public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore)
+public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore, TaskPreflightChecker preflight, TaskTriggerRegistrar? triggerRegistrar = null)
 {
     /// <summary>
     /// Parse and validate a task definition without persisting it.
@@ -79,13 +80,26 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             Description = parseResult.Definition.Description,
             SourceText = request.SourceText,
             OutputTypeName = parseResult.Definition.OutputType?.Name,
-            ParametersJson = SerializeParameters(parseResult.Definition.Parameters),
+            ParametersJson  = SerializeParameters(parseResult.Definition.Parameters),
+            RequirementsJson = SerializeRequirements(parseResult.Definition.Requirements),
+            TriggersJson     = SerializeTriggers(parseResult.Definition.TriggerDefinitions),
         };
 
         db.TaskDefinitions.Add(entity);
         await db.SaveChangesAsync(ct);
 
-        return ToDefinitionResponse(entity, parseResult.Definition.Parameters);
+        if (triggerRegistrar is not null)
+        {
+            await triggerRegistrar.SyncTriggersAsync(entity, parseResult.Definition.TriggerDefinitions, ct);
+            await db.SaveChangesAsync(ct);
+            if (triggerRegistrar.HostService is { } host)
+                await host.NotifyBindingsChangedAsync();
+        }
+
+        return ToDefinitionResponse(entity,
+            parseResult.Definition.Parameters,
+            parseResult.Definition.Requirements,
+            parseResult.Definition.TriggerDefinitions);
     }
 
     public async Task<TaskDefinitionResponse?> GetDefinitionAsync(
@@ -93,7 +107,30 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
     {
         var entity = await db.TaskDefinitions.FindAsync([id], ct);
         if (entity is null) return null;
-        return ToDefinitionResponse(entity, DeserializeParameters(entity.ParametersJson));
+        return ToDefinitionResponse(entity,
+            DeserializeParameters(entity.ParametersJson),
+            DeserializeRequirements(entity.RequirementsJson),
+            DeserializeTriggers(entity.TriggersJson));
+    }
+
+    /// <summary>
+    /// Returns the deserialized requirement list
+    /// </summary>
+    public async Task<IReadOnlyList<TaskRequirementDefinition>?> GetRequirementsAsync(
+        Guid id, CancellationToken ct = default)
+    {
+        var entity = await db.TaskDefinitions.FindAsync([id], ct);
+        return entity is null ? null : DeserializeRequirements(entity.RequirementsJson);
+    }
+
+    /// <summary>
+    /// Returns the deserialized trigger definition list for a task.
+    /// </summary>
+    public async Task<IReadOnlyList<TaskTriggerDefinition>?> GetTriggersAsync(
+        Guid id, CancellationToken ct = default)
+    {
+        var entity = await db.TaskDefinitions.FindAsync([id], ct);
+        return entity is null ? null : DeserializeTriggers(entity.TriggersJson);
     }
 
     public async Task<IReadOnlyList<TaskDefinitionResponse>> ListDefinitionsAsync(
@@ -104,7 +141,10 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             .ToListAsync(ct);
 
         return entities
-            .Select(e => ToDefinitionResponse(e, DeserializeParameters(e.ParametersJson)))
+            .Select(e => ToDefinitionResponse(e,
+                DeserializeParameters(e.ParametersJson),
+                DeserializeRequirements(e.RequirementsJson),
+                DeserializeTriggers(e.TriggersJson)))
             .ToList();
     }
 
@@ -117,6 +157,7 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
         if (entity is null) return null;
 
         IReadOnlyList<TaskParameterDefinition>? parameters = null;
+        IReadOnlyList<TaskTriggerDefinition>? parsedTriggers = null;
 
         if (request.SourceText is not null)
         {
@@ -138,15 +179,30 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             entity.Description = parseResult.Definition.Description;
             entity.SourceText = request.SourceText;
             entity.OutputTypeName = parseResult.Definition.OutputType?.Name;
-            entity.ParametersJson = SerializeParameters(parseResult.Definition.Parameters);
+            entity.ParametersJson  = SerializeParameters(parseResult.Definition.Parameters);
+            entity.RequirementsJson = SerializeRequirements(parseResult.Definition.Requirements);
+            entity.TriggersJson     = SerializeTriggers(parseResult.Definition.TriggerDefinitions);
             parameters = parseResult.Definition.Parameters;
+            parsedTriggers = parseResult.Definition.TriggerDefinitions;
         }
 
         if (request.IsActive is not null)
             entity.IsActive = request.IsActive.Value;
 
         await db.SaveChangesAsync(ct);
-        return ToDefinitionResponse(entity, parameters ?? DeserializeParameters(entity.ParametersJson));
+
+        if (triggerRegistrar is not null && parsedTriggers is not null)
+        {
+            await triggerRegistrar.SyncTriggersAsync(entity, parsedTriggers, ct);
+            await db.SaveChangesAsync(ct);
+            if (triggerRegistrar.HostService is { } host)
+                await host.NotifyBindingsChangedAsync();
+        }
+
+        return ToDefinitionResponse(entity,
+            parameters ?? DeserializeParameters(entity.ParametersJson),
+            DeserializeRequirements(entity.RequirementsJson),
+            DeserializeTriggers(entity.TriggersJson));
     }
 
     public async Task<bool> DeleteDefinitionAsync(Guid id, CancellationToken ct = default)
@@ -154,9 +210,37 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
         var entity = await db.TaskDefinitions.FindAsync([id], ct);
         if (entity is null) return false;
 
+        if (triggerRegistrar is not null)
+        {
+            await triggerRegistrar.RemoveTriggersAsync(id, ct);
+            await db.SaveChangesAsync(ct);
+            if (triggerRegistrar.HostService is { } host)
+                await host.NotifyBindingsChangedAsync();
+        }
+
         db.TaskDefinitions.Remove(entity);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+
+    /// <summary>
+    /// Enable or disable all trigger bindings for a task definition.
+    /// Returns the number of bindings affected.
+    /// </summary>
+    public async Task<int> SetTriggersEnabledAsync(
+        Guid taskDefinitionId,
+        bool enabled,
+        CancellationToken ct = default)
+    {
+        var bindings = await db.TaskTriggerBindings
+            .Where(b => b.TaskDefinitionId == taskDefinitionId)
+            .ToListAsync(ct);
+
+        foreach (var binding in bindings)
+            binding.IsEnabled = enabled;
+
+        await db.SaveChangesAsync(ct);
+        return bindings.Count;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -180,6 +264,22 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
         if (!definition.IsActive)
             throw new InvalidOperationException(
                 $"Task definition '{definition.Name}' is not active.");
+
+        var requirements = DeserializeRequirements(definition.RequirementsJson);
+        if (requirements.Count > 0)
+        {
+            var paramMap = request.ParameterValues is not null
+                ? request.ParameterValues.ToDictionary(
+                    kv => kv.Key,
+                    kv => (object?)kv.Value,
+                    StringComparer.Ordinal)
+                : (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>();
+
+            var preflightResult = await preflight.CheckRuntimeAsync(
+                requirements, paramMap, callerAgentId, ct);
+            if (preflightResult.IsBlocked)
+                throw new PreflightBlockedException(preflightResult);
+        }
 
         var instance = new TaskInstanceDB
         {
@@ -401,7 +501,9 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
 
     private static TaskDefinitionResponse ToDefinitionResponse(
         TaskDefinitionDB entity,
-        IReadOnlyList<TaskParameterDefinition> parameters)
+        IReadOnlyList<TaskParameterDefinition> parameters,
+        IReadOnlyList<TaskRequirementDefinition> requirements,
+        IReadOnlyList<TaskTriggerDefinition> triggers)
     {
         return new TaskDefinitionResponse(
             entity.Id,
@@ -411,10 +513,50 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             entity.IsActive,
             parameters.Select(p => new TaskParameterResponse(
                 p.Name, p.TypeName, p.Description, p.DefaultValue, p.IsRequired)).ToList(),
+            requirements.Select(r => new TaskRequirementResponse(
+                r.Kind.ToString(),
+                r.Severity.ToString(),
+                r.Value,
+                r.CapabilityValue,
+                r.ParameterName)).ToList(),
+            triggers.Select(t => new TaskTriggerResponse(
+                t.Kind.ToString(),
+                TriggerValueFor(t),
+                TriggerFilterFor(t),
+                IsEnabled: true)).ToList(),
             entity.CreatedAt,
             entity.UpdatedAt,
             entity.CustomId);
     }
+
+    private static string? TriggerValueFor(TaskTriggerDefinition t) => t.Kind switch
+    {
+        TriggerKind.Cron            => t.CronExpression,
+        TriggerKind.Event           => t.EventType,
+        TriggerKind.FileChanged     => t.WatchPath,
+        TriggerKind.ProcessStarted
+            or TriggerKind.ProcessStopped
+            or TriggerKind.WindowFocused
+            or TriggerKind.WindowBlurred => t.ProcessName,
+        TriggerKind.Webhook         => t.WebhookRoute,
+        TriggerKind.HostReachable
+            or TriggerKind.HostUnreachable => t.HostName,
+        TriggerKind.TaskCompleted
+            or TriggerKind.TaskFailed     => t.SourceTaskName,
+        TriggerKind.Hotkey          => t.HotkeyCombo,
+        TriggerKind.QueryReturnsRows => t.SqlQuery,
+        TriggerKind.MetricThreshold => t.MetricSource,
+        TriggerKind.OsShortcut      => t.ShortcutLabel,
+        TriggerKind.Custom          => t.CustomSourceName,
+        _                           => null,
+    };
+
+    private static string? TriggerFilterFor(TaskTriggerDefinition t) => t.Kind switch
+    {
+        TriggerKind.Event  => t.EventFilter,
+        TriggerKind.Custom => t.CustomSourceFilter,
+        _                  => null,
+    };
 
     private static TaskInstanceResponse ToInstanceResponse(
         TaskInstanceDB instance,
@@ -484,5 +626,64 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
                 DefaultValue: e.TryGetProperty("DefaultValue", out var dv) ? dv.GetString() : null,
                 IsRequired: e.TryGetProperty("IsRequired", out var r) && r.GetBoolean()))
             .ToList();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Requirement serialisation
+    // ═══════════════════════════════════════════════════════════════
+
+    private static string SerializeRequirements(IReadOnlyList<TaskRequirementDefinition> requirements)
+    {
+        return JsonSerializer.Serialize(requirements.Select(r => new
+        {
+            Kind = r.Kind.ToString(),
+            Severity = r.Severity.ToString(),
+            r.Value,
+            r.CapabilityValue,
+            r.ParameterName,
+            r.Line,
+        }));
+    }
+
+    private static IReadOnlyList<TaskRequirementDefinition> DeserializeRequirements(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.EnumerateArray()
+            .Select(e =>
+            {
+                var kindStr = e.GetProperty("Kind").GetString() ?? "";
+                var sevStr = e.GetProperty("Severity").GetString() ?? "Error";
+
+                Enum.TryParse<TaskRequirementKind>(kindStr, out var kind);
+                Enum.TryParse<TaskDiagnosticSeverity>(sevStr, out var severity);
+
+                return new TaskRequirementDefinition
+                {
+                    Kind           = kind,
+                    Severity       = severity,
+                    Value          = e.TryGetProperty("Value",           out var v)  ? v.GetString()  : null,
+                    CapabilityValue= e.TryGetProperty("CapabilityValue", out var cv) ? cv.GetString() : null,
+                    ParameterName  = e.TryGetProperty("ParameterName",  out var pn) ? pn.GetString() : null,
+                    Line           = e.TryGetProperty("Line",            out var ln) ? ln.GetInt32()  : 0,
+                };
+            })
+            .ToList();
+    }
+    // ═══════════════════════════════════════════════════════════════
+    // Trigger serialisation
+    // ═══════════════════════════════════════════════════════════════
+
+    private static string SerializeTriggers(IReadOnlyList<TaskTriggerDefinition> triggers)
+        => JsonSerializer.Serialize(triggers);
+
+    private static IReadOnlyList<TaskTriggerDefinition> DeserializeTriggers(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        return JsonSerializer.Deserialize<List<TaskTriggerDefinition>>(json) ?? [];
     }
 }

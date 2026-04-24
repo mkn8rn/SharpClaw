@@ -11,11 +11,16 @@ using SharpClaw.Application.API.Api;
 using SharpClaw.Application.API.Cli;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.API.Routing;
+using SharpClaw.Application.API.Webhooks;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Application.Core.Services.Triggers.Sources;
+using SharpClaw.Application.Core.Services;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Infrastructure.Logging;
+using SharpClaw.Application.Infrastructure.Tasks.Parsing;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
@@ -23,8 +28,12 @@ using SharpClaw.Infrastructure;
 using SharpClaw.Infrastructure.Configuration;
 using SharpClaw.Utils.Logging;
 using SharpClaw.Utils.Instances;
+using Microsoft.EntityFrameworkCore;
+using SharpClaw.Modules.ComputerUse;
 using SharpClaw.Utils.Security;
 using Serilog.Events;
+using SharpClaw.Contracts.Tasks;
+using SharpClaw.Application.Core.Services.Triggers;
 
 var dataDir = Environment.GetEnvironmentVariable("SHARPCLAW_DATA_DIR");
 var instanceRoot = Environment.GetEnvironmentVariable("SHARPCLAW_INSTANCE_ROOT");
@@ -251,16 +260,36 @@ try
     builder.Services.AddScoped<ContextService>();
     builder.Services.AddScoped<AgentActionService>();
     builder.Services.AddScoped<AgentJobService>();
+    builder.Services.AddScoped<ITranscriptionSegmentPublisher>(sp => sp.GetRequiredService<AgentJobService>());
     builder.Services.AddScoped<HeaderTagProcessor>();
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<ThreadActivitySignal>();
     builder.Services.AddScoped<RoleService>();
+    builder.Services.AddScoped<TaskPreflightChecker>();
+    builder.Services.AddScoped<TaskTriggerRegistrar>();
     builder.Services.AddScoped<TaskService>();
+    builder.Services.AddScoped<ScheduledJobService>();
     builder.Services.AddScoped<TaskToolProvider>();
     builder.Services.AddScoped<EnvFileService>();
     builder.Services.AddScoped<TaskOrchestrator>();
     builder.Services.AddSingleton<TaskRuntimeHost>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskRuntimeHost>());
+    // Trigger host service + built-in sources
+    builder.Services.AddSingleton<TaskTriggerHostService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskTriggerHostService>());
+    builder.Services.AddSingleton<ITaskTriggerSource, EventBusTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource, FileChangedTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource, HostProbeTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource, NetworkTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource, MetricTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource, LifecycleTriggerSource>();
+    builder.Services.AddSingleton<WebhookTriggerSource>();
+    builder.Services.AddSingleton<ITaskTriggerSource>(sp => sp.GetRequiredService<WebhookTriggerSource>());
+    builder.Services.AddSingleton<ITaskMetricProvider, PendingJobCountMetricProvider>();
+    builder.Services.AddSingleton<ITaskMetricProvider, PendingTaskCountMetricProvider>();
+    builder.Services.AddSingleton<ITaskMetricProvider, SchedulerPendingJobCountMetricProvider>();
+    // Register EventBusTriggerSource as ISharpClawEventSink so the dispatcher picks it up
+    builder.Services.AddSingleton<ISharpClawEventSink>(sp => sp.GetRequiredService<EventBusTriggerSource>());
     // Module system
     builder.Services.AddSingleton<ModuleRegistry>();
     builder.Services.AddSingleton<ModuleMetricsCollector>();
@@ -280,7 +309,11 @@ try
     var moduleLoader = ModuleLoader.DiscoverBundled();
 
     foreach (var bundledModule in moduleLoader.GetAllBundled())
+    {
         bundledModule.ConfigureServices(builder.Services);
+        if (bundledModule is ITaskParserAware parserAware)
+            TaskScriptParser.RegisterModule(parserAware.ParserExtension);
+    }
 
     builder.Services.AddSingleton(moduleLoader);
     builder.Services.AddScoped<ModuleService>();
@@ -542,6 +575,15 @@ try
             Log.Error(ex, "Module '{ModuleId}' failed to map endpoints", module.Id);
         }
     }
+
+    // Webhook trigger routes — registered lazily after ApplicationStarted so
+    // that TaskTriggerHostService has loaded its first binding set.
+    var webhookSource = app.Services.GetRequiredService<WebhookTriggerSource>();
+    var webhookRegistry = new WebhookRouteRegistry(
+        app,
+        webhookSource,
+        app.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<WebhookRouteRegistry>>());
+    webhookSource.SetRouteRegistrar(webhookRegistry);
 
     app.Lifetime.ApplicationStopping.Register(() =>
     {

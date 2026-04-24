@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -28,6 +30,8 @@ using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Application.Core.Services.Triggers;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Application.API.Cli;
 
@@ -2416,6 +2420,8 @@ public static class CliDispatcher
                 "task activate <id>                       Activate a definition",
                 "task deactivate <id>                     Deactivate a definition",
                 "task delete <id>                         Delete a task definition",
+                "task preflight <taskId> [--param key=value ...]",
+                "                                         Check requirements without creating an instance",
                 "task create-queued <taskId> [channelId] [--param key=value ...]",
                 "                                         Create a queued instance without starting",
                 "task start <taskId> [channelId] [--param key=value ...]",
@@ -2431,7 +2437,13 @@ public static class CliDispatcher
                 "task stop <instanceId>                   Stop a running instance",
                 "task pause <instanceId>                  Pause a running instance",
                 "task resume <instanceId>                 Resume a paused instance",
-                "task listen <instanceId>                 Stream live task output");
+                "task listen <instanceId>                 Stream live task output",
+                "task schedule <sub> ...                  Manage cron scheduled jobs (see: task schedule)",
+                "task trigger-sources                     List registered task trigger sources",
+                "task triggers enable <taskId>            Enable all trigger bindings for a task",
+                "task triggers disable <taskId>           Disable all trigger bindings for a task",
+                "task shortcuts install <id>              Create or refresh OS shortcut for a task",
+                "task shortcuts remove <id>               Remove OS shortcut files for a task");
             return Results.Ok();
         }
 
@@ -2439,9 +2451,18 @@ public static class CliDispatcher
         var svc = sp.GetRequiredService<TaskService>();
         var chatSvc = sp.GetRequiredService<ChatService>();
 
+        if (sub == "schedule")
+            return await HandleTaskScheduleCommand(args, sp);
+
+        if (sub == "shortcuts")
+            return await HandleTaskShortcutsCommand(args, sp);
+
+        if (sub == "triggers")
+            return await HandleTaskTriggersCommand(args, sp);
+
         return sub switch
         {
-            "create" when args.Length >= 3 => await HandleTaskCreate(args[2], svc),
+
             "create" => UsageResult("task create <sourceFilePath>"),
 
             "list" => await TaskDefinitionHandlers.List(svc),
@@ -2469,6 +2490,10 @@ public static class CliDispatcher
             "delete" when args.Length >= 3
                 => await TaskDefinitionHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
             "delete" => UsageResult("task delete <id>"),
+
+            "preflight" when args.Length >= 3
+                => await HandleTaskPreflight(args, svc, sp),
+            "preflight" => UsageResult("task preflight <taskId> [--param key=value ...]"),
 
             "create-queued" when args.Length >= 3
                 => await HandleTaskStart(args, svc, sp, startImmediately: false),
@@ -2517,8 +2542,205 @@ public static class CliDispatcher
                 => await HandleTaskListen(CliIdMap.Resolve(args[2]), sp),
             "listen" => UsageResult("task listen <instanceId>"),
 
+            "trigger-sources" => HandleTaskTriggerSources(sp),
+
             _ => UsageResult($"Unknown sub-command: task {sub}. Try 'help' for usage.")
         };
+    }
+
+    private static async Task<IResult?> HandleTaskTriggersCommand(
+        string[] args, IServiceProvider sp)
+    {
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "task triggers enable <taskId>            Enable all trigger bindings for a task",
+                "task triggers disable <taskId>           Disable all trigger bindings for a task");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<TaskService>();
+        var hostService = sp.GetRequiredService<TaskTriggerHostService>();
+
+        return sub switch
+        {
+            "enable" when args.Length >= 4
+                => await TaskTriggerHandlers.EnableTriggers(CliIdMap.Resolve(args[3]), svc, hostService, default),
+            "enable" => UsageResult("task triggers enable <taskId>"),
+
+            "disable" when args.Length >= 4
+                => await TaskTriggerHandlers.DisableTriggers(CliIdMap.Resolve(args[3]), svc, hostService, default),
+            "disable" => UsageResult("task triggers disable <taskId>"),
+
+            _ => UsageResult($"Unknown sub-command: task triggers {sub}. Try 'task triggers' for usage.")
+        };
+    }
+
+    private static IResult HandleTaskTriggerSources(IServiceProvider sp)
+    {
+        var sources = sp.GetServices<ITaskTriggerSource>();
+        return TaskTriggerHandlers.ListTriggerSources(sources);
+    }
+
+    private static async Task<IResult?> HandleTaskShortcutsCommand(
+        string[] args, IServiceProvider sp)
+    {
+        // args[0] = "task", args[1] = "shortcuts", args[2] = sub-command
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "task shortcuts install <taskId>   Create or refresh OS shortcut for a task",
+                "task shortcuts remove <taskId>    Remove OS shortcut files for a task");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        var svc = sp.GetRequiredService<TaskService>();
+        var shortcuts = sp.GetRequiredService<IShortcutLauncherService>();
+
+        switch (sub)
+        {
+            case "install" when args.Length >= 4:
+            {
+                var taskId = CliIdMap.Resolve(args[3]);
+                var result = await TaskShortcutHandlers.Install(taskId, svc, shortcuts, default);
+                if (result is Microsoft.AspNetCore.Http.HttpResults.NotFound)
+                    Console.Error.WriteLine("Task not found.");
+                else if (result is Microsoft.AspNetCore.Http.HttpResults.UnprocessableEntity<string> ue)
+                    Console.Error.WriteLine(ue.Value);
+                else
+                    Console.WriteLine("Shortcut installed.");
+                return Results.Ok();
+            }
+
+            case "install":
+                return UsageResult("task shortcuts install <taskId>");
+
+            case "remove" when args.Length >= 4:
+            {
+                var taskId = CliIdMap.Resolve(args[3]);
+                var result = await TaskShortcutHandlers.Remove(taskId, svc, shortcuts, default);
+                if (result is Microsoft.AspNetCore.Http.HttpResults.NotFound)
+                    Console.Error.WriteLine("Task not found.");
+                else
+                    Console.WriteLine("Shortcut removed.");
+                return Results.Ok();
+            }
+
+            case "remove":
+                return UsageResult("task shortcuts remove <taskId>");
+
+            default:
+                return UsageResult($"Unknown sub-command: task shortcuts {sub}. Try 'task shortcuts' for usage.");
+        }
+    }
+
+    private static async Task<IResult?> HandleTaskScheduleCommand(
+        string[] args, IServiceProvider sp)
+    {
+        // args[0] = "task", args[1] = "schedule", args[2] = sub-command
+        var svc = sp.GetRequiredService<ScheduledJobService>();
+
+        if (args.Length < 3)
+        {
+            PrintUsage(
+                "task schedule list                        List all scheduled jobs",
+                "task schedule get <jobId>                 Show a scheduled job",
+                "task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <n>]",
+                "                                          Create a cron scheduled job",
+                "task schedule update <jobId> --cron <expr> [--timezone <tz>]",
+                "                                          Update cron expression / timezone",
+                "task schedule pause <jobId>               Pause a scheduled job",
+                "task schedule resume <jobId>              Resume a paused job",
+                "task schedule delete <jobId>              Delete a scheduled job",
+                "task schedule preview <expr> [--timezone <tz>] [--count N]",
+                "                                          Preview next occurrences of a cron expression");
+            return Results.Ok();
+        }
+
+        var sub = args[2].ToLowerInvariant();
+
+        switch (sub)
+        {
+            case "list":
+                return Results.Ok(await svc.ListAsync());
+
+            case "get" when args.Length >= 4:
+                return await ScheduledJobHandlers.GetById(CliIdMap.Resolve(args[3]), svc, default);
+
+            case "get":
+                return UsageResult("task schedule get <jobId>");
+
+            case "create":
+            {
+                var flags = ParseFlags(args, 3);
+                if (!flags.TryGetValue("cron", out var cronExpr))
+                    return UsageResult("task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <n>]");
+
+                Guid? taskId = args.Length >= 4 && Guid.TryParse(args[3], out var tid) ? tid : null;
+                flags.TryGetValue("timezone", out var tz);
+                flags.TryGetValue("name", out var name);
+
+                var request = new CreateScheduledJobRequest(
+                    Name: name ?? cronExpr,
+                    TaskDefinitionId: taskId,
+                    CronExpression: cronExpr,
+                    CronTimezone: tz);
+
+                return await ScheduledJobHandlers.Create(request, svc, default);
+            }
+
+            case "update" when args.Length >= 4:
+            {
+                var jobId = CliIdMap.Resolve(args[3]);
+                var flags = ParseFlags(args, 4);
+                flags.TryGetValue("cron", out var cronExpr);
+                flags.TryGetValue("timezone", out var tz);
+
+                var request = new UpdateScheduledJobRequest(
+                    CronExpression: cronExpr,
+                    CronTimezone: tz);
+
+                return await ScheduledJobHandlers.Update(jobId, request, svc, default);
+            }
+
+            case "update":
+                return UsageResult("task schedule update <jobId> --cron <expr> [--timezone <tz>]");
+
+            case "pause" when args.Length >= 4:
+                return await ScheduledJobHandlers.Pause(CliIdMap.Resolve(args[3]), svc, default);
+
+            case "pause":
+                return UsageResult("task schedule pause <jobId>");
+
+            case "resume" when args.Length >= 4:
+                return await ScheduledJobHandlers.Resume(CliIdMap.Resolve(args[3]), svc, default);
+
+            case "resume":
+                return UsageResult("task schedule resume <jobId>");
+
+            case "delete" when args.Length >= 4:
+                return await ScheduledJobHandlers.Delete(CliIdMap.Resolve(args[3]), svc, default);
+
+            case "delete":
+                return UsageResult("task schedule delete <jobId>");
+
+            case "preview" when args.Length >= 4:
+            {
+                var expr = args[3];
+                var flags = ParseFlags(args, 4);
+                flags.TryGetValue("timezone", out var tz);
+                int count = flags.TryGetValue("count", out var cStr) && int.TryParse(cStr, out var c) ? c : 10;
+                return ScheduledJobHandlers.PreviewExpression(expr, tz, count);
+            }
+
+            case "preview":
+                return UsageResult("task schedule preview <expr> [--timezone <tz>] [--count N]");
+
+            default:
+                return UsageResult($"Unknown sub-command: task schedule {sub}. Try 'task schedule' for usage.");
+        }
     }
 
     private static async Task<IResult> HandleTaskCreate(string sourceFilePath, TaskService svc)
@@ -2574,6 +2796,50 @@ public static class CliDispatcher
 
         return await TaskDefinitionHandlers.Update(
             taskId, new UpdateTaskDefinitionRequest(SourceText: sourceText), svc);
+    }
+
+    private static async Task<IResult> HandleTaskPreflight(
+        string[] args, TaskService svc, IServiceProvider sp)
+    {
+        var taskId = CliIdMap.Resolve(args[2]);
+
+        var paramValues = new Dictionary<string, object?>(StringComparer.Ordinal);
+        for (var i = 3; i < args.Length; i++)
+        {
+            if (args[i] is "--param" or "-p" && i + 1 < args.Length)
+            {
+                var kv = args[++i];
+                var eq = kv.IndexOf('=');
+                if (eq > 0)
+                    paramValues[kv[..eq]] = kv[(eq + 1)..];
+            }
+        }
+
+        var requirements = await svc.GetRequirementsAsync(taskId);
+        if (requirements is null)
+        {
+            Console.Error.WriteLine("Task definition not found.");
+            return Results.NotFound();
+        }
+
+        var preflight = sp.GetRequiredService<TaskPreflightChecker>();
+        var result = await preflight.CheckRuntimeAsync(requirements, paramValues, callerAgentId: null);
+
+        foreach (var f in result.Findings)
+        {
+            var icon = f.Passed ? "\u2713" : "\u2717";
+            var severity = f.Passed ? string.Empty : $" [{f.Severity}]";
+            Console.WriteLine($"  {icon} {f.RequirementKind}{severity}: {f.Message}");
+        }
+
+        if (result.IsBlocked)
+        {
+            Console.Error.WriteLine("\nPreflight FAILED — instance cannot be created.");
+            return Results.UnprocessableEntity("Preflight failed.");
+        }
+
+        Console.WriteLine("\nPreflight PASSED.");
+        return Results.Ok();
     }
 
     private static async Task<IResult> HandleTaskStart(
@@ -3397,5 +3663,24 @@ public static class CliDispatcher
         }
 
         return Results.Ok();
+    }
+
+    /// <summary>
+    /// Parses <c>--key value</c> pairs from <paramref name="args"/> starting at
+    /// <paramref name="startIndex"/>. Returns a case-insensitive dictionary.
+    /// </summary>
+    private static Dictionary<string, string> ParseFlags(string[] args, int startIndex)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = startIndex; i < args.Length - 1; i++)
+        {
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                var key = args[i][2..];
+                result[key] = args[i + 1];
+                i++; // consume value
+            }
+        }
+        return result;
     }
 }

@@ -3,10 +3,9 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-using SharpClaw.Application.Services;
-using SharpClaw.Modules.EditorCommon.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Modules.EditorCommon.Services;
 
 namespace SharpClaw.Modules.VSCodeEditor;
 

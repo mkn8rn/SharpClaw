@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 
-using SharpClaw.Application.Services;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
@@ -47,7 +46,7 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
 
         var safeModuleId = EnsureSafeModuleId(moduleId);
         var moduleDir = PathGuard.EnsureContainedIn(
-            workspace.ResolveModuleDir(safeModuleId), ModuleService.ResolveExternalModulesDir());
+            workspace.ResolveModuleDir(safeModuleId), workspace.ExternalModulesDir);
 
         if (!Directory.Exists(moduleDir))
             throw new DirectoryNotFoundException($"Module directory not found: {moduleDir}");
@@ -69,7 +68,7 @@ internal sealed partial class ModuleBuildService(ModuleWorkspaceService workspac
             FileName = "dotnet",
             ArgumentList = { "build", csprojPath, "-c", configuration, "-nologo",
                 "-consoleloggerparameters:NoSummary" },
-            WorkingDirectory = ModuleService.ResolveExternalModulesDir(),
+            WorkingDirectory = workspace.ExternalModulesDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
