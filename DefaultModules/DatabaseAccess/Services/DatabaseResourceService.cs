@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Databases;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.DatabaseAccess.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.DatabaseAccess.Services;
@@ -12,7 +11,7 @@ namespace SharpClaw.Modules.DatabaseAccess.Services;
 /// <see cref="ExternalDatabaseDB"/> resources.
 /// </summary>
 public sealed class DatabaseResourceService(
-    SharpClawDbContext db,
+    DatabaseAccessDbContext db,
     EncryptionOptions encryptionOptions)
 {
     // ═══════════════════════════════════════════════════════════════

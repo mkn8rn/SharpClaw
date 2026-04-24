@@ -1,17 +1,17 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models;
-using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.BotIntegration.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.BotIntegration.Services;
 
 public sealed class BotIntegrationService(
-    SharpClawDbContext db,
-    EncryptionOptions encryptionOptions)
+    BotIntegrationDbContext db,
+    EncryptionOptions encryptionOptions,
+    IThreadResolver threadResolver)
 {
     public async Task<IReadOnlyList<BotIntegrationResponse>> ListAsync(CancellationToken ct = default)
     {
@@ -161,23 +161,6 @@ public sealed class BotIntegrationService(
     /// <summary>
     /// Finds the latest thread in a channel, or creates a "Default" thread if none exist.
     /// </summary>
-    private async Task<Guid> ResolveOrCreateThreadAsync(Guid channelId, CancellationToken ct)
-    {
-        var latest = await db.ChatThreads
-            .Where(t => t.ChannelId == channelId)
-            .OrderByDescending(t => t.CreatedAt)
-            .Select(t => (Guid?)t.Id)
-            .FirstOrDefaultAsync(ct);
-
-        if (latest.HasValue) return latest.Value;
-
-        var thread = new ChatThreadDB
-        {
-            Name = "Default",
-            ChannelId = channelId,
-        };
-        db.ChatThreads.Add(thread);
-        await db.SaveChangesAsync(ct);
-        return thread.Id;
-    }
+    private Task<Guid> ResolveOrCreateThreadAsync(Guid channelId, CancellationToken ct) =>
+        threadResolver.ResolveOrCreateAsync(channelId, ct);
 }

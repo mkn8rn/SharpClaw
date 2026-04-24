@@ -7,8 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
     <ProjectReference Include="..\EditorCommon\SharpClaw.Modules.EditorCommon.csproj" />
+    <ProjectReference Include="..\..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,11 +1,11 @@
 using System.Text.Json;
 
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
+using Microsoft.EntityFrameworkCore;
+
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.AgentOrchestration.Services;
 
 namespace SharpClaw.Modules.AgentOrchestration;
@@ -26,6 +26,7 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddDbContext<AgentOrchestrationDbContext>();
         services.TryAddScoped<AgentOrchestrationService>();
     }
 
@@ -43,28 +44,53 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
     [
         new("AoAgent", "ManageAgent", "ManageAgentAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
-            return await db.Agents.Select(a => a.Id).ToListAsync(ct);
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetAgentIdsAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetAgentLookupItemsAsync(ct);
         }),
         new("AoTask", "EditTask", "EditTaskAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
-            return await db.ScheduledTasks.Select(t => t.Id).ToListAsync(ct);
+            var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
+            return await db.ScheduledJobs.Select(t => t.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
+            return await db.ScheduledJobs.Select(t => new ValueTuple<Guid, string>(t.Id, t.Name)).ToListAsync(ct);
         }),
         new("AoSkill", "AccessSkill", "AccessSkillAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
             return await db.Skills.Select(s => s.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
+            return await db.Skills.Select(s => new ValueTuple<Guid, string>(s.Id, s.Name)).ToListAsync(ct);
         }),
         new("AoAgentHeader", "EditAgentHeader", "EditAgentHeaderAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
-            return await db.Agents.Select(a => a.Id).ToListAsync(ct);
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetAgentIdsAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetAgentLookupItemsAsync(ct);
         }),
         new("AoChannelHeader", "EditChannelHeader", "EditChannelHeaderAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
-            return await db.Channels.Select(c => c.Id).ToListAsync(ct);
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetChannelIdsAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
+            return await ids.GetChannelLookupItemsAsync(ct);
         }),
     ];
 

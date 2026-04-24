@@ -1,16 +1,19 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Infrastructure.Models.Jobs;
 using SharpClaw.Contracts.DTOs.Tasks;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
 public sealed class ScheduledTaskService(
     IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
     ILogger<ScheduledTaskService> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
@@ -52,6 +55,9 @@ public sealed class ScheduledTaskService(
             .Where(t => t.Status == ScheduledTaskStatus.Pending && t.NextRunAt <= now)
             .ToListAsync(ct);
 
+        var missedThreshold = TimeSpan.FromMinutes(
+            configuration.GetValue("Scheduler:MissedFireThresholdMinutes", 60));
+
         foreach (var task in dueTasks)
         {
             task.Status = ScheduledTaskStatus.Running;
@@ -90,11 +96,17 @@ public sealed class ScheduledTaskService(
                 task.RetryCount = 0;
                 task.LastError = null;
 
-                if (task.RepeatInterval.HasValue)
+                // Missed-fire: if the job fired significantly late and the policy
+                // is Skip, advance without a second execution.
+                bool wasMissed = (now - task.NextRunAt) > missedThreshold;
+                if (task.MissedFirePolicy == MissedFirePolicy.Skip && wasMissed)
                 {
-                    task.Status = ScheduledTaskStatus.Pending;
-                    task.NextRunAt = now.Add(task.RepeatInterval.Value);
+                    AdvanceNextRunAt(task, now);
+                    await db.SaveChangesAsync(ct);
+                    continue;
                 }
+
+                AdvanceNextRunAt(task, now);
 
                 logger.LogInformation("Task {TaskName} ({TaskId}) completed.", task.Name, task.Id);
             }
@@ -120,5 +132,24 @@ public sealed class ScheduledTaskService(
 
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    private static void AdvanceNextRunAt(ScheduledJobDB task, DateTimeOffset now)
+    {
+        if (!string.IsNullOrEmpty(task.CronExpression))
+        {
+            var next = CronEvaluator.GetNextOccurrence(
+                task.CronExpression, now, task.CronTimezone);
+
+            task.Status    = next.HasValue ? ScheduledTaskStatus.Pending
+                                           : ScheduledTaskStatus.Completed;
+            task.NextRunAt = next ?? task.NextRunAt;
+        }
+        else if (task.RepeatInterval.HasValue)
+        {
+            task.Status    = ScheduledTaskStatus.Pending;
+            task.NextRunAt = now.Add(task.RepeatInterval.Value);
+        }
+        // else: one-shot — caller already set Completed above, leave it.
     }
 }

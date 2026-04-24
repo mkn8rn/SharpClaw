@@ -24,8 +24,13 @@ public static class ContainerResourceHandlers
     }
 
     public static async Task<IResult> CreateContainer(
-        CreateContainerRequest request, ContainerService svc)
-        => Results.Ok(await svc.CreateAsync(request));
+        CreateContainerRequest request, ContainerService svc, HttpContext httpContext)
+    {
+        var userIdClaim = httpContext.User.FindFirst(
+            System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var userId = Guid.TryParse(userIdClaim, out var id) ? id : (Guid?)null;
+        return Results.Ok(await svc.CreateAsync(request, userId));
+    }
 
     public static async Task<IResult> ListContainers(ContainerService svc)
         => Results.Ok(await svc.ListAsync());

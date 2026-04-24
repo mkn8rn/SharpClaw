@@ -1,15 +1,13 @@
 using System.Text.Json;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-using Microsoft.EntityFrameworkCore;
-
-using SharpClaw.Application.Services;
-using SharpClaw.Modules.EditorCommon.Services;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.EditorCommon;
+using SharpClaw.Modules.EditorCommon.Services;
 
 namespace SharpClaw.Modules.VS2026Editor;
 
@@ -52,8 +50,13 @@ public sealed class VS2026EditorModule : ISharpClawModule
     [
         new("EditorSession", "EditorSession", "AccessEditorSessionAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<EditorCommonDbContext>();
             return await db.EditorSessions.Select(e => e.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<EditorCommonDbContext>();
+            return await db.EditorSessions.Select(e => new ValueTuple<Guid, string>(e.Id, e.Name)).ToListAsync(ct);
         }),
     ];
 

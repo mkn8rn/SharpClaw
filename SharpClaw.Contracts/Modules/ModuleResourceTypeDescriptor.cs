@@ -35,8 +35,14 @@ namespace SharpClaw.Contracts.Modules;
 /// the module can resolve its own <c>DbContext</c> or services.
 /// Called when a wildcard grant (AllResources) needs to be expanded.
 /// </param>
+/// <param name="LoadLookupItems">
+/// Optional async callback that loads <c>(Id, Name)</c> pairs for the
+/// generic <c>GET /resources/lookup/{type}</c> endpoint.  When <c>null</c>
+/// the lookup endpoint omits this resource type.
+/// </param>
 public sealed record ModuleResourceTypeDescriptor(
     string ResourceType,
     string GrantLabel,
     string DelegateMethodName,
-    Func<IServiceProvider, CancellationToken, Task<List<Guid>>> LoadAllIds);
+    Func<IServiceProvider, CancellationToken, Task<List<Guid>>> LoadAllIds,
+    Func<IServiceProvider, CancellationToken, Task<List<(Guid Id, string Name)>>>? LoadLookupItems = null);

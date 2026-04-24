@@ -2,6 +2,7 @@ using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Application.Infrastructure.Models.Tasks;
 using SharpClaw.Contracts.Entities;
+using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Application.Infrastructure.Models.Jobs;
 
@@ -49,12 +50,21 @@ public class ScheduledJobDB : BaseEntity
     /// <summary>Optional per-task permission set override.</summary>
     public Guid? PermissionSetId { get; set; }
     public PermissionSetDB? PermissionSet { get; set; }
-}
 
-public enum ScheduledTaskStatus
-{
-    Pending,
-    Running,
-    Completed,
-    Failed
+    // ── Cron scheduling ────────────────────────────────────────────
+
+    /// <summary>
+    /// Standard or second-resolution cron expression that controls when
+    /// this job fires. Mutually exclusive with <see cref="RepeatInterval"/>.
+    /// </summary>
+    public string? CronExpression { get; set; }
+
+    /// <summary>
+    /// IANA or Windows timezone identifier used when evaluating
+    /// <see cref="CronExpression"/>. Defaults to UTC when null.
+    /// </summary>
+    public string? CronTimezone { get; set; }
+
+    /// <summary>Behaviour when a scheduled firing is detected to have been missed.</summary>
+    public MissedFirePolicy MissedFirePolicy { get; set; } = MissedFirePolicy.FireOnceAndRecompute;
 }

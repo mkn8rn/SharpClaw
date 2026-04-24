@@ -6,15 +6,16 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 
-using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Services;
+using SharpClaw.Modules.ComputerUse.Models;
+using SharpClaw.Modules.ComputerUse.Metrics;
 using SharpClaw.Modules.ComputerUse.Services;
+using SharpClaw.Modules.ComputerUse.Triggers;
 using SharpClaw.Modules.ComputerUse.Handlers;
 using SharpClaw.Contracts.DTOs.DisplayDevices;
 using SharpClaw.Contracts.DTOs.NativeApplications;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Contracts.Modules.Contracts;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Modules.ComputerUse;
 
@@ -36,8 +37,6 @@ public sealed class ComputerUseModule : ISharpClawModule
     {
         services.AddScoped<DisplayDeviceService>();
         services.AddScoped<NativeApplicationService>();
-        services.TryAddScoped<DefaultResourceSetService>();
-        services.TryAddScoped<ToolAwarenessSetService>();
         services.AddSingleton<DesktopAwarenessService>();
         services.AddSingleton<DisplayCaptureService>();
         services.AddSingleton<DesktopInputService>();
@@ -45,6 +44,18 @@ public sealed class ComputerUseModule : ISharpClawModule
             sp.GetRequiredService<DesktopAwarenessService>());
         services.AddSingleton<IDesktopInput>(sp =>
             sp.GetRequiredService<DesktopInputService>());
+        // Trigger sources owned by this module
+        services.AddSingleton<ITaskTriggerSource, WindowFocusTriggerSource>();
+        services.AddSingleton<ITaskTriggerSource, HotkeyTriggerSource>();
+        services.AddSingleton<ITaskTriggerSource, IdleTriggerSource>();
+        services.AddSingleton<ITaskTriggerSource, SessionTriggerSource>();
+        services.AddSingleton<ITaskTriggerSource, DeviceTriggerSource>();
+        services.AddSingleton<ITaskTriggerSource, ProcessTriggerSource>();
+        services.AddSingleton<ShortcutLauncherService>();
+        services.AddSingleton<IShortcutLauncherService>(sp => sp.GetRequiredService<ShortcutLauncherService>());
+        // OS-level metric providers
+        services.AddSingleton<ITaskMetricProvider, SystemMemoryMetricProvider>();
+        services.AddSingleton<ITaskMetricProvider, SystemCpuMetricProvider>();
     }
 
     public void MapEndpoints(object app)
@@ -74,13 +85,23 @@ public sealed class ComputerUseModule : ISharpClawModule
     [
         new("CuDisplay", "DisplayDevice", "AccessDisplayDeviceAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<ComputerUseDbContext>();
             return await db.DisplayDevices.Select(d => d.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<ComputerUseDbContext>();
+            return await db.DisplayDevices.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
         }),
         new("CuNativeApp", "NativeApplication", "LaunchNativeApplicationAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<ComputerUseDbContext>();
             return await db.NativeApplications.Select(n => n.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<ComputerUseDbContext>();
+            return await db.NativeApplications.Select(n => new ValueTuple<Guid, string>(n.Id, n.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -149,6 +170,27 @@ public sealed class ComputerUseModule : ISharpClawModule
             ],
             Handler: HandleNativeApplicationResourceCliAsync),
     ];
+
+    // ═══════════════════════════════════════════════════════════════
+    // Lifecycle
+    // ═══════════════════════════════════════════════════════════════
+
+    public async Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
+    {
+        var db = services.GetRequiredService<ComputerUseDbContext>();
+        var exists = await db.DisplayDevices.AnyAsync(d => d.DeviceIdentifier == "display-0", ct);
+        if (exists)
+            return;
+
+        db.DisplayDevices.Add(new DisplayDeviceDB
+        {
+            Name = "Primary Display",
+            DeviceIdentifier = "display-0",
+            DisplayIndex = 0,
+            Description = "System primary display"
+        });
+        await db.SaveChangesAsync(ct);
+    }
 
     private static readonly JsonSerializerOptions CliJsonPrint = new()
     {

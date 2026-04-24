@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-using SharpClaw.Application.Core.Modules;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
@@ -14,7 +14,7 @@ namespace SharpClaw.Modules.ModuleDev.Services;
 internal sealed partial class ModuleScaffoldService(
     ModuleWorkspaceService workspace,
     DevEnvironmentService devEnv,
-    ModuleRegistry registry)
+    IModuleLifecycleManager lifecycle)
 {
     /// <summary>
     /// Scaffold specification provided by the agent.
@@ -109,11 +109,11 @@ internal sealed partial class ModuleScaffoldService(
             throw new ArgumentException("Display name is required.");
 
         // Check uniqueness against loaded modules
-        if (registry.GetModule(spec.ModuleId) is not null)
+        if (lifecycle.IsModuleRegistered(spec.ModuleId))
             throw new InvalidOperationException(
                 $"Module ID '{spec.ModuleId}' is already registered.");
 
-        if (registry.GetModuleByPrefix(spec.ToolPrefix) is not null)
+        if (lifecycle.IsToolPrefixRegistered(spec.ToolPrefix))
             throw new InvalidOperationException(
                 $"Tool prefix '{spec.ToolPrefix}' is already in use.");
     }

@@ -4,7 +4,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
-using SharpClaw.Application.Infrastructure.Models.Resources;
+using SharpClaw.Modules.ComputerUse.Models;
 using SharpClaw.Contracts.Modules.Contracts;
 using SharpClaw.Utils.Security;
 

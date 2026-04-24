@@ -213,6 +213,7 @@ task list | get <id>
 task update <id> <sourceFilePath>      Validates before upload.
 task activate <id> | deactivate <id>
 task delete <id>
+task preflight <taskId> [--param key=value ...]
 
 Instances:
 task start <taskId> [channelId] [--param key=value ...]   Uses active channel.
@@ -228,6 +229,23 @@ task pause <instanceId>
 task resume <instanceId>
 task listen <instanceId>               Stream output events (output/log/status/done).
                                        Ctrl+C stops listening (not the instance).
+
+Scheduling:
+task schedule list
+task schedule get <jobId>
+task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <n>]
+task schedule update <jobId> --cron <expr> [--timezone <tz>]
+task schedule pause <jobId>
+task schedule resume <jobId>
+task schedule delete <jobId>
+task schedule preview <expr> [--timezone <tz>] [--count N]
+
+Triggers and shortcuts:
+task trigger-sources
+task triggers enable <taskId>
+task triggers disable <taskId>
+task shortcuts install <taskId>
+task shortcuts remove <taskId>
 
 ────────────────────────────────────────
 ROLE

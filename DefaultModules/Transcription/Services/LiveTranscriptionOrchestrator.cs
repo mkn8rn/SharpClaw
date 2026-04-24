@@ -1,17 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NAudio.Wave;
 
-using SharpClaw.Application.Infrastructure.Models.Jobs;
-using SharpClaw.Modules.Transcription.Audio;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Models;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.Transcription.Audio;
 using SharpClaw.Utils.Security;
 
 using LanguageValidator = SharpClaw.Modules.Transcription.Clients.LanguageScriptValidator;
@@ -31,6 +27,8 @@ public sealed class LiveTranscriptionOrchestrator(
     Clients.SharedAudioCaptureManager sharedCapture,
     Clients.TranscriptionApiClientFactory transcriptionClientFactory,
     IHttpClientFactory httpClientFactory,
+    IModelInfoProvider modelInfoProvider,
+    ITranscriptionJobSink jobSink,
     EncryptionOptions encryptionOptions,
     ILogger<LiveTranscriptionOrchestrator> logger) : ILiveTranscriptionOrchestrator
 {
@@ -123,41 +121,25 @@ public sealed class LiveTranscriptionOrchestrator(
         string modelName;
         ProviderType providerType;
 
-        using (var scope = scopeFactory.CreateScope())
+        var modelInfo = await modelInfoProvider.GetModelProviderInfoAsync(modelId, ct)
+            ?? throw new InvalidOperationException($"Model {modelId} not found.");
+
+        providerType = modelInfo.ProviderType;
+
+        if (!transcriptionClientFactory.Supports(providerType))
+            throw new InvalidOperationException(
+                $"Provider ({providerType}) does not support transcription.");
+
+        if (providerType == ProviderType.Whisper)
         {
-            var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
-            var model = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == modelId, ct)
-                ?? throw new InvalidOperationException($"Model {modelId} not found.");
-
-            providerType = model.Provider.ProviderType;
-
-            if (!transcriptionClientFactory.Supports(providerType))
-                throw new InvalidOperationException(
-                    $"Provider '{model.Provider.Name}' ({providerType}) does not support transcription.");
-
-            if (providerType == ProviderType.Whisper)
-            {
-                var localFile = await db.LocalModelFiles
-                    .FirstOrDefaultAsync(f => f.ModelId == modelId, ct)
-                    ?? throw new InvalidOperationException(
-                        $"No local model file found for model {modelId}.");
-
-                if (localFile.Status != LocalModelStatus.Ready)
-                    throw new InvalidOperationException(
-                        $"Local model file status is {localFile.Status}.");
-
-                modelName = localFile.FilePath;
-            }
-            else
-            {
-                if (string.IsNullOrEmpty(model.Provider.EncryptedApiKey))
-                    throw new InvalidOperationException("Provider does not have an API key configured.");
-
-                apiKey = ApiKeyEncryptor.DecryptOrPassthrough(model.Provider.EncryptedApiKey, encryptionOptions.Key);
-                modelName = model.Name;
-            }
+            modelName = await modelInfoProvider.GetLocalModelFilePathAsync(modelId, ct)
+                ?? throw new InvalidOperationException(
+                    $"No ready local model file found for model {modelId}.");
+        }
+        else
+        {
+            apiKey = modelInfo.DecryptedApiKey;
+            modelName = modelInfo.ModelName;
         }
 
         var sttClient = transcriptionClientFactory.GetClient(providerType);
@@ -458,7 +440,7 @@ public sealed class LiveTranscriptionOrchestrator(
 
                             using (var mergeScope = scopeFactory.CreateScope())
                             {
-                                var mergeSvc = mergeScope.ServiceProvider.GetRequiredService<AgentJobService>();
+                                var mergeSvc = mergeScope.ServiceProvider.GetRequiredService<ITranscriptionJobSink>();
                                 await mergeSvc.UpdateProvisionalTextAsync(
                                     jobId, last.SegmentId, mergedText, ct);
                             }
@@ -503,7 +485,7 @@ public sealed class LiveTranscriptionOrchestrator(
                     }
 
                     using var scope = scopeFactory.CreateScope();
-                    var svc = scope.ServiceProvider.GetRequiredService<AgentJobService>();
+                    var svc = scope.ServiceProvider.GetRequiredService<ITranscriptionJobSink>();
 
                     foreach (var seg in segments)
                     {
@@ -647,24 +629,7 @@ public sealed class LiveTranscriptionOrchestrator(
 
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
-                var job = await db.AgentJobs
-                    .Include(j => j.LogEntries)
-                    .FirstOrDefaultAsync(j => j.Id == jobId);
-                if (job is not null && job.Status == AgentJobStatus.Executing)
-                {
-                    job.Status = AgentJobStatus.Failed;
-                    job.ErrorLog = ex.ToString();
-                    job.CompletedAt = DateTimeOffset.UtcNow;
-                    job.LogEntries.Add(new AgentJobLogEntryDB
-                    {
-                        AgentJobId = job.Id,
-                        Message = $"Transcription failed: {ex.Message}",
-                        Level = "Error",
-                    });
-                    await db.SaveChangesAsync();
-                }
+                await jobSink.MarkJobFailedAsync(jobId, ex);
             }
             catch (Exception dbEx)
             {
@@ -790,25 +755,8 @@ public sealed class LiveTranscriptionOrchestrator(
         return ms.ToArray();
     }
 
-    private async Task AddJobLogAsync(Guid jobId, string message, string level = "Info")
-    {
-        try
-        {
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
-            db.AgentJobLogEntries.Add(new AgentJobLogEntryDB
-            {
-                AgentJobId = jobId,
-                Message = message,
-                Level = level,
-            });
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to write log entry for job {JobId}: {Message}", jobId, message);
-        }
-    }
+    private Task AddJobLogAsync(Guid jobId, string message, string level = "Info") =>
+        jobSink.AddJobLogAsync(jobId, message, level);
 
     private static TimeSpan ComputeAccumulationDelay(
         AudioRingBuffer ringBuffer, long lastInferenceSample, long samplesPerWindow)

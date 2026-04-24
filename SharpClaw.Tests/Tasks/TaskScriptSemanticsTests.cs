@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Tests.Tasks;
 

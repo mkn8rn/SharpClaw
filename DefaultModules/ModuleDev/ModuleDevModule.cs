@@ -4,8 +4,6 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
-using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Modules.Contracts;
 using SharpClaw.Modules.ModuleDev.Handlers;
@@ -159,11 +157,10 @@ public sealed class ModuleDevModule : ISharpClawModule
 
             case "load" when args.Length >= 3:
             {
-                var moduleSvc = sp.GetRequiredService<ModuleService>();
-                var loader = sp.GetRequiredService<ModuleLoader>();
+                var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
                 var workspace = sp.GetRequiredService<ModuleWorkspaceService>();
                 var moduleDir = workspace.ResolveModuleDir(args[2]);
-                var result = await moduleSvc.LoadExternalAsync(moduleDir, loader.RootServices, ct);
+                var result = await lifecycle.LoadExternalAsync(moduleDir, sp, ct);
                 Console.WriteLine(JsonSerializer.Serialize(result, CliJsonPrint));
                 break;
             }
@@ -173,8 +170,8 @@ public sealed class ModuleDevModule : ISharpClawModule
 
             case "unload" when args.Length >= 3:
             {
-                var moduleSvc = sp.GetRequiredService<ModuleService>();
-                await moduleSvc.UnloadExternalAsync(args[2], ct);
+                var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
+                await lifecycle.UnloadExternalAsync(args[2], ct);
                 Console.WriteLine($"Module '{args[2]}' unloaded.");
                 break;
             }
@@ -184,9 +181,8 @@ public sealed class ModuleDevModule : ISharpClawModule
 
             case "reload" when args.Length >= 3:
             {
-                var moduleSvc = sp.GetRequiredService<ModuleService>();
-                var loader = sp.GetRequiredService<ModuleLoader>();
-                var result = await moduleSvc.ReloadExternalAsync(args[2], loader.RootServices, ct);
+                var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
+                var result = await lifecycle.ReloadExternalAsync(args[2], sp, ct);
                 Console.WriteLine(JsonSerializer.Serialize(result, CliJsonPrint));
                 break;
             }
@@ -451,32 +447,30 @@ public sealed class ModuleDevModule : ISharpClawModule
     private static async Task<string> LoadModuleAsync(
         JsonElement p, IServiceProvider sp, CancellationToken ct)
     {
-        var moduleSvc = sp.GetRequiredService<ModuleService>();
-        var loader = sp.GetRequiredService<ModuleLoader>();
+        var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
         var workspace = sp.GetRequiredService<ModuleWorkspaceService>();
 
         var moduleId = Str(p, "module_id") ?? throw new InvalidOperationException("module_id is required.");
 
         // Check if already loaded → reload
-        var registry = sp.GetRequiredService<ModuleRegistry>();
-        if (registry.GetModule(moduleId) is not null)
+        if (lifecycle.IsModuleRegistered(moduleId))
         {
-            var reloaded = await moduleSvc.ReloadExternalAsync(moduleId, loader.RootServices, ct);
+            var reloaded = await lifecycle.ReloadExternalAsync(moduleId, sp, ct);
             return JsonSerializer.Serialize(reloaded, ToolJsonOpts);
         }
 
         var moduleDir = workspace.ResolveModuleDir(moduleId);
-        var result = await moduleSvc.LoadExternalAsync(moduleDir, loader.RootServices, ct);
+        var result = await lifecycle.LoadExternalAsync(moduleDir, sp, ct);
         return JsonSerializer.Serialize(result, ToolJsonOpts);
     }
 
     private static async Task<string> UnloadModuleAsync(
         JsonElement p, IServiceProvider sp, CancellationToken ct)
     {
-        var moduleSvc = sp.GetRequiredService<ModuleService>();
+        var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
         var moduleId = Str(p, "module_id") ?? throw new InvalidOperationException("module_id is required.");
 
-        await moduleSvc.UnloadExternalAsync(moduleId, ct);
+        await lifecycle.UnloadExternalAsync(moduleId, ct);
         return JsonSerializer.Serialize(new { moduleId, unloaded = true }, ToolJsonOpts);
     }
 
@@ -486,9 +480,9 @@ public sealed class ModuleDevModule : ISharpClawModule
         var toolName = Str(p, "tool_name") ?? throw new InvalidOperationException("tool_name is required.");
         var paramsEl = p.TryGetProperty("parameters", out var pe) ? pe : default;
 
-        // Resolve the tool via the registry and execute directly
-        var registry = sp.GetRequiredService<ModuleRegistry>();
-        var toolEntry = registry.FindToolByName(toolName)
+        // Resolve the tool via the lifecycle manager and execute directly
+        var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
+        var toolEntry = lifecycle.FindToolByName(toolName)
             ?? throw new InvalidOperationException($"Tool '{toolName}' not found in any loaded module.");
 
         var timeoutSeconds = Int(p, "timeout_seconds") ?? 30;
@@ -588,16 +582,13 @@ public sealed class ModuleDevModule : ISharpClawModule
 
     private static string ListLoadedModules(IServiceProvider sp)
     {
-        var registry = sp.GetRequiredService<ModuleRegistry>();
-        var modules = registry.GetAllModules();
+        var provider = sp.GetRequiredService<IModuleInfoProvider>();
+        var modules = provider.GetAllModules();
         var result = modules.Select(m => new
         {
             m.Id,
-            m.DisplayName,
             m.ToolPrefix,
-            ToolCount = m.GetToolDefinitions().Count,
-            InlineToolCount = m.GetInlineToolDefinitions().Count,
-            ExportedContracts = m.ExportedContracts.Select(c => c.ContractName).ToList(),
+            ExportedContracts = m.ExportedContractNames,
         });
 
         return JsonSerializer.Serialize(result, ToolJsonOpts);

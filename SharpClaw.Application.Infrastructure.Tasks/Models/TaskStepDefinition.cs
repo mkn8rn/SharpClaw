@@ -1,3 +1,5 @@
+using SharpClaw.Contracts.Tasks;
+
 namespace SharpClaw.Application.Infrastructure.Tasks.Models;
 
 /// <summary>

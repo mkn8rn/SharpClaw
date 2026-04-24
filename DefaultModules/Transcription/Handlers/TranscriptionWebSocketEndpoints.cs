@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Modules.Transcription.Handlers;
 
@@ -41,12 +41,15 @@ public static class TranscriptionWebSocketEndpoints
             return;
         }
 
-        var jobId = Guid.Parse((string)context.Request.RouteValues["jobId"]!);
+        if (!context.Request.RouteValues.TryGetValue("jobId", out var jobIdObj)
+            || !Guid.TryParse(jobIdObj?.ToString(), out var jobId))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
 
-        using var scope = context.RequestServices.CreateScope();
-        var svc = scope.ServiceProvider.GetRequiredService<AgentJobService>();
-
-        var reader = svc.Subscribe(jobId);
+        var sink = context.RequestServices.GetRequiredService<ITranscriptionJobSink>();
+        var reader = sink.Subscribe(jobId);
         if (reader is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -86,19 +89,21 @@ public static class TranscriptionWebSocketEndpoints
 
     private static async Task HandleSse(HttpContext context)
     {
-        var jobId = Guid.Parse((string)context.Request.RouteValues["jobId"]!);
+        if (!context.Request.RouteValues.TryGetValue("jobId", out var jobIdObj)
+            || !Guid.TryParse(jobIdObj?.ToString(), out var jobId))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
 
-        using var scope = context.RequestServices.CreateScope();
-        var svc = scope.ServiceProvider.GetRequiredService<AgentJobService>();
-
-        var reader = svc.Subscribe(jobId);
+        var sink = context.RequestServices.GetRequiredService<ITranscriptionJobSink>();
+        var reader = sink.Subscribe(jobId);
         if (reader is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
 
-        context.Response.ContentType = "text/event-stream";
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Connection = "keep-alive";
 
@@ -121,3 +126,4 @@ public static class TranscriptionWebSocketEndpoints
         }
     }
 }
+

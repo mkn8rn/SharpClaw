@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-
+using SharpClaw.Application.Services;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Core.Modules;
@@ -16,10 +16,10 @@ internal sealed class ModuleServiceScope(
 {
     private static readonly HashSet<Type> BlockedTypes =
     [
-        typeof(Services.AgentJobService),
-        typeof(Services.AgentActionService),
-        typeof(Services.ChatService),
-        typeof(Services.ModuleService),
+        typeof(AgentJobService),
+        typeof(AgentActionService),
+        typeof(ChatService),
+        typeof(ModuleService),
         typeof(ModuleRegistry),
         typeof(ModuleLoader),
         typeof(SharpClawDbContext),         // Modules use their own DbContext (§3.8)

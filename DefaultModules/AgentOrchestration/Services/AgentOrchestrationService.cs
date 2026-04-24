@@ -2,11 +2,8 @@ using System.Text.Json;
 
 using Microsoft.EntityFrameworkCore;
 
-using SharpClaw.Infrastructure.Models;
-using SharpClaw.Application.Infrastructure.Models.Context;
-using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Infrastructure.Models.Jobs;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Contracts.Modules;
+using SharpClaw.Modules.AgentOrchestration.Models;
 
 namespace SharpClaw.Modules.AgentOrchestration.Services;
 
@@ -14,7 +11,9 @@ namespace SharpClaw.Modules.AgentOrchestration.Services;
 /// Wraps agent lifecycle, task editing, and skill access DB operations
 /// for the Agent Orchestration module.
 /// </summary>
-internal sealed class AgentOrchestrationService(SharpClawDbContext db)
+internal sealed class AgentOrchestrationService(
+    AgentOrchestrationDbContext db,
+    IAgentManager agentManager)
 {
     private static readonly JsonSerializerOptions PayloadOptions = new()
     {
@@ -43,23 +42,10 @@ internal sealed class AgentOrchestrationService(SharpClawDbContext db)
             throw new InvalidOperationException(
                 "create_sub_agent requires a valid 'modelId' GUID.");
 
-        var model = await db.Models
-            .Include(m => m.Provider)
-            .FirstOrDefaultAsync(m => m.Id == modelId, ct)
-            ?? throw new InvalidOperationException(
-                $"Model {modelId} not found.");
+        var (agentId, modelName, agentName) =
+            await agentManager.CreateSubAgentAsync(name, modelId, systemPrompt, ct);
 
-        var agent = new AgentDB
-        {
-            Name = name,
-            SystemPrompt = systemPrompt,
-            ModelId = model.Id,
-        };
-
-        db.Agents.Add(agent);
-        await db.SaveChangesAsync(ct);
-
-        return $"Created sub-agent '{agent.Name}' (id={agent.Id}, model={model.Name}).";
+        return $"Created sub-agent '{agentName}' (id={agentId}, model={modelName}).";
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -69,47 +55,16 @@ internal sealed class AgentOrchestrationService(SharpClawDbContext db)
     public async Task<string> ManageAgentAsync(
         Guid resourceId, JsonElement parameters, CancellationToken ct)
     {
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .FirstOrDefaultAsync(a => a.Id == resourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Agent {resourceId} not found.");
+        string? newName = parameters.TryGetProperty("name", out var nameProp)
+            && nameProp.GetString() is { Length: > 0 } n ? n : null;
 
-        var changes = new List<string>();
+        string? systemPrompt = parameters.TryGetProperty("systemPrompt", out var spProp)
+            ? spProp.GetString() : null;
 
-        if (parameters.TryGetProperty("name", out var nameProp)
-            && nameProp.GetString() is { Length: > 0 } newName)
-        {
-            agent.Name = newName;
-            changes.Add($"name='{newName}'");
-        }
+        Guid? newModelId = parameters.TryGetProperty("modelId", out var midProp)
+            && Guid.TryParse(midProp.GetString(), out var mid) ? mid : null;
 
-        if (parameters.TryGetProperty("systemPrompt", out var spProp))
-        {
-            agent.SystemPrompt = spProp.GetString();
-            changes.Add("systemPrompt updated");
-        }
-
-        if (parameters.TryGetProperty("modelId", out var midProp)
-            && Guid.TryParse(midProp.GetString(), out var newModelId))
-        {
-            var model = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == newModelId, ct)
-                ?? throw new InvalidOperationException(
-                    $"Model {newModelId} not found.");
-            agent.ModelId = model.Id;
-            agent.Model = model;
-            changes.Add($"model='{model.Name}'");
-        }
-
-        if (changes.Count == 0)
-            return $"Agent '{agent.Name}' (id={agent.Id}) — no changes applied.";
-
-        await db.SaveChangesAsync(ct);
-
-        var summary = string.Join(", ", changes);
-        return $"Updated agent '{agent.Name}' (id={agent.Id}): {summary}.";
+        return await agentManager.UpdateAgentAsync(resourceId, newName, systemPrompt, newModelId, ct);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -119,10 +74,10 @@ internal sealed class AgentOrchestrationService(SharpClawDbContext db)
     public async Task<string> EditTaskAsync(
         Guid resourceId, JsonElement parameters, CancellationToken ct)
     {
-        var task = await db.ScheduledTasks
+        var task = await db.ScheduledJobs
             .FirstOrDefaultAsync(t => t.Id == resourceId, ct)
             ?? throw new InvalidOperationException(
-                $"ScheduledTask {resourceId} not found.");
+                $"ScheduledJob {resourceId} not found.");
 
         var changes = new List<string>();
 
@@ -180,21 +135,14 @@ internal sealed class AgentOrchestrationService(SharpClawDbContext db)
     public async Task<string> EditAgentHeaderAsync(
         Guid resourceId, JsonElement parameters, CancellationToken ct)
     {
-        var agent = await db.Agents
-            .FirstOrDefaultAsync(a => a.Id == resourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Agent {resourceId} not found.");
-
         var header = parameters.TryGetProperty("header", out var hProp)
-            ? hProp.GetString()
-            : null;
+            ? hProp.GetString() : null;
 
-        agent.CustomChatHeader = string.IsNullOrEmpty(header) ? null : header;
-        await db.SaveChangesAsync(ct);
+        await agentManager.SetAgentHeaderAsync(resourceId, header, ct);
 
-        return agent.CustomChatHeader is null
-            ? $"Cleared custom chat header for agent '{agent.Name}' (id={agent.Id})."
-            : $"Updated custom chat header for agent '{agent.Name}' (id={agent.Id}).";
+        return string.IsNullOrEmpty(header)
+            ? $"Cleared custom chat header for agent (id={resourceId})."
+            : $"Updated custom chat header for agent (id={resourceId}).";
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -204,20 +152,13 @@ internal sealed class AgentOrchestrationService(SharpClawDbContext db)
     public async Task<string> EditChannelHeaderAsync(
         Guid resourceId, JsonElement parameters, CancellationToken ct)
     {
-        var channel = await db.Channels
-            .FirstOrDefaultAsync(c => c.Id == resourceId, ct)
-            ?? throw new InvalidOperationException(
-                $"Channel {resourceId} not found.");
-
         var header = parameters.TryGetProperty("header", out var hProp)
-            ? hProp.GetString()
-            : null;
+            ? hProp.GetString() : null;
 
-        channel.CustomChatHeader = string.IsNullOrEmpty(header) ? null : header;
-        await db.SaveChangesAsync(ct);
+        await agentManager.SetChannelHeaderAsync(resourceId, header, ct);
 
-        return channel.CustomChatHeader is null
-            ? $"Cleared custom chat header for channel '{channel.Title}' (id={channel.Id})."
-            : $"Updated custom chat header for channel '{channel.Title}' (id={channel.Id}).";
+        return string.IsNullOrEmpty(header)
+            ? $"Cleared custom chat header for channel (id={resourceId})."
+            : $"Updated custom chat header for channel (id={resourceId}).";
     }
 }

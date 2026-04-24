@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.JSON;
@@ -98,7 +99,7 @@ public static class InfrastructureServiceExtensions
                     "with EFC 10 compatibility. Not yet available.");
         }
 
-        // Register migration gate and service for all storage modes so that
+        // Register migration gate
         // the /admin/db/* endpoints can always bind their DI parameters.
         // In JsonFile mode the service is effectively a no-op (InMemory
         // provider has no pending migrations), but it must still be
@@ -106,6 +107,8 @@ public static class InfrastructureServiceExtensions
         // type as [FromBody] and fails endpoint construction on GET routes.
         services.AddSingleton<MigrationGate>();
         services.AddSingleton<MigrationService>();
+
+        services.AddScoped<ICoreEntityIdProvider, CoreEntityIdProvider>();
 
         return services;
     }
@@ -144,7 +147,7 @@ public static class InfrastructureServiceExtensions
     }
 
     /// <summary>
-    /// Initializes the infrastructure layer (e.g. loads persisted JSON data
+    /// Initializes the infrastructure layer
     /// into the InMemory database). Call once after building the host.
     /// On the first run after a navigation-stripping fix, a full re-flush
     /// recompacts any bloated JSON files.

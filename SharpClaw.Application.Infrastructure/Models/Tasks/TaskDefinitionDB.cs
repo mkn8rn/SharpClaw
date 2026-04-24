@@ -31,6 +31,19 @@ public class TaskDefinitionDB : BaseEntity
     /// </summary>
     public string? ParametersJson { get; set; }
 
+    /// <summary>
+    /// JSON-serialised array of <see cref="Infrastructure.Tasks.Models.TaskRequirementDefinition"/>
+    /// extracted at parse time.  Used by the preflight checker and the UI
+    /// to surface environment requirements before execution.
+    /// </summary>
+    public string? RequirementsJson { get; set; }
+
+    /// <summary>
+    /// JSON-serialised array of <c>TaskTriggerDefinition</c> extracted at parse time.
+    /// Kept so the UI / CLI can display trigger metadata without re-parsing the source.
+    /// </summary>
+    public string? TriggersJson { get; set; }
+
     /// <summary>Whether this definition is available for execution.</summary>
     public bool IsActive { get; set; } = true;
 
@@ -38,4 +51,7 @@ public class TaskDefinitionDB : BaseEntity
 
     /// <summary>All instances ever created from this definition.</summary>
     public ICollection<TaskInstanceDB> Instances { get; set; } = [];
+
+    /// <summary>Active trigger bindings derived from parsed trigger attributes.</summary>
+    public ICollection<TaskTriggerBindingDB> TriggerBindings { get; set; } = [];
 }

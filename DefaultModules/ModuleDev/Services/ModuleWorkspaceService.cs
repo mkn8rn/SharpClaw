@@ -1,6 +1,6 @@
 using System.Text;
 
-using SharpClaw.Application.Services;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ModuleDev.Services;
@@ -15,9 +15,11 @@ internal sealed class ModuleWorkspaceService
 
     private readonly string _externalModulesDir;
 
-    public ModuleWorkspaceService()
+    public string ExternalModulesDir => _externalModulesDir;
+
+    public ModuleWorkspaceService(IModuleLifecycleManager lifecycle)
     {
-        _externalModulesDir = ModuleService.ResolveExternalModulesDir();
+        _externalModulesDir = lifecycle.ExternalModulesDir;
     }
 
     /// <summary>
@@ -122,11 +124,6 @@ internal sealed class ModuleWorkspaceService
             .Order()
             .ToList();
     }
-
-    /// <summary>
-    /// Gets the root path for external modules.
-    /// </summary>
-    public string ExternalModulesDir => _externalModulesDir;
 
     // ── Validation ────────────────────────────────────────────────
 

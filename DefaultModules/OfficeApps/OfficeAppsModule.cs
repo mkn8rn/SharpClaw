@@ -4,13 +4,10 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
-using SharpClaw.Application.Infrastructure.Models.Resources;
-using SharpClaw.Application.Services;
 using SharpClaw.Modules.OfficeApps.Services;
 using SharpClaw.Modules.OfficeApps.Handlers;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps;
@@ -51,8 +48,13 @@ public sealed class OfficeAppsModule : ISharpClawModule
     [
         new("OaDocument", "DocumentSession", "AccessDocumentSessionAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<OfficeAppsDbContext>();
             return await db.DocumentSessions.Select(d => d.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<OfficeAppsDbContext>();
+            return await db.DocumentSessions.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -323,7 +325,7 @@ public sealed class OfficeAppsModule : ISharpClawModule
             throw new InvalidOperationException(
                 $"{toolName} requires a ResourceId (DocumentSession).");
 
-        var db = sp.GetRequiredService<SharpClawDbContext>();
+        var db = sp.GetRequiredService<OfficeAppsDbContext>();
         var docSession = await db.DocumentSessions.FirstOrDefaultAsync(
             d => d.Id == job.ResourceId, ct)
             ?? throw new InvalidOperationException(
@@ -391,7 +393,7 @@ public sealed class OfficeAppsModule : ISharpClawModule
             throw new InvalidOperationException(
                 $"{toolName} requires a ResourceId (DocumentSession).");
 
-        var db = sp.GetRequiredService<SharpClawDbContext>();
+        var db = sp.GetRequiredService<OfficeAppsDbContext>();
         var docSession = await db.DocumentSessions.FirstOrDefaultAsync(
             d => d.Id == job.ResourceId, ct)
             ?? throw new InvalidOperationException(

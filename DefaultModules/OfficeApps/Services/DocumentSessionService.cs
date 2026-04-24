@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Documents;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.OfficeApps.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps.Services;
@@ -12,7 +11,7 @@ namespace SharpClaw.Modules.OfficeApps.Services;
 /// Document sessions are registered file paths that agents can
 /// operate on using spreadsheet and document tools.
 /// </summary>
-public sealed class DocumentSessionService(SharpClawDbContext db)
+public sealed class DocumentSessionService(OfficeAppsDbContext db)
 {
     public async Task<DocumentSessionResponse> CreateAsync(
         CreateDocumentSessionRequest request, CancellationToken ct = default)

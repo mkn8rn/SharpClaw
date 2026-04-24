@@ -11,10 +11,24 @@ GET    /tasks                          → TaskDefinitionResponse[]
 GET    /tasks/{id}                     → TaskDefinitionResponse
 PUT    /tasks/{id}                     { sourceText?, isActive? }  → TaskDefinitionResponse
 DELETE /tasks/{id}                     → 204
+GET    /tasks/{id}/preflight?param.Name=value  → TaskPreflightResponse
+GET    /tasks/trigger-sources          → TaskTriggerSourceResponse[]
+POST   /tasks/{id}/triggers/enable     → { enabled }
+POST   /tasks/{id}/triggers/disable    → { disabled }
+POST   /tasks/{id}/shortcuts/install   → 204
+DELETE /tasks/{id}/shortcuts           → 204
 
 TaskDefinitionResponse fields:
   id, name, description?, outputTypeName?, isActive, createdAt, updatedAt, customId?,
   parameters[]: { name, typeName, description?, defaultValue?, isRequired }
+  requirements[]: { kind, severity, value?, capabilityValue?, parameterName? }
+  triggers[]: { kind, triggerValue?, filter?, isEnabled }
+
+TaskPreflightResponse fields:
+  isBlocked, findings[]: { requirementKind, severity, passed, message, parameterName? }
+
+TaskTriggerSourceResponse fields:
+  sourceName?, supportedKinds[], type, isCustom
 
 ────────────────────────────────────────
 TASK INSTANCES
@@ -75,9 +89,27 @@ Public properties = parameters. Inner classes = data types.
 Attributes:
   [Task("name")]               — required; registers the task name
   [Description("...")]        — optional; stored in definition + agent schema
+  [RequiresProvider("...")]    — requires configured provider at preflight/runtime
+  [RequiresModelCapability("...")] — requires at least one capable model
+  [RequiresModel("...")]       — requires a specific model
+  [RequiresModule("...")]      — requires enabled module
+  [RecommendsModule("...")]    — warning only; non-blocking recommendation
+  [RequiresPlatform(...)]       — limits supported host platforms
+  [RequiresPermission("...")]  — requires caller permission/global flag
   [ToolCall("name")]           — marks a public method as an inline agent tool
   [AgentOutput("json|md|text")]— hints return-value format to the calling agent
   [Output]                     — marks one inner class as the structured output type
+  [Schedule("cron")]           — self-register cron schedule
+  [OnEvent("Type")]            — self-register event trigger
+  [OnFileChanged(path)]         — self-register file watcher trigger
+  [OnWebhook("/route")]        — self-register webhook trigger
+  [OnTrigger("SourceName")]    — bind to a custom module-provided trigger source
+  [OsShortcut("Label")]        — install desktop/app launcher shortcut
+  [ConcurrencyPolicy(...)]      — control running-instance collision behavior
+
+Parameter-level requirement attributes:
+  [ModelId]                     — marks parameter as model reference
+  [RequiresCapability("...")]  — requires that referenced model capability
 
 Allowed constructs:
   var x = expr;  |  TypeName x = expr;     variable declaration
@@ -131,13 +163,31 @@ Compilation (run on instance start):
   TASK202  supplied parameter value cannot convert to declared type
   TASK203  declared default value cannot convert to declared type
 
+Requirements / trigger diagnostics include TASK4xx codes for invalid requirement
+and trigger declarations.
+
 ────────────────────────────────────────
-SCHEDULING
+PREFLIGHT, SCHEDULING, TRIGGERS
 ────────────────────────────────────────
-Tasks can be launched on a schedule via ScheduledJobDB.
-Fields: TaskDefinitionId, ParameterValuesJson, CallerAgentId.
-Scheduler calls TaskService.CreateInstanceAsync + orchestrator start.
-Manage scheduled jobs via the scheduler endpoints in the Core API.
+Preflight:
+  task preflight <taskId> [--param key=value ...]
+
+Scheduling:
+  task schedule list
+  task schedule get <jobId>
+  task schedule create <taskId> --cron <expr> [--timezone <tz>] [--name <n>]
+  task schedule update <jobId> --cron <expr> [--timezone <tz>]
+  task schedule pause <jobId>
+  task schedule resume <jobId>
+  task schedule delete <jobId>
+  task schedule preview <expr> [--timezone <tz>] [--count N]
+
+Triggers and shortcuts:
+  task trigger-sources
+  task triggers enable <taskId>
+  task triggers disable <taskId>
+  task shortcuts install <taskId>
+  task shortcuts remove <taskId>
 
 ────────────────────────────────────────
 QUICK PATTERNS

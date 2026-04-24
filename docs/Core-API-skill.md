@@ -248,6 +248,43 @@ Job streaming endpoints (WebSocket, SSE) are module-provided. See individual mod
 documentation for available transports (e.g. Module-Transcription for live segments).
 
 ────────────────────────────────────────
+TASKS
+────────────────────────────────────────
+POST   /tasks                          { sourceText }  → TaskDefinitionResponse
+POST   /tasks/validate                 { sourceText }  → TaskValidationResponse
+GET    /tasks                          → TaskDefinitionResponse[]
+GET    /tasks/{id}                     → TaskDefinitionResponse
+PUT    /tasks/{id}                     { sourceText?, isActive? }  → TaskDefinitionResponse
+DELETE /tasks/{id}                     → 204
+GET    /tasks/{id}/preflight?param.Name=value  → TaskPreflightResponse
+GET    /tasks/trigger-sources          → TaskTriggerSourceResponse[]
+POST   /tasks/{id}/triggers/enable     → { enabled }
+POST   /tasks/{id}/triggers/disable    → { disabled }
+POST   /tasks/{id}/shortcuts/install   → 204
+DELETE /tasks/{id}/shortcuts           → 204
+
+Instances:
+  POST /tasks/{id}/instances           { channelId?, parameterValues?, startImmediately? }  → TaskInstanceResponse
+  GET  /tasks/{id}/instances           → TaskInstanceSummaryResponse[] / TaskInstanceResponse[] depending on caller use
+  GET  /tasks/{id}/instances/{iid}     → TaskInstanceResponse
+  POST /tasks/{id}/instances/{iid}/start
+  POST /tasks/{id}/instances/{iid}/cancel
+  POST /tasks/{id}/instances/{iid}/stop
+  POST /tasks/{id}/instances/{iid}/pause
+  POST /tasks/{id}/instances/{iid}/resume
+  GET  /tasks/{id}/instances/{iid}/outputs?since={datetime}
+  GET  /tasks/{id}/instances/{iid}/stream   → SSE
+
+TaskDefinitionResponse includes:
+  id, name, description?, outputTypeName?, isActive, parameters[], requirements[], triggers[], createdAt, updatedAt, customId?
+
+TaskPreflightResponse:
+  isBlocked, findings[]: { requirementKind, severity, passed, message, parameterName? }
+
+TaskTriggerSourceResponse:
+  sourceName?, supportedKinds[], type, isCustom
+
+────────────────────────────────────────
 RESOURCES
 ────────────────────────────────────────
 Modules may register resource types at startup. All resource types follow the

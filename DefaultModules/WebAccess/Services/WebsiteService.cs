@@ -1,9 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Websites;
 using SharpClaw.Contracts.Persistence;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.WebAccess.Models;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.WebAccess.Services;
@@ -13,7 +12,7 @@ namespace SharpClaw.Modules.WebAccess.Services;
 /// Handles credential encryption/decryption and skill association.
 /// </summary>
 public sealed class WebsiteService(
-    SharpClawDbContext db,
+    WebAccessDbContext db,
     EncryptionOptions encryptionOptions)
 {
     // ═══════════════════════════════════════════════════════════════

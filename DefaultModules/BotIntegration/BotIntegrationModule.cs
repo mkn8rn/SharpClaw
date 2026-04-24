@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using SharpClaw.Contracts.DTOs.Bots;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.BotIntegration.Handlers;
 using SharpClaw.Modules.BotIntegration.Services;
 
@@ -48,8 +47,13 @@ public sealed class BotIntegrationModule : ISharpClawModule
     [
         new("BiChannel", "BotIntegration", "AccessBotIntegrationAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<BotIntegrationDbContext>();
             return await db.BotIntegrations.Select(b => b.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<BotIntegrationDbContext>();
+            return await db.BotIntegrations.Select(b => new ValueTuple<Guid, string>(b.Id, b.Name)).ToListAsync(ct);
         }),
     ];
 

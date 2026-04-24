@@ -15,10 +15,8 @@ using SharpClaw.Contracts.DTOs.Containers;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Application.Services;
 using SharpClaw.Modules.Mk8Shell.Services;
 using SharpClaw.Modules.Mk8Shell.Handlers;
-using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Modules.Mk8Shell;
 
@@ -33,6 +31,7 @@ public sealed class Mk8ShellModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddDbContext<Mk8ShellDbContext>();
         services.AddScoped<ContainerService>();
     }
 
@@ -52,13 +51,23 @@ public sealed class Mk8ShellModule : ISharpClawModule
     [
         new("Mk8Shell", "SafeShell", "ExecuteAsSafeShellAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<Mk8ShellDbContext>();
             return await db.Containers.Select(c => c.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<Mk8ShellDbContext>();
+            return await db.Containers.Select(c => new ValueTuple<Guid, string>(c.Id, c.Name)).ToListAsync(ct);
         }),
         new("Container", "ContainerAccess", "AccessContainerAsync", static async (sp, ct) =>
         {
-            var db = sp.GetRequiredService<SharpClawDbContext>();
+            var db = sp.GetRequiredService<Mk8ShellDbContext>();
             return await db.Containers.Select(c => c.Id).ToListAsync(ct);
+        },
+        LoadLookupItems: static async (sp, ct) =>
+        {
+            var db = sp.GetRequiredService<Mk8ShellDbContext>();
+            return await db.Containers.Select(c => new ValueTuple<Guid, string>(c.Id, c.Name)).ToListAsync(ct);
         }),
     ];
 
@@ -119,7 +128,8 @@ public sealed class Mk8ShellModule : ISharpClawModule
                         ContainerType.Mk8Shell,
                         args[4],
                         args[5],
-                        args.Length >= 7 ? string.Join(' ', args[6..]) : null)));
+                        args.Length >= 7 ? string.Join(' ', args[6..]) : null),
+                    userId: null));
                 break;
             case "add":
                 Console.Error.WriteLine("resource container add mk8shell <name> <parentPath>");
@@ -333,7 +343,7 @@ public sealed class Mk8ShellModule : ISharpClawModule
             basePath,
             description);
 
-        var created = await containerService.CreateAsync(request, ct);
+        var created = await containerService.CreateAsync(request, userId: null, ct);
 
         return $"Created mk8shell container '{sandboxName}' at '{sandboxDir}' (id={created.Id}).";
     }

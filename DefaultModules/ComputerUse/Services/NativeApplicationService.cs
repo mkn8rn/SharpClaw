@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.NativeApplications;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.ComputerUse.Models;
 
 namespace SharpClaw.Modules.ComputerUse.Services;
 
@@ -10,7 +9,7 @@ namespace SharpClaw.Modules.ComputerUse.Services;
 /// Native applications are registered executables that agents can
 /// launch via the <c>launch_application</c> tool.
 /// </summary>
-public sealed class NativeApplicationService(SharpClawDbContext db)
+public sealed class NativeApplicationService(ComputerUseDbContext db)
 {
     public async Task<NativeApplicationResponse> CreateAsync(
         CreateNativeApplicationRequest request, CancellationToken ct = default)

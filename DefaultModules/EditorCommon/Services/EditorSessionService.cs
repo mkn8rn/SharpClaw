@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Application.Infrastructure.Models.Resources;
 using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.EditorCommon.Models;
 
 namespace SharpClaw.Modules.EditorCommon.Services;
 
@@ -11,7 +10,7 @@ namespace SharpClaw.Modules.EditorCommon.Services;
 /// typically auto-created when an IDE extension connects via the
 /// <see cref="EditorBridgeService"/>, but can also be managed manually.
 /// </summary>
-public sealed class EditorSessionService(SharpClawDbContext db)
+public sealed class EditorSessionService(EditorCommonDbContext db)
 {
     public async Task<EditorSessionResponse> CreateAsync(
         CreateEditorSessionRequest request, CancellationToken ct = default)

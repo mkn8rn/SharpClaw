@@ -4,8 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Services;
+using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Modules.ModuleDev.Handlers;
 
@@ -96,27 +95,27 @@ public static class ModuleDevEndpoints
         // ── Load ─────────────────────────────────────────────────
         group.MapPost("/{moduleId}/load", async (
             string moduleId,
-            ModuleService moduleSvc, ModuleLoader loader,
+            IModuleLifecycleManager lifecycle,
             Services.ModuleWorkspaceService workspace) =>
         {
             var moduleDir = workspace.ResolveModuleDir(moduleId);
-            var result = await moduleSvc.LoadExternalAsync(moduleDir, loader.RootServices);
+            var result = await lifecycle.LoadExternalAsync(moduleDir, null!);
             return Results.Ok(result);
         });
 
         // ── Unload ───────────────────────────────────────────────
         group.MapDelete("/{moduleId}/load", async (
-            string moduleId, ModuleService moduleSvc) =>
+            string moduleId, IModuleLifecycleManager lifecycle) =>
         {
-            await moduleSvc.UnloadExternalAsync(moduleId);
+            await lifecycle.UnloadExternalAsync(moduleId);
             return Results.Ok(new { moduleId, unloaded = true });
         });
 
         // ── Reload ───────────────────────────────────────────────
         group.MapPost("/{moduleId}/reload", async (
-            string moduleId, ModuleService moduleSvc, ModuleLoader loader) =>
+            string moduleId, IModuleLifecycleManager lifecycle) =>
         {
-            var result = await moduleSvc.ReloadExternalAsync(moduleId, loader.RootServices);
+            var result = await lifecycle.ReloadExternalAsync(moduleId, null!);
             return Results.Ok(result);
         });
 
