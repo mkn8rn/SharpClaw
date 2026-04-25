@@ -58,6 +58,11 @@ public sealed class ModuleRegistry
     private readonly Dictionary<string, string> _flagOwnerModule = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _resourceTypeOwnerModule = new(StringComparer.Ordinal);
 
+    // Header tag name → tag descriptor contributed by a module.
+    // Only one module may own a given tag name at a time (case-insensitive).
+    private readonly Dictionary<string, ModuleHeaderTag> _headerTags =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // External (hot-loaded) module hosts keyed by module ID.
     private readonly Dictionary<string, ExternalModuleHost> _externalHosts = new(StringComparer.Ordinal);
 
@@ -227,6 +232,16 @@ public sealed class ModuleRegistry
                         "collides with a resource type delegate from another module.");
             }
 
+            // Validate header tags.
+            var headerTags = module.GetHeaderTags() ?? [];
+            foreach (var tag in headerTags)
+            {
+                if (_headerTags.ContainsKey(tag.Name))
+                    throw new InvalidOperationException(
+                        $"Header tag '{tag.Name}' from module '{module.Id}' " +
+                        "is already registered by another module.");
+            }
+
             // --- Phase 2: All checks passed — commit all mutations ---
 
             _modules[module.Id] = module;
@@ -287,6 +302,9 @@ public sealed class ModuleRegistry
                 _delegateToFlagKey[flag.DelegateMethodName] = flag.FlagKey;
                 _flagOwnerModule[flag.FlagKey] = module.Id;
             }
+
+            foreach (var tag in headerTags)
+                _headerTags[tag.Name] = tag;
 
             if (externalHost is not null)
                 _externalHosts[module.Id] = externalHost;
@@ -367,6 +385,10 @@ public sealed class ModuleRegistry
                 _delegateToFlagKey.Remove(flag.DelegateMethodName);
                 _flagOwnerModule.Remove(flag.FlagKey);
             }
+
+            // Remove any header tags this module provided.
+            foreach (var tag in module.GetHeaderTags() ?? [])
+                _headerTags.Remove(tag.Name);
 
             _manifestCache.Remove(moduleId);
             _externalHosts.Remove(moduleId);
@@ -628,6 +650,21 @@ public sealed class ModuleRegistry
         {
             _lock.ExitReadLock();
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Header tags
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Returns the <see cref="ModuleHeaderTag"/> registered for <paramref name="tagName"/>,
+    /// or <c>null</c> if no module has registered that tag.
+    /// </summary>
+    public ModuleHeaderTag? GetHeaderTag(string tagName)
+    {
+        _lock.EnterReadLock();
+        try { return _headerTags.GetValueOrDefault(tagName); }
+        finally { _lock.ExitReadLock(); }
     }
 
     // ═══════════════════════════════════════════════════════════════

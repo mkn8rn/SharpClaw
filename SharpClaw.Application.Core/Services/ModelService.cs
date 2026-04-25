@@ -20,14 +20,17 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
         {
             Name = request.Name,
             ProviderId = provider.Id,
-            Capabilities = request.Capabilities,
             CustomId = request.CustomId,
+            CapabilityTagsRaw = request.CapabilityTags is { Count: > 0 }
+                ? string.Join(',', request.CapabilityTags)
+                : null
         };
 
         db.Models.Add(model);
         await db.SaveChangesAsync(ct);
 
-        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.Capabilities, model.CustomId);
+        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name,
+            model.CustomId, model.CapabilityTags);
     }
 
     public async Task<IReadOnlyList<ModelResponse>> ListAsync(Guid? providerId = null, CancellationToken ct = default)
@@ -40,14 +43,16 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
             query = query.Where(m => m.ProviderId == providerId);
 
         return await query
-            .Select(m => new ModelResponse(m.Id, m.Name, m.ProviderId, m.Provider.Name, m.Capabilities, m.CustomId))
+            .Select(m => new ModelResponse(m.Id, m.Name, m.ProviderId, m.Provider.Name,
+                m.CustomId, m.CapabilityTags))
             .ToListAsync(ct);
     }
 
     public async Task<ModelResponse?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         var m = await db.Models.Include(m => m.Provider).FirstOrDefaultAsync(m => m.Id == id, ct);
-        return m is null ? null : new ModelResponse(m.Id, m.Name, m.ProviderId, m.Provider.Name, m.Capabilities, m.CustomId);
+        return m is null ? null : new ModelResponse(m.Id, m.Name, m.ProviderId, m.Provider.Name,
+            m.CustomId, m.CapabilityTags);
     }
 
     public async Task<ModelResponse?> UpdateAsync(Guid id, UpdateModelRequest request, CancellationToken ct = default)
@@ -61,11 +66,15 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
                 await EnsureModelNameUniqueAsync(request.Name, excludeId: id, ct);
             model.Name = request.Name;
         }
-        if (request.Capabilities is not null) model.Capabilities = request.Capabilities.Value;
         if (request.CustomId is not null) model.CustomId = request.CustomId;
+        if (request.CapabilityTags is not null)
+            model.CapabilityTagsRaw = request.CapabilityTags.Count > 0
+                ? string.Join(',', request.CapabilityTags)
+                : null;
 
         await db.SaveChangesAsync(ct);
-        return new ModelResponse(model.Id, model.Name, model.ProviderId, model.Provider.Name, model.Capabilities, model.CustomId);
+        return new ModelResponse(model.Id, model.Name, model.ProviderId, model.Provider.Name,
+            model.CustomId, model.CapabilityTags);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)

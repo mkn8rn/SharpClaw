@@ -48,7 +48,7 @@ public class ChatMessageDB : BaseEntity
     /// <summary>
     /// Which client interface originated this message.
     /// </summary>
-    public ChatClientType? ClientType { get; set; }
+    public string? ClientType { get; set; }
 
     // ── Token usage (assistant messages only) ─────────────────────
 

@@ -33,82 +33,67 @@
     <ProjectReference Include="..\SharpClaw.Migrations.SQLite\SharpClaw.Migrations.SQLite.csproj" />
   </ItemGroup>
 
-  <!-- Bundled modules: copied to output for runtime discovery, not referenced at compile time. -->
+  <!--
+    Bundled modules: ReferenceOutputAssembly=false keeps them off the compiler reference list so the
+    API cannot take accidental compile-time dependencies. Private is left at its default (true) so
+    that Visual Studio includes these projects in the pre-launch build graph — without it VS skips
+    rebuilding modules on Start/Start Without Debugging. The CopyBundledModules target below handles
+    copying the DLLs to the output folder, because ReferenceOutputAssembly=false also suppresses the
+    normal copy-local mechanism.
+  -->
   <ItemGroup>
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\ComputerUse\SharpClaw.Modules.ComputerUse.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\DangerousShell\SharpClaw.Modules.DangerousShell.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\DatabaseAccess\SharpClaw.Modules.DatabaseAccess.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\Mk8Shell\SharpClaw.Modules.Mk8Shell.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\OfficeApps\SharpClaw.Modules.OfficeApps.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\Transcription\SharpClaw.Modules.Transcription.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\VSCodeEditor\SharpClaw.Modules.VSCodeEditor.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\WebAccess\SharpClaw.Modules.WebAccess.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <Private>false</Private>
     </ProjectReference>
   </ItemGroup>
 
+  <!--
+    Copy all DLLs from every module's output folder, not just the module DLL itself.
+    This ensures transitive dependencies unique to a module (e.g. Whisper.net, NAudio) are present
+    at runtime. SkipUnchangedFiles avoids unnecessary copies on incremental builds.
+  -->
   <Target Name="CopyBundledModules" AfterTargets="Build">
     <ItemGroup>
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\AgentOrchestration\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.AgentOrchestration.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\BotIntegration\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.BotIntegration.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ComputerUse\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ComputerUse.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ContextTools\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ContextTools.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\DangerousShell\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DangerousShell.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\DatabaseAccess\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DatabaseAccess.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\EditorCommon\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.EditorCommon.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\Mk8Shell\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.Mk8Shell.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ModuleDev\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ModuleDev.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\OfficeApps\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.OfficeApps.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\Transcription\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.Transcription.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\VS2026Editor\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.VS2026Editor.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\VSCodeEditor\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.VSCodeEditor.dll" />
-      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\WebAccess\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.WebAccess.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\*\bin\$(Configuration)\$(TargetFramework)\*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>

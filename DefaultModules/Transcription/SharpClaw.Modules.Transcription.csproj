@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Force NuGet package DLLs (e.g. Whisper.net) to be physically copied to the output folder.
+         Without this the SDK leaves them as deps.json cache references, which the host's
+         AssemblyLoadContext cannot resolve when loading the module at runtime. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>

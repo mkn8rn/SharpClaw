@@ -28,10 +28,10 @@ using SharpClaw.Contracts.DTOs.Tools;
 using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Application.API.Cli;
 
@@ -452,10 +452,11 @@ public static class CliDispatcher
                     new CreateModelRequest(
                         args[2],
                         CliIdMap.Resolve(args[3]),
-                        ParseCapabilities(args, 4)),
+                        CustomId: null,
+                        ParseCapabilityTags(args, 4)),
                     svc),
             "add" => UsageResult(
-                "model add <name> <providerId> [--cap Chat,Vision]",
+                "model add <name> <providerId> [--tag chat,vision,tts,embedding,image-generation]",
                 "  <name> must be the exact provider model ID (e.g. gpt-4o).",
                 "  Tip: use 'provider sync-models <id>' to auto-import models."),
 
@@ -470,9 +471,10 @@ public static class CliDispatcher
                     CliIdMap.Resolve(args[2]),
                     new UpdateModelRequest(
                         args[3],
-                        ParseCapabilitiesNullable(args, 4)),
+                        CustomId: null,
+                        ParseCapabilityTags(args, 4)),
                     svc),
-            "update" => UsageResult("model update <id> <name> [--cap Chat,Vision]"),
+            "update" => UsageResult("model update <id> <name> [--tag chat,vision,tts,embedding,image-generation]"),
 
             "delete" when args.Length >= 3
                 => await ModelHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
@@ -635,19 +637,17 @@ public static class CliDispatcher
         return Results.Ok(new { modelId, mmprojPath = mmproj });
     }
 
-    private static ModelCapability ParseCapabilities(string[] args, int startIndex)
-    {
-        return ParseCapabilitiesNullable(args, startIndex) ?? ModelCapability.Chat;
-    }
-
-    private static ModelCapability? ParseCapabilitiesNullable(string[] args, int startIndex)
+    private static IReadOnlySet<string>? ParseCapabilityTags(string[] args, int startIndex)
     {
         for (var i = startIndex; i < args.Length - 1; i++)
         {
-            if (args[i] is "--cap" or "-c")
+            if (args[i] is "--tag" or "-t")
             {
-                if (Enum.TryParse<ModelCapability>(args[i + 1], true, out var cap))
-                    return cap;
+                var tags = args[i + 1]
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                return tags.Length > 0
+                    ? new HashSet<string>(tags, StringComparer.OrdinalIgnoreCase)
+                    : null;
             }
         }
         return null;
@@ -1302,7 +1302,7 @@ public static class CliDispatcher
         }
 
         var chatService = sp.GetRequiredService<ChatService>();
-        var request = new ChatRequest(string.Join(' ', messageParts), agentId, ChatClientType.CLI);
+        var request = new ChatRequest(string.Join(' ', messageParts), agentId, WellKnownClientKeys.Cli);
         var wroteText = false;
 
         async Task<bool> CliApprovalCallback(
@@ -3318,130 +3318,104 @@ public static class CliDispatcher
             Most entities support: add, get, list, update, delete.
 
             Auth:
-              register <user> <pass>          login <user> <pass>          logout
-              me                               Show current user profile & role
+              register <user> <pass>  login <user> <pass>  logout
+              me                      Show current user profile & role
 
             System:
-              health                           Show persistence health status
+              health                  Show persistence health status
 
-            Provider:  provider <sub> [args]    (add, get, list, update, delete)
+            Provider:  provider <sub> [args]
               provider add <name> <type> [endpoint]
                 Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,
-                  ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom
-              provider set-key <id> <apiKey>   login <id>   sync-models <id>   refresh-caps <id>
+                       ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom
+              provider get|list|update|delete|set-key|login|sync-models|refresh-caps <id> [args]
+              provider cost <id> [--days <n>]   provider cost-total [--days <n>] [--simple] [--all]
 
-            Model:     model <sub> [args]       (add, get, list, update, delete)
-              Prefer 'provider sync-models <id>' to auto-import models.
-              model add <name> <providerId> [--cap Chat,Vision,...]
-                <name> must be the exact provider model ID (e.g. gpt-4o).
-              Local models:
-              model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp>]
-              model download list <url>          List available GGUF files at a URL
-                Omit --provider to register with LlamaSharp.
-                Specify --provider to target LlamaSharp.
-              model load <id> [--gpu-layers <n>] [--ctx <size>]    Pin (keep loaded)
-              model unload <id>                                    Unpin
-              model local list                   List downloaded local models
+            Model:     model <sub> [args]
+              model add <name> <providerId> [--cap Chat,Vision,...]   (exact provider model ID)
+              model get|list|update|delete <id> [args]
+              model download <url> [--name <alias>] [--quant <Q>] [--gpu-layers <n>] [--provider <type>]
+              model download list <url>       List available GGUF files at a URL
+              model load <id> [--gpu-layers <n>] [--ctx <size>]       Pin model (keep loaded)
+              model unload <id>                                        Unpin model
+              model local list                                         List local models
+              Tip: 'provider sync-models <id>' auto-imports models.
               Models auto-load on chat and auto-unload when idle.
-              Use load/unload to keep frequently-used models resident.
 
-            Agent:     agent <sub> [args]       (add, get, list, update, delete)
-              agent add <name> <modelId> [system prompt] [--tools <setId>]
-              agent update <id> <name> [--tools <setId>]
-              agent role <id> <roleId|none>
+            Agent:     agent <sub> [args]
+              agent add <name> <modelId> [system prompt] [--max-tokens <n>] [--tools <setId>]
+              agent get|list|update|delete <id> [args]
+              agent role <id> <roleId|none>   agent sync-with-models
 
             Role:      role <sub> [args]
-              role list                          role permissions <id>
+              role list   role get <id>   role permissions <id>
               role permissions <id> set [--flag FlagKey[:clearance]] [--grant <ResourceType> <id>[:clearance]] ...
 
-            Context:   context|ctx <sub> [args] (add, get, list, update, delete)
+            Context:   context|ctx <sub> [args]
               context add <agentId> [name]
+              context get|list|update|delete <id> [args]
               context agents <id> [add|remove <agentId>]
               context defaults <id> [set <key> <resId> | clear <key>]
 
-            Channel:   channel|chan <sub> [args] (add, get, list, select, delete)
+            Channel:   channel|chan <sub> [args]
               channel add [--agent <id>] [--context <id>] [--tools <setId>] [title]
+              channel get|list|select|delete <id> [args]
               channel attach|detach <id> [contextId]
               channel agents <id> [add|remove <agentId>]
               channel defaults <id> [set <key> <resId> | clear <key>]
-              Fields cascade from context when not set: agent, permissions,
-                DisableChatHeader, AllowedAgents, DefaultResourceSet.
-              Default-resource keys contributed by registered modules.
+              channel cost <id>
+              Fields cascade from context when unset: agent, permissions, AllowedAgents, defaults.
 
             Chat:
               chat [--agent <id>] [--thread <id>] <message>
-                Send a message in the active channel.
-                Without --thread, no history is sent (one-shot).
-                With --thread, conversation history is included.
-              chat toggle                      Toggle chat mode (all input → chat)
-                In chat mode: !exit or !chat toggle to return to normal mode.
+              chat toggle                     Toggle chat mode (all input → chat; !exit to return)
+              Without --thread: one-shot (no history). With --thread: history included.
 
             Thread:    thread <sub> [args]
               thread add [channelId] [name] [--max-messages <n>] [--max-chars <n>]
-              thread list [channelId]                      List threads
-              thread get <id>                              Show thread details
-              thread update <id> [--name <n>] [--max-messages <n>] [--max-chars <n>]
-              thread select <id>                           Select active thread for chat
-              thread deselect                              Deselect active thread
-              thread delete <id>                           Delete a thread
-              Defaults: 50 messages, 100k chars. Set 0 to reset to default.
+              thread get|list|update|delete|select|deselect <id> [args]
+              thread cost <id>
+              Limits default to 50 messages / 100k chars. Set 0 to reset to default.
 
             Bio:       bio get | set <text> | clear
 
-            Env:       env <sub>                 (get, set, auth, status, unlock)
-              env get                            Read core .env content
-              env set                            Write core .env (stdin input)
-              env auth                           Check env edit authorisation
-              env status                         Show .env encryption status
-              env unlock                         Decrypt .env in-place (re-locks on startup)
+            Env:       env <sub>
+              env get|set|auth|status|unlock
 
-            Database:  db <sub>                  (relational providers only)
-              db status                          Show migration gate state + applied/pending
-              db migrate                         Drain requests and apply pending migrations
+            Database:  db <sub>    (relational providers only)
+              db status   db migrate
 
-            User:      user <sub> [args]        (admin only)
-              user list                          List all registered users
-              user role <userId> <roleId|none>   Assign or remove a user's role
+            User:      user <sub> [args]    (admin only)
+              user list   user role <userId> <roleId|none>
 
             Job:       job <sub> [args]
               job submit <channelId> <actionKey> [resourceId] [--agent <id>]
-                  [--model <id>] [--lang <code>]
-              job list [channelId]   status <id>   approve <id>   cancel <id>
-              job stop <id>          listen <id>
+              job list [channelId]   status <id>   approve <id>   stop <id>
+              job pause <id>         resume <id>   cancel <id>    listen <id>
 
             Task:      task <sub> [args]
-              task create <sourceFilePath>       Create definition from .cs file
-              task list                          List all task definitions
-              task get <id>                      Show definition details
-              task update <id> <sourceFilePath>  Update definition source
-              task activate <id>                 Activate / deactivate <id>
-              task delete <id>                   Delete a task definition
-              task start <taskId> [channelId] [--param key=value ...]
-              task instances <taskId>            List instances of a definition
-              task instance <instanceId>         Show instance details
-              task cancel <instanceId>           Cancel a running instance
-              task stop <instanceId>             Stop a running instance
-              task listen <instanceId>           Stream live task output
+              task create|update <sourceFilePath>   task list   task get|delete|activate|deactivate <id>
+              task start|run <taskId> [channelId] [--param key=value ...]
+              task create-queued <taskId> [channelId] [--param key=value ...]
+              task start-instance|instance|instances|cancel|stop|pause|resume|listen <instanceId>
+              task outputs <instanceId> [--since <timestamp>]
+              task preflight <taskId> [--param key=value ...]
+              task schedule list|get|create|update|pause|resume|delete|preview [args]
+              task triggers enable|disable <taskId>
+              task shortcuts install|remove <taskId>
+              task trigger-sources
 
             Resource:  resource <type> <sub>    (add, get, list, update, delete, sync)
               All resource types are module-provided.
               See Module Commands below for available types.
 
-            Tools:     tools <sub> [args]       (add, get, list, update, delete)
-              tools add <name> [json]            Create a tool awareness set
-              tools list                         List all sets
-              tools get <id>                     Show set details
-              tools update <id> [--name <n>] [json]  Update a set
-              tools delete <id>                  Delete a set
+            Tools:     tools <sub> [args]
+              tools add <name> [json]   tools get|list|update|delete <id> [args]
               json: '{"tool_name": true, ...}' — omitted tools default to enabled.
-              Assign to agents/channels via --tools <setId>.
-              Override chain: channel → agent → null (all enabled).
+              Assign via --tools <setId> on agent/channel. Override chain: channel → agent → null.
 
-            Module:    module <sub>              (list, get, enable, disable)
-              module list                        List all bundled modules
-              module get <id>                    Show module details
-              module enable <id>                 Enable a module at runtime
-              module disable <id>                Disable a module at runtime
+            Module:    module <sub>
+              module list|get|enable|disable|scan|reload|unload <id>
 
               exit / quit
             """);

@@ -17,8 +17,7 @@ public sealed class WindowFocusTriggerSource(
     private Task? _pollTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.WindowFocused, TriggerKind.WindowBlurred];
+    public IReadOnlyList<string> TriggerKeys { get; } = ["WindowFocused", "WindowBlurred"];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -77,10 +76,10 @@ public sealed class WindowFocusTriggerSource(
                     var wasFocused = lastFocused.GetValueOrDefault(processName, false);
                     lastFocused[processName] = isFocused;
 
-                    if (ctx.Definition.Kind == TriggerKind.WindowFocused && !wasFocused && isFocused)
+                    if (ctx.Definition.TriggerKey == "WindowFocused" && !wasFocused && isFocused)
                         await FireAsync(ctx);
 
-                    if (ctx.Definition.Kind == TriggerKind.WindowBlurred && wasFocused && !isFocused)
+                    if (ctx.Definition.TriggerKey == "WindowBlurred" && wasFocused && !isFocused)
                         await FireAsync(ctx);
                 }
             }

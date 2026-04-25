@@ -4,6 +4,7 @@ using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
@@ -186,10 +187,11 @@ public sealed class ProviderService(
         var updated = 0;
         foreach (var model in models)
         {
-            var inferred = InferCapabilities(model.Name);
-            if (model.Capabilities != inferred)
+            var tags = InferCapabilitiesAndTags(model.Name);
+            var tagsRaw = tags.Count > 0 ? string.Join(',', tags) : null;
+            if (model.CapabilityTagsRaw != tagsRaw)
             {
-                model.Capabilities = inferred;
+                model.CapabilityTagsRaw = tagsRaw;
                 updated++;
             }
         }
@@ -225,11 +227,15 @@ public sealed class ProviderService(
         var existingNames = provider.Models.Select(m => m.Name).ToHashSet();
         var newModels = modelIds
             .Where(id => !existingNames.Contains(id))
-            .Select(id => new ModelDB
+            .Select(id =>
             {
-                Name = id,
-                ProviderId = provider.Id,
-                Capabilities = InferCapabilities(id)
+                var tags = InferCapabilitiesAndTags(id);
+                return new ModelDB
+                {
+                    Name = id,
+                    ProviderId = provider.Id,
+                    CapabilityTagsRaw = tags.Count > 0 ? string.Join(',', tags) : null
+                };
             })
             .ToList();
 
@@ -241,61 +247,60 @@ public sealed class ProviderService(
 
         return await db.Models
             .Where(m => m.ProviderId == providerId)
-            .Select(m => new ModelResponse(m.Id, m.Name, m.ProviderId, provider.Name, m.Capabilities))
+            .Select(m => new ModelResponse(m.Id, m.Name, m.ProviderId, provider.Name,
+                m.CustomId, m.CapabilityTags))
             .ToListAsync(ct);
     }
 
     /// <summary>
-    /// Infers <see cref="ModelCapability"/> from a model's name using
-    /// well-known naming conventions across providers.
+    /// Infers capability tags from a model's name using well-known naming conventions.
+    /// Returns a set of <see cref="WellKnownCapabilityKeys"/> values.
     /// </summary>
-    internal static ModelCapability InferCapabilities(string modelName)
+    internal static HashSet<string> InferCapabilitiesAndTags(string modelName)
     {
         var name = modelName.ToLowerInvariant();
 
         // ── Pure embedding models ─────────────────────────────────
         if (name.Contains("embedding") || name.Contains("embed"))
-            return ModelCapability.Embedding;
+            return [WellKnownCapabilityKeys.Embedding];
 
         // ── Pure TTS models ───────────────────────────────────────
         if (name.StartsWith("tts-"))
-            return ModelCapability.TextToSpeech;
+            return [WellKnownCapabilityKeys.Tts];
 
         // ── Pure image generation models ──────────────────────────
         if (name.StartsWith("dall-e") || name.StartsWith("gpt-image")
             || name.StartsWith("chatgpt-image") || name.StartsWith("sora"))
-            return ModelCapability.ImageGeneration;
+            return [WellKnownCapabilityKeys.ImageGeneration];
 
         // ── Moderation / non-generative ───────────────────────────
         if (name.Contains("moderation"))
-            return ModelCapability.None;
+            return [];
 
         // ── Legacy base / completions-only models ─────────────────
         if (name.StartsWith("babbage") || name.StartsWith("davinci")
             || name.EndsWith("-instruct"))
-            return ModelCapability.None;
+            return [];
 
         // ── Chat models with TTS suffix ───────────────────────────
         if (name.Contains("-tts"))
-            return ModelCapability.Chat | ModelCapability.TextToSpeech;
+            return [WellKnownCapabilityKeys.Chat, WellKnownCapabilityKeys.Tts];
 
         // ── Chat models with audio/realtime capabilities ──────────
         // These models handle audio through the chat completions API.
-        // They must NOT get the Transcription flag.
         if (name.Contains("audio") || name.Contains("realtime"))
-            return ModelCapability.Chat | ModelCapability.TextToSpeech;
+            return [WellKnownCapabilityKeys.Chat, WellKnownCapabilityKeys.Tts];
 
         // ── Positive chat-family matching ─────────────────────────
-        // Only models from known chat-compatible families get Chat.
-        // Unknown models get None to avoid sending them to the wrong
+        // Only models from known chat-compatible families get chat.
+        // Unknown models get no tags to avoid sending them to the wrong
         // endpoint (e.g. completions-only base models).
         if (!IsChatCapable(name))
-            return ModelCapability.None;
+            return [];
 
-        var hasVision = IsVisionCapable(name);
-        return hasVision
-            ? ModelCapability.Chat | ModelCapability.Vision
-            : ModelCapability.Chat;
+        return IsVisionCapable(name)
+            ? [WellKnownCapabilityKeys.Chat, WellKnownCapabilityKeys.Vision]
+            : [WellKnownCapabilityKeys.Chat];
     }
 
     /// <summary>

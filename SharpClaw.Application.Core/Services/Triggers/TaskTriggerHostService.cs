@@ -85,14 +85,14 @@ public sealed class TaskTriggerHostService(
         await _reloadLock.WaitAsync();
         try
         {
-            // Find the source
-            var source = _sources.FirstOrDefault(s => 
-                string.Equals(s.SourceName, sourceName, StringComparison.OrdinalIgnoreCase));
-            
+            // Find the source by its TriggerKey
+            var source = _sources.FirstOrDefault(s =>
+                s.TriggerKeys.Any(k => string.Equals(k, sourceName, StringComparison.OrdinalIgnoreCase)));
+
             if (source is null)
             {
                 logger.LogWarning(
-                    "Cannot reload custom source '{SourceName}': no registered source with that name.",
+                    "Cannot reload trigger source '{SourceName}': no registered source with that key.",
                     sourceName);
                 return;
             }
@@ -114,8 +114,7 @@ public sealed class TaskTriggerHostService(
             {
                 var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
                 bindings = await db.TaskTriggerBindings
-                    .Where(b => b.IsEnabled && b.Kind == nameof(TriggerKind.Custom) 
-                             && b.TriggerValue == sourceName)
+                    .Where(b => b.IsEnabled && b.Kind == sourceName)
                     .ToListAsync(_stoppingToken);
             }
 
@@ -205,25 +204,13 @@ public sealed class TaskTriggerHostService(
     }
 
     /// <summary>
-    /// Determines whether a binding matches this source. For custom sources
-    /// (<see cref="TriggerKind.Custom"/>), matches by <see cref="ITaskTriggerSource.SourceName"/>.
-    /// For built-in sources, matches by <see cref="TriggerKind"/>.
+    /// Determines whether a binding row belongs to the given source by matching
+    /// the binding's <c>Kind</c> column against the source's <see cref="ITaskTriggerSource.TriggerKeys"/>.
     /// </summary>
-    private bool IsSourceMatch(ITaskTriggerSource source, TaskTriggerBindingDB binding)
+    private static bool IsSourceMatch(ITaskTriggerSource source, TaskTriggerBindingDB binding)
     {
-        // For custom sources, match by source name
-        if (binding.Kind == nameof(TriggerKind.Custom))
-        {
-            if (string.IsNullOrWhiteSpace(source.SourceName))
-                return false;
-
-            // TriggerValue holds CustomSourceName for Custom bindings
-            return string.Equals(source.SourceName, binding.TriggerValue, 
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        // For built-in sources, match by kind
-        return source.SupportedKinds.Any(k => k.ToString() == binding.Kind);
+        var keys = source.TriggerKeys;
+        return keys.Any(k => string.Equals(k, binding.Kind, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task StopAllSourcesAsync()

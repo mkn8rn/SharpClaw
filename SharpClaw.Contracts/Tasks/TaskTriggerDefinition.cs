@@ -6,7 +6,13 @@ namespace SharpClaw.Contracts.Tasks;
 /// </summary>
 public sealed record TaskTriggerDefinition
 {
-    public required TriggerKind Kind { get; init; }
+    /// <summary>
+    /// String key identifying the trigger source that owns this definition.
+    /// Matches <see cref="ITaskTriggerSource.TriggerKey"/> (or one of
+    /// <see cref="ITaskTriggerSource.TriggerKeys"/>). Set for both core and
+    /// module-owned triggers; replaces the former <c>Kind</c> enum.
+    /// </summary>
+    public string? TriggerKey { get; init; }
 
     // ── Cron ──────────────────────────────────────────────────────
     public string? CronExpression { get; init; }
@@ -67,6 +73,9 @@ public sealed record TaskTriggerDefinition
     public string? ShortcutCategory { get; init; }
 
     // ── Custom source ─────────────────────────────────────────────
+    /// <summary>
+    /// Kept for serialisation compatibility. Superseded by <see cref="TriggerKey"/>.
+    /// </summary>
     public string? CustomSourceName   { get; init; }
     public string? CustomSourceFilter { get; init; }
 

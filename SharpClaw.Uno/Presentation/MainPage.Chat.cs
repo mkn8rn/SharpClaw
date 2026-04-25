@@ -524,7 +524,7 @@ public sealed partial class MainPage
         AppendMessage("user", text, DateTimeOffset.Now,
             senderName: _currentUsername,
             senderUserId: _currentUserId,
-            clientType: DetectedClientTypeName);
+            clientType: _clientType);
         ScrollToBottom();
 
         UpdateCursor(text);

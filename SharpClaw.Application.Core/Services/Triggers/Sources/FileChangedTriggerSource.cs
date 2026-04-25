@@ -14,7 +14,7 @@ public sealed class FileChangedTriggerSource(
     private readonly List<FileSystemWatcher> _watchers = [];
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.FileChanged];
+    public string TriggerKey => WellKnownTriggerKeys.FileChanged;
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {

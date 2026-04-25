@@ -46,7 +46,7 @@ public sealed class WebhookTriggerSource : ITaskTriggerSource
     // ── ITaskTriggerSource ────────────────────────────────────────
 
     /// <inheritdoc />
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.Webhook];
+    public string TriggerKey => WellKnownTriggerKeys.Webhook;
 
     /// <inheritdoc />
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)

@@ -18,7 +18,7 @@ public sealed class HotkeyTriggerSource(
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
     private readonly List<int> _registeredIds = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.Hotkey];
+    public string? TriggerKey => "Hotkey";
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {

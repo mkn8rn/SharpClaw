@@ -28,13 +28,12 @@ public class WebhookTriggerSourceTests
         _source.SetRouteRegistrar(_registrar);
     }
 
-    // ── SupportedKinds ────────────────────────────────────────────
+    // ── TriggerKey ────────────────────────────────────────────────
 
     [Test]
-    public void SupportedKinds_ContainsWebhook()
+    public void TriggerKey_IsWebhook()
     {
-        _source.SupportedKinds.Should().ContainSingle()
-            .Which.Should().Be(TriggerKind.Webhook);
+        _source.TriggerKey.Should().Be(WellKnownTriggerKeys.Webhook);
     }
 
     // ── StartAsync ────────────────────────────────────────────────
@@ -296,7 +295,7 @@ public class WebhookTriggerSourceTests
     {
         var def = new TaskTriggerDefinition
         {
-            Kind                   = TriggerKind.Webhook,
+            TriggerKey             = WellKnownTriggerKeys.Webhook,
             WebhookRoute           = route,
             WebhookSecretEnvVar    = secretEnvVar,
             WebhookSignatureHeader = signatureHeader,
@@ -348,7 +347,7 @@ public class WebhookTriggerSourceTests
     {
         public TaskTriggerDefinition Definition { get; } = new TaskTriggerDefinition
         {
-            Kind = TriggerKind.Webhook,
+            TriggerKey   = WellKnownTriggerKeys.Webhook,
             WebhookRoute = route,
         };
         public Guid TaskDefinitionId { get; } = Guid.NewGuid();

@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.Editor;
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Modules.EditorCommon.Models;
 
 namespace SharpClaw.Modules.EditorCommon.Services;
@@ -18,7 +17,9 @@ public sealed class EditorSessionService(EditorCommonDbContext db)
         var session = new EditorSessionDB
         {
             Name = request.Name,
-            EditorType = request.EditorType,
+            EditorType = Enum.TryParse<EditorType>(request.EditorKey, ignoreCase: true, out var et)
+                ? et
+                : EditorType.Other,
             EditorVersion = request.EditorVersion,
             WorkspacePath = request.WorkspacePath,
             Description = request.Description
@@ -110,7 +111,7 @@ public sealed class EditorSessionService(EditorCommonDbContext db)
     }
 
     internal static EditorSessionResponse ToResponse(EditorSessionDB s) =>
-        new(s.Id, s.Name, s.EditorType, s.EditorVersion,
+        new(s.Id, s.Name, s.EditorType.ToString(), s.EditorVersion,
             s.WorkspacePath, s.Description,
             s.ConnectionId is not null, s.CreatedAt);
 }

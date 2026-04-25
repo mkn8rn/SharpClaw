@@ -1,10 +1,11 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Modules.Transcription.Services;
 
 public sealed class TranscriptionJobSink(
-    IAgentJobController jobs,
+    IServiceScopeFactory scopeFactory,
     ILogger<TranscriptionJobSink> logger)
 {
     private const string TranscriptionActionPrefix = "transcribe_from_audio";
@@ -13,6 +14,8 @@ public sealed class TranscriptionJobSink(
     {
         try
         {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var jobs = scope.ServiceProvider.GetRequiredService<IAgentJobController>();
             await jobs.AddJobLogAsync(jobId, message, level);
         }
         catch (InvalidOperationException ex)
@@ -25,6 +28,8 @@ public sealed class TranscriptionJobSink(
     {
         try
         {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var jobs = scope.ServiceProvider.GetRequiredService<IAgentJobController>();
             await jobs.MarkJobFailedAsync(jobId, ex);
         }
         catch (InvalidOperationException dbEx)
@@ -35,6 +40,8 @@ public sealed class TranscriptionJobSink(
 
     public async Task CancelStaleTranscriptionJobsAsync(CancellationToken ct = default)
     {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<IAgentJobController>();
         await jobs.CancelStaleJobsByActionPrefixAsync(TranscriptionActionPrefix, ct);
     }
 }

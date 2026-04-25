@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Application.Services;
 
@@ -90,7 +89,7 @@ public enum ThreadActivityEventType
 }
 
 /// <summary>A single thread activity event.</summary>
-public sealed record ThreadActivityEvent(ThreadActivityEventType Type, ChatClientType? ClientType = null);
+public sealed record ThreadActivityEvent(ThreadActivityEventType Type, string? ClientType = null);
 
 /// <summary>
 /// A subscription to thread activity events. Dispose to unsubscribe.

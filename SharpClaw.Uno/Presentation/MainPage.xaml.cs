@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Helpers;
 using SharpClaw.Services;
 
@@ -43,7 +44,7 @@ public sealed partial class MainPage : Page
     private string _currentUsername = "user";
     private Guid _currentUserId;
     private Guid? _currentUserRoleId;
-    private static readonly int _clientType = DetectClientType();
+    private static readonly string _clientType = DetectClientType();
 
     // ── Cached UI resources (avoids per-rebuild native allocations) ──
     private static readonly FontFamily _monoFont = TerminalUI.Mono;
@@ -118,34 +119,23 @@ public sealed partial class MainPage : Page
     private static SolidColorBrush Brush(int rgb) => TerminalUI.Brush(rgb);
     private static string Truncate(string s, int max) => TerminalUI.Truncate(s, max);
 
-    private static string DetectedClientTypeName => _clientType switch
-    {
-        0 => "CLI", 1 => "API", 2 => "Telegram", 3 => "Discord",
-        4 => "WhatsApp", 5 => "VisualStudio", 6 => "VisualStudioCode",
-        7 => "UnoWindows", 8 => "UnoAndroid", 9 => "UnoMacOS",
-        10 => "UnoLinux", 11 => "UnoBrowser", _ => "Other",
-    };
-
     /// <summary>
-    /// Returns the <c>ChatClientType</c> enum integer value matching the
+    /// Returns the <see cref="WellKnownClientKeys"/> string matching the
     /// current Uno Platform runtime host.
     /// </summary>
-    private static int DetectClientType()
+    private static string DetectClientType()
     {
-        // ChatClientType enum values:
-        // 7 = UnoWindows, 8 = UnoAndroid, 9 = UnoMacOS,
-        // 10 = UnoLinux, 11 = UnoBrowser
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Create("BROWSER")))
-            return 11; // UnoBrowser
+            return WellKnownClientKeys.UnoBrowser;
         if (OperatingSystem.IsAndroid())
-            return 8;  // UnoAndroid
+            return WellKnownClientKeys.UnoAndroid;
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst())
-            return 9;  // UnoMacOS
+            return WellKnownClientKeys.UnoMacOS;
         if (OperatingSystem.IsLinux())
-            return 10; // UnoLinux
+            return WellKnownClientKeys.UnoLinux;
         if (OperatingSystem.IsWindows())
-            return 7;  // UnoWindows
-        return 12; // Other
+            return WellKnownClientKeys.UnoWindows;
+        return WellKnownClientKeys.Other;
     }
 
     public MainPage()

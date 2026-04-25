@@ -54,13 +54,13 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_Schedule_PopulatesCronKindAndExpression()
+    public void Parse_Schedule_PopulatesCronTriggerKeyAndExpression()
     {
         var def = ParseOk(Wrap("", """[Schedule("0 9 * * MON-FRI")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind           = TriggerKind.Cron,
+                TriggerKey     = WellKnownTriggerKeys.Cron,
                 CronExpression = "0 9 * * MON-FRI",
                 CronTimezone   = (string?)null,
             });
@@ -73,7 +73,7 @@ public class TriggerTask
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind           = TriggerKind.Cron,
+                TriggerKey     = WellKnownTriggerKeys.Cron,
                 CronExpression = "0 9 * * *",
                 CronTimezone   = "America/New_York",
             });
@@ -84,14 +84,14 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnEvent_PopulatesEventKindAndType()
+    public void Parse_OnEvent_PopulatesEventTriggerKeyAndType()
     {
         var def = ParseOk(Wrap("", """[OnEvent("ModelAdded")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind      = TriggerKind.Event,
-                EventType = "ModelAdded",
+                TriggerKey = WellKnownTriggerKeys.Event,
+                EventType  = "ModelAdded",
             });
     }
 
@@ -102,7 +102,7 @@ public class TriggerTask
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.Event,
+                TriggerKey  = WellKnownTriggerKeys.Event,
                 EventType   = "ModelAdded",
                 EventFilter = "provider=openai",
             });
@@ -113,14 +113,14 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnFileChanged_PopulatesFileChangedKindAndPath()
+    public void Parse_OnFileChanged_PopulatesFileChangedTriggerKeyAndPath()
     {
         var def = ParseOk(Wrap("", """[OnFileChanged("/tmp/data")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind      = TriggerKind.FileChanged,
-                WatchPath = "/tmp/data",
+                TriggerKey = WellKnownTriggerKeys.FileChanged,
+                WatchPath  = "/tmp/data",
                 FileEvents = FileWatchEvent.Any,
             });
     }
@@ -139,25 +139,25 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnProcessStarted_PopulatesProcessStartedKind()
+    public void Parse_OnProcessStarted_PopulatesProcessStartedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnProcessStarted("chrome")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.ProcessStarted,
+                TriggerKey  = "ProcessStarted",
                 ProcessName = "chrome",
             });
     }
 
     [Test]
-    public void Parse_OnProcessStopped_PopulatesProcessStoppedKind()
+    public void Parse_OnProcessStopped_PopulatesProcessStoppedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnProcessStopped("chrome")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.ProcessStopped,
+                TriggerKey  = "ProcessStopped",
                 ProcessName = "chrome",
             });
     }
@@ -167,13 +167,13 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnWebhook_PopulatesWebhookKindAndRoute()
+    public void Parse_OnWebhook_PopulatesWebhookTriggerKeyAndRoute()
     {
         var def = ParseOk(Wrap("", """[OnWebhook("/hook/deploy")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind         = TriggerKind.Webhook,
+                TriggerKey   = WellKnownTriggerKeys.Webhook,
                 WebhookRoute = "/hook/deploy",
             });
     }
@@ -192,14 +192,14 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnHostReachable_PopulatesHostKindAndName()
+    public void Parse_OnHostReachable_PopulatesHostReachableTriggerKeyAndName()
     {
         var def = ParseOk(Wrap("", """[OnHostReachable("db.internal")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind     = TriggerKind.HostReachable,
-                HostName = "db.internal",
+                TriggerKey = WellKnownTriggerKeys.HostReachable,
+                HostName   = "db.internal",
             });
     }
 
@@ -208,7 +208,7 @@ public class TriggerTask
     {
         var def = ParseOk(Wrap("", """[OnHostUnreachable("db.internal", Port = 5432)]"""));
         var t = def.TriggerDefinitions.Should().ContainSingle().Subject;
-        t.Kind.Should().Be(TriggerKind.HostUnreachable);
+        t.TriggerKey.Should().Be(WellKnownTriggerKeys.HostUnreachable);
         t.HostPort.Should().Be(5432);
     }
 
@@ -223,7 +223,7 @@ public class TriggerTask
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind           = TriggerKind.TaskCompleted,
+                TriggerKey     = WellKnownTriggerKeys.TaskCompleted,
                 SourceTaskName = "IngestData",
             });
     }
@@ -235,7 +235,7 @@ public class TriggerTask
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind           = TriggerKind.TaskFailed,
+                TriggerKey     = WellKnownTriggerKeys.TaskFailed,
                 SourceTaskName = "IngestData",
             });
     }
@@ -245,25 +245,25 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnWindowFocused_PopulatesWindowFocusedKind()
+    public void Parse_OnWindowFocused_PopulatesWindowFocusedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnWindowFocused("notepad")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.WindowFocused,
+                TriggerKey  = "WindowFocused",
                 ProcessName = "notepad",
             });
     }
 
     [Test]
-    public void Parse_OnWindowBlurred_PopulatesWindowBlurredKind()
+    public void Parse_OnWindowBlurred_PopulatesWindowBlurredTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnWindowBlurred("notepad")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.WindowBlurred,
+                TriggerKey  = "WindowBlurred",
                 ProcessName = "notepad",
             });
     }
@@ -273,13 +273,13 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnHotkeyValidCombo_PopulatesHotkeyKind()
+    public void Parse_OnHotkeyValidCombo_PopulatesHotkeyTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnHotkey("Ctrl+Shift+F10")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.Hotkey,
+                TriggerKey  = "Hotkey",
                 HotkeyCombo = "Ctrl+Shift+F10",
             });
     }
@@ -303,23 +303,23 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnSystemIdle_PopulatesIdleMinutes()
+    public void Parse_OnSystemIdle_PopulatesIdleMinutesWithSystemIdleTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnSystemIdle(Minutes = 15)]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind        = TriggerKind.SystemIdle,
+                TriggerKey  = "SystemIdle",
                 IdleMinutes = 15,
             });
     }
 
     [Test]
-    public void Parse_OnSystemActive_PopulatesSystemActiveKind()
+    public void Parse_OnSystemActive_PopulatesSystemActiveTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnSystemActive]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.SystemActive);
+            .Which.TriggerKey.Should().Be("SystemActive");
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -327,19 +327,19 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnScreenLocked_PopulatesScreenLockedKind()
+    public void Parse_OnScreenLocked_PopulatesScreenLockedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnScreenLocked]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.ScreenLocked);
+            .Which.TriggerKey.Should().Be("ScreenLocked");
     }
 
     [Test]
-    public void Parse_OnScreenUnlocked_PopulatesScreenUnlockedKind()
+    public void Parse_OnScreenUnlocked_PopulatesScreenUnlockedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnScreenUnlocked]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.ScreenUnlocked);
+            .Which.TriggerKey.Should().Be("ScreenUnlocked");
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -347,11 +347,11 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnNetworkChanged_PopulatesNetworkChangedKind()
+    public void Parse_OnNetworkChanged_PopulatesNetworkChangedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnNetworkChanged]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.NetworkChanged);
+            .Which.TriggerKey.Should().Be(WellKnownTriggerKeys.NetworkChanged);
     }
 
     [Test]
@@ -368,21 +368,21 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnDeviceConnected_PopulatesDeviceConnectedKind()
+    public void Parse_OnDeviceConnected_PopulatesDeviceConnectedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnDeviceConnected(Class = "USB", Pattern = "YubiKey*")]"""));
         var t = def.TriggerDefinitions.Should().ContainSingle().Subject;
-        t.Kind.Should().Be(TriggerKind.DeviceConnected);
+        t.TriggerKey.Should().Be("DeviceConnected");
         t.DeviceClass.Should().Be("USB");
         t.DeviceNamePattern.Should().Be("YubiKey*");
     }
 
     [Test]
-    public void Parse_OnDeviceDisconnected_PopulatesDeviceDisconnectedKind()
+    public void Parse_OnDeviceDisconnected_PopulatesDeviceDisconnectedTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnDeviceDisconnected(Class = "USB")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.DeviceDisconnected);
+            .Which.TriggerKey.Should().Be("DeviceDisconnected");
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -390,11 +390,11 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnQueryReturnsRowsWithSelectCount_NoTask431()
+    public void Parse_OnQueryReturnsRowsWithSelectCount_PopulatesQueryReturnsRowsTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnQueryReturnsRows("SELECT COUNT(*) FROM PendingItems WHERE Done = 0")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.QueryReturnsRows);
+            .Which.TriggerKey.Should().Be("QueryReturnsRows");
     }
 
     [Test]
@@ -421,7 +421,7 @@ public class TriggerTask
     {
         var def = ParseOk(Wrap("", """[OnMetricThreshold("System.CpuPercent", Threshold = 90.0, Direction = ThresholdDirection.Above)]"""));
         var t = def.TriggerDefinitions.Should().ContainSingle().Subject;
-        t.Kind.Should().Be(TriggerKind.MetricThreshold);
+        t.TriggerKey.Should().Be(WellKnownTriggerKeys.MetricThreshold);
         t.MetricSource.Should().Be("System.CpuPercent");
         t.MetricThreshold.Should().Be(90.0);
         t.MetricDirection.Should().Be(ThresholdDirection.Above);
@@ -432,19 +432,19 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnStartup_PopulatesStartupKind()
+    public void Parse_OnStartup_PopulatesStartupTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnStartup]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.Startup);
+            .Which.TriggerKey.Should().Be(WellKnownTriggerKeys.Startup);
     }
 
     [Test]
-    public void Parse_OnShutdown_PopulatesShutdownKind()
+    public void Parse_OnShutdown_PopulatesShutdownTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnShutdown]"""));
         def.TriggerDefinitions.Should().ContainSingle()
-            .Which.Kind.Should().Be(TriggerKind.Shutdown);
+            .Which.TriggerKey.Should().Be(WellKnownTriggerKeys.Shutdown);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -452,11 +452,11 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OsShortcut_PopulatesShortcutFields()
+    public void Parse_OsShortcut_PopulatesShortcutFieldsWithOsShortcutTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OsShortcut("Run Ingest", Icon = "ingest.ico", Category = "Data")]"""));
         var t = def.TriggerDefinitions.Should().ContainSingle().Subject;
-        t.Kind.Should().Be(TriggerKind.OsShortcut);
+        t.TriggerKey.Should().Be("OsShortcut");
         t.ShortcutLabel.Should().Be("Run Ingest");
         t.ShortcutIcon.Should().Be("ingest.ico");
         t.ShortcutCategory.Should().Be("Data");
@@ -467,14 +467,13 @@ public class TriggerTask
     // ─────────────────────────────────────────────────────────────
 
     [Test]
-    public void Parse_OnTrigger_PopulatesCustomKindAndSourceName()
+    public void Parse_OnTrigger_PopulatesTriggerKey()
     {
         var def = ParseOk(Wrap("", """[OnTrigger("MyCustomSource")]"""));
         def.TriggerDefinitions.Should().ContainSingle()
             .Which.Should().BeEquivalentTo(new
             {
-                Kind             = TriggerKind.Custom,
-                CustomSourceName = "MyCustomSource",
+                TriggerKey = "MyCustomSource",
             });
     }
 
@@ -562,8 +561,8 @@ public class TriggerTask
 """);
         var def = ParseOk(source);
         def.TriggerDefinitions.Should().HaveCount(3);
-        def.TriggerDefinitions.Select(t => t.Kind)
-            .Should().BeEquivalentTo([TriggerKind.Cron, TriggerKind.Event, TriggerKind.Startup]);
+        def.TriggerDefinitions.Select(t => t.TriggerKey)
+            .Should().BeEquivalentTo([WellKnownTriggerKeys.Cron, WellKnownTriggerKeys.Event, WellKnownTriggerKeys.Startup]);
     }
 
     // ─────────────────────────────────────────────────────────────

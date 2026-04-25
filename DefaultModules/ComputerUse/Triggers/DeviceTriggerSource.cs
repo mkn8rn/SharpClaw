@@ -17,8 +17,7 @@ public sealed class DeviceTriggerSource(
     private Task? _listenTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.DeviceConnected, TriggerKind.DeviceDisconnected];
+    public IReadOnlyList<string> TriggerKeys { get; } = ["DeviceConnected", "DeviceDisconnected"];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -83,10 +82,10 @@ public sealed class DeviceTriggerSource(
                 seen = current;
 
                 foreach (var device in added)
-                    await FireMatchingAsync(TriggerKind.DeviceConnected, device);
+                    await FireMatchingAsync("DeviceConnected", device);
 
                 foreach (var device in removed)
-                    await FireMatchingAsync(TriggerKind.DeviceDisconnected, device);
+                    await FireMatchingAsync("DeviceDisconnected", device);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -126,10 +125,10 @@ public sealed class DeviceTriggerSource(
                 seen = current;
 
                 foreach (var device in added)
-                    await FireMatchingAsync(TriggerKind.DeviceConnected, device);
+                    await FireMatchingAsync("DeviceConnected", device);
 
                 foreach (var device in removed)
-                    await FireMatchingAsync(TriggerKind.DeviceDisconnected, device);
+                    await FireMatchingAsync("DeviceDisconnected", device);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -152,9 +151,9 @@ public sealed class DeviceTriggerSource(
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private async Task FireMatchingAsync(TriggerKind kind, string deviceId)
+    private async Task FireMatchingAsync(string triggerKey, string deviceId)
     {
-        foreach (var ctx in _contexts.Where(c => c.Definition.Kind == kind))
+        foreach (var ctx in _contexts.Where(c => c.Definition.TriggerKey == triggerKey))
         {
             var pattern = ctx.Definition.DeviceNamePattern;
             if (!string.IsNullOrWhiteSpace(pattern) &&

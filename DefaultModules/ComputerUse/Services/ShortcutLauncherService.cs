@@ -8,7 +8,7 @@ namespace SharpClaw.Modules.ComputerUse.Services;
 
 /// <summary>
 /// Manages OS-level shortcut files for tasks declared with
-/// <c>[OsShortcut]</c> / <see cref="TriggerKind.OsShortcut"/>.
+/// <c>[OsShortcut]</c>.
 ///
 /// Two files are created per task:
 /// <list type="bullet">

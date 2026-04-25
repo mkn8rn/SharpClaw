@@ -4,9 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Modules.EditorCommon;
+using SharpClaw.Modules.EditorCommon.Models;
 using SharpClaw.Modules.EditorCommon.Services;
 
 namespace SharpClaw.Modules.VS2026Editor;

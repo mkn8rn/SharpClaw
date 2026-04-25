@@ -139,12 +139,6 @@ public sealed class JwtSessionMiddleware(
     private static bool IsExemptPath(PathString path)
     {
         var value = path.Value ?? "";
-        // Exact matches
-        if (ExemptPaths.Contains(value))
-            return true;
-        // Editor WebSocket endpoint has its own handshake auth
-        if (value.StartsWith("/editor/ws", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return false;
+        return ExemptPaths.Contains(value);
     }
 }

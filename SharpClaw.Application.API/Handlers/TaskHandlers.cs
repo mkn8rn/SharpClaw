@@ -228,7 +228,7 @@ public static class TaskShortcutHandlers
 
         var triggers = await svc.GetTriggersAsync(taskId, ct);
         var shortcutTrigger = triggers?.FirstOrDefault(
-            t => t.Kind == TriggerKind.OsShortcut);
+            t => t.TriggerKey == "OsShortcut");
 
         if (shortcutTrigger is null)
             return Results.UnprocessableEntity("Task has no OsShortcut trigger defined.");
@@ -271,10 +271,10 @@ public static class TaskTriggerHandlers
         IEnumerable<ITaskTriggerSource> sources)
     {
         var sourceList = sources.Select(s => new TaskTriggerSourceResponse(
-            s.SourceName,
-            s.SupportedKinds.Select(k => k.ToString()).ToList(),
+            s.TriggerKey,
+            s.TriggerKeys.ToList(),
             s.GetType().Name,
-            !string.IsNullOrWhiteSpace(s.SourceName))).ToList();
+            true)).ToList();
 
         return Results.Ok(sourceList);
     }

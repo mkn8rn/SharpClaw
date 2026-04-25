@@ -295,7 +295,7 @@ public sealed class TaskOrchestrator(
                     ? Guid.TryParse(ResolveExpression(step.Arguments[0], context), out var aid) ? aid : null
                     : null;
 
-                var request = new ChatRequest(message, agentId, ChatClientType.API, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
+                var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
                 var response = await requiredChatService.SendMessageAsync(
                     channelId, request, ct: context.CancellationToken);
 
@@ -317,7 +317,7 @@ public sealed class TaskOrchestrator(
                     ? Guid.TryParse(ResolveExpression(step.Arguments[0], context), out var aid) ? aid : null
                     : null;
 
-                var request = new ChatRequest(message, agentId, ChatClientType.API, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
+                var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
                 var sb = new StringBuilder();
 
                 await foreach (var evt in requiredChatService.SendMessageStreamAsync(
@@ -520,7 +520,7 @@ public sealed class TaskOrchestrator(
                     throw new InvalidOperationException($"Invalid thread ID: {threadIdStr}");
 
                 var channelId = await GetInstanceChannelIdAsync(context.InstanceId, context.CancellationToken, db);
-                var request = new ChatRequest(message, agentId, ChatClientType.API, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
+                var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api, TaskContext: new TaskChatContext(context.InstanceId, context.Plan.TaskName));
                 var response = await requiredChatService.SendMessageAsync(
                     channelId, request, threadId: threadId, ct: context.CancellationToken);
 

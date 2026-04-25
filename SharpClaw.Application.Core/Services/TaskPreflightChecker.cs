@@ -116,21 +116,12 @@ public sealed class TaskPreflightChecker(
                 case TaskRequirementKind.RequiresModelCapability:
                 {
                     var capName = req.CapabilityValue ?? string.Empty;
-                    var passed = false;
-                    string message;
-
-                    if (Enum.TryParse<ModelCapability>(capName, ignoreCase: true, out var cap) && cap != ModelCapability.None)
-                    {
-                        passed = await db.Models
-                            .AnyAsync(m => (m.Capabilities & cap) == cap, ct);
-                        message = passed
-                            ? $"A model with capability '{capName}' exists."
-                            : $"No model with capability '{capName}' is registered.";
-                    }
-                    else
-                    {
-                        message = $"'{capName}' is not a recognised ModelCapability flag.";
-                    }
+                    var tag = capName.ToLowerInvariant();
+                    var passed = await db.Models
+                        .AnyAsync(m => m.CapabilityTagsRaw != null && m.CapabilityTagsRaw.Contains(tag), ct);
+                    var message = passed
+                        ? $"A model with capability tag '{capName}' exists."
+                        : $"No model with capability tag '{capName}' is registered.";
 
                     findings.Add(new TaskPreflightFinding(
                         req.Kind.ToString(), req.Severity, passed, message));
@@ -237,19 +228,13 @@ public sealed class TaskPreflightChecker(
                     var passed = false;
                     string message;
 
-                    if (!Enum.TryParse<ModelCapability>(capName, ignoreCase: true, out var cap) || cap == ModelCapability.None)
-                    {
-                        message = $"'{capName}' is not a recognised ModelCapability flag.";
-                    }
-                    else
-                    {
-                        passed = Guid.TryParse(modelRef, out var modelGuid)
-                            ? await db.Models.AnyAsync(m => m.Id == modelGuid && (m.Capabilities & cap) == cap, ct)
-                            : await db.Models.AnyAsync(m => (m.Name == modelRef || m.CustomId == modelRef) && (m.Capabilities & cap) == cap, ct);
-                        message = passed
-                            ? $"Model '{modelRef}' (from parameter '{paramName}') has capability '{capName}'."
-                            : $"Model '{modelRef}' (from parameter '{paramName}') does not have capability '{capName}'.";
-                    }
+                    var tag = capName.ToLowerInvariant();
+                    passed = Guid.TryParse(modelRef, out var modelGuid)
+                        ? await db.Models.AnyAsync(m => m.Id == modelGuid && m.CapabilityTagsRaw != null && m.CapabilityTagsRaw.Contains(tag), ct)
+                        : await db.Models.AnyAsync(m => (m.Name == modelRef || m.CustomId == modelRef) && m.CapabilityTagsRaw != null && m.CapabilityTagsRaw.Contains(tag), ct);
+                    message = passed
+                        ? $"Model '{modelRef}' (from parameter '{paramName}') has capability tag '{capName}'."
+                        : $"Model '{modelRef}' (from parameter '{paramName}') does not have capability tag '{capName}'.";
 
                     findings.Add(new TaskPreflightFinding(
                         req.Kind.ToString(), req.Severity, passed, message, paramName));

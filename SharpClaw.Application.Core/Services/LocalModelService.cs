@@ -3,6 +3,7 @@ using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Models;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -29,7 +30,7 @@ public sealed class LocalModelService(
 
         var (provider, defaultCapability) = request.ProviderType switch
         {
-            ProviderType.LlamaSharp => (await EnsureLocalProviderAsync(ct), ModelCapability.Chat),
+            ProviderType.LlamaSharp => (await EnsureLocalProviderAsync(ct), WellKnownCapabilityKeys.Chat),
             _ => throw new ArgumentException(
                 $"Provider type '{request.ProviderType}' does not support local file download. " +
                 "Only LlamaSharp is supported by the host; other local providers must register via a module.",
@@ -42,7 +43,7 @@ public sealed class LocalModelService(
     private async Task<ModelResponse> DownloadAndRegisterCoreAsync(
         DownloadModelRequest request,
         ProviderDB provider,
-        ModelCapability defaultCapability,
+        string defaultCapability,
         IProgress<double>? progress,
         CancellationToken ct)
     {
@@ -114,7 +115,7 @@ public sealed class LocalModelService(
     private async Task<(Guid ModelId, Guid FileId)> CreateOrReuseDownloadPlaceholderAsync(
         string modelName,
         ProviderDB provider,
-        ModelCapability defaultCapability,
+        string defaultCapability,
         ResolvedDownloadTarget target,
         CancellationToken ct)
     {
@@ -122,10 +123,15 @@ public sealed class LocalModelService(
             .FirstOrDefaultAsync(m => m.Name == modelName && m.ProviderId == provider.Id, ct);
         if (model is null)
         {
-            var capabilities = ProviderService.InferCapabilities(modelName);
-            if (capabilities == ModelCapability.None)
-                capabilities = defaultCapability;
-            model = new ModelDB { Name = modelName, ProviderId = provider.Id, Capabilities = capabilities };
+            var tags = ProviderService.InferCapabilitiesAndTags(modelName);
+            if (tags.Count == 0)
+                tags = [defaultCapability];
+            model = new ModelDB
+            {
+                Name = modelName,
+                ProviderId = provider.Id,
+                CapabilityTagsRaw = string.Join(',', tags)
+            };
             db.Models.Add(model);
         }
 
@@ -195,7 +201,7 @@ public sealed class LocalModelService(
         await db.SaveChangesAsync(ct);
 
         var provider = await db.Providers.FirstAsync(p => p.Id == model.ProviderId, ct);
-        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.Capabilities);
+        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.CapabilityTagsRaw);
     }
 
     private sealed record ResolvedDownloadTarget(
@@ -283,7 +289,7 @@ public sealed class LocalModelService(
         DownloadedFile file,
         string modelName,
         ProviderDB provider,
-        ModelCapability defaultCapability,
+        string defaultCapability,
         CancellationToken ct)
     {
         var existingModel = await db.Models
@@ -305,14 +311,19 @@ public sealed class LocalModelService(
             }
 
             return new ModelResponse(existingModel.Id, existingModel.Name,
-                provider.Id, provider.Name, existingModel.Capabilities);
+                provider.Id, provider.Name, existingModel.CustomId, existingModel.CapabilityTags);
         }
 
-        var capabilities = ProviderService.InferCapabilities(modelName);
-        if (capabilities == ModelCapability.None)
-            capabilities = defaultCapability;
+        var tags = ProviderService.InferCapabilitiesAndTags(modelName);
+        if (tags.Count == 0)
+            tags = [defaultCapability];
 
-        var model = new ModelDB { Name = modelName, ProviderId = provider.Id, Capabilities = capabilities };
+        var model = new ModelDB
+        {
+            Name = modelName,
+            ProviderId = provider.Id,
+            CapabilityTagsRaw = string.Join(',', tags)
+        };
         db.Models.Add(model);
 
         db.LocalModelFiles.Add(new LocalModelFileDB
@@ -327,7 +338,7 @@ public sealed class LocalModelService(
         });
 
         await db.SaveChangesAsync(ct);
-        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.Capabilities);
+        return new ModelResponse(model.Id, model.Name, provider.Id, provider.Name, model.CustomId, model.CapabilityTags);
     }
 
     private sealed record DownloadedFile(string DestPath, string SourceUrl, ResolvedModelFile Target);
