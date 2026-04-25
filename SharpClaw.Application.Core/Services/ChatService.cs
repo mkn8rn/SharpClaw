@@ -1511,12 +1511,7 @@ public sealed class ChatService(
             ActionKey: parsed.ActionKey,
             ResourceId: parsed.ResourceId,
             CallerAgentId: agentId,
-            DangerousShellType: parsed.DangerousShellType,
-            SafeShellType: parsed.SafeShellType,
-            ScriptJson: parsed.ScriptJson,
-            WorkingDirectory: parsed.WorkingDirectory,
-            TranscriptionModelId: parsed.TranscriptionModelId,
-            Language: parsed.Language);
+            ScriptJson: parsed.ScriptJson);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1803,16 +1798,12 @@ public sealed class ChatService(
                 new { module = moduleId, tool = toolName, @params = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}").RootElement },
                 SecureJsonOptions.Envelope);
 
-            // Attempt to extract resourceId / sandboxId from the arguments.
-            // Historically module tools used either "resource_id" or "targetId".
-            // The mk8 shell tools use "resourceId" / "sandboxId". When only a
-            // sandboxId is provided, resolve it to the corresponding Mk8Shell
-            // container GUID so the permission layer sees a concrete per-resource
-            // target instead of null (which previously caused bug #7: the chat loop
-            // denied execute_mk8_shell before job submission with
-            // "ResourceId is required for module tool 'execute_mk8_shell'.").
+            // Attempt to extract resourceId from the arguments using well-known
+            // generic argument names. Module-owned tools should use "resource_id"
+            // or "resourceId". Legacy aliases "targetId" remain supported.
+            // For tools that require sandbox-name-to-resource-id translation, the
+            // owning module must contribute a tool resource-id extractor hook.
             Guid? modResourceId = null;
-            string? sandboxId = null;
             try
             {
                 using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
@@ -1822,36 +1813,29 @@ public sealed class ChatService(
                     && Guid.TryParse(rp.GetString(), out var mrid))
                     modResourceId = mrid;
 
-                if (doc.RootElement.TryGetProperty("sandboxId", out var sp))
-                    sandboxId = sp.GetString();
+                // If no direct resource id, ask the registry for a module-contributed extractor.
+                if (!modResourceId.HasValue)
+                {
+                    var extractor = moduleRegistry.GetResourceIdExtractor(toolCall.Name);
+                    if (extractor is not null)
+                    {
+                        await using var extractorScope = serviceScopeFactory.CreateAsyncScope();
+                        modResourceId = await extractor(
+                            extractorScope.ServiceProvider,
+                            toolCall.ArgumentsJson ?? "{}",
+                            ct);
+                    }
+                }
             }
             catch (JsonException) { /* non-critical */ }
 
-            if (!modResourceId.HasValue && !string.IsNullOrWhiteSpace(sandboxId))
-            {
-                modResourceId = await db.Containers
-                    .Where(c => c.Type == ContainerType.Mk8Shell && c.SandboxName == sandboxId)
-                    .Select(c => (Guid?)c.Id)
-                    .FirstOrDefaultAsync(ct);
-            }
-
-            if (string.Equals(toolCall.Name, "execute_mk8_shell", StringComparison.Ordinal))
-            {
-                logger.LogInformation(
-                    "[Bug7Trace] execute_mk8_shell parsed args raw={RawArgs} sandboxId={SandboxId} resourceId={ResourceId}",
-                    toolCall.ArgumentsJson,
-                    sandboxId ?? "(null)",
-                    modResourceId?.ToString() ?? "(null)");
-            }
-
             Debug.WriteLine(
-                $"[ParseToolCall] ResourceId={modResourceId?.ToString() ?? "(null)"} SandboxId={sandboxId ?? "(null)"} from args: {toolCall.ArgumentsJson}",
+                $"[ParseToolCall] ResourceId={modResourceId?.ToString() ?? "(null)"} from args: {toolCall.ArgumentsJson}",
                 "SharpClaw.CLI");
 
             return new ParsedToolCall(
                 toolCall.Id,
                 modResourceId,
-                SandboxId: sandboxId,
                 ScriptJson: envelope,
                 ActionKey: toolCall.Name);
         }
@@ -1953,13 +1937,7 @@ public sealed class ChatService(
     private sealed record ParsedToolCall(
         string CallId,
         Guid? ResourceId,
-        string? SandboxId,
         string? ScriptJson,
-        DangerousShellType? DangerousShellType = null,
-        SafeShellType? SafeShellType = null,
-        Guid? TranscriptionModelId = null,
-        string? Language = null,
-        string? WorkingDirectory = null,
         string? RawJson = null,
         string? ActionKey = null);
 

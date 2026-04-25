@@ -1,5 +1,4 @@
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Contracts.DTOs.AgentActions;
@@ -11,17 +10,8 @@ string? ActionKey = null,
 Guid? ResourceId = null,
 Guid? AgentId = null,
 Guid? CallerAgentId = null,
-// Shell-specific
-DangerousShellType? DangerousShellType = null,
-SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
-string? WorkingDirectory = null,
-// Transcription-specific
-Guid? TranscriptionModelId = null,
-string? Language = null,
-TranscriptionMode? TranscriptionMode = null,
-int? WindowSeconds = null,
-int? StepSeconds = null);
+string? WorkingDirectory = null);
 
 public sealed record ApproveAgentJobRequest(
     Guid? ApproverAgentId = null);
@@ -42,18 +32,8 @@ IReadOnlyList<AgentJobLogResponse> Logs,
 DateTimeOffset CreatedAt,
 DateTimeOffset? StartedAt,
 DateTimeOffset? CompletedAt,
-// Shell
-DangerousShellType? DangerousShellType = null,
-SafeShellType? SafeShellType = null,
 string? ScriptJson = null,
 string? WorkingDirectory = null,
-// Transcription
-Guid? TranscriptionModelId = null,
-string? Language = null,
-TranscriptionMode? TranscriptionMode = null,
-int? WindowSeconds = null,
-int? StepSeconds = null,
-IReadOnlyList<TranscriptionSegmentResponse>? Segments = null,
 TokenUsageResponse? JobCost = null,
 ChannelCostResponse? ChannelCost = null);
 

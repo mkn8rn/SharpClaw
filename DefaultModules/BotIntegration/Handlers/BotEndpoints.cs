@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.Bots;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.BotIntegration.Dtos;
+using SharpClaw.Modules.BotIntegration.Contracts;
 using SharpClaw.Modules.BotIntegration.Services;
 
 namespace SharpClaw.Modules.BotIntegration.Handlers;

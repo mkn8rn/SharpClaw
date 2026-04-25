@@ -46,6 +46,9 @@ MariaDB, SQLite, MSSQL, and CockroachDB for query execution. Additional
 types (MongoDB, Redis, CosmosDB, Oracle, Firebird, Custom) can be
 registered but are not yet supported for live queries.
 
+This module also owns the task-side query polling trigger. Tasks that declare
+`[OnQueryReturnsRows(...)]` rely on Database Access to supply the runtime trigger source.
+
 External database connection strings are AES-GCM encrypted at rest.
 
 Tools are dispatched via the SharpClaw module system
@@ -63,6 +66,7 @@ when sent to the model — for example, `register_database` becomes
   - [db_access_internal_databases](#db_access_internal_databases)
   - [db_access_external_database](#db_access_external_database)
 - [CLI Commands](#cli-commands)
+- [Task trigger support](#task-trigger-support)
 - [Resource Dependencies](#resource-dependencies)
 - [Role Permissions](#role-permissions)
 - [Module Manifest](#module-manifest)
@@ -152,6 +156,35 @@ query JSON for MongoDB, Redis commands for Redis).
 **Permission:** Per-resource — requires `externalDatabaseAccesses` grant.
 
 **Returns:** Query results formatted as a table (max 64 KB).
+
+---
+
+## Task trigger support
+
+Database Access owns the `[OnQueryReturnsRows]` task trigger attribute.
+
+Example:
+
+```csharp
+[Task("poll-orders")]
+[OnQueryReturnsRows("SELECT COUNT(*) FROM Orders WHERE Status = 'Pending'", PollInterval = 30)]
+public class PollOrdersTask
+{
+    public async Task RunAsync(CancellationToken ct)
+    {
+        await Log("Pending orders detected.");
+    }
+}
+```
+
+Guidance:
+
+- prefer `SELECT COUNT(*) ...` style queries for polling triggers
+- keep poll intervals conservative to avoid unnecessary database load
+- if the module is disabled, task preflight emits
+  `RecommendsModule("sharpclaw_database_access")`
+- use `task trigger-sources` to confirm the query trigger source is available on the
+  current host
 
 ---
 

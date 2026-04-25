@@ -16,7 +16,7 @@ public sealed record CreateRoleRequest(string Name);
 /// <para>
 /// Global flags are dictionary-keyed by FlagKey (e.g. "CanClickDesktop").
 /// Presence means the flag is granted; the value is the per-flag clearance.
-/// Per-resource grants are dictionary-keyed by ResourceType (e.g. "CuDisplay").
+/// Per-resource grants are dictionary-keyed by ResourceType (e.g. "Module.Resource").
 /// See Module-System-Design §12.4.5.
 /// </para>
 /// </summary>
@@ -31,7 +31,7 @@ public sealed record SetRolePermissionsRequest(
     IReadOnlyDictionary<string, PermissionClearance>? GlobalFlags = null,
 
     /// <summary>
-    /// Per-resource grants. Key = ResourceType (e.g. "DsShell", "CuDisplay"),
+    /// Per-resource grants. Key = ResourceType (e.g. "Module.Resource"),
     /// Value = list of resource grants for that type.
     /// </summary>
     IReadOnlyDictionary<string, IReadOnlyList<ResourceGrant>>? ResourceGrants = null);

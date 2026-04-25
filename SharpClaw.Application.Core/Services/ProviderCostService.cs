@@ -31,8 +31,8 @@ public sealed class ProviderCostService(
 
         var (periodStart, periodEnd) = ResolvePeriod(days, startDate, endDate);
 
-        // LlamaSharp and Whisper providers have zero cloud cost
-        if (provider.ProviderType is ProviderType.LlamaSharp or ProviderType.Whisper)
+        // LlamaSharp providers have zero cloud cost
+        if (provider.ProviderType is ProviderType.LlamaSharp)
         {
             return new ProviderCostResponse(
                 provider.Id, provider.Name, provider.ProviderType,

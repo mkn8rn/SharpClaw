@@ -7,9 +7,8 @@ namespace SharpClaw.Gateway.Configuration;
 /// returns <c>503 Service Unavailable</c> for every request.
 /// Individual endpoint groups can be toggled independently.
 /// <para>
-/// Default posture: only <see cref="Bots"/> is enabled so the gateway
-/// acts purely as a bot relay.  Enable individual groups as needed to
-/// expose the public REST surface.
+/// Default posture: all endpoint groups are disabled. Enable individual
+/// groups as needed to expose the public REST surface.
 /// </para>
 /// </summary>
 public sealed class GatewayEndpointOptions
@@ -32,11 +31,7 @@ public sealed class GatewayEndpointOptions
     public bool Providers { get; set; }
     public bool Roles { get; set; }
     public bool Users { get; set; }
-    public bool InputAudios { get; set; }
-    public bool Transcription { get; set; }
-    public bool TranscriptionStreaming { get; set; }
     public bool Cost { get; set; }
-    public bool Bots { get; set; } = true;
 
     /// <summary>
     /// Resolves whether a given endpoint group is active.
@@ -62,11 +57,7 @@ public sealed class GatewayEndpointOptions
             nameof(Providers) => Providers,
             nameof(Roles) => Roles,
             nameof(Users) => Users,
-            nameof(InputAudios) => InputAudios,
-            nameof(Transcription) => Transcription,
-            nameof(TranscriptionStreaming) => TranscriptionStreaming,
             nameof(Cost) => Cost,
-            nameof(Bots) => Bots,
             _ => true
         };
     }

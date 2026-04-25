@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using SharpClaw.Modules.ComputerUse.Models;
-using SharpClaw.Contracts.Modules.Contracts;
+using SharpClaw.Modules.ComputerUse.Contracts;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.ComputerUse;

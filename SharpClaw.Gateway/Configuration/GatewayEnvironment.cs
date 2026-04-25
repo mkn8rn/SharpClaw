@@ -23,10 +23,8 @@ public static class GatewayEnvironment
           // SharpClaw Gateway Environment Configuration
           // Values here are loaded for all environments.
           //
-          // DEFAULT POSTURE: only bot integrations are enabled.
-          // All public-facing REST/streaming endpoints are disabled.
-          // To expose the full REST API, set the individual endpoint
-          // toggles to "true" (or flip the master "Enabled" switch).
+          // DEFAULT POSTURE: all public-facing REST endpoints are disabled.
+          // Enable individual endpoint groups via the Endpoints toggles below.
 
           // ── Internal API ───────────────────────────────────────────
           // Base URL + timeout for the internal SharpClaw Application API.
@@ -50,76 +48,26 @@ public static class GatewayEnvironment
               "MaxQueueSize": "500"
             },
 
-            // ── Endpoint Toggles ───────────────────────────────────────
-            // Master kill-switch and per-group enable/disable.
-            // By default everything except "Bots" is disabled so the
-            // gateway acts purely as a bot relay. Enable individual
-            // groups as needed to expose the public REST surface.
-            "Endpoints": {
-              "Enabled": "true",
-              "Auth": "false",
-              "Agents": "false",
-              "Channels": "false",
-              "ChannelContexts": "false",
-              "Chat": "false",
-              "ChatStream": "false",
-              "Threads": "false",
-              "ThreadChat": "false",
-              "Jobs": "false",
-              "Models": "false",
-              "Providers": "false",
-              "Roles": "false",
-              "Users": "false",
-              "InputAudios": "false",
-              "Transcription": "false",
-              "TranscriptionStreaming": "false",
-              "Cost": "false",
-              "Bots": "true"
-            },
-
-            // ── Bot Integrations ───────────────────────────────────────
-            // Bots are enabled by default — configure tokens via the
-            // Uno settings page or directly in this file.
-            "Bots": {
-              "Telegram": {
+              // ── Endpoint Toggles ───────────────────────────────────────
+              // Master kill-switch and per-group enable/disable.
+              // All endpoint groups are disabled by default. Enable
+              // individual groups as needed to expose the public REST surface.
+              "Endpoints": {
                 "Enabled": "true",
-                "BotToken": ""
-              },
-              "Discord": {
-                "Enabled": "false",
-                "BotToken": ""
-              },
-              "WhatsApp": {
-                  "Enabled": "false",
-                  "PhoneNumberId": "",
-                  "VerifyToken": ""
-                },
-                "Slack": {
-                  "Enabled": "false",
-                  "SigningSecret": ""
-                },
-                "Matrix": {
-                  "Enabled": "false",
-                  "HomeserverUrl": ""
-                },
-                "Signal": {
-                  "Enabled": "false",
-                  "ApiUrl": "",
-                  "PhoneNumber": ""
-                },
-                "Email": {
-                  "Enabled": "false",
-                  "ImapHost": "",
-                  "ImapPort": "993",
-                  "SmtpHost": "",
-                  "SmtpPort": "587",
-                  "Username": "",
-                  "PollIntervalSeconds": "30"
-                },
-                "Teams": {
-                  "Enabled": "false",
-                  "AppId": ""
-                }
+                "Auth": "false",
+                "Agents": "false",
+                "Channels": "false",
+                "ChannelContexts": "false",
+                "Chat": "false",
+                "ChatStream": "false",
+                "Threads": "false",
+                "ThreadChat": "false",
+                "Jobs": "false",
+                "Models": "false",
+                "Providers": "false",
+                "Roles": "false",
+                "Users": "false",
+                "Cost": "false"
               }
           }
         }

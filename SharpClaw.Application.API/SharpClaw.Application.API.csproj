@@ -28,23 +28,89 @@
     <ProjectReference Include="..\SharpClaw.Contracts\SharpClaw.Contracts.csproj" />
     <ProjectReference Include="..\SharpClaw.Application.Infrastructure\SharpClaw.Application.Infrastructure.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
-    <ProjectReference Include="..\DefaultModules\ComputerUse\SharpClaw.Modules.ComputerUse.csproj" />
-    <ProjectReference Include="..\DefaultModules\DangerousShell\SharpClaw.Modules.DangerousShell.csproj" />
-    <ProjectReference Include="..\DefaultModules\Mk8Shell\SharpClaw.Modules.Mk8Shell.csproj" />
-    <ProjectReference Include="..\DefaultModules\OfficeApps\SharpClaw.Modules.OfficeApps.csproj" />
-    <ProjectReference Include="..\DefaultModules\DatabaseAccess\SharpClaw.Modules.DatabaseAccess.csproj" />
-    <ProjectReference Include="..\DefaultModules\Transcription\SharpClaw.Modules.Transcription.csproj" />
-    <ProjectReference Include="..\DefaultModules\WebAccess\SharpClaw.Modules.WebAccess.csproj" />
-    <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj" />
-    <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
-    <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj" />
-    <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj" />
-    <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj" />
-    <ProjectReference Include="..\DefaultModules\VSCodeEditor\SharpClaw.Modules.VSCodeEditor.csproj" />
-    <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj" />
     <ProjectReference Include="..\SharpClaw.Migrations.Postgres\SharpClaw.Migrations.Postgres.csproj" />
     <ProjectReference Include="..\SharpClaw.Migrations.SqlServer\SharpClaw.Migrations.SqlServer.csproj" />
     <ProjectReference Include="..\SharpClaw.Migrations.SQLite\SharpClaw.Migrations.SQLite.csproj" />
   </ItemGroup>
+
+  <!-- Bundled modules: copied to output for runtime discovery, not referenced at compile time. -->
+  <ItemGroup>
+    <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\ComputerUse\SharpClaw.Modules.ComputerUse.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\ContextTools\SharpClaw.Modules.ContextTools.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\DangerousShell\SharpClaw.Modules.DangerousShell.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\DatabaseAccess\SharpClaw.Modules.DatabaseAccess.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\Mk8Shell\SharpClaw.Modules.Mk8Shell.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\OfficeApps\SharpClaw.Modules.OfficeApps.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\Transcription\SharpClaw.Modules.Transcription.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\VSCodeEditor\SharpClaw.Modules.VSCodeEditor.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\WebAccess\SharpClaw.Modules.WebAccess.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyBundledModules" AfterTargets="Build">
+    <ItemGroup>
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\AgentOrchestration\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.AgentOrchestration.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\BotIntegration\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.BotIntegration.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ComputerUse\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ComputerUse.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ContextTools\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ContextTools.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\DangerousShell\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DangerousShell.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\DatabaseAccess\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DatabaseAccess.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\EditorCommon\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.EditorCommon.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\Mk8Shell\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.Mk8Shell.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\ModuleDev\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.ModuleDev.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\OfficeApps\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.OfficeApps.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\Transcription\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.Transcription.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\VS2026Editor\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.VS2026Editor.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\VSCodeEditor\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.VSCodeEditor.dll" />
+      <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\WebAccess\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.WebAccess.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

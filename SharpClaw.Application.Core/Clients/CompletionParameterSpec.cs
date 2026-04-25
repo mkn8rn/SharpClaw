@@ -594,23 +594,6 @@ public sealed record CompletionParameterSpec
         },
 
         // ─────────────────────────────────────────────────────────
-        // Whisper  (in-process STT — does not use completion params)
-        // ─────────────────────────────────────────────────────────
-        [ProviderType.Whisper] = new()
-        {
-            ProviderName = "Whisper (Local)",
-            SupportsTemperature = false,
-            SupportsTopP = false,
-            SupportsTopK = false,
-            SupportsFrequencyPenalty = false,
-            SupportsPresencePenalty = false,
-            SupportsStop = false,
-            SupportsSeed = false,
-            SupportsResponseFormat = false,
-            SupportsReasoningEffort = false,
-        },
-
-        // ─────────────────────────────────────────────────────────
         // Ollama  (user-managed server — OpenAI-compatible)
         // https://github.com/ollama/ollama/blob/main/docs/api.md
         // ─────────────────────────────────────────────────────────

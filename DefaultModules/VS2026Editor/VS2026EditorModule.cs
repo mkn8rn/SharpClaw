@@ -57,7 +57,7 @@ public sealed class VS2026EditorModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<EditorCommonDbContext>();
             return await db.EditorSessions.Select(e => new ValueTuple<Guid, string>(e.Id, e.Name)).ToListAsync(ct);
-        }),
+        }, DefaultResourceKey: "editor"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

@@ -132,6 +132,5 @@ public sealed class JsonFileOptions
         typeof(TaskInstanceDB),
         typeof(TaskExecutionLogDB),
         typeof(TaskOutputEntryDB),
-        typeof(TranscriptionSegmentDB),
     ];
 }

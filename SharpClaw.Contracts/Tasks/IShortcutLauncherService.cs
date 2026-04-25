@@ -2,7 +2,6 @@ namespace SharpClaw.Contracts.Tasks;
 
 /// <summary>
 /// Abstracts OS shortcut creation and removal for <see cref="TriggerKind.OsShortcut"/> triggers.
-/// Implemented by the ComputerUse module.
 /// </summary>
 public interface IShortcutLauncherService
 {

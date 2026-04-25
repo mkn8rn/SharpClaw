@@ -17,7 +17,6 @@ using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Models;
@@ -29,28 +28,20 @@ namespace SharpClaw.Application.Services;
 /// <summary>
 /// Manages the lifecycle of agent action jobs: submission, permission
 /// evaluation, optional approval, execution, and outcome tracking.
-/// For transcription jobs, also manages live transcription
-/// (orchestrator, channels, segments).
 /// </summary>
 public sealed class AgentJobService(
     SharpClawDbContext db,
     ColdEntityStore coldStore,
     AgentActionService actions,
-    ILiveTranscriptionOrchestrator orchestrator,
     SessionService session,
     ModuleRegistry moduleRegistry,
     ModuleMetricsCollector metricsCollector,
     ModuleEventDispatcher eventDispatcher,
     IServiceScopeFactory serviceScopeFactory,
-    IConfiguration configuration) : ITranscriptionSegmentPublisher
+    IConfiguration configuration)
 {
     private readonly ModuleEventDispatcher _eventDispatcher = eventDispatcher;
     private readonly IConfiguration _configuration = configuration;
-
-    /// <summary>
-    /// Per-job broadcast channels for live transcription streaming.
-    /// </summary>
-    private static readonly ConcurrentDictionary<Guid, Channel<TranscriptionSegmentResponse>> _channels = new();
 
     // ═══════════════════════════════════════════════════════════════
     // Public API
@@ -110,14 +101,6 @@ public sealed class AgentJobService(
                 request.ActionKey, channelId, agentId, ct);
         }
 
-        // Resolve default transcription model when not specified.
-        var effectiveTranscriptionModelId = request.TranscriptionModelId;
-        if (!effectiveTranscriptionModelId.HasValue && IsTranscriptionActionKey(request.ActionKey))
-        {
-            effectiveTranscriptionModelId = await ResolveDefaultTranscriptionModelAsync(
-                channelId, ct);
-        }
-
         var job = new AgentJobDB
         {
             AgentId = agentId,
@@ -127,15 +110,8 @@ public sealed class AgentJobService(
             ActionKey = request.ActionKey,
             ResourceId = effectiveResourceId,
             Status = AgentJobStatus.Queued,
-            DangerousShellType = request.DangerousShellType,
-            SafeShellType = request.SafeShellType,
             ScriptJson = request.ScriptJson,
             WorkingDirectory = request.WorkingDirectory,
-            TranscriptionModelId = effectiveTranscriptionModelId,
-            Language = request.Language,
-            TranscriptionMode = request.TranscriptionMode,
-            WindowSeconds = request.WindowSeconds,
-            StepSeconds = request.StepSeconds,
         };
 
         db.AgentJobs.Add(job);
@@ -259,14 +235,6 @@ public sealed class AgentJobService(
             return ToResponse(job);
         }
 
-        if (IsTranscriptionActionKey(job.ActionKey)
-            && job.Status is AgentJobStatus.Executing or AgentJobStatus.Paused)
-        {
-            if (job.Status == AgentJobStatus.Executing)
-                orchestrator.Stop(jobId);
-            CompleteChannel(jobId);
-        }
-
         job.Status = AgentJobStatus.Cancelled;
         job.CompletedAt = DateTimeOffset.UtcNow;
         AddLog(job, "Job cancelled.");
@@ -275,16 +243,17 @@ public sealed class AgentJobService(
         return ToResponse(job);
     }
 
-    /// <summary>Stop a long-running transcription job (complete it normally).</summary>
-    public async Task<AgentJobResponse?> StopTranscriptionAsync(
-        Guid jobId, CancellationToken ct = default)
+    /// <summary>Stop a long-running job and complete it normally.</summary>
+    public async Task<AgentJobResponse?> StopAsync(
+        Guid jobId, string? requiredActionPrefix = null, CancellationToken ct = default)
     {
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (!IsTranscriptionActionKey(job.ActionKey))
+        if (!string.IsNullOrWhiteSpace(requiredActionPrefix)
+            && job.ActionKey?.StartsWith(requiredActionPrefix, StringComparison.OrdinalIgnoreCase) != true)
         {
-            AddLog(job, "Stop rejected: not a transcription job.", "Warning");
+            AddLog(job, "Stop rejected: job action does not match the requested action prefix.", "Warning");
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -296,23 +265,16 @@ public sealed class AgentJobService(
             return ToResponse(job);
         }
 
-        if (job.Status == AgentJobStatus.Executing)
-            orchestrator.Stop(jobId);
-
         job.Status = AgentJobStatus.Completed;
         job.CompletedAt = DateTimeOffset.UtcNow;
-        AddLog(job, "Transcription completed.");
+        AddLog(job, "Job stopped.");
         await db.SaveChangesAsync(ct);
-
-        CompleteChannel(jobId);
 
         return ToResponse(job);
     }
 
     /// <summary>
-    /// Pause a long-running job.  For transcription jobs this stops the
-    /// audio capture loop so no further inference calls (and therefore no
-    /// token costs) are incurred.  The job can be resumed later with
+    /// Pause a long-running job. The job can be resumed later with
     /// <see cref="ResumeAsync"/>.
     /// </summary>
     public async Task<AgentJobResponse?> PauseAsync(
@@ -328,9 +290,6 @@ public sealed class AgentJobService(
             return ToResponse(job);
         }
 
-        if (IsTranscriptionActionKey(job.ActionKey))
-            orchestrator.Stop(jobId);
-
         job.Status = AgentJobStatus.Paused;
         AddLog(job, "Job paused.");
         await db.SaveChangesAsync(ct);
@@ -339,8 +298,8 @@ public sealed class AgentJobService(
     }
 
     /// <summary>
-    /// Resume a previously paused job.  For transcription jobs this
-    /// restarts the audio capture and inference loop using the original
+    /// Resume a previously paused job. Module executors own their resume
+    /// semantics and restore any module-specific state using the original
     /// job parameters.
     /// </summary>
     public async Task<AgentJobResponse?> ResumeAsync(
@@ -359,9 +318,6 @@ public sealed class AgentJobService(
         job.Status = AgentJobStatus.Executing;
         AddLog(job, "Job resumed.");
         await db.SaveChangesAsync(ct);
-
-        if (IsTranscriptionActionKey(job.ActionKey))
-            await RestartTranscriptionAsync(job, ct);
 
         return ToResponse(job);
     }
@@ -382,15 +338,12 @@ public sealed class AgentJobService(
             j => j.ChannelId == channelId, ct,
             new ColdEntityStore.IndexFilter("ChannelId", channelId));
 
-        // Load related log entries and segments from disk.
+        // Load related log entries from disk.
         foreach (var job in jobs)
         {
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
                 l => l.AgentJobId == job.Id, ct,
                 new ColdEntityStore.IndexFilter("AgentJobId", job.Id));
-            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == job.Id, ct,
-                new ColdEntityStore.IndexFilter("AgentJobId", job.Id))).OrderBy(s => s.StartTime).ToList();
         }
 
         return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
@@ -417,14 +370,15 @@ public sealed class AgentJobService(
             .ToList();
     }
 
-    /// <summary>List transcription jobs, optionally filtered by input audio.</summary>
-    public async Task<IReadOnlyList<AgentJobResponse>> ListTranscriptionJobsAsync(
-        Guid? inputAudioId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
+        string actionKeyPrefix,
+        Guid? resourceId = null,
+        CancellationToken ct = default)
     {
         var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
             j => j.ActionKey != null
-                 && j.ActionKey.StartsWith("transcribe_from_audio")
-                 && (inputAudioId is null || j.ResourceId == inputAudioId),
+                 && j.ActionKey.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase)
+                 && (resourceId is null || j.ResourceId == resourceId),
             ct);
 
         foreach (var job in jobs)
@@ -432,12 +386,36 @@ public sealed class AgentJobService(
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
                 l => l.AgentJobId == job.Id, ct,
                 new ColdEntityStore.IndexFilter("AgentJobId", job.Id));
-            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == job.Id, ct,
-                new ColdEntityStore.IndexFilter("AgentJobId", job.Id))).OrderBy(s => s.StartTime).ToList();
         }
 
         return jobs.OrderByDescending(j => j.CreatedAt).Select(ToResponse).ToList();
+    }
+
+    public async Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
+        string actionKeyPrefix,
+        Guid? resourceId = null,
+        CancellationToken ct = default)
+    {
+        var jobs = await coldStore.QueryAllAsync<AgentJobDB>(
+            j => j.ActionKey != null
+                 && j.ActionKey.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase)
+                 && (resourceId is null || j.ResourceId == resourceId),
+            ct);
+
+        return jobs
+            .OrderByDescending(j => j.CreatedAt)
+            .Select(j => new AgentJobSummaryResponse(
+                j.Id, j.ChannelId, j.AgentId,
+                j.ActionKey, j.ResourceId, j.Status,
+                j.CreatedAt, j.StartedAt, j.CompletedAt))
+            .ToList();
+    }
+
+    public async Task<bool> JobExistsWithActionPrefixAsync(
+        Guid jobId, string actionKeyPrefix, CancellationToken ct = default)
+    {
+        var job = await LoadJobAsync(jobId, ct);
+        return job?.ActionKey?.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     /// <summary>Returns the session user ID, or <c>null</c> if not authenticated.</summary>
@@ -455,169 +433,6 @@ public sealed class AgentJobService(
         => DispatchPermissionCheckAsync(agentId, resourceId, caller, ct, actionKey);
 
     // ═══════════════════════════════════════════════════════════════
-    // Transcription: segments & streaming
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Pushes a new transcription segment into an executing job.
-    /// Called by the orchestrator each time a segment is recognised.
-    /// </summary>
-    public async Task<TranscriptionSegmentResponse?> PushSegmentAsync(
-        Guid jobId, string text, double startTime, double endTime,
-        double? confidence = null, bool isProvisional = false,
-        CancellationToken ct = default)
-    {
-        var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
-        if (job is null || job.Status != AgentJobStatus.Executing)
-            return null;
-
-        var segment = new TranscriptionSegmentDB
-        {
-            AgentJobId = jobId,
-            Text = text,
-            StartTime = startTime,
-            EndTime = endTime,
-            Confidence = confidence,
-            Timestamp = DateTimeOffset.UtcNow,
-            IsProvisional = isProvisional,
-        };
-
-        db.TranscriptionSegments.Add(segment);
-        await db.SaveChangesAsync(ct);
-
-        var response = new TranscriptionSegmentResponse(
-            segment.Id, segment.Text, segment.StartTime, segment.EndTime,
-            segment.Confidence, segment.Timestamp, segment.IsProvisional);
-
-        if (_channels.TryGetValue(jobId, out var channel))
-            await channel.Writer.WriteAsync(response, ct);
-
-        return response;
-    }
-
-    /// <summary>
-    /// Promotes a provisional segment to final, optionally updating its
-    /// text and confidence.  Pushes the updated segment to streaming
-    /// consumers so they can replace the provisional version in-place.
-    /// </summary>
-    public async Task<TranscriptionSegmentResponse?> FinalizeSegmentAsync(
-        Guid jobId, Guid segmentId, string text, double? confidence = null,
-        CancellationToken ct = default)
-    {
-        var segment = await db.TranscriptionSegments
-            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId, ct);
-        if (segment is null)
-            return null;
-
-        segment.Text = text;
-        segment.IsProvisional = false;
-        segment.Timestamp = DateTimeOffset.UtcNow;
-        if (confidence.HasValue)
-            segment.Confidence = confidence;
-
-        await db.SaveChangesAsync(ct);
-
-        var response = new TranscriptionSegmentResponse(
-            segment.Id, segment.Text, segment.StartTime, segment.EndTime,
-            segment.Confidence, segment.Timestamp, IsProvisional: false);
-
-        if (_channels.TryGetValue(jobId, out var channel))
-            await channel.Writer.WriteAsync(response, ct);
-
-        return response;
-    }
-
-    /// <summary>
-    /// Updates the text of a provisional segment without finalizing it.
-    /// Used to merge sentence-completion fragments into their parent
-    /// provisional instead of emitting a standalone segment.
-    /// </summary>
-    public async Task<bool> UpdateProvisionalTextAsync(
-        Guid jobId, Guid segmentId, string text,
-        CancellationToken ct = default)
-    {
-        var segment = await db.TranscriptionSegments
-            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId && s.IsProvisional, ct);
-        if (segment is null)
-            return false;
-
-        segment.Text = text;
-        segment.Timestamp = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(ct);
-
-        if (_channels.TryGetValue(jobId, out var channel))
-        {
-            var response = new TranscriptionSegmentResponse(
-                segment.Id, segment.Text, segment.StartTime, segment.EndTime,
-                segment.Confidence, segment.Timestamp, IsProvisional: true);
-            await channel.Writer.WriteAsync(response, ct);
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Removes a provisional segment that was not confirmed by later
-    /// inference ticks (likely a hallucination).  Deletes the DB record
-    /// and pushes a zero-length "retracted" event so streaming consumers
-    /// can remove it.
-    /// </summary>
-    public async Task RetractSegmentAsync(
-        Guid jobId, Guid segmentId, CancellationToken ct = default)
-    {
-        var segment = await db.TranscriptionSegments
-            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId, ct);
-        if (segment is null)
-            return;
-
-        db.TranscriptionSegments.Remove(segment);
-        await db.SaveChangesAsync(ct);
-
-        // Push a tombstone so streaming consumers know to remove it.
-        if (_channels.TryGetValue(jobId, out var channel))
-        {
-            var tombstone = new TranscriptionSegmentResponse(
-                segment.Id, string.Empty, segment.StartTime, segment.EndTime,
-                Confidence: null, Timestamp: DateTimeOffset.UtcNow,
-                IsProvisional: false);
-            await channel.Writer.WriteAsync(tombstone, ct);
-        }
-    }
-
-    /// <summary>
-    /// Returns a <see cref="ChannelReader{T}"/> for live segment updates.
-    /// </summary>
-    public ChannelReader<TranscriptionSegmentResponse>? Subscribe(Guid jobId)
-    {
-        return _channels.TryGetValue(jobId, out var channel)
-            ? channel.Reader
-            : null;
-    }
-
-    /// <summary>Retrieves segments added after a given timestamp.</summary>
-    public async Task<IReadOnlyList<TranscriptionSegmentResponse>> GetSegmentsSinceAsync(
-        Guid jobId, DateTimeOffset since, CancellationToken ct = default)
-    {
-        // Try EF first for current-session segments, fall back to cold store.
-        var segments = await db.TranscriptionSegments
-            .Where(s => s.AgentJobId == jobId && s.Timestamp > since)
-            .OrderBy(s => s.StartTime)
-            .ToListAsync(ct);
-
-        if (segments.Count == 0)
-        {
-            segments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == jobId && s.Timestamp > since, ct,
-                new ColdEntityStore.IndexFilter("AgentJobId", jobId)))
-                .OrderBy(s => s.StartTime)
-                .ToList();
-        }
-
-        return segments.Select(s => new TranscriptionSegmentResponse(
-            s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp)).ToList();
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // Execution
     // ═══════════════════════════════════════════════════════════════
 
@@ -630,12 +445,6 @@ public sealed class AgentJobService(
 
         try
         {
-            if (IsTranscriptionActionKey(job.ActionKey))
-            {
-                await StartTranscriptionAsync(job, ct);
-                return;
-            }
-
             var resultData = await DispatchExecutionAsync(job, ct);
             job.Status = AgentJobStatus.Completed;
             job.CompletedAt = DateTimeOffset.UtcNow;
@@ -651,78 +460,6 @@ public sealed class AgentJobService(
         }
 
         await db.SaveChangesAsync(ct);
-    }
-
-    private async Task StartTranscriptionAsync(AgentJobDB job, CancellationToken ct)
-    {
-        ModelDB model;
-        if (job.TranscriptionModelId is { } explicitModelId)
-        {
-            model = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == explicitModelId, ct)
-                ?? throw new InvalidOperationException($"Model {explicitModelId} not found.");
-
-            if (!model.Capabilities.HasFlag(ModelCapability.Transcription))
-                throw new InvalidOperationException(
-                    $"Model '{model.Name}' does not have the Transcription capability.");
-        }
-        else
-        {
-            // No explicit transcription model — use the agent's own model.
-            var agent = await db.Agents
-                .Include(a => a.Model).ThenInclude(m => m.Provider)
-                .FirstOrDefaultAsync(a => a.Id == job.AgentId, ct)
-                ?? throw new InvalidOperationException($"Agent {job.AgentId} not found.");
-
-            model = agent.Model;
-
-            if (!model.Capabilities.HasFlag(ModelCapability.Transcription))
-                throw new InvalidOperationException(
-                    $"Agent '{agent.Name}' uses model '{model.Name}' which does not have " +
-                    $"the Transcription capability. Either assign a transcription model to the " +
-                    $"agent or specify one explicitly with '--model <id>'.");
-        }
-
-        // Verify the provider has a transcription client implementation.
-        if (!orchestrator.SupportsProvider(model.Provider.ProviderType))
-            throw new InvalidOperationException(
-                $"Provider '{model.Provider.Name}' ({model.Provider.ProviderType}) does not " +
-                $"support transcription. Use a provider with a transcription implementation " +
-                $"(e.g. OpenAI Whisper, Groq, or a local Whisper GGML model).");
-
-        job.TranscriptionModelId = model.Id;
-
-        var device = await db.InputAudios.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException("Audio device not found.");
-
-        _channels.TryAdd(job.Id, Channel.CreateUnbounded<TranscriptionSegmentResponse>());
-
-        AddLog(job, $"Transcription started with model '{model.Name}' on device '{device.Name}'.");
-        await db.SaveChangesAsync(ct);
-
-        orchestrator.Start(
-            job.Id, model.Id, device.DeviceIdentifier, job.Language,
-            job.TranscriptionMode, job.WindowSeconds, job.StepSeconds);
-    }
-
-    /// <summary>
-    /// Restarts the transcription capture loop for a resumed job using
-    /// the parameters already persisted on the <see cref="AgentJobDB"/>.
-    /// </summary>
-    private async Task RestartTranscriptionAsync(AgentJobDB job, CancellationToken ct)
-    {
-        var modelId = job.TranscriptionModelId
-            ?? throw new InvalidOperationException("Paused transcription job has no model.");
-
-        var device = await db.InputAudios.FirstOrDefaultAsync(d => d.Id == job.ResourceId, ct)
-            ?? throw new InvalidOperationException("Audio device not found.");
-
-        _channels.TryAdd(job.Id, Channel.CreateUnbounded<TranscriptionSegmentResponse>());
-
-        orchestrator.Start(
-            job.Id, modelId, device.DeviceIdentifier, job.Language,
-            job.TranscriptionMode, job.WindowSeconds, job.StepSeconds);
     }
 
     private async Task<string?> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
@@ -771,8 +508,7 @@ public sealed class AgentJobService(
             AgentId: job.AgentId,
             ChannelId: job.ChannelId,
             ResourceId: job.ResourceId,
-            ActionKey: job.ActionKey,
-            Language: job.Language);
+            ActionKey: job.ActionKey);
 
         // External modules use their own per-module DI container;
         // bundled modules use the host's scope.
@@ -1006,22 +742,21 @@ public sealed class AgentJobService(
         var delegateTo = ResolveDelegateTo(actionKey);
 
         var ch = await db.Channels
-            .Include(c => c.DefaultResourceSet)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.DefaultResourceSet)
-            .Include(c => c.AgentContext)
+            .Include(c => c.DefaultResourceSet!).ThenInclude(drs => drs.Entries)
+            .Include(c => c.AgentContext!).ThenInclude(ctx => ctx.DefaultResourceSet!).ThenInclude(drs => drs.Entries)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct);
 
         // 1. Channel's DefaultResourceSet
         if (ch?.DefaultResourceSet is { } chDrs)
         {
-            var id = ExtractFromDefaultResourceSet(chDrs, delegateTo);
+            var id = ExtractFromDefaultResourceSet(chDrs, delegateTo, moduleRegistry);
             if (id.HasValue) return id;
         }
 
         // 2. Context's DefaultResourceSet
         if (ch?.AgentContext?.DefaultResourceSet is { } ctxDrs)
         {
-            var id = ExtractFromDefaultResourceSet(ctxDrs, delegateTo);
+            var id = ExtractFromDefaultResourceSet(ctxDrs, delegateTo, moduleRegistry);
             if (id.HasValue) return id;
         }
 
@@ -1062,48 +797,17 @@ public sealed class AgentJobService(
         return null;
     }
 
-    /// <summary>
-    /// Resolves the default transcription model from the channel/context
-    /// <see cref="DefaultResourceSetDB"/>.
-    /// </summary>
-    private async Task<Guid?> ResolveDefaultTranscriptionModelAsync(
-        Guid channelId, CancellationToken ct)
-    {
-        var ch = await db.Channels
-            .Include(c => c.DefaultResourceSet)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.DefaultResourceSet)
-            .FirstOrDefaultAsync(c => c.Id == channelId, ct);
-
-        if (ch?.DefaultResourceSet?.TranscriptionModelId is { } chModel)
-            return chModel;
-
-        if (ch?.AgentContext?.DefaultResourceSet?.TranscriptionModelId is { } ctxModel)
-            return ctxModel;
-
-        return null;
-    }
-
     private static Guid? ExtractFromDefaultResourceSet(
-        DefaultResourceSetDB drs, string? delegateTo) => delegateTo switch
+        DefaultResourceSetDB drs, string? delegateTo,
+        ModuleRegistry registry)
     {
-        "UnsafeExecuteAsDangerousShellAsync" => drs.DangerousShellResourceId,
-        "ExecuteAsSafeShellAsync" => drs.SafeShellResourceId,
-        "AccessContainerAsync" => drs.ContainerResourceId,
-        "AccessWebsiteAsync" => drs.WebsiteResourceId,
-        "QuerySearchEngineAsync" => drs.SearchEngineResourceId,
-        "AccessInternalDatabaseAsync" => drs.InternalDatabaseResourceId,
-        "AccessExternalDatabaseAsync" => drs.ExternalDatabaseResourceId,
-        "AccessInputAudioAsync" => drs.InputAudioResourceId,
-        "AccessDisplayDeviceAsync" => drs.DisplayDeviceResourceId,
-        "AccessEditorSessionAsync" => drs.EditorSessionResourceId,
-        "ManageAgentAsync" => drs.AgentResourceId,
-        "EditTaskAsync" => drs.TaskResourceId,
-        "AccessSkillAsync" => drs.SkillResourceId,
-        "AccessBotIntegrationAsync" => drs.BotIntegrationResourceId,
-        "AccessDocumentSessionAsync" => drs.DocumentSessionResourceId,
-        "LaunchNativeApplicationAsync" => drs.NativeApplicationResourceId,
-        _ => null,
-    };
+        if (delegateTo is null) return null;
+        var key = registry.GetDefaultResourceKeyForDelegate(delegateTo);
+        if (key is null) return null;
+        var entry = drs.Entries.FirstOrDefault(
+            e => string.Equals(e.ResourceKey, key, StringComparison.OrdinalIgnoreCase));
+        return entry?.ResourceId;
+    }
 
     /// <summary>
     /// Returns the resource ID from the matching default access entry on
@@ -1264,7 +968,6 @@ public sealed class AgentJobService(
         // Try EF first (current-session entities still tracked).
         var job = await db.AgentJobs
             .Include(j => j.LogEntries)
-            .Include(j => j.TranscriptionSegments.OrderBy(s => s.StartTime))
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
         if (job is not null)
             return job;
@@ -1276,9 +979,6 @@ public sealed class AgentJobService(
             job.LogEntries = await coldStore.QueryAllAsync<AgentJobLogEntryDB>(
                 l => l.AgentJobId == jobId, ct,
                 new ColdEntityStore.IndexFilter("AgentJobId", jobId));
-            job.TranscriptionSegments = (await coldStore.QueryAllAsync<TranscriptionSegmentDB>(
-                s => s.AgentJobId == jobId, ct,
-                new ColdEntityStore.IndexFilter("AgentJobId", jobId))).OrderBy(s => s.StartTime).ToList();
         }
 
         return job;
@@ -1298,19 +998,6 @@ public sealed class AgentJobService(
         caller.UserId is not null ? $"user {caller.UserId}"
         : caller.AgentId is not null ? $"agent {caller.AgentId}"
         : "unknown";
-
-    private static void CompleteChannel(Guid jobId)
-    {
-        if (_channels.TryRemove(jobId, out var channel))
-            channel.Writer.TryComplete();
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when the <paramref name="actionKey"/> corresponds
-    /// to a transcription tool (e.g. "transcribe_from_audio_device").
-    /// </summary>
-    private static bool IsTranscriptionActionKey(string? actionKey) =>
-        actionKey is not null && actionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase);
 
     private static AgentJobResponse ToResponse(AgentJobDB job)
     {
@@ -1338,23 +1025,8 @@ public sealed class AgentJobService(
             CreatedAt: job.CreatedAt,
             StartedAt: job.StartedAt,
             CompletedAt: job.CompletedAt,
-            DangerousShellType: job.DangerousShellType,
-            SafeShellType: job.SafeShellType,
             ScriptJson: job.ScriptJson,
             WorkingDirectory: job.WorkingDirectory,
-            TranscriptionModelId: job.TranscriptionModelId,
-            Language: job.Language,
-            TranscriptionMode: job.TranscriptionMode,
-            WindowSeconds: job.WindowSeconds,
-            StepSeconds: job.StepSeconds,
-            Segments: IsTranscriptionActionKey(job.ActionKey)
-                ? job.TranscriptionSegments
-                    .OrderBy(s => s.StartTime)
-                    .Select(s => new TranscriptionSegmentResponse(
-                        s.Id, s.Text, s.StartTime, s.EndTime, s.Confidence, s.Timestamp,
-                        s.IsProvisional))
-                    .ToList()
-                : null,
             JobCost: jobCost);
     }
 

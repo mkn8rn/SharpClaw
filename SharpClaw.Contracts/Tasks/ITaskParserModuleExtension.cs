@@ -10,19 +10,24 @@ public interface ITaskParserModuleExtension
 {
     /// <summary>
     /// Maps context-API method names (as they appear in task scripts) to a
-    /// <see cref="TaskStepKind"/> value and the owning module ID.
+    /// module-owned step key and the owning module ID.
+    /// The parser records <see cref="TaskStepKind.ModuleStep"/> on the step
+    /// and stores the key in <c>TaskStepDefinition.ModuleStepKey</c>.
     /// </summary>
-    IReadOnlyDictionary<string, (TaskStepKind Kind, string ModuleId)> StepKindMappings { get; }
+    IReadOnlyDictionary<string, (string StepKey, string ModuleId)> StepKeyMappings { get; }
 
     /// <summary>
     /// Maps event-handler method names (as they appear in task scripts) to a
-    /// <see cref="TaskTriggerKind"/> value and the owning module ID.
+    /// module-owned trigger key and the owning module ID.
+    /// The parser records <see cref="TaskTriggerKind.ModuleEvent"/> on the
+    /// step and stores the key in <c>TaskStepDefinition.ModuleTriggerKey</c>.
     /// </summary>
-    IReadOnlyDictionary<string, (TaskTriggerKind Kind, string ModuleId)> EventTriggerMappings { get; }
+    IReadOnlyDictionary<string, (string TriggerKey, string ModuleId)> EventTriggerMappings { get; }
 
     /// <summary>
-    /// Method names in <see cref="StepKindMappings"/> whose first argument
+    /// Method names in <see cref="StepKeyMappings"/> whose first argument
     /// should be captured as <c>Expression</c> on the parsed step.
     /// </summary>
     IReadOnlySet<string> SingleArgExpressionMethods { get; }
 }
+

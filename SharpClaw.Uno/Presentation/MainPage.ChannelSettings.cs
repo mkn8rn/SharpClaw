@@ -139,10 +139,13 @@ public sealed partial class MainPage
                 using var defStream = await defResp.Content.ReadAsStreamAsync();
                 using var defDoc = await JsonDocument.ParseAsync(defStream);
                 var defRoot = defDoc.RootElement;
-                if (defRoot.TryGetProperty("documentSessionResourceId", out var dsId) && dsId.ValueKind == JsonValueKind.String)
-                    defaultDocSessionId = dsId.GetGuid();
-                if (defRoot.TryGetProperty("nativeApplicationResourceId", out var naId) && naId.ValueKind == JsonValueKind.String)
-                    defaultNativeAppId = naId.GetGuid();
+                if (defRoot.TryGetProperty("entries", out var entries) && entries.ValueKind == JsonValueKind.Object)
+                {
+                    if (entries.TryGetProperty("document", out var dsId) && dsId.ValueKind == JsonValueKind.String)
+                        defaultDocSessionId = dsId.GetGuid();
+                    if (entries.TryGetProperty("nativeapp", out var naId) && naId.ValueKind == JsonValueKind.String)
+                        defaultNativeAppId = naId.GetGuid();
+                }
             }
         }
         catch { /* non-critical */ }

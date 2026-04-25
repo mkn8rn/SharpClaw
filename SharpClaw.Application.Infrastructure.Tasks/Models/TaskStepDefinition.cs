@@ -35,7 +35,7 @@ public sealed record TaskStepDefinition
 
     /// <summary>
     /// Variable that stores the result of this step.  Used by steps
-    /// that produce a value (Chat, StartTranscription, ParseResponse …).
+    /// that produce a value (Chat, Emit, ParseResponse …).
     /// </summary>
     public string? ResultVariable { get; init; }
 
@@ -53,7 +53,7 @@ public sealed record TaskStepDefinition
 
     /// <summary>
     /// Positional arguments: variable references or literal values
-    /// passed to context-API steps (StartTranscription, Emit, etc.).
+    /// passed to context-API steps (Chat, Emit, ModuleStep, etc.).
     /// </summary>
     public IReadOnlyList<string>? Arguments { get; init; }
 
@@ -63,6 +63,18 @@ public sealed record TaskStepDefinition
     /// Trigger kind for <see cref="TaskStepKind.EventHandler"/>.
     /// </summary>
     public TaskTriggerKind? TriggerKind { get; init; }
+
+    /// <summary>
+    /// Module-owned trigger key when <see cref="TriggerKind"/> is
+    /// <see cref="TaskTriggerKind.ModuleEvent"/>.
+    /// </summary>
+    public string? ModuleTriggerKey { get; init; }
+
+    /// <summary>
+    /// Module-owned step key when <see cref="Kind"/> is
+    /// <see cref="TaskStepKind.ModuleStep"/>.
+    /// </summary>
+    public string? ModuleStepKey { get; init; }
 
     /// <summary>
     /// Lambda parameter name for event-handler callbacks.

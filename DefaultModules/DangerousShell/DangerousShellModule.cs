@@ -2,8 +2,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
+using SharpClaw.Modules.DangerousShell.Contracts;
 using SharpClaw.Modules.DangerousShell.Models;
 
 namespace SharpClaw.Modules.DangerousShell;
@@ -26,7 +27,8 @@ public sealed class DangerousShellModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddDbContext<DangerousShellDbContext>();
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<DangerousShellDbContext>());
     }
 
     // ═══════════════════════════════════════════════════════════════

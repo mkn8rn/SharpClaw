@@ -1,5 +1,4 @@
 using SharpClaw.Application.Infrastructure.Models.Context;
-using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
@@ -32,17 +31,6 @@ public class AgentJobDB : BaseEntity
     public string? ActionKey { get; set; }
 
     public Guid? ResourceId { get; set; }
-
-    // ── Shell type (for shell execution actions) ──────────────────
-    //
-    //  Safe (ExecuteAsSafeShell)     → mk8.shell only (sandboxed DSL).
-    //  Dangerous (UnsafeExecuteAs…)  → real Bash/PowerShell/Cmd/Git.
-    //
-    //  mk8.shell is ALWAYS safe.  Bash/PowerShell/Cmd/Git are ALWAYS
-    //  dangerous.  There is no crossover.
-    //
-    public DangerousShellType? DangerousShellType { get; set; }
-    public SafeShellType? SafeShellType { get; set; }
 
     /// <summary>
     /// Payload submitted with the job.  The format depends on the
@@ -89,35 +77,10 @@ public class AgentJobDB : BaseEntity
     public Guid? ApprovedByUserId { get; set; }
     public Guid? ApprovedByAgentId { get; set; }
 
-    // ── Transcription ───────────────────────────────────────────
-    public Guid? TranscriptionModelId { get; set; }
-    public ModelDB? TranscriptionModel { get; set; }
-
-    /// <summary>
-    /// Pipeline mode: <see cref="Enums.TranscriptionMode.SlidingWindow"/>
-    /// (overlapping, two-pass) or <see cref="Enums.TranscriptionMode.StrictWindow"/>
-    /// (sequential full windows, final-only).  Null = default (SlidingWindow).
-    /// </summary>
-    public TranscriptionMode? TranscriptionMode { get; set; }
-
-    /// <summary>
-    /// Seconds of audio sent to Whisper per inference tick.  Null = default.
-    /// </summary>
-    public int? WindowSeconds { get; set; }
-
-    /// <summary>
-    /// Seconds between inference ticks.  Null = default.  In StrictWindow
-    /// mode this is ignored (step equals window — no overlap).
-    /// </summary>
-    public int? StepSeconds { get; set; }
-
     // ── Channel (required — every job belongs to a channel) ───
     public Guid ChannelId { get; set; }
     public ChannelDB Channel { get; set; } = null!;
 
-    public string? Language { get; set; }
-
     // ── Logs ──────────────────────────────────────────────────────
     public ICollection<AgentJobLogEntryDB> LogEntries { get; set; } = [];
-    public ICollection<TranscriptionSegmentDB> TranscriptionSegments { get; set; } = [];
 }

@@ -5,8 +5,12 @@ namespace SharpClaw.Contracts.Tasks;
 /// </summary>
 public enum TaskTriggerKind
 {
-    /// <summary>Fired when a transcription job produces a new segment.</summary>
-    TranscriptionSegment,
+    /// <summary>
+    /// A trigger owned by a module. The module trigger key is stored
+    /// alongside this discriminator in <c>TaskStepDefinition.ModuleTriggerKey</c>
+    /// and in <c>ITaskEventHandler.ModuleTriggerKey</c>.
+    /// </summary>
+    ModuleEvent,
 
     /// <summary>Fired on a periodic timer interval.</summary>
     Timer,

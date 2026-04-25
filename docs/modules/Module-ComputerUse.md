@@ -48,6 +48,11 @@ input simulation (mouse clicks, keyboard typing, hotkeys), clipboard
 access, display capture, and process control. All tools in this module
 are **Windows only** and use Win32 APIs under the hood.
 
+This module also owns the desktop-facing task trigger sources. If a task uses
+`[OnWindowFocused]`, `[OnHotkey]`, `[OnSystemIdle]`, `[OnProcessStarted]`,
+`[OnDeviceConnected]`, or `[OsShortcut]`, Computer Use is the module that provides
+those runtime integrations.
+
 Tools are dispatched via the SharpClaw module system
 (`AgentActionType = ModuleAction`). Tool names are prefixed with `cu_`
 when sent to the model — for example, `capture_display` becomes
@@ -72,6 +77,7 @@ when sent to the model — for example, `capture_display` becomes
   - [cu_write_clipboard](#cu_write_clipboard)
   - [cu_stop_process](#cu_stop_process)
 - [CLI Commands](#cli-commands)
+- [Task trigger support](#task-trigger-support)
 - [Resource Dependencies](#resource-dependencies)
 - [Role Permissions](#role-permissions)
 - [Exported Contracts](#exported-contracts)
@@ -327,6 +333,34 @@ must match a registered native application (by resource ID or alias).
 
 **Permission:** Per-resource — requires `nativeApplicationAccesses`
 grant.
+
+---
+
+## Task trigger support
+
+Computer Use is the owner of these task trigger attributes:
+
+| Attribute | Purpose |
+|---|---|
+| `[OnWindowFocused]`, `[OnWindowBlurred]` | React to foreground window changes |
+| `[OnHotkey]` | React to a registered OS hotkey |
+| `[OnSystemIdle]`, `[OnSystemActive]` | React to user idle/active state |
+| `[OnScreenLocked]`, `[OnScreenUnlocked]` | React to desktop session lock state |
+| `[OnDeviceConnected]`, `[OnDeviceDisconnected]` | React to hardware changes |
+| `[OnProcessStarted]`, `[OnProcessStopped]` | React to process lifecycle changes |
+| `[OsShortcut]` | Install an OS launcher for the task |
+
+If this module is disabled, those attributes still parse and can be stored in task
+definitions, but task preflight warns that `sharpclaw_computer_use` is recommended and
+the trigger source does not appear in `task trigger-sources`.
+
+Typical workflow:
+
+1. Enable the module.
+2. Create or update the task definition.
+3. Run `task preflight <taskId>` to confirm there are no blocking findings.
+4. Run `task trigger-sources` to verify the source is present.
+5. Use `task shortcuts install <taskId>` for tasks that declare `[OsShortcut]`.
 
 ---
 

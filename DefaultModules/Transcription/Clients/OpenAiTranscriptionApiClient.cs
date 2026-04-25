@@ -18,6 +18,8 @@ public class OpenAiTranscriptionApiClient : ITranscriptionApiClient
 
     public virtual ProviderType ProviderType => ProviderType.OpenAI;
 
+    public virtual bool IsLocalInference => false;
+
     private const int MaxRetries = 3;
     private static readonly TimeSpan InitialBackoff = TimeSpan.FromSeconds(2);
 

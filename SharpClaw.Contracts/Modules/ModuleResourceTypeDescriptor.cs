@@ -14,18 +14,15 @@ namespace SharpClaw.Contracts.Modules;
 /// </para>
 /// </summary>
 /// <param name="ResourceType">
-/// String discriminator stored in <c>ResourceAccessDB.ResourceType</c>
-/// (e.g. <c>"DsShell"</c>, <c>"WaWebsite"</c>). Must be unique across
-/// all modules.
+/// String discriminator stored in <c>ResourceAccessDB.ResourceType</c>.
+/// Must be unique across all modules.
 /// </param>
 /// <param name="GrantLabel">
-/// Human-readable label used in the chat header grant list
-/// (e.g. <c>"DangerousShell"</c>, <c>"WebsiteAccess"</c>).
+/// Human-readable label used in the chat header grant list.
 /// </param>
 /// <param name="DelegateMethodName">
 /// The <c>DelegateTo</c> method name that maps to this resource type
-/// in the permission evaluation pipeline (e.g.
-/// <c>"UnsafeExecuteAsDangerousShellAsync"</c> → <c>"DsShell"</c>).
+/// in the permission evaluation pipeline.
 /// <c>AgentActionService</c> uses this to resolve per-resource
 /// permission checks dynamically at runtime.
 /// </param>
@@ -40,9 +37,18 @@ namespace SharpClaw.Contracts.Modules;
 /// generic <c>GET /resources/lookup/{type}</c> endpoint.  When <c>null</c>
 /// the lookup endpoint omits this resource type.
 /// </param>
+/// <param name="DefaultResourceKey">
+/// Optional case-insensitive key used in the generic default-resource
+/// registry (e.g. <c>"container"</c>, <c>"website"</c>).  When set,
+/// callers may reference this resource type by this short key when
+/// configuring per-channel or per-context defaults.  Must be unique
+/// across all registered modules.  When <c>null</c> the resource type
+/// is not addressable as a default resource entry.
+/// </param>
 public sealed record ModuleResourceTypeDescriptor(
     string ResourceType,
     string GrantLabel,
     string DelegateMethodName,
     Func<IServiceProvider, CancellationToken, Task<List<Guid>>> LoadAllIds,
-    Func<IServiceProvider, CancellationToken, Task<List<(Guid Id, string Name)>>>? LoadLookupItems = null);
+    Func<IServiceProvider, CancellationToken, Task<List<(Guid Id, string Name)>>>? LoadLookupItems = null,
+    string? DefaultResourceKey = null);

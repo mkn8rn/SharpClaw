@@ -36,6 +36,15 @@ OVERVIEW
 Desktop awareness, window management, input simulation, clipboard access,
 display capture, and process control. All tools are Windows-only.
 
+Also owns task trigger sources for:
+  [OnWindowFocused], [OnWindowBlurred], [OnHotkey], [OnSystemIdle],
+  [OnSystemActive], [OnScreenLocked], [OnScreenUnlocked],
+  [OnDeviceConnected], [OnDeviceDisconnected], [OnProcessStarted],
+  [OnProcessStopped], [OsShortcut]
+
+If the module is disabled, task registration can still succeed, but preflight warns with
+RecommendsModule(sharpclaw_computer_use) and the source is absent from task trigger-sources.
+
 Tools are dispatched via the module system (AgentActionType = ModuleAction).
 Tool names are prefixed with "cu_" when sent to the model.
 

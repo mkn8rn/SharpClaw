@@ -5,8 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Contracts.DTOs.Transcription;
-using SharpClaw.Contracts.Modules;
+using SharpClaw.Modules.Transcription.Contracts;
 
 namespace SharpClaw.Modules.Transcription.Handlers;
 
@@ -48,8 +47,8 @@ public static class TranscriptionWebSocketEndpoints
             return;
         }
 
-        var sink = context.RequestServices.GetRequiredService<ITranscriptionJobSink>();
-        var reader = sink.Subscribe(jobId);
+        var publisher = context.RequestServices.GetRequiredService<ITranscriptionSegmentPublisher>();
+        var reader = publisher.Subscribe(jobId);
         if (reader is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -96,8 +95,8 @@ public static class TranscriptionWebSocketEndpoints
             return;
         }
 
-        var sink = context.RequestServices.GetRequiredService<ITranscriptionJobSink>();
-        var reader = sink.Subscribe(jobId);
+        var publisher = context.RequestServices.GetRequiredService<ITranscriptionSegmentPublisher>();
+        var reader = publisher.Subscribe(jobId);
         if (reader is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.DisplayDevices;
+using SharpClaw.Modules.ComputerUse.Dtos;
 using SharpClaw.Modules.ComputerUse.Services;
 
 namespace SharpClaw.Modules.ComputerUse.Handlers;

@@ -2,7 +2,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.BotIntegration.Contracts;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Utils.Security;
 

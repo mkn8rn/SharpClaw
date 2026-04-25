@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.DTOs.Databases;
+using SharpClaw.Modules.DatabaseAccess.Dtos;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.DatabaseAccess.Models;
 using SharpClaw.Utils.Security;

@@ -6,8 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Modules.OfficeApps.Services;
 using SharpClaw.Modules.OfficeApps.Handlers;
-using SharpClaw.Contracts.DTOs.Documents;
+using SharpClaw.Modules.OfficeApps.Dtos;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Modules.OfficeApps;
@@ -28,6 +29,8 @@ public sealed class OfficeAppsModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<OfficeAppsDbContext>());
         services.AddScoped<DocumentSessionService>();
         services.AddSingleton<SpreadsheetService>();
         if (OperatingSystem.IsWindows())
@@ -55,7 +58,7 @@ public sealed class OfficeAppsModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<OfficeAppsDbContext>();
             return await db.DocumentSessions.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
-        }),
+        }, DefaultResourceKey: "document"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

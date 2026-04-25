@@ -12,6 +12,13 @@ public interface ITranscriptionApiClient
     ProviderType ProviderType { get; }
 
     /// <summary>
+    /// True for clients that perform inference locally (e.g. Whisper.net),
+    /// where the "model" parameter is a file path rather than a remote model ID
+    /// and no API key is required.
+    /// </summary>
+    bool IsLocalInference { get; }
+
+    /// <summary>
     /// Transcribes a chunk of audio data.
     /// </summary>
     /// <param name="httpClient">Shared HTTP client.</param>

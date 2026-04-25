@@ -36,6 +36,11 @@ types (MongoDB, Redis, CosmosDB, Oracle, Firebird, Custom) can be
 registered but are not yet query-capable. External connection strings
 are AES-GCM encrypted at rest.
 
+Also owns the task trigger source for [OnQueryReturnsRows]. If the module is disabled,
+task registration still succeeds, but preflight warns with
+RecommendsModule(sharpclaw_database_access) and the trigger source is absent from
+task trigger-sources.
+
 Tools are dispatched via the module system (AgentActionType = ModuleAction).
 Tool names are prefixed with "db_" when sent to the model.
 

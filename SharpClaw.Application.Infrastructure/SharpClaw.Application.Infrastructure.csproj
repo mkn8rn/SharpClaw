@@ -39,8 +39,4 @@
     <!-- .env files registered dynamically by Directory.Build.targets (_RegisterEnvironmentContent) -->
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Shell\" />
-  </ItemGroup>
-
 </Project>

@@ -21,7 +21,8 @@ public sealed class JsonFilePersistenceService(
     EncryptionOptions encryptionOptions,
     ILogger<JsonFilePersistenceService> logger,
     DirectoryLockManager? directoryLockManager = null,
-    TransactionQueue? transactionQueue = null)
+    TransactionQueue? transactionQueue = null,
+    IEnumerable<IModuleColdIndexContributor>? coldIndexContributors = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -30,6 +31,9 @@ public sealed class JsonFilePersistenceService(
         ReferenceHandler = ReferenceHandler.IgnoreCycles,
         Converters = { new NumericOrStringEnumConverterFactory(), new NullableGuidConverter() }
     };
+
+    private readonly ModuleColdIndexRegistry _coldIndexRegistry =
+        new(coldIndexContributors ?? []);
 
     /// <summary>
     /// Lazily-built lookup: CLR type → list of navigation PropertyInfos.
@@ -365,7 +369,8 @@ public sealed class JsonFilePersistenceService(
                         {
                             await ColdEntityIndex.UpdateIndexAsync(
                                 fs, dirPath, clrType.Name, id, entity: null,
-                                deleted: true, logger, ct);
+                                deleted: true, logger, ct,
+                                _coldIndexRegistry.GetIndexedProperties());
                         }
                     }
                     else
@@ -385,7 +390,8 @@ public sealed class JsonFilePersistenceService(
                             {
                                 await ColdEntityIndex.UpdateIndexAsync(
                                     fs, dirPath, clrType.Name, id, entity,
-                                    deleted: false, logger, ct);
+                                    deleted: false, logger, ct,
+                                    _coldIndexRegistry.GetIndexedProperties());
                             }
                         }
                     }
@@ -860,6 +866,8 @@ public sealed class JsonFilePersistenceService(
         {
             // ProviderType.Local was renamed to ProviderType.LlamaSharp (numeric value 13 unchanged).
             ["ProviderType.Local"] = "LlamaSharp",
+            // ProviderType.Whisper was removed; migrate persisted rows to Custom.
+            ["ProviderType.Whisper"] = "Custom",
         };
 
         public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -930,6 +938,7 @@ public sealed class JsonFilePersistenceService(
     /// </summary>
     public async Task RebuildColdIndexesAsync(CancellationToken ct = default)
     {
+        var mergedIndex = _coldIndexRegistry.GetIndexedProperties();
         var tasks = new List<Task>();
         foreach (var coldType in options.ColdEntityTypes)
         {
@@ -940,7 +949,7 @@ public sealed class JsonFilePersistenceService(
             tasks.Add(ColdEntityIndex.RebuildIndexAsync(
                 fs, entityDir, coldType.Name, coldType,
                 encryptionOptions.Key, ColdEntityStore.JsonOptions,
-                logger, ct));
+                logger, ct, mergedIndex));
         }
 
         if (tasks.Count > 0)

@@ -51,11 +51,6 @@ public enum ProviderType
     GoogleVertexAIOpenAi = 16,
 
     /// <summary>
-    /// In-process speech-to-text transcription via Whisper.net.
-    /// </summary>
-    Whisper = 17,
-
-    /// <summary>
     /// User-managed Ollama server (OpenAI-compatible HTTP API).
     /// Default endpoint: <c>http://localhost:11434</c>.
     /// </summary>

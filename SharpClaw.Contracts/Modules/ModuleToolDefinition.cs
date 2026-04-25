@@ -29,8 +29,7 @@ public sealed record ModuleToolDefinition(
     /// Optional alias names that resolve to this tool in the registry.
     /// When set, <see cref="ModuleRegistry"/> emits these names instead of
     /// the prefixed canonical name in <c>GetAllToolDefinitions()</c>.
-    /// Used for backwards compatibility when migrating tools that keep
-    /// their original names (e.g. "execute_mk8_shell" instead of "sh_execute").
+    /// Used for backwards compatibility when migrating tools to a new canonical name.
     /// </summary>
     IReadOnlyList<string>? Aliases = null
 );

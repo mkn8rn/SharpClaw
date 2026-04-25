@@ -259,7 +259,6 @@ public sealed class SeedingService(
     private static string DisplayNameFor(ProviderType pt) => pt switch
     {
         ProviderType.LlamaSharp => "LlamaSharp (Local)",
-        ProviderType.Whisper    => "Whisper (Local)",
         _                       => pt.ToString(),
     };
 

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using SharpClaw.Contracts.DTOs.Websites;
+using SharpClaw.Modules.WebAccess.Dtos;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.WebAccess.Models;
 using SharpClaw.Utils.Security;

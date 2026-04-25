@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Http;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.DTOs.Transcription;
 
 namespace SharpClaw.Application.API.Handlers;
 
@@ -50,7 +49,7 @@ public static class AgentJobHandlers
     public static async Task<IResult> Stop(
         Guid channelId, Guid jobId, AgentJobService svc, ChatService chatSvc)
     {
-        var job = await svc.StopTranscriptionAsync(jobId);
+        var job = await svc.StopAsync(jobId);
         if (job is null) return Results.NotFound();
         var cost = await chatSvc.GetChannelCostAsync(job.ChannelId);
         return Results.Ok(job with { ChannelCost = cost });
@@ -86,21 +85,4 @@ public static class AgentJobHandlers
         return Results.Ok(job with { ChannelCost = cost });
     }
 
-    [MapPost("/{jobId:guid}/segments")]
-    public static async Task<IResult> PushSegment(
-        Guid channelId, Guid jobId, PushSegmentRequest request, AgentJobService svc)
-    {
-        var segment = await svc.PushSegmentAsync(
-            jobId, request.Text, request.StartTime, request.EndTime, request.Confidence);
-        return segment is not null ? Results.Ok(segment) : Results.NotFound();
     }
-
-    [MapGet("/{jobId:guid}/segments")]
-    public static async Task<IResult> GetSegments(
-        Guid channelId, Guid jobId, AgentJobService svc, DateTimeOffset? since = null)
-    {
-        var segments = await svc.GetSegmentsSinceAsync(
-            jobId, since ?? DateTimeOffset.MinValue);
-        return Results.Ok(segments);
-    }
-}

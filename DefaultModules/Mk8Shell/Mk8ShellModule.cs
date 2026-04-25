@@ -2,19 +2,17 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-
 using Mk8.Shell.Engine;
 using Mk8.Shell.Models;
 using Mk8.Shell.Safety;
 using Mk8.Shell.Startup;
-using SharpClaw.Contracts.DTOs.Containers;
-using SharpClaw.Contracts.Entities;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.Mk8Shell.Contracts;
+using SharpClaw.Modules.Mk8Shell.Dtos;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.Mk8Shell.Services;
 using SharpClaw.Modules.Mk8Shell.Handlers;
 
@@ -31,8 +29,10 @@ public sealed class Mk8ShellModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddDbContext<Mk8ShellDbContext>();
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<Mk8ShellDbContext>());
         services.AddScoped<ContainerService>();
+        services.AddScoped<IContainerSandboxResolver, ContainerSandboxResolver>();
     }
 
     public void MapEndpoints(object app)
@@ -68,7 +68,8 @@ public sealed class Mk8ShellModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<Mk8ShellDbContext>();
             return await db.Containers.Select(c => new ValueTuple<Guid, string>(c.Id, c.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "container"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

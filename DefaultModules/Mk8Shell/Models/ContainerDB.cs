@@ -1,5 +1,5 @@
 using SharpClaw.Contracts.Entities;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.Mk8Shell.Contracts;
 
 namespace SharpClaw.Modules.Mk8Shell.Models;
 
