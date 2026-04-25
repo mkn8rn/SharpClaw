@@ -19,4 +19,8 @@
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Bots\" />
+  </ItemGroup>
+
 </Project>

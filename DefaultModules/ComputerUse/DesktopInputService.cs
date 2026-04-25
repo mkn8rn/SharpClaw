@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using SharpClaw.Contracts.Modules.Contracts;
+using SharpClaw.Modules.ComputerUse.Contracts;
 
 namespace SharpClaw.Modules.ComputerUse;
 

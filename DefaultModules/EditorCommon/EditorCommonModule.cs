@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.EditorCommon.Handlers;
 using SharpClaw.Modules.EditorCommon.Services;
 
@@ -39,6 +40,8 @@ public sealed class EditorCommonModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<EditorCommonDbContext>());
         services.AddSingleton<EditorBridgeService>();
         services.AddScoped<EditorSessionService>();
     }

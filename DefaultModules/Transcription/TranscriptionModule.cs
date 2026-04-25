@@ -2,14 +2,15 @@ using System.Text.Json;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
-using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.Transcription.Clients;
+using SharpClaw.Modules.Transcription.Contracts;
+using SharpClaw.Modules.Transcription.DTOs;
 using SharpClaw.Modules.Transcription.Handlers;
 using SharpClaw.Modules.Transcription.LocalInference;
 using SharpClaw.Modules.Transcription.Models;
@@ -50,7 +51,14 @@ public sealed class TranscriptionModule : ISharpClawModule, ITaskParserAware
         services.AddSingleton<LiveTranscriptionOrchestrator>();
         services.AddSingleton<ILiveTranscriptionOrchestrator>(sp =>
             sp.GetRequiredService<LiveTranscriptionOrchestrator>());
+        services.AddSingleton<ITranscriptionSegmentPublisher>(sp =>
+            sp.GetRequiredService<LiveTranscriptionOrchestrator>());
+        services.AddScoped<TranscriptionTaskBridge>();
+        services.AddSingleton<TranscriptionJobSink>();
         services.AddScoped<TranscriptionService>();
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<TranscriptionDbContext>());
+        services.AddScoped<ITaskStepExecutorExtension, TranscriptionTaskStepExecutor>();
 
         // Shared services this module may also need
     }
@@ -84,7 +92,7 @@ public sealed class TranscriptionModule : ISharpClawModule, ITaskParserAware
         {
             var db = sp.GetRequiredService<TranscriptionDbContext>();
             return await db.InputAudios.Select(a => new ValueTuple<Guid, string>(a.Id, a.Name)).ToListAsync(ct);
-        }),
+        }, DefaultResourceKey: "inputaudio"),
     ];
 
     // ═══════════════════════════════════════════════════════════════
@@ -251,26 +259,85 @@ public sealed class TranscriptionModule : ISharpClawModule, ITaskParserAware
     // Tool Execution
     // ═══════════════════════════════════════════════════════════════
 
-    public Task<string> ExecuteToolAsync(
+    public async Task<string> ExecuteToolAsync(
         string toolName, JsonElement parameters, AgentJobContext job,
         IServiceProvider sp, CancellationToken ct)
     {
-        // Transcription jobs use the core IsTranscriptionAction path in
-        // AgentJobService.ExecuteJobAsync, which calls StartTranscriptionAsync
-        // directly via ILiveTranscriptionOrchestrator. ActionKey-based
-        // transcription submissions are intercepted before dispatch reaches
-        // the module. Return a confirmation string for any edge case that
-        // does reach here.
-        return Task.FromResult(toolName switch
+        var orchestrator = sp.GetRequiredService<ILiveTranscriptionOrchestrator>();
+
+        if (toolName is "transcribe_audio_device" or "transcribe_from_audio_device"
+                     or "transcribe_audio_stream" or "transcribe_audio_file")
         {
-            "transcribe_audio_device" or "transcribe_from_audio_device"
-                => "Transcription started via orchestrator.",
-            "transcribe_audio_stream"
-                => "Transcription started via orchestrator.",
-            "transcribe_audio_file"
-                => "Transcription started via orchestrator.",
-            _ => throw new InvalidOperationException($"Unknown Transcription tool: {toolName}"),
-        });
+            var modelInfoProvider = sp.GetRequiredService<IModelInfoProvider>();
+            var db = sp.GetRequiredService<TranscriptionDbContext>();
+
+            var deviceId = job.ResourceId
+                ?? throw new InvalidOperationException("transcribe_audio_device requires a ResourceId (audio device).");
+
+            // Resolve model: explicit modelId parameter, else agent model.
+            Guid modelId;
+            if (parameters.TryGetProperty("modelId", out var modelIdProp)
+                && modelIdProp.TryGetGuid(out var explicitModelId))
+            {
+                modelId = explicitModelId;
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Agent {job.AgentId} has no model configured; pass modelId explicitly.");
+            }
+
+            var modelInfo = await modelInfoProvider.GetModelProviderInfoAsync(modelId, ct)
+                ?? throw new InvalidOperationException($"Model {modelId} not found.");
+
+
+
+            if (!orchestrator.SupportsProvider(modelInfo.ProviderType))
+                throw new InvalidOperationException(
+                    $"Provider ({modelInfo.ProviderType}) does not support transcription.");
+
+            // Read transcription parameters from the tool call.
+            var language = parameters.TryGetProperty("language", out var langProp) ? langProp.GetString() : null;
+
+            TranscriptionMode? mode = null;
+            if (parameters.TryGetProperty("mode", out var modeProp)
+                && modeProp.GetString() is { } modeStr
+                && Enum.TryParse<TranscriptionMode>(modeStr, ignoreCase: true, out var parsedMode))
+                mode = parsedMode;
+
+            int? windowSeconds = null;
+            if (parameters.TryGetProperty("windowSeconds", out var wsProp)
+                && wsProp.TryGetInt32(out var ws))
+                windowSeconds = ws;
+
+            int? stepSeconds = null;
+            if (parameters.TryGetProperty("stepSeconds", out var ssProp)
+                && ssProp.TryGetInt32(out var ss))
+                stepSeconds = ss;
+
+            // Persist module-owned job params.
+            var txJob = new TranscriptionJobDB
+            {
+                AgentJobId = job.JobId,
+                ModelId = modelId,
+                DeviceId = deviceId,
+                Language = language,
+                Mode = mode,
+                WindowSeconds = windowSeconds,
+                StepSeconds = stepSeconds,
+            };
+            db.TranscriptionJobs.Add(txJob);
+            await db.SaveChangesAsync(ct);
+
+            orchestrator.Start(
+                job.JobId, modelId, deviceId,
+                language, mode, windowSeconds, stepSeconds);
+
+            // Transcription jobs remain in Executing status until stopped.
+            return "Transcription started.";
+        }
+
+        throw new InvalidOperationException($"Unknown Transcription tool: {toolName}");
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -314,7 +381,7 @@ public sealed class TranscriptionModule : ISharpClawModule, ITaskParserAware
 
         // Reconcile transcription jobs left in Executing/Queued from a previous session.
         // No orchestrator loops survive a restart, so these are guaranteed stale.
-        var sink = services.GetService<ITranscriptionJobSink>();
+        var sink = services.GetService<TranscriptionJobSink>();
         if (sink is not null)
             await sink.CancelStaleTranscriptionJobsAsync(ct);
     }

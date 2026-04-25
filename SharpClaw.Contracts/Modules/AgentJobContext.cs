@@ -11,6 +11,5 @@ public sealed record AgentJobContext(
     Guid AgentId,
     Guid ChannelId,
     Guid? ResourceId,
-    string? ActionKey,
-    string? Language
+    string? ActionKey
 );

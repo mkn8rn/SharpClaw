@@ -2,6 +2,9 @@
 
 How to enable, disable, and configure SharpClaw modules.
 
+> **Creation guide:** [../guides/Module-Creation-Guide.md](../guides/Module-Creation-Guide.md)
+> **Agent creation skill:** [../guides/Module-Creation-skill.md](../guides/Module-Creation-skill.md)
+
 ---
 
 ## How the Module System Works
@@ -121,6 +124,28 @@ feature backed by that contract is unavailable.
 ```
 
 All other modules are standalone with no inter-module dependencies.
+
+---
+
+## Task trigger ownership
+
+The task system is extensible, so not every trigger kind is hosted by Core itself.
+If you use task triggers, module state directly affects which trigger sources are
+available on the current host.
+
+| Trigger area | Owner |
+|---|---|
+| Cron, event bus, task-completed, task-failed, file changed, webhook, host reachable/unreachable, network changed, startup/shutdown, generic metric polling, custom trigger contracts | Core |
+| Window focus/blur, hotkeys, idle/active, screen lock/unlock, device connected/disconnected, process started/stopped, OS shortcut launchers | Computer Use |
+| Query returns rows | Database Access |
+
+Practical effect:
+
+- a task can still be saved when a module-owned trigger's module is disabled
+- preflight reports a warning recommending the missing module
+- `task trigger-sources` and `GET /tasks/trigger-sources` show the active sources for the
+  current host
+- enabling the owning module makes those sources available to the trigger host again
 
 ---
 
@@ -486,3 +511,13 @@ module list                              # Verify status
 Runtime changes take effect immediately. Endpoints remain mapped
 (returning 503 when disabled) since routes cannot be removed after
 `app.Build()`.
+
+### Task trigger not firing
+
+1. Run `task preflight <taskId>` and look for warning-level module recommendations.
+2. Run `task trigger-sources` to confirm the source exists on the current host.
+3. Make sure the owning module is enabled:
+   - `sharpclaw_computer_use` for hotkeys, process events, desktop events, and
+     `OsShortcut`
+   - `sharpclaw_database_access` for `OnQueryReturnsRows`
+4. Re-enable the task's triggers with `task triggers enable <taskId>` if needed.

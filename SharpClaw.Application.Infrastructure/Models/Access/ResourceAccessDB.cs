@@ -43,9 +43,8 @@ public class ResourceAccessDB : BaseEntity
     /// <summary>
     /// Optional sub-type discriminator for resource types that have variants.
     /// <para>
-    /// Used by shell grants: <c>DsShell</c> stores a <see cref="DangerousShellType"/>
-    /// string ("Bash", "PowerShell", etc.); <c>Mk8Shell</c> stores a
-    /// <see cref="SafeShellType"/> string ("Mk8Shell").
+    /// Used when a resource type has sub-variants (e.g. shell interpreter type,
+    /// sandbox flavor). The owning module writes its own discriminator string here.
     /// </para>
     /// Empty string for resource types without variants (not null — ensures
     /// deterministic unique-index behavior across all database providers).

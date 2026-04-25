@@ -1,11 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Contracts.Modules.Contracts;
 using SharpClaw.Modules.ModuleDev.Handlers;
 using SharpClaw.Modules.ModuleDev.Services;
 
@@ -28,10 +25,10 @@ public sealed class ModuleDevModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton<ModuleWorkspaceService>();
-        services.AddSingleton<ModuleBuildService>();
-        services.AddSingleton<ModuleScaffoldService>();
-        services.AddSingleton<DevEnvironmentService>();
+        services.AddScoped<ModuleWorkspaceService>();
+        services.AddScoped<ModuleBuildService>();
+        services.AddScoped<ModuleScaffoldService>();
+        services.AddScoped<DevEnvironmentService>();
         services.AddSingleton<ProcessInspectionService>();
         services.AddSingleton<ComTypeLibInspector>();
     }
@@ -50,7 +47,7 @@ public sealed class ModuleDevModule : ISharpClawModule
 
     public IReadOnlyList<ModuleContractRequirement> RequiredContracts =>
     [
-        new("window_management", typeof(IWindowManager), Optional: true,
+        new("window_management", Optional: true,
             Description: "Window-title → PID resolution for process inspection. Falls back to Process.GetProcessesByName."),
     ];
 
@@ -494,8 +491,7 @@ public sealed class ModuleDevModule : ISharpClawModule
             AgentId: Guid.Empty,
             ChannelId: Guid.Empty,
             ResourceId: null,
-            ActionKey: toolName,
-            Language: null);
+            ActionKey: toolName);
 
         return toolEntry.Module.ExecuteToolAsync(
             toolEntry.ToolName, paramsEl, dummyContext, sp, timeoutCts.Token);

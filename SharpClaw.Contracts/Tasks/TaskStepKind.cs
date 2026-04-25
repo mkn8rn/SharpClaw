@@ -14,16 +14,14 @@ public enum TaskStepKind
     /// <summary>Send a message to an agent and stream the response.</summary>
     ChatStream,
 
-    // ── Transcription ─────────────────────────────────────────────────────────
+    // ── Module-owned steps ────────────────────────────────────────────────────
 
-    /// <summary>Begin a live transcription job on an audio device.</summary>
-    StartTranscription,
-
-    /// <summary>Stop a running transcription job.</summary>
-    StopTranscription,
-
-    /// <summary>Resolve the system default audio input source.</summary>
-    GetDefaultInputAudio,
+    /// <summary>
+    /// A step owned by a module. The module step key is stored alongside
+    /// this discriminator in <c>TaskStepDefinition.ModuleStepKey</c>.
+    /// The module's <c>ITaskStepExecutorExtension</c> handles execution.
+    /// </summary>
+    ModuleStep,
 
     // ── Output ────────────────────────────────────────────────────────────────
 

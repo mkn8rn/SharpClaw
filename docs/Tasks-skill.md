@@ -6,6 +6,7 @@ All bodies JSON. Enums as strings. Timestamps ISO 8601.
 ────────────────────────────────────────
 TASK DEFINITIONS
 ────────────────────────────────────────
+POST   /tasks/validate                 { sourceText }  → { isValid, diagnostics[] }
 POST   /tasks                          { sourceText }  → TaskDefinitionResponse
 GET    /tasks                          → TaskDefinitionResponse[]
 GET    /tasks/{id}                     → TaskDefinitionResponse
@@ -188,6 +189,18 @@ Triggers and shortcuts:
   task triggers disable <taskId>
   task shortcuts install <taskId>
   task shortcuts remove <taskId>
+
+Module-owned trigger mapping:
+  Computer Use module (sharpclaw_computer_use):
+    [OnWindowFocused], [OnWindowBlurred], [OnHotkey], [OnSystemIdle], [OnSystemActive],
+    [OnScreenLocked], [OnScreenUnlocked], [OnDeviceConnected], [OnDeviceDisconnected],
+    [OnProcessStarted], [OnProcessStopped], [OsShortcut]
+  Database Access module (sharpclaw_database_access):
+    [OnQueryReturnsRows]
+
+When those modules are disabled, task registration still succeeds, but preflight emits a
+warning-level RecommendsModule finding and the trigger source is absent from
+task trigger-sources / GET /tasks/trigger-sources.
 
 ────────────────────────────────────────
 QUICK PATTERNS

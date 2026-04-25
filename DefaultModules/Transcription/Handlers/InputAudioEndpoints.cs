@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.Transcription;
+using SharpClaw.Modules.Transcription.DTOs;
 using SharpClaw.Modules.Transcription.Services;
 
 namespace SharpClaw.Modules.Transcription.Handlers;

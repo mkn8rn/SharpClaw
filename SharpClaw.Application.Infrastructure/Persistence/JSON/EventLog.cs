@@ -59,6 +59,23 @@ internal sealed class EventLog
     internal async Task AppendAsync(
         IReadOnlyList<(Type ClrType, Guid Id, EntityState State)> changes,
         CancellationToken ct)
+        => await AppendCoreAsync(changes, moduleId: null, ct);
+
+    /// <summary>
+    /// Appends module-owned entity change events, tagging each entry with
+    /// <paramref name="moduleId"/> so module writes are distinguishable from
+    /// host writes during audit and recovery.
+    /// </summary>
+    internal async Task AppendAsync(
+        string moduleId,
+        IReadOnlyList<(Type ClrType, Guid Id, EntityState State)> changes,
+        CancellationToken ct)
+        => await AppendCoreAsync(changes, moduleId, ct);
+
+    private async Task AppendCoreAsync(
+        IReadOnlyList<(Type ClrType, Guid Id, EntityState State)> changes,
+        string? moduleId,
+        CancellationToken ct)
     {
         if (!_options.EnableEventLog || changes.Count == 0)
             return;
@@ -80,6 +97,7 @@ internal sealed class EventLog
                 Timestamp = today,
                 EntityType = clrType.Name,
                 EntityId = id,
+                ModuleId = moduleId,
                 Action = state switch
                 {
                     EntityState.Added => EventAction.Created,
@@ -252,6 +270,11 @@ internal sealed class EventLogEntry
     public required string EntityType { get; init; }
     public Guid EntityId { get; init; }
     public EventAction Action { get; init; }
+    /// <summary>
+    /// Identifies the owning module for module-entity events.
+    /// Null for host-entity events.
+    /// </summary>
+    public string? ModuleId { get; init; }
 }
 
 /// <summary>

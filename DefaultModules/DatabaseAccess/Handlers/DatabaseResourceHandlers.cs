@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.Databases;
+using SharpClaw.Modules.DatabaseAccess.Dtos;
 using SharpClaw.Modules.DatabaseAccess.Services;
 
 namespace SharpClaw.Modules.DatabaseAccess.Handlers;

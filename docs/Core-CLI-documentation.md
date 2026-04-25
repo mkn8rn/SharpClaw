@@ -557,6 +557,10 @@ task preflight <taskId> [--param key=value ...]
 ```
 
 `preflight` evaluates declared requirements without creating an instance.
+This is also the fastest way to diagnose module-backed triggers. For example,
+`[OnHotkey]`, `[OnProcessStarted]`, and `[OsShortcut]` warn when
+`sharpclaw_computer_use` is disabled, while `[OnQueryReturnsRows]` warns when
+`sharpclaw_database_access` is disabled.
 
 ### Instances
 
@@ -772,6 +776,9 @@ GUIDs. Short IDs do not apply here.
 directory without restarting. `reload` unloads and re-loads a single
 external module. `disable` is rejected (409) if another enabled module
 depends on a contract this module exports.
+
+For tutorial-style walkthroughs, see
+`docs/guides/Module-User-Guide.md` and `docs/guides/Module-Agent-Skill.md`.
 
 ---
 

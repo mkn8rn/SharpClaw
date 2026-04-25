@@ -2,6 +2,8 @@
 
 > **Full API reference:** [Core API — Task endpoints](#rest-api-reference)
 > **Agent skill file:** [Tasks-skill.md](Tasks-skill.md)
+> **Creation guide:** [guides/Task-Creation-Guide.md](guides/Task-Creation-Guide.md)
+> **Agent creation skill:** [guides/Task-Creation-skill.md](guides/Task-Creation-skill.md)
 
 Tasks are user-defined automation scripts that run as managed background processes
 inside SharpClaw. A task can orchestrate agent conversations, make HTTP calls, perform
@@ -175,6 +177,24 @@ Common trigger attributes:
 | `[OsShortcut("Label")]` | Install an OS launcher shortcut for the task. |
 | `[OnTrigger("SourceName")]` | Bind to a custom module-provided trigger source. |
 | `[ConcurrencyPolicy(...)]` | Control what happens when a trigger fires while a prior instance is still running. |
+
+---
+
+### Module-owned trigger notes
+
+Some trigger attributes are implemented by modules rather than by the core task host.
+Those attributes still parse and register normally, but preflight emits a non-blocking
+module recommendation if the owning module is disabled.
+
+| Trigger attributes | Owning module |
+|---|---|
+| `[OnWindowFocused]`, `[OnWindowBlurred]`, `[OnHotkey]`, `[OnSystemIdle]`, `[OnSystemActive]`, `[OnScreenLocked]`, `[OnScreenUnlocked]`, `[OnDeviceConnected]`, `[OnDeviceDisconnected]`, `[OnProcessStarted]`, `[OnProcessStopped]`, `[OsShortcut]` | `sharpclaw_computer_use` |
+| `[OnQueryReturnsRows]` | `sharpclaw_database_access` |
+
+That means a task using `[OnHotkey("Ctrl+Shift+R")]` can still be saved on a host where
+Computer Use is off, but the task's preflight result will recommend enabling
+`sharpclaw_computer_use`, and the trigger will not become active until that module is
+available.
 
 ---
 
@@ -425,6 +445,13 @@ The preflight result returns:
 - `isBlocked` — `true` when any error-severity requirement failed
 - `findings[]` — one row per requirement, including pass/fail, severity, and message
 
+For module-owned triggers, the parser also emits implicit recommendation findings.
+Typical examples are:
+
+- `RecommendsModule("sharpclaw_computer_use")` for desktop, process, hotkey, and
+  `OsShortcut` triggers
+- `RecommendsModule("sharpclaw_database_access")` for `[OnQueryReturnsRows]`
+
 Preflight also runs automatically during instance creation. If a blocking check
 fails, the API returns `422 Unprocessable Entity` with the same structured result.
 
@@ -522,10 +549,17 @@ The trigger system lets a task definition register itself with runtime watchers.
 
 - `TaskTriggerRegistrar` persists trigger bindings extracted from task source
 - `TaskTriggerHostService` starts and reloads the active watcher set
-- built-in sources cover events, file changes, host reachability, network changes,
-  lifecycle events, metrics, query polling, and more
+- core-owned sources cover events, file changes, host reachability, network changes,
+  lifecycle events, and generic metric polling
+- module-owned sources extend the host with domain-specific watchers such as desktop,
+  hotkey, process, shortcut, and database-query triggers
 - module authors can register custom `ITaskTriggerSource` implementations and bind
   tasks to them with `[OnTrigger("SourceName")]`
+
+For the current host, `GET /tasks/trigger-sources` and `task trigger-sources` are the
+authoritative way to see which trigger sources are actually available. If a module that
+owns a trigger kind is disabled, existing definitions stay registered but those trigger
+bindings cannot activate until the module is enabled again.
 
 Useful trigger-related endpoints:
 
@@ -593,6 +627,22 @@ task shortcuts remove <taskId>
 > **Auth:** `X-Api-Key` header on every request.
 
 ### Task definitions
+
+#### `POST /tasks/validate`
+
+Validate a task source document without saving it.
+
+**Request:**
+
+```json
+{
+  "sourceText": "string"
+}
+```
+
+**Response `200`:** validation result with `isValid` and `diagnostics[]`.
+
+---
 
 #### `POST /tasks`
 

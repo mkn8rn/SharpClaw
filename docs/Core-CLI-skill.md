@@ -214,6 +214,9 @@ task update <id> <sourceFilePath>      Validates before upload.
 task activate <id> | deactivate <id>
 task delete <id>
 task preflight <taskId> [--param key=value ...]
+  Use preflight to diagnose module-backed triggers:
+    Computer Use module → [OnHotkey], [OnProcessStarted], [OsShortcut], desktop/session/device triggers
+    Database Access module → [OnQueryReturnsRows]
 
 Instances:
 task start <taskId> [channelId] [--param key=value ...]   Uses active channel.
@@ -323,6 +326,7 @@ module reload <id>                     Unload + re-load single external module.
 module unload <id>
 
 Module IDs are strings (e.g. sharpclaw_transcription). Not short-ID eligible.
+Guides: docs/guides/Module-User-Guide.md and docs/guides/Module-Agent-Skill.md
 
 ────────────────────────────────────────
 ENV

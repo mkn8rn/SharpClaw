@@ -424,7 +424,7 @@ public static class CliDispatcher
                 "  <name> must be the exact model ID from the provider API",
                 "    (e.g. gpt-4o, claude-sonnet-4-20250514, gemini-2.5-flash).",
                 "  Tip: use 'provider sync-models <id>' to auto-import models.",
-                "  Capabilities (comma-separated): Chat, Transcription,",
+                "  Capabilities (comma-separated): Chat,",
                 "    ImageGeneration, Embedding, TextToSpeech",
                 "model get <id>",
                 "model list [--provider <id>]           List models (optionally by provider)",
@@ -432,7 +432,7 @@ public static class CliDispatcher
                 "model delete <id>",
                 "",
                 "Local models:",
-                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]",
+                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp>]",
                 "model download list <url>",
                 "model load <id> [--gpu-layers <n>] [--ctx <size>]  Pin model (keep loaded)",
                 "model unload <id>                                  Unpin model",
@@ -455,7 +455,7 @@ public static class CliDispatcher
                         ParseCapabilities(args, 4)),
                     svc),
             "add" => UsageResult(
-                "model add <name> <providerId> [--cap Chat,Transcription]",
+                "model add <name> <providerId> [--cap Chat,Vision]",
                 "  <name> must be the exact provider model ID (e.g. gpt-4o).",
                 "  Tip: use 'provider sync-models <id>' to auto-import models."),
 
@@ -472,7 +472,7 @@ public static class CliDispatcher
                         args[3],
                         ParseCapabilitiesNullable(args, 4)),
                     svc),
-            "update" => UsageResult("model update <id> <name> [--cap Chat,Transcription]"),
+            "update" => UsageResult("model update <id> <name> [--cap Chat,Vision]"),
 
             "delete" when args.Length >= 3
                 => await ModelHandlers.Delete(CliIdMap.Resolve(args[2]), svc),
@@ -524,10 +524,10 @@ public static class CliDispatcher
             return Results.Ok(files);
         }
 
-        // model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]
+        // model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp>]
         if (args.Length < 3)
             return UsageResult(
-                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]",
+                "model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp>]",
                 "model download list <url>");
 
         var url = args[2];
@@ -548,10 +548,8 @@ public static class CliDispatcher
                     gpuLayers = gl; i++; break;
                 case "--provider" when i + 1 < args.Length:
                     var provStr = args[++i];
-                    if (!Enum.TryParse<ProviderType>(provStr, ignoreCase: true, out var pt)
-                        || pt is not (ProviderType.LlamaSharp or ProviderType.Whisper))
-                        return Results.BadRequest(
-                            $"Unknown provider '{provStr}'. Supported values: LlamaSharp, Whisper.");
+                    if (!Enum.TryParse<ProviderType>(provStr, ignoreCase: true, out var pt))
+                        return Results.BadRequest($"Unknown provider '{provStr}'.");
                     providerType = pt;
                     break;
             }
@@ -568,13 +566,8 @@ public static class CliDispatcher
 
         if (providerType is null)
         {
-            var both = await svc.DownloadAndRegisterBothAsync(
-                new DownloadModelRequest(url, name, quant, gpuLayers), progress);
-            if (both.LlamaSharp is { } l) Console.WriteLine($"LlamaSharp: {l.Name} ({l.Id})");
-            else                          Console.WriteLine("LlamaSharp: skipped");
-            if (both.Whisper    is { } w) Console.WriteLine($"Whisper:    {w.Name} ({w.Id})");
-            else                          Console.WriteLine("Whisper:    skipped");
-            return Results.Ok(both);
+            Console.Error.WriteLine("error: --provider is required. Specify a local provider (e.g. llamasharp).");
+            return Results.BadRequest("ProviderType is required.");
         }
 
         var result = await svc.DownloadAndRegisterAsync(
@@ -1086,8 +1079,7 @@ public static class CliDispatcher
     ///   <item><c>defaults &lt;id&gt; set &lt;key&gt; &lt;resourceId&gt;</c> — set one field.</item>
     ///   <item><c>defaults &lt;id&gt; clear &lt;key&gt;</c> — clear one field.</item>
     /// </list>
-    /// Keys: safeshell, dangshell, container, website, search, localinfo,
-    /// externalinfo, inputaudio, agent, task, skill, transcriptionmodel, editor.
+    /// Keys are contributed by registered module resource descriptors.
     /// </summary>
     private static async Task<IResult> HandleDefaults(
         string scope, Guid entityId, string[] extra, IServiceProvider sp)
@@ -1120,9 +1112,9 @@ public static class CliDispatcher
 
             if (current is null) return Results.NotFound();
 
-            var req = MergeDefaultResourceKey(current, key, value);
+            var req = MergeDefaultResourceKey(current, key, value, svc);
             if (req is null)
-                return UsageResult($"Unknown key '{extra[1]}'. Valid keys: safeshell, dangshell, container, website, search, localinfo, externalinfo, inputaudio, displaydevice, agent, task, skill, transcriptionmodel, editor");
+                return UsageResult($"Unknown key '{extra[1]}'.");
 
             var result = scope == "channel"
                 ? await svc.SetForChannelAsync(entityId, req)
@@ -1143,7 +1135,7 @@ public static class CliDispatcher
 
             if (current is null) return Results.NotFound();
 
-            var req = MergeDefaultResourceKey(current, key, null);
+            var req = MergeDefaultResourceKey(current, key, null, svc);
             if (req is null)
                 return UsageResult($"Unknown key '{extra[1]}'.");
 
@@ -1165,27 +1157,21 @@ public static class CliDispatcher
     /// Returns <c>null</c> when the key is unrecognised.
     /// </summary>
     private static SetDefaultResourcesRequest? MergeDefaultResourceKey(
-        DefaultResourcesResponse current, string key, Guid? value)
+        DefaultResourcesResponse current, string key, Guid? value, DefaultResourceSetService svc)
     {
-        var d = current;
-        return key switch
-        {
-            "safeshell" => new(d.DangerousShellResourceId, value, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "dangshell" or "dangerousshell" => new(value, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "container" => new(d.DangerousShellResourceId, d.SafeShellResourceId, value, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "website" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, value, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "search" or "searchengine" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, value, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "internaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, value, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "externaldb" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, value, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "inputaudio" or "audio" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, value, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "displaydevice" or "display" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, value, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "agent" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, value, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "task" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, value, d.SkillResourceId, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "skill" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, value, d.TranscriptionModelId, d.EditorSessionResourceId),
-            "transcriptionmodel" or "model" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, value, d.EditorSessionResourceId),
-            "editorsession" or "editor" => new(d.DangerousShellResourceId, d.SafeShellResourceId, d.ContainerResourceId, d.WebsiteResourceId, d.SearchEngineResourceId, d.InternalDatabaseResourceId, d.ExternalDatabaseResourceId, d.InputAudioResourceId, d.DisplayDeviceResourceId, d.AgentResourceId, d.TaskResourceId, d.SkillResourceId, d.TranscriptionModelId, value),
-            _ => null,
-        };
+        if (!svc.IsValidKey(key))
+            return null;
+
+        var entries = new Dictionary<string, Guid?>(
+            current.Entries.ToDictionary(kvp => kvp.Key, kvp => (Guid?)kvp.Value),
+            StringComparer.OrdinalIgnoreCase);
+
+        if (value is null)
+            entries.Remove(key);
+        else
+            entries[key] = value;
+
+        return new(entries.AsReadOnly());
     }
 
     /// <summary>
@@ -1800,36 +1786,8 @@ public static class CliDispatcher
                 "role permissions <roleId> set [flags...]  Set role permissions",
                 "",
                 "Permission flags:",
-                "  --flag FlagKey[:clearance]              Grant a global flag with optional clearance",
-                "  --create-sub-agents                     Grant CanCreateSubAgents",
-                "  --create-containers                     Grant CanCreateContainers",
-                "  --register-databases                    Grant CanRegisterDatabases",
-                "  --localhost-browser                     Grant CanAccessLocalhostInBrowser",
-                "  --localhost-cli                         Grant CanAccessLocalhostCli",
-                "  --click-desktop                         Grant CanClickDesktop",
-                "  --type-on-desktop                       Grant CanTypeOnDesktop",
-                "  --read-cross-thread-history             Grant CanReadCrossThreadHistory",
-                "  --edit-agent-header                     Grant CanEditAgentHeader",
-                "  --edit-channel-header                   Grant CanEditChannelHeader",
-                "  --create-document-sessions              Grant CanCreateDocumentSessions",
-                "  --enumerate-windows                     Grant CanEnumerateWindows",
-                "  --focus-window                          Grant CanFocusWindow",
-                "  --close-window                          Grant CanCloseWindow",
-                "  --resize-window                         Grant CanResizeWindow",
-                "  --send-hotkey                           Grant CanSendHotkey",
-                "  --read-clipboard                        Grant CanReadClipboard",
-                "  --write-clipboard                       Grant CanWriteClipboard",
-                "  --dangerous-shell <id>[:<clearance>]    Add DangerousShell grant",
-                "  --safe-shell <id>[:<clearance>]         Add SafeShell grant",
-                "  --container <id>[:<clearance>]          Add Container grant",
-                "  --website <id>[:<clearance>]            Add Website grant",
-                "  --search-engine <id>[:<clearance>]      Add SearchEngine grant",
-                "  --internal-db <id>[:<clearance>]        Add InternalDatabase grant",
-                "  --external-db <id>[:<clearance>]        Add ExternalDatabase grant",
-                "  --input-audio <id>[:<clearance>]        Add InputAudio grant",
-                "  --agent <id>[:<clearance>]              Add Agent grant",
-                "  --task <id>[:<clearance>]               Add Task grant",
-                "  --skill <id>[:<clearance>]              Add Skill grant",
+                "  --flag FlagKey[:clearance]              Grant a global flag (e.g. --flag CanCreateSubAgents:Independent)",
+                "  --grant <ResourceType> <id>[:<clearance>]  Add a resource grant",
                 "",
                 "  Use 'all' as resource id for wildcard grant.");
             return Results.Ok();
@@ -1978,18 +1936,13 @@ public static class CliDispatcher
                 "job list [channelId]                       List jobs (current channel if omitted)",
                 "job status <jobId>",
                 "job approve <jobId>",
-                "job stop <jobId>                           Stop a transcription job (complete)",
+                "job stop <jobId>                           Stop a long-running job",
                 "job pause <jobId>                          Pause a long-running job",
                 "job resume <jobId>                         Resume a paused job",
                 "job cancel <jobId>",
-                "job listen <jobId>                         Stream live transcription segments",
+                "job listen <jobId>                         Stream live job output (module-owned)",
                 "",
-                "Action keys are module tool names (e.g. execute_as_safe_shell, manage_agent,",
-                "  cu_click_desktop, transcribe_from_audio_device).",
-                "",
-                "Transcription: submit transcribe_from_audio_device <channelId> <deviceId>",
-                "  Optional flags: --model <id>, --lang <code>,",
-                "    --mode <sliding|step|window>, --window <seconds>, --step <seconds>");
+                "Action keys are module-contributed tool names (e.g. manage_agent).");
             return Results.Ok();
         }
 
@@ -2041,7 +1994,7 @@ public static class CliDispatcher
             "resume" => UsageResult("job resume <jobId>"),
 
             "listen" when args.Length >= 3
-                => await HandleJobListen(CliIdMap.Resolve(args[2]), svc),
+                => await HandleJobListen(CliIdMap.Resolve(args[2]), svc, sp),
             "listen" => UsageResult("job listen <jobId>"),
 
             _ => UsageResult($"Unknown sub-command: job {sub}. Try 'help' for usage.")
@@ -2057,42 +2010,14 @@ public static class CliDispatcher
             : null;
         var flagStart = resourceId is not null ? nextArg + 1 : nextArg;
 
-        Guid? modelId = null;
         Guid? agentId = null;
-        string? language = null;
-        TranscriptionMode? transcriptionMode = null;
-        int? windowSeconds = null;
-        int? stepSeconds = null;
 
         for (var i = flagStart; i < args.Length; i++)
         {
             switch (args[i])
             {
-                case "--model" or "-m" when i + 1 < args.Length:
-                    modelId = CliIdMap.Resolve(args[++i]);
-                    break;
                 case "--agent" or "-a" when i + 1 < args.Length:
                     agentId = CliIdMap.Resolve(args[++i]);
-                    break;
-                case "--lang" or "-l" when i + 1 < args.Length:
-                    language = args[++i];
-                    break;
-                case "--mode" when i + 1 < args.Length:
-                    var modeArg = args[++i];
-                    if (string.Equals(modeArg, "sliding", StringComparison.OrdinalIgnoreCase))
-                        transcriptionMode = TranscriptionMode.SlidingWindow;
-                    else if (string.Equals(modeArg, "window", StringComparison.OrdinalIgnoreCase))
-                        transcriptionMode = TranscriptionMode.StrictWindow;
-                    else if (Enum.TryParse<TranscriptionMode>(modeArg, true, out var m))
-                        transcriptionMode = m;
-                    break;
-                case "--window" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var w))
-                        windowSeconds = w;
-                    break;
-                case "--step" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var s))
-                        stepSeconds = s;
                     break;
             }
         }
@@ -2102,110 +2027,13 @@ public static class CliDispatcher
             new SubmitAgentJobRequest(
                 ActionKey: actionKey,
                 ResourceId: resourceId,
-                AgentId: agentId,
-                TranscriptionModelId: modelId,
-                Language: language,
-                TranscriptionMode: transcriptionMode,
-                WindowSeconds: windowSeconds,
-                StepSeconds: stepSeconds),
+                AgentId: agentId),
             svc, chatSvc);
     }
 
-    private static async Task<IResult> HandleJobListen(Guid jobId, AgentJobService svc)
+    private static async Task<IResult> HandleJobListen(Guid jobId, AgentJobService svc, IServiceProvider sp)
     {
-        var reader = svc.Subscribe(jobId);
-        if (reader is null)
-        {
-            var job = await svc.GetAsync(jobId);
-            if (job is null)
-            {
-                Console.Error.WriteLine("Job not found.");
-            }
-            else if (job.ActionKey is null || !job.ActionKey.StartsWith("transcribe_from_audio", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.Error.WriteLine("Only transcription jobs support live listening.");
-            }
-            else if (job.Status is AgentJobStatus.Failed or AgentJobStatus.Cancelled or AgentJobStatus.Denied)
-            {
-                Console.Error.WriteLine($"Job is {job.Status}.");
-                if (!string.IsNullOrWhiteSpace(job.ErrorLog))
-                {
-                    Console.Error.WriteLine();
-                    Console.Error.WriteLine("Error:");
-                    Console.Error.WriteLine(job.ErrorLog);
-                }
-                else if (job.Logs is { Count: > 0 })
-                {
-                    var lastLog = job.Logs[^1];
-                    Console.Error.WriteLine($"  Last log: {lastLog.Message}");
-                }
-            }
-            else if (job.Status is not AgentJobStatus.Executing)
-            {
-                Console.Error.WriteLine($"Job is {job.Status}. Only executing jobs can be listened to.");
-            }
-            else
-            {
-                Console.Error.WriteLine("No active transcription channel for this job.");
-                Console.Error.WriteLine("The job may have been started in a previous session. Cancel and resubmit it.");
-            }
-            return Results.Ok();
-        }
-
-        using var cts = new CancellationTokenSource();
-
-        // Suppress Ctrl+C from reaching the host's shutdown handler.
-        // Detect it as a regular key press instead.
-        var prevCtrlC = Console.TreatControlCAsInput;
-        Console.TreatControlCAsInput = true;
-
-        Console.WriteLine("Listening for transcription segments... (Ctrl+C to stop)");
-        Console.WriteLine();
-
-        // Poll for Ctrl+C key press on a background thread.
-        var keyTask = Task.Run(() =>
-        {
-            while (!cts.IsCancellationRequested)
-            {
-                if (Console.KeyAvailable)
-                {
-                    var key = Console.ReadKey(intercept: true);
-                    if (key is { Modifiers: ConsoleModifiers.Control, Key: ConsoleKey.C })
-                    {
-                        cts.Cancel();
-                        return;
-                    }
-                }
-
-                Thread.Sleep(50);
-            }
-        });
-
-        try
-        {
-            await foreach (var segment in reader.ReadAllAsync(cts.Token))
-            {
-                var confidence = segment.Confidence.HasValue
-                    ? $" [{segment.Confidence:P0}]"
-                    : "";
-                Console.WriteLine($"  [{segment.StartTime:F1}s - {segment.EndTime:F1}s]{confidence} {segment.Text}");
-            }
-
-            Console.WriteLine();
-            Console.WriteLine("Transcription ended.");
-        }
-        catch (OperationCanceledException)
-        {
-            Console.WriteLine();
-            Console.WriteLine("Stopped listening.");
-        }
-        finally
-        {
-            await cts.CancelAsync();
-            await keyTask;
-            Console.TreatControlCAsInput = prevCtrlC;
-        }
-
+        Console.Error.WriteLine("Live job listening is module-owned. Use the owning module's streaming endpoint or CLI command.");
         return Results.Ok();
     }
 
@@ -3504,13 +3332,13 @@ public static class CliDispatcher
 
             Model:     model <sub> [args]       (add, get, list, update, delete)
               Prefer 'provider sync-models <id>' to auto-import models.
-              model add <name> <providerId> [--cap Chat,Transcription,...]
+              model add <name> <providerId> [--cap Chat,Vision,...]
                 <name> must be the exact provider model ID (e.g. gpt-4o).
               Local models:
-              model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]
+              model download <url> [--name <alias>] [--quant <Q4_K_M>] [--gpu-layers <n>] [--provider <LlamaSharp>]
               model download list <url>          List available GGUF files at a URL
-                Omit --provider to register with all local providers (LlamaSharp + Whisper).
-                Specify --provider to target one. --gpu-layers has no effect for Whisper.
+                Omit --provider to register with LlamaSharp.
+                Specify --provider to target LlamaSharp.
               model load <id> [--gpu-layers <n>] [--ctx <size>]    Pin (keep loaded)
               model unload <id>                                    Unpin
               model local list                   List downloaded local models
@@ -3524,7 +3352,7 @@ public static class CliDispatcher
 
             Role:      role <sub> [args]
               role list                          role permissions <id>
-              role permissions <id> set [--create-sub-agents] [--safe-shell all:Independent] ...
+              role permissions <id> set [--flag FlagKey[:clearance]] [--grant <ResourceType> <id>[:clearance]] ...
 
             Context:   context|ctx <sub> [args] (add, get, list, update, delete)
               context add <agentId> [name]
@@ -3538,9 +3366,7 @@ public static class CliDispatcher
               channel defaults <id> [set <key> <resId> | clear <key>]
               Fields cascade from context when not set: agent, permissions,
                 DisableChatHeader, AllowedAgents, DefaultResourceSet.
-              Default-resource keys: safeshell, dangshell, container, website,
-                search, localinfo, externalinfo, inputaudio, agent, task,
-                skill, transcriptionmodel
+              Default-resource keys contributed by registered modules.
 
             Chat:
               chat [--agent <id>] [--thread <id>] <message>
@@ -3581,7 +3407,7 @@ public static class CliDispatcher
               job submit <channelId> <actionKey> [resourceId] [--agent <id>]
                   [--model <id>] [--lang <code>]
               job list [channelId]   status <id>   approve <id>   cancel <id>
-              job stop <id>          listen <id>   (transcription jobs)
+              job stop <id>          listen <id>
 
             Task:      task <sub> [args]
               task create <sourceFilePath>       Create definition from .cs file

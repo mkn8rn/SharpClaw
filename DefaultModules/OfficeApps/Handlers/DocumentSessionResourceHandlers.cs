@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.Documents;
+using SharpClaw.Modules.OfficeApps.Dtos;
 using SharpClaw.Modules.OfficeApps.Services;
 
 namespace SharpClaw.Modules.OfficeApps.Handlers;

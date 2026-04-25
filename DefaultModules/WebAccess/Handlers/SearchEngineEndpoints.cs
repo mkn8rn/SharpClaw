@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using SharpClaw.Contracts.DTOs.SearchEngines;
+using SharpClaw.Modules.WebAccess.Dtos;
 using SharpClaw.Modules.WebAccess.Services;
 
 namespace SharpClaw.Modules.WebAccess.Handlers;

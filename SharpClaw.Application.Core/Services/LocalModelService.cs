@@ -17,8 +17,7 @@ public sealed class LocalModelService(
 {
     /// <summary>
     /// Downloads a model and registers it under an explicit provider.
-    /// <paramref name="request"/>.<c>ProviderType</c> must be non-null;
-    /// call <see cref="DownloadAndRegisterBothAsync"/> when it is omitted.
+    /// <paramref name="request"/>.<c>ProviderType</c> must be non-null.
     /// </summary>
     public async Task<ModelResponse> DownloadAndRegisterAsync(
         DownloadModelRequest request,
@@ -30,53 +29,14 @@ public sealed class LocalModelService(
 
         var (provider, defaultCapability) = request.ProviderType switch
         {
-            ProviderType.LlamaSharp => (await EnsureLocalProviderAsync(ct),   ModelCapability.Chat),
-            ProviderType.Whisper    => (await EnsureWhisperProviderAsync(ct), ModelCapability.Transcription),
+            ProviderType.LlamaSharp => (await EnsureLocalProviderAsync(ct), ModelCapability.Chat),
             _ => throw new ArgumentException(
                 $"Provider type '{request.ProviderType}' does not support local file download. " +
-                "Only LlamaSharp and Whisper are supported.", nameof(request))
+                "Only LlamaSharp is supported by the host; other local providers must register via a module.",
+                nameof(request))
         };
 
         return await DownloadAndRegisterCoreAsync(request, provider, defaultCapability, progress, ct);
-    }
-
-    /// <summary>
-    /// Downloads a model once and registers it under all compatible local providers
-    /// (LlamaSharp + Whisper). The GGUF architecture header is probed after download
-    /// to skip providers that are clearly incompatible; a null member in the response
-    /// means that provider was skipped, not that an error occurred.
-    /// <para>
-    /// NOTE: Unlike <see cref="DownloadAndRegisterAsync"/>, this path does NOT yet
-    /// create a placeholder DB row before the download starts, so
-    /// <c>GET /models/local</c> will still return an empty list for the duration of
-    /// a download submitted via the both-providers endpoint. Fixing this requires
-    /// either (a) creating placeholders for both target providers up front and
-    /// deleting the one that ends up architecture-incompatible, or (b) probing
-    /// architecture via a partial range-download before committing placeholders.
-    /// See bug #2 in docs/internal/local-inference-pipeline-debug-report.md.
-    /// </para>
-    /// </summary>
-    public async Task<BothModelsResponse> DownloadAndRegisterBothAsync(
-        DownloadModelRequest request,
-        IProgress<double>? progress = null,
-        CancellationToken ct = default)
-    {
-        var downloaded      = await DownloadFileAsync(request, progress, ct);
-        var modelName       = request.Name ?? Path.GetFileNameWithoutExtension(downloaded.Target.Filename);
-        var architecture    = await GgufHeaderReader.ReadArchitectureAsync(downloaded.DestPath, ct);
-        var targets         = GgufArchitectureClassifier.Classify(architecture);
-
-        var llamaProvider   = targets.LlamaSharp ? await EnsureLocalProviderAsync(ct)   : null;
-        var whisperProvider = targets.Whisper    ? await EnsureWhisperProviderAsync(ct) : null;
-
-        var llamaResponse   = llamaProvider   is not null
-            ? await RegisterModelAsync(downloaded, modelName, llamaProvider,   ModelCapability.Chat,          ct)
-            : null;
-        var whisperResponse = whisperProvider is not null
-            ? await RegisterModelAsync(downloaded, modelName, whisperProvider, ModelCapability.Transcription, ct)
-            : null;
-
-        return new BothModelsResponse(llamaResponse, whisperResponse);
     }
 
     private async Task<ModelResponse> DownloadAndRegisterCoreAsync(
@@ -528,20 +488,5 @@ public sealed class LocalModelService(
         return provider;
     }
 
-    private async Task<ProviderDB> EnsureWhisperProviderAsync(CancellationToken ct)
-    {
-        var existing = await db.Providers
-            .FirstOrDefaultAsync(p => p.ProviderType == ProviderType.Whisper, ct);
-
-        if (existing is not null) return existing;
-
-        var provider = new ProviderDB
-        {
-            Name = "Whisper (Local)",
-            ProviderType = ProviderType.Whisper,
-        };
-        db.Providers.Add(provider);
-        await db.SaveChangesAsync(ct);
-        return provider;
     }
-}
+

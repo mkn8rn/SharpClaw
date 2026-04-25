@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.DTOs.NativeApplications;
+using SharpClaw.Modules.ComputerUse.Dtos;
 using SharpClaw.Modules.ComputerUse.Models;
 
 namespace SharpClaw.Modules.ComputerUse.Services;

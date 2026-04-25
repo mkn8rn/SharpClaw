@@ -1,6 +1,6 @@
 using SharpClaw.Contracts.Attributes;
 using SharpClaw.Contracts.Entities;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.BotIntegration.Contracts;
 
 namespace SharpClaw.Modules.BotIntegration.Models;
 

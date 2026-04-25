@@ -9,8 +9,6 @@ public class ModelDB : BaseEntity
 
     /// <summary>
     /// Advertised capabilities. Defaults to <see cref="ModelCapability.Chat"/>.
-    /// A transcription-capable model (e.g. Whisper) should include
-    /// <see cref="ModelCapability.Transcription"/>.
     /// </summary>
     public ModelCapability Capabilities { get; set; } = ModelCapability.Chat;
 

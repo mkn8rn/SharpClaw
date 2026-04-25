@@ -36,6 +36,15 @@ public sealed class ModuleRegistry
     // to resource types through this registry instead of a static class.
     private readonly Dictionary<string, string> _delegateToResourceType = new(StringComparer.Ordinal);
 
+    // DefaultResourceKey (case-insensitive) → descriptor. Used by the
+    // default-resource service to validate and map short per-channel/context keys.
+    private readonly Dictionary<string, ModuleResourceTypeDescriptor> _defaultResourceKeyToDescriptor
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    // DelegateMethodName → DefaultResourceKey. Used by AgentJobService to
+    // look up the default resource entry by delegate name.
+    private readonly Dictionary<string, string> _delegateToDefaultResourceKey = new(StringComparer.Ordinal);
+
     // FlagKey → descriptor provided by a module (e.g. "CanClickDesktop" → descriptor).
     // Only one module may own a given global flag at a time.
     private readonly Dictionary<string, ModuleGlobalFlagDescriptor> _globalFlagDescriptors = new(StringComparer.Ordinal);
@@ -51,6 +60,13 @@ public sealed class ModuleRegistry
 
     // External (hot-loaded) module hosts keyed by module ID.
     private readonly Dictionary<string, ExternalModuleHost> _externalHosts = new(StringComparer.Ordinal);
+
+    // Tool name → async resource-id extractor contributed by owning module.
+    // Modules register this when the tool uses a non-standard argument name
+    // (e.g. a sandbox name that must be translated to a GUID) so that
+    // ChatService can resolve a concrete resource id without module-specific logic.
+    private readonly Dictionary<string, Func<IServiceProvider, string, CancellationToken, Task<Guid?>>>
+        _toolResourceIdExtractors = new(StringComparer.Ordinal);
 
     private readonly ReaderWriterLockSlim _lock = new();
 
@@ -182,6 +198,12 @@ public sealed class ModuleRegistry
                     throw new InvalidOperationException(
                         $"Delegate method '{desc.DelegateMethodName}' from module '{module.Id}' " +
                         "is already mapped by another module.");
+
+                if (desc.DefaultResourceKey is not null &&
+                    _defaultResourceKeyToDescriptor.ContainsKey(desc.DefaultResourceKey))
+                    throw new InvalidOperationException(
+                        $"Default resource key '{desc.DefaultResourceKey}' from module '{module.Id}' " +
+                        "collides with an existing registration.");
             }
 
             // Validate global flag descriptors.
@@ -251,6 +273,12 @@ public sealed class ModuleRegistry
                 _resourceTypeDescriptors[desc.ResourceType] = desc;
                 _delegateToResourceType[desc.DelegateMethodName] = desc.ResourceType;
                 _resourceTypeOwnerModule[desc.ResourceType] = module.Id;
+
+                if (desc.DefaultResourceKey is not null)
+                {
+                    _defaultResourceKeyToDescriptor[desc.DefaultResourceKey] = desc;
+                    _delegateToDefaultResourceKey[desc.DelegateMethodName] = desc.DefaultResourceKey;
+                }
             }
 
             foreach (var flag in flagDescriptors)
@@ -324,6 +352,12 @@ public sealed class ModuleRegistry
                 _resourceTypeDescriptors.Remove(desc.ResourceType);
                 _delegateToResourceType.Remove(desc.DelegateMethodName);
                 _resourceTypeOwnerModule.Remove(desc.ResourceType);
+
+                if (desc.DefaultResourceKey is not null)
+                {
+                    _defaultResourceKeyToDescriptor.Remove(desc.DefaultResourceKey);
+                    _delegateToDefaultResourceKey.Remove(desc.DelegateMethodName);
+                }
             }
 
             // Remove any global flag descriptors this module provided.
@@ -626,6 +660,85 @@ public sealed class ModuleRegistry
         _lock.EnterReadLock();
         try { return _delegateToResourceType.GetValueOrDefault(delegateMethodName); }
         finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="key"/> is a
+    /// registered default-resource key contributed by any module.
+    /// </summary>
+    public bool IsRegisteredDefaultResourceKey(string key)
+    {
+        _lock.EnterReadLock();
+        try { return _defaultResourceKeyToDescriptor.ContainsKey(key); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Returns the descriptor for a registered default-resource key, or
+    /// <c>null</c> when <paramref name="key"/> is not registered.
+    /// </summary>
+    public ModuleResourceTypeDescriptor? GetDescriptorByDefaultResourceKey(string key)
+    {
+        _lock.EnterReadLock();
+        try { return _defaultResourceKeyToDescriptor.GetValueOrDefault(key); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Resolves a <c>DelegateTo</c> method name to its default-resource key
+    /// string (as registered by <see cref="ModuleResourceTypeDescriptor.DefaultResourceKey"/>).
+    /// Returns <c>null</c> when the delegate has no default-resource key.
+    /// </summary>
+    public string? GetDefaultResourceKeyForDelegate(string delegateMethodName)
+    {
+        _lock.EnterReadLock();
+        try { return _delegateToDefaultResourceKey.GetValueOrDefault(delegateMethodName); }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Get all registered default-resource keys contributed by modules.
+    /// </summary>
+    public IReadOnlyList<string> GetAllDefaultResourceKeys()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _defaultResourceKeyToDescriptor.Keys]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Returns the module-contributed resource-id extractor for <paramref name="toolName"/>,
+    /// or <see langword="null"/> if none was registered. The extractor receives the
+    /// raw arguments JSON and should return the resolved <see cref="Guid"/>, or
+    /// <see langword="null"/> if resolution is not possible.
+    /// </summary>
+    public Func<IServiceProvider, string, CancellationToken, Task<Guid?>>? GetResourceIdExtractor(string toolName)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            _toolResourceIdExtractors.TryGetValue(toolName, out var extractor);
+            return extractor;
+        }
+        finally { _lock.ExitReadLock(); }
+    }
+
+    /// <summary>
+    /// Register an async resource-id extractor for the given fully-prefixed
+    /// <paramref name="toolName"/> (e.g. <c>"module_tool_name"</c>).
+    /// The extractor is called by the generic chat tool-call parser when no
+    /// standard resource-id argument is found in the tool arguments.
+    /// Must be called after the owning module is registered.
+    /// </summary>
+    public void RegisterResourceIdExtractor(
+        string toolName,
+        Func<IServiceProvider, string, CancellationToken, Task<Guid?>> extractor)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentNullException.ThrowIfNull(extractor);
+        _lock.EnterWriteLock();
+        try { _toolResourceIdExtractors[toolName] = extractor; }
+        finally { _lock.ExitWriteLock(); }
     }
 
     /// <summary>

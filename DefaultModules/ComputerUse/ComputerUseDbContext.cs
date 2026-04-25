@@ -6,8 +6,6 @@ namespace SharpClaw.Modules.ComputerUse;
 
 /// <summary>
 /// EF DbContext for ComputerUse-owned entities.
-/// Configured at startup by the host using the same storage backend as
-/// <c>SharpClawDbContext</c>.
 /// </summary>
 public sealed class ComputerUseDbContext(DbContextOptions<ComputerUseDbContext> options)
     : DbContext(options)

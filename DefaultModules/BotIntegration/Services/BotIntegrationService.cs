@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.DTOs.Bots;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.BotIntegration.Dtos;
+using SharpClaw.Modules.BotIntegration.Contracts;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.BotIntegration.Models;

@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.AgentOrchestration.Services;
 
 namespace SharpClaw.Modules.AgentOrchestration;
@@ -26,7 +27,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddDbContext<AgentOrchestrationDbContext>();
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<AgentOrchestrationDbContext>());
         services.TryAddScoped<AgentOrchestrationService>();
     }
 
@@ -51,7 +53,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
         {
             var ids = sp.GetRequiredService<ICoreEntityIdProvider>();
             return await ids.GetAgentLookupItemsAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "agent"),
         new("AoTask", "EditTask", "EditTaskAsync", static async (sp, ct) =>
         {
             var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
@@ -61,7 +64,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
             return await db.ScheduledJobs.Select(t => new ValueTuple<Guid, string>(t.Id, t.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "task"),
         new("AoSkill", "AccessSkill", "AccessSkillAsync", static async (sp, ct) =>
         {
             var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
@@ -71,7 +75,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
             return await db.Skills.Select(s => new ValueTuple<Guid, string>(s.Id, s.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "skill"),
         new("AoAgentHeader", "EditAgentHeader", "EditAgentHeaderAsync", static async (sp, ct) =>
         {
             var ids = sp.GetRequiredService<ICoreEntityIdProvider>();

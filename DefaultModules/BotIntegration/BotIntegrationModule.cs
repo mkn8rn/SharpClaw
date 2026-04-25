@@ -1,12 +1,11 @@
 using System.Text.Json;
-
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-
-using SharpClaw.Contracts.DTOs.Bots;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.BotIntegration.Contracts;
+using SharpClaw.Modules.BotIntegration.Dtos;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.BotIntegration.Handlers;
 using SharpClaw.Modules.BotIntegration.Services;
 
@@ -29,6 +28,8 @@ public sealed class BotIntegrationModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<BotIntegrationDbContext>());
         services.TryAddScoped<BotIntegrationService>();
         services.TryAddScoped<BotMessageSenderService>();
     }
@@ -54,7 +55,7 @@ public sealed class BotIntegrationModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<BotIntegrationDbContext>();
             return await db.BotIntegrations.Select(b => new ValueTuple<Guid, string>(b.Id, b.Name)).ToListAsync(ct);
-        }),
+        }, DefaultResourceKey: "botintegration"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

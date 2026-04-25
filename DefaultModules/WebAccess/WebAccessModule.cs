@@ -5,11 +5,12 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 using Microsoft.EntityFrameworkCore;
 
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
+using SharpClaw.Modules.WebAccess.Enums;
 using SharpClaw.Modules.WebAccess.Handlers;
 using SharpClaw.Modules.WebAccess.Services;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.WebAccess.Dtos;
 
 namespace SharpClaw.Modules.WebAccess;
 
@@ -30,6 +31,8 @@ public sealed class WebAccessModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<WebAccessDbContext>());
         services.AddScoped<LocalhostAccessService>();
         services.AddScoped<WebsiteAccessService>();
         services.TryAddScoped<SearchEngineService>();
@@ -57,7 +60,8 @@ public sealed class WebAccessModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<WebAccessDbContext>();
             return await db.Websites.Select(w => new ValueTuple<Guid, string>(w.Id, w.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "website"),
         new("WaSearch", "SearchEngineAccess", "QuerySearchEngineAsync", static async (sp, ct) =>
         {
             var db = sp.GetRequiredService<WebAccessDbContext>();
@@ -67,7 +71,8 @@ public sealed class WebAccessModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<WebAccessDbContext>();
             return await db.SearchEngines.Select(s => new ValueTuple<Guid, string>(s.Id, s.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "search"),
     ];
 
     // ═══════════════════════════════════════════════════════════════
@@ -284,14 +289,14 @@ public sealed class WebAccessModule : ISharpClawModule
         {
             case "add" when args.Length >= 6:
             {
-                if (!Enum.TryParse<SharpClaw.Contracts.Enums.SearchEngineType>(args[4], true, out var engineType))
+                if (!Enum.TryParse<SearchEngineType>(args[4], true, out var engineType))
                 {
                     Console.Error.WriteLine($"Unknown search engine type: '{args[4]}'.");
-                    Console.Error.WriteLine($"Valid types: {string.Join(", ", Enum.GetNames<SharpClaw.Contracts.Enums.SearchEngineType>())}");
+                    Console.Error.WriteLine($"Valid types: {string.Join(", ", Enum.GetNames<SearchEngineType>())}");
                     return;
                 }
                 var result = await svc.CreateAsync(
-                    new SharpClaw.Contracts.DTOs.SearchEngines.CreateSearchEngineRequest(
+                    new CreateSearchEngineRequest(
                         args[3], engineType, args[5]), ct);
                 ids.PrintJson(result);
                 break;
@@ -324,7 +329,7 @@ public sealed class WebAccessModule : ISharpClawModule
             {
                 var id = ids.Resolve(args[3]);
                 string? name = null, endpoint = null, description = null;
-                SharpClaw.Contracts.Enums.SearchEngineType? type = null;
+                SearchEngineType? type = null;
                 foreach (var arg in args[4..])
                 {
                     if (arg.StartsWith("name=", StringComparison.OrdinalIgnoreCase))
@@ -332,7 +337,7 @@ public sealed class WebAccessModule : ISharpClawModule
                     else if (arg.StartsWith("endpoint=", StringComparison.OrdinalIgnoreCase))
                         endpoint = arg[9..];
                     else if (arg.StartsWith("type=", StringComparison.OrdinalIgnoreCase)
-                             && Enum.TryParse<SharpClaw.Contracts.Enums.SearchEngineType>(arg[5..], true, out var t))
+                             && Enum.TryParse<SearchEngineType>(arg[5..], true, out var t))
                         type = t;
                     else if (arg.StartsWith("desc=", StringComparison.OrdinalIgnoreCase))
                         description = arg[5..];
@@ -340,7 +345,7 @@ public sealed class WebAccessModule : ISharpClawModule
                         name ??= arg;
                 }
                 var result = await svc.UpdateAsync(id,
-                    new SharpClaw.Contracts.DTOs.SearchEngines.UpdateSearchEngineRequest(
+                    new UpdateSearchEngineRequest(
                         name, type, endpoint, description), ct);
                 if (result is not null)
                     ids.PrintJson(result);

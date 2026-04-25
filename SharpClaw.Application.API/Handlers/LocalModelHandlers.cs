@@ -10,9 +10,12 @@ public static class LocalModelHandlers
 {
     [MapPost("/download")]
     public static async Task<IResult> Download(DownloadModelRequest request, LocalModelService svc)
-        => request.ProviderType is null
-            ? Results.Ok(await svc.DownloadAndRegisterBothAsync(request))
-            : Results.Ok(await svc.DownloadAndRegisterAsync(request));
+    {
+        if (request.ProviderType is null)
+            return Results.BadRequest("ProviderType is required. Specify a local provider (e.g. LlamaSharp).");
+
+        return Results.Ok(await svc.DownloadAndRegisterAsync(request));
+    }
 
     [MapGet("/download/list")]
     public static async Task<IResult> ListFiles(string url, LocalModelService svc)

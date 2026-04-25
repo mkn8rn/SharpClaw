@@ -253,10 +253,6 @@ public sealed class ProviderService(
     {
         var name = modelName.ToLowerInvariant();
 
-        // ── Pure transcription models ─────────────────────────────
-        if (name.StartsWith("whisper") || name.StartsWith("ggml-"))
-            return ModelCapability.Transcription;
-
         // ── Pure embedding models ─────────────────────────────────
         if (name.Contains("embedding") || name.Contains("embed"))
             return ModelCapability.Embedding;
@@ -279,18 +275,13 @@ public sealed class ProviderService(
             || name.EndsWith("-instruct"))
             return ModelCapability.None;
 
-        // ── Chat models with transcription suffix ─────────────────
-        if (name.Contains("transcribe"))
-            return ModelCapability.Chat | ModelCapability.Transcription;
-
         // ── Chat models with TTS suffix ───────────────────────────
         if (name.Contains("-tts"))
             return ModelCapability.Chat | ModelCapability.TextToSpeech;
 
         // ── Chat models with audio/realtime capabilities ──────────
-        // These models handle audio through the chat completions API,
-        // NOT the /v1/audio/transcriptions endpoint. They must NOT
-        // get the Transcription flag.
+        // These models handle audio through the chat completions API.
+        // They must NOT get the Transcription flag.
         if (name.Contains("audio") || name.Contains("realtime"))
             return ModelCapability.Chat | ModelCapability.TextToSpeech;
 

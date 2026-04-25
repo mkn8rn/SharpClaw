@@ -1,12 +1,9 @@
-using SharpClaw.Contracts.DTOs.Containers;
-using SharpClaw.Contracts.Enums;
-
 namespace SharpClaw.Contracts.Modules;
 
 /// <summary>
 /// Host-side service for container ownership provisioning.
 /// Implemented by <c>ContainerOwnershipService</c> in Core/Infrastructure;
-/// injected into the Mk8Shell module so it never references Core entities.
+/// injected into modules via DI so they never reference Core entities.
 /// </summary>
 public interface IContainerProvisioner
 {
@@ -20,7 +17,7 @@ public interface IContainerProvisioner
         string containerName,
         string accessContainerActionName,
         string executeSafeShellActionName,
-        ContainerType containerType,
+        string containerTypeKey,
         Guid? userId,
         CancellationToken ct = default);
 }

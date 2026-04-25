@@ -24,8 +24,8 @@ public sealed class TaskScriptParser
 {
     // ── Module extension registry ─────────────────────────────────
 
-    private static readonly Dictionary<string, (TaskStepKind Kind, string ModuleId)> _moduleStepKinds = [];
-    private static readonly Dictionary<string, (TaskTriggerKind Kind, string ModuleId)> _moduleEventTriggers = [];
+    private static readonly Dictionary<string, (string StepKey, string ModuleId)> _moduleStepKeys = [];
+    private static readonly Dictionary<string, (string TriggerKey, string ModuleId)> _moduleEventTriggers = [];
     private static readonly HashSet<string> _moduleSingleArgMethods = [];
     private static readonly Lock _registryLock = new();
 
@@ -39,8 +39,8 @@ public sealed class TaskScriptParser
         ArgumentNullException.ThrowIfNull(extension);
         lock (_registryLock)
         {
-            foreach (var (method, entry) in extension.StepKindMappings)
-                _moduleStepKinds.TryAdd(method, entry);
+            foreach (var (method, entry) in extension.StepKeyMappings)
+                _moduleStepKeys.TryAdd(method, entry);
             foreach (var (method, entry) in extension.EventTriggerMappings)
                 _moduleEventTriggers.TryAdd(method, entry);
             foreach (var method in extension.SingleArgExpressionMethods)
@@ -1365,7 +1365,7 @@ public sealed class TaskScriptParser
             return null;
         }
 
-        // Non-await invocation: event handlers (OnTranscriptionSegment, OnTimer) and Log
+        // Non-await invocation: event handlers (OnModuleEvent, OnTimer) and Log
         if (expression is InvocationExpressionSyntax invocation)
         {
             var eventStep = TryParseEventHandler(invocation, line, column, diagnostics);
@@ -1524,6 +1524,7 @@ public sealed class TaskScriptParser
             Kind = kind.Value,
             Line = line,
             Column = column,
+            ModuleStepKey = kind.Value is TaskStepKind.ModuleStep ? ResolveModuleStepKey(methodName) : null,
             Arguments = ExtractArgumentTexts(invocation)
         };
 
@@ -1643,6 +1644,7 @@ public sealed class TaskScriptParser
             Line = line,
             Column = column,
             TriggerKind = triggerKind.Value,
+            ModuleTriggerKey = ResolveModuleTriggerKey(methodName),
             HandlerParameter = handlerParam,
             Arguments = nonLambdaArgs,
             Body = body ?? []
@@ -1781,15 +1783,21 @@ public sealed class TaskScriptParser
             _              => null
         };
         if (builtin is not null) return builtin;
-        return _moduleStepKinds.TryGetValue(methodName, out var entry) ? entry.Kind : null;
+        return _moduleStepKeys.ContainsKey(methodName) ? TaskStepKind.ModuleStep : null;
     }
+
+    internal static string? ResolveModuleStepKey(string methodName)
+        => _moduleStepKeys.TryGetValue(methodName, out var entry) ? entry.StepKey : null;
 
     private static TaskTriggerKind? ResolveEventTrigger(string? methodName)
     {
         if (methodName is null) return null;
         if (methodName == "OnTimer") return TaskTriggerKind.Timer;
-        return _moduleEventTriggers.TryGetValue(methodName, out var entry) ? entry.Kind : null;
+        return _moduleEventTriggers.ContainsKey(methodName) ? TaskTriggerKind.ModuleEvent : null;
     }
+
+    internal static string? ResolveModuleTriggerKey(string? methodName)
+        => methodName is not null && _moduleEventTriggers.TryGetValue(methodName, out var entry) ? entry.TriggerKey : null;
 
     private static string? ResolveHttpMethod(string methodName) => methodName switch
     {

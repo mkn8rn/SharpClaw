@@ -31,7 +31,6 @@ internal sealed class ColdEntityIndex
         ["ChatMessageDB"] = ["ChannelId", "ThreadId", "SenderAgentId"],
         ["AgentJobDB"] = ["ChannelId", "AgentId"],
         ["AgentJobLogEntryDB"] = ["AgentJobId"],
-        ["TranscriptionSegmentDB"] = ["AgentJobId"],
         ["TaskInstanceDB"] = ["TaskDefinitionId", "ChannelId"],
         ["TaskExecutionLogDB"] = ["TaskInstanceId"],
         ["TaskOutputEntryDB"] = ["TaskInstanceId"],
@@ -48,6 +47,10 @@ internal sealed class ColdEntityIndex
     /// Updates the sharded index files for a given entity directory after an entity
     /// is added, modified, or deleted. Only dirty shards are rewritten.
     /// </summary>
+    /// <param name="indexedProperties">
+    /// Optional merged index map from <c>ModuleColdIndexRegistry</c>. When
+    /// <see langword="null"/> the static host <see cref="IndexedProperties"/> is used.
+    /// </param>
     public static async Task UpdateIndexAsync(
         IPersistenceFileSystem fs,
         string entityDir,
@@ -56,9 +59,11 @@ internal sealed class ColdEntityIndex
         object? entity,
         bool deleted,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string[]>? indexedProperties = null)
     {
-        if (!IndexedProperties.TryGetValue(entityTypeName, out var propNames))
+        var index = indexedProperties ?? IndexedProperties;
+        if (!index.TryGetValue(entityTypeName, out var propNames))
             return;
 
         var type = entity?.GetType();
@@ -146,6 +151,10 @@ internal sealed class ColdEntityIndex
     /// Rebuilds the sharded indexes from scratch by scanning all entity files in the directory.
     /// Used during startup or when indexes are corrupted.
     /// </summary>
+    /// <param name="indexedProperties">
+    /// Optional merged index map from <c>ModuleColdIndexRegistry</c>. When
+    /// <see langword="null"/> the static host <see cref="IndexedProperties"/> is used.
+    /// </param>
     public static async Task RebuildIndexAsync(
         IPersistenceFileSystem fs,
         string entityDir,
@@ -154,9 +163,11 @@ internal sealed class ColdEntityIndex
         byte[] encryptionKey,
         JsonSerializerOptions deserializeOptions,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string[]>? indexedProperties = null)
     {
-        if (!IndexedProperties.TryGetValue(entityTypeName, out var propNames))
+        var index = indexedProperties ?? IndexedProperties;
+        if (!index.TryGetValue(entityTypeName, out var propNames))
             return;
 
         var files = fs.GetFiles(entityDir, "*.json")

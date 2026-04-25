@@ -6,8 +6,6 @@ namespace SharpClaw.Modules.EditorCommon;
 
 /// <summary>
 /// EF DbContext for EditorCommon-owned entities.
-/// Configured at startup by the host using the same storage backend as
-/// <c>SharpClawDbContext</c>.
 /// </summary>
 public sealed class EditorCommonDbContext(DbContextOptions<EditorCommonDbContext> options)
     : DbContext(options)

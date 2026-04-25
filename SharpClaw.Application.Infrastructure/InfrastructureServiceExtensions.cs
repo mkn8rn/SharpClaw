@@ -6,6 +6,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.JSON;
+using SharpClaw.Infrastructure.Persistence.Modules;
 
 namespace SharpClaw.Infrastructure;
 
@@ -20,6 +21,15 @@ public static class InfrastructureServiceExtensions
         string? connectionString = null,
         Action<JsonFileOptions>? configureJsonFile = null)
     {
+        services.AddSingleton(new ModuleDbContextOptions
+        {
+            StorageMode = mode,
+            ConnectionString = connectionString,
+        });
+        services.AddSingleton<RuntimeModuleDbContextRegistry>();
+        services.AddSingleton<ModulePersistenceRegistrationFactory>();
+        services.AddSingleton<IModuleDbContextFactory, ModuleDbContextFactory>();
+
         switch (mode)
         {
             case StorageMode.JsonFile:
@@ -50,6 +60,8 @@ public static class InfrastructureServiceExtensions
                         sp.GetRequiredService<ILogger<FlushWorker>>()));
                 services.AddSingleton<JsonPersistenceHealthCheck>();
                 services.AddSingleton<EntityMigrationRegistry>();
+                services.AddSingleton<ModuleJsonPersistenceService>();
+                services.AddSingleton<ModuleJsonSaveChangesInterceptor>();
 
                 services.AddDbContext<SharpClawDbContext>((sp, options) =>
                 {

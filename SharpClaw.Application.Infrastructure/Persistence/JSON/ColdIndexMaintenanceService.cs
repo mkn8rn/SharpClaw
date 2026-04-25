@@ -20,6 +20,7 @@ internal sealed class ColdIndexMaintenanceService : IDisposable
     private readonly IPersistenceFileSystem _fs;
     private readonly DirectoryLockManager? _directoryLockManager;
     private readonly ILogger<ColdIndexMaintenanceService> _logger;
+    private readonly ModuleColdIndexRegistry _coldIndexRegistry;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loopTask;
 
@@ -28,13 +29,15 @@ internal sealed class ColdIndexMaintenanceService : IDisposable
         EncryptionOptions encryptionOptions,
         IPersistenceFileSystem fs,
         ILogger<ColdIndexMaintenanceService> logger,
-        DirectoryLockManager? directoryLockManager = null)
+        DirectoryLockManager? directoryLockManager = null,
+        IEnumerable<IModuleColdIndexContributor>? coldIndexContributors = null)
     {
         _options = options;
         _encryptionOptions = encryptionOptions;
         _fs = fs;
         _logger = logger;
         _directoryLockManager = directoryLockManager;
+        _coldIndexRegistry = new ModuleColdIndexRegistry(coldIndexContributors ?? []);
     }
 
     /// <summary>
@@ -139,7 +142,7 @@ internal sealed class ColdIndexMaintenanceService : IDisposable
         await ColdEntityIndex.RebuildIndexAsync(
             _fs, entityDir, coldType.Name, coldType,
             _encryptionOptions.Key, ColdEntityStore.JsonOptions,
-            _logger, ct);
+            _logger, ct, _coldIndexRegistry.GetIndexedProperties());
     }
 
     private int _disposed;

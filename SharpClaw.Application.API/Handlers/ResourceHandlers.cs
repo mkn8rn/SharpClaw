@@ -20,7 +20,7 @@ public static class ResourceHandlers
     /// Returns lightweight <c>[{id, name}]</c> items for the resource type
     /// that backs a given permission access category.  The <paramref name="type"/>
     /// value matches the <see cref="SharpClaw.Contracts.Models.ResourceAccessDB.ResourceType"/> discriminator
-    /// (e.g. <c>TrAudio</c>, <c>Container</c>).  Delegates to the owning module's
+    /// contributed by a registered module resource descriptor.  Delegates to the owning module's
     /// <c>LoadLookupItems</c> callback registered via <see cref="SharpClaw.Contracts.Modules.ModuleResourceTypeDescriptor"/>.
     /// </summary>
     [MapGet("/lookup/{type}")]

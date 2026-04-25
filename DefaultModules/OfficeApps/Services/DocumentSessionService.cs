@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.DTOs.Documents;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.OfficeApps.Dtos;
+using SharpClaw.Modules.OfficeApps.Enums;
 using SharpClaw.Modules.OfficeApps.Models;
 using SharpClaw.Utils.Security;
 

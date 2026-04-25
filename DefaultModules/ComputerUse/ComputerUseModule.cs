@@ -11,11 +11,11 @@ using SharpClaw.Modules.ComputerUse.Metrics;
 using SharpClaw.Modules.ComputerUse.Services;
 using SharpClaw.Modules.ComputerUse.Triggers;
 using SharpClaw.Modules.ComputerUse.Handlers;
-using SharpClaw.Contracts.DTOs.DisplayDevices;
-using SharpClaw.Contracts.DTOs.NativeApplications;
+using SharpClaw.Modules.ComputerUse.Dtos;
 using SharpClaw.Contracts.Modules;
-using SharpClaw.Contracts.Modules.Contracts;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Modules.ComputerUse.Contracts;
 
 namespace SharpClaw.Modules.ComputerUse;
 
@@ -35,6 +35,8 @@ public sealed class ComputerUseModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<ComputerUseDbContext>());
         services.AddScoped<DisplayDeviceService>();
         services.AddScoped<NativeApplicationService>();
         services.AddSingleton<DesktopAwarenessService>();
@@ -92,7 +94,8 @@ public sealed class ComputerUseModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<ComputerUseDbContext>();
             return await db.DisplayDevices.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "displaydevice"),
         new("CuNativeApp", "NativeApplication", "LaunchNativeApplicationAsync", static async (sp, ct) =>
         {
             var db = sp.GetRequiredService<ComputerUseDbContext>();
@@ -102,7 +105,8 @@ public sealed class ComputerUseModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<ComputerUseDbContext>();
             return await db.NativeApplications.Select(n => new ValueTuple<Guid, string>(n.Id, n.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "nativeapp"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

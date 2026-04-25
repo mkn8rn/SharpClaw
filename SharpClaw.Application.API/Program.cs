@@ -29,7 +29,6 @@ using SharpClaw.Infrastructure.Configuration;
 using SharpClaw.Utils.Logging;
 using SharpClaw.Utils.Instances;
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Modules.ComputerUse;
 using SharpClaw.Utils.Security;
 using Serilog.Events;
 using SharpClaw.Contracts.Tasks;
@@ -260,7 +259,15 @@ try
     builder.Services.AddScoped<ContextService>();
     builder.Services.AddScoped<AgentActionService>();
     builder.Services.AddScoped<AgentJobService>();
-    builder.Services.AddScoped<ITranscriptionSegmentPublisher>(sp => sp.GetRequiredService<AgentJobService>());
+    builder.Services.AddScoped<IAgentJobController, HostAgentJobController>();
+    builder.Services.AddScoped<IAgentManager, HostAgentManager>();
+    builder.Services.AddScoped<IAgentJobReader, HostAgentJobReader>();
+    builder.Services.AddSingleton<IModelInfoProvider, HostModelInfoProvider>();
+    builder.Services.AddScoped<IContextDataReader, HostContextDataReader>();
+    builder.Services.AddScoped<IContainerProvisioner, HostContainerProvisioner>();
+    builder.Services.AddScoped<IThreadResolver, HostThreadResolver>();
+    builder.Services.AddSingleton<IModuleLifecycleManager, HostModuleLifecycleManager>();
+    builder.Services.AddSingleton<IModuleInfoProvider, HostModuleInfoProvider>();
     builder.Services.AddScoped<HeaderTagProcessor>();
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<ThreadActivitySignal>();
@@ -408,6 +415,11 @@ try
         }
 
         registry.Register(bundledModule);
+        using (var scope = app.Services.CreateScope())
+        {
+            var moduleSvc = scope.ServiceProvider.GetRequiredService<ModuleService>();
+            moduleSvc.RegisterModulePersistence(bundledModule);
+        }
         registeredBundledCount++;
 
         var manifest = moduleLoader.GetManifest(bundledModule.Id);
@@ -417,6 +429,14 @@ try
 
         if (manifest is not null)
             registry.CacheManifest(bundledModule.Id, manifest);
+    }
+
+    if (storageMode == StorageMode.JsonFile)
+    {
+        using var moduleLoadScope = app.Services.CreateScope();
+        var moduleSvc = moduleLoadScope.ServiceProvider.GetRequiredService<ModuleService>();
+        foreach (var bundledModule in allBundled.Where(m => enabledModuleIds.Contains(m.Id)))
+            await moduleSvc.LoadModulePersistenceAsync(bundledModule);
     }
 
     Log.Information("Bundled modules: {Registered} registered, {Disabled} disabled, {Total} discovered",
@@ -429,6 +449,8 @@ try
     foreach (var (moduleId, reason) in excludedModules)
     {
         Log.Warning("Module '{ModuleId}' excluded from initialization: {Reason}", moduleId, reason);
+        app.Services.GetRequiredService<SharpClaw.Infrastructure.Persistence.Modules.RuntimeModuleDbContextRegistry>()
+            .UnregisterModule(moduleId);
         registry.Unregister(moduleId);
     }
 
@@ -460,6 +482,8 @@ try
                 failedContracts.Add(export.ContractName);
 
             registry.Unregister(moduleId);
+            app.Services.GetRequiredService<SharpClaw.Infrastructure.Persistence.Modules.RuntimeModuleDbContextRegistry>()
+                .UnregisterModule(moduleId);
             failedInitCount++;
             continue;
         }
@@ -478,6 +502,8 @@ try
                 failedContracts.Add(export.ContractName);
 
             registry.Unregister(moduleId);
+            app.Services.GetRequiredService<SharpClaw.Infrastructure.Persistence.Modules.RuntimeModuleDbContextRegistry>()
+                .UnregisterModule(moduleId);
             failedInitCount++;
         }
     }

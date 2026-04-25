@@ -94,7 +94,7 @@ public static class ChannelHandlers
         Guid id, string key, SetDefaultResourceByKeyRequest request,
         DefaultResourceSetService svc)
     {
-        if (!DefaultResourceSetService.IsValidKey(key))
+        if (!svc.IsValidKey(key))
             return Results.BadRequest($"Unknown default resource key: {key}");
 
         var result = await svc.SetKeyForChannelAsync(id, key, request.ResourceId);
@@ -105,7 +105,7 @@ public static class ChannelHandlers
     public static async Task<IResult> ClearDefaultByKey(
         Guid id, string key, DefaultResourceSetService svc)
     {
-        if (!DefaultResourceSetService.IsValidKey(key))
+        if (!svc.IsValidKey(key))
             return Results.BadRequest($"Unknown default resource key: {key}");
 
         var result = await svc.ClearKeyForChannelAsync(id, key);

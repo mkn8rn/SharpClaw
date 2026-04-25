@@ -2,13 +2,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Models;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Infrastructure.Persistence.JSON;
+using SharpClaw.Infrastructure.Persistence.Modules;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
@@ -22,6 +24,10 @@ public sealed class ModuleService(
     SharpClawDbContext db,
     ModuleLoader loader,
     ModuleRegistry registry,
+    RuntimeModuleDbContextRegistry moduleDbContextRegistry,
+    ModulePersistenceRegistrationFactory modulePersistenceRegistrationFactory,
+    ModuleDbContextOptions moduleDbContextOptions,
+    ModuleJsonPersistenceService? moduleJsonPersistence,
     ModuleEventDispatcher eventDispatcher,
     ILoggerFactory loggerFactory,
     ILogger<ModuleService> logger)
@@ -171,6 +177,8 @@ public sealed class ModuleService(
             try
             {
                 registry.Register(module);
+                RegisterModulePersistence(module);
+                await LoadModulePersistenceAsync(module, ct);
 
                 if (manifest is not null)
                     registry.CacheManifest(moduleId, manifest);
@@ -180,6 +188,7 @@ public sealed class ModuleService(
                 if (unsatisfied.Count > 0)
                 {
                     var names = string.Join(", ", unsatisfied.Select(r => r.ContractName));
+                    moduleDbContextRegistry.UnregisterModule(moduleId);
                     registry.Unregister(moduleId);
                     throw new InvalidOperationException(
                         $"Module '{moduleId}' has unsatisfied contract dependencies: {names}");
@@ -190,6 +199,7 @@ public sealed class ModuleService(
             catch
             {
                 // Rollback: unregister if init failed
+                moduleDbContextRegistry.UnregisterModule(moduleId);
                 registry.Unregister(moduleId);
                 throw;
             }
@@ -243,6 +253,7 @@ public sealed class ModuleService(
             {
                 logger.LogWarning(ex, "Module '{ModuleId}' shutdown error during disable", moduleId);
             }
+            moduleDbContextRegistry.UnregisterModule(moduleId);
             registry.Unregister(moduleId);
         }
 
@@ -308,7 +319,9 @@ public sealed class ModuleService(
         try
         {
             registry.Register(host.Module, host);
+            RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
+            await LoadModulePersistenceAsync(host.Module, ct);
             await host.Module.InitializeAsync(host.Services, ct);
 
             logger.LogInformation("External module '{ModuleId}' loaded from {Dir}",
@@ -318,6 +331,7 @@ public sealed class ModuleService(
         catch
         {
             registry.Unregister(manifest.Id);
+            moduleDbContextRegistry.UnregisterModule(manifest.Id);
             await host.DisposeAsync();
             throw;
         }
@@ -333,6 +347,7 @@ public sealed class ModuleService(
 
         await host.DrainAsync(TimeSpan.FromSeconds(30), ct);
         await host.Module.ShutdownAsync();
+        moduleDbContextRegistry.UnregisterModule(moduleId);
         registry.Unregister(moduleId);
         await host.DisposeAsync();
 
@@ -417,7 +432,9 @@ public sealed class ModuleService(
         try
         {
             registry.Register(host.Module, host);
+            RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
+            await LoadModulePersistenceAsync(host.Module, ct);
             await host.Module.InitializeAsync(host.Services, ct);
 
             logger.LogInformation("External module '{ModuleId}' loaded from absolute path {Dir}",
@@ -430,8 +447,35 @@ public sealed class ModuleService(
         catch
         {
             registry.Unregister(manifest.Id);
+            moduleDbContextRegistry.UnregisterModule(manifest.Id);
             await host.DisposeAsync();
             throw;
+        }
+    }
+
+    public void RegisterModulePersistence(ISharpClawModule module)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+
+        var registrations = modulePersistenceRegistrationFactory.CreateRegistrations(
+            module.Id,
+            module.GetType().Assembly);
+
+        foreach (var registration in registrations)
+            moduleDbContextRegistry.Register(registration);
+    }
+
+    public async Task LoadModulePersistenceAsync(ISharpClawModule module, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+
+        if (moduleDbContextOptions.StorageMode != StorageMode.JsonFile || moduleJsonPersistence is null)
+            return;
+
+        foreach (var registration in moduleDbContextRegistry.GetAll()
+                     .Where(r => string.Equals(r.ModuleId, module.Id, StringComparison.Ordinal)))
+        {
+            await moduleJsonPersistence.LoadModuleAsync(registration, ct);
         }
     }
 

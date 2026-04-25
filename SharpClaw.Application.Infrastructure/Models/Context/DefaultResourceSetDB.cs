@@ -3,72 +3,26 @@ using SharpClaw.Contracts.Entities;
 namespace SharpClaw.Application.Infrastructure.Models.Context;
 
 /// <summary>
-/// Stores default resource IDs for each per-resource action type.
-/// Attached to a channel or context so that jobs submitted without an
-/// explicit resource ID automatically use the configured default.
+/// Stores default resource IDs for per-resource action types, indexed by
+/// module-contributed resource key.  Attached to a channel or context so
+/// that jobs submitted without an explicit resource ID automatically use the
+/// configured default.
+/// <para>
+/// Keys are owned by registered modules via
+/// <c>ModuleResourceTypeDescriptor.DefaultResourceKey</c>.  The host does
+/// not know the set of valid keys at compile time.
+/// </para>
 /// <para>
 /// This is independent of <see cref="Clearance.PermissionSetDB"/> —
-/// permission sets control <em>what you're allowed to do</em>, while
-/// this entity controls <em>which resource to use by default</em>.
+/// permission sets control <em>what you are allowed to do</em>, while this
+/// entity controls <em>which resource to use by default</em>.
 /// </para>
 /// </summary>
 public class DefaultResourceSetDB : BaseEntity
 {
-    // ── Per-resource defaults (direct resource IDs) ───────────────
-
-    /// <summary>Default SystemUser for UnsafeExecuteAsDangerousShell.</summary>
-    public Guid? DangerousShellResourceId { get; set; }
-
-    /// <summary>Default Container for ExecuteAsSafeShell.</summary>
-    public Guid? SafeShellResourceId { get; set; }
-
-    /// <summary>Default Container for AccessContainer.</summary>
-    public Guid? ContainerResourceId { get; set; }
-
-    /// <summary>Default Website for AccessWebsite.</summary>
-    public Guid? WebsiteResourceId { get; set; }
-
-    /// <summary>Default SearchEngine for QuerySearchEngine.</summary>
-    public Guid? SearchEngineResourceId { get; set; }
-
-    /// <summary>Default InternalDatabase for AccessInternalDatabases.</summary>
-    public Guid? InternalDatabaseResourceId { get; set; }
-
-    /// <summary>Default ExternalDatabase for AccessExternalDatabase.</summary>
-    public Guid? ExternalDatabaseResourceId { get; set; }
-
-    /// <summary>Default InputAudio for transcription jobs.</summary>
-    public Guid? InputAudioResourceId { get; set; }
-
-    /// <summary>Default DisplayDevice for CaptureDisplay.</summary>
-    public Guid? DisplayDeviceResourceId { get; set; }
-
-    /// <summary>Default EditorSession for editor actions.</summary>
-    public Guid? EditorSessionResourceId { get; set; }
-
-    /// <summary>Default Agent for ManageAgent.</summary>
-    public Guid? AgentResourceId { get; set; }
-
-    /// <summary>Default ScheduledTask for EditTask.</summary>
-    public Guid? TaskResourceId { get; set; }
-
-    /// <summary>Default Skill for AccessSkill.</summary>
-    public Guid? SkillResourceId { get; set; }
-
-    /// <summary>Default BotIntegration for SendBotMessage.</summary>
-    public Guid? BotIntegrationResourceId { get; set; }
-
-    /// <summary>Default DocumentSession for spreadsheet actions.</summary>
-    public Guid? DocumentSessionResourceId { get; set; }
-
-    /// <summary>Default NativeApplication for LaunchNativeApplication.</summary>
-    public Guid? NativeApplicationResourceId { get; set; }
-
-    // ── Non-resource defaults ─────────────────────────────────────
-
     /// <summary>
-    /// Default transcription model so transcription jobs don't need
-    /// <c>--model</c> every time.
+    /// Generic keyed default-resource entries contributed by modules.
     /// </summary>
-    public Guid? TranscriptionModelId { get; set; }
+    public List<DefaultResourceEntryDB> Entries { get; set; } = [];
 }
+

@@ -14,7 +14,6 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Tasks;
-using SharpClaw.Contracts.DTOs.Transcription;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
@@ -40,10 +39,13 @@ public sealed class TaskOrchestrator(
     IHttpClientFactory httpClientFactory,
     IServiceScopeFactory scopeFactory,
     TaskRuntimeHost runtimeHost,
-    ModuleRegistry moduleRegistry)
+    ModuleRegistry moduleRegistry,
+    IEnumerable<ITaskStepExecutorExtension> stepExtensions)
 {
     private readonly ChatService _chatService = chatService;
     private readonly AgentJobService _agentJobService = agentJobService;
+    private readonly IReadOnlyList<ITaskStepExecutorExtension> _stepExtensions = [.. stepExtensions];
+    private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
 
     // ═══════════════════════════════════════════════════════════════
     // Public API
@@ -149,6 +151,7 @@ public sealed class TaskOrchestrator(
         var agentJobService = scope.ServiceProvider.GetService<AgentJobService>();
 
         var context = new TaskExecutionContext(instanceId, plan, runtime, ct);
+        context.ChannelId = await GetInstanceChannelIdAsync(instanceId, ct, db);
 
         // ── Set up shared data store for inter-agent communication ──
         var store = TaskSharedData.GetOrCreate(instanceId);
@@ -330,68 +333,6 @@ public sealed class TaskOrchestrator(
 
                 if (step.ResultVariable is not null)
                     context.Variables[step.ResultVariable] = sb.ToString();
-                return TaskStepExecutionResult.Continue;
-            }
-
-            case TaskStepKind.StartTranscription:
-            {
-                var requiredAgentJobService = agentJobService ?? throw new InvalidOperationException("AgentJobService is not available for task transcription steps.");
-                var channelId = await GetInstanceChannelIdAsync(context.InstanceId, context.CancellationToken, db);
-                var deviceIdStr = step.Arguments is { Count: > 0 }
-                    ? ResolveExpression(step.Arguments[0], context)
-                    : ResolveExpression(step.Expression, context);
-
-                if (!Guid.TryParse(deviceIdStr, out var deviceId))
-                    throw new InvalidOperationException($"Invalid audio device ID: {deviceIdStr}");
-
-                var jobRequest = new SubmitAgentJobRequest(
-                    ActionKey: "transcribe_from_audio_device",
-                    ResourceId: deviceId);
-
-                var jobResponse = await requiredAgentJobService.SubmitAsync(
-                    channelId, jobRequest, context.CancellationToken);
-
-                await taskService.AppendLogAsync(
-                    context.InstanceId,
-                    $"Started transcription job {jobResponse.Id} on device {deviceId}",
-                    ct: context.CancellationToken);
-
-                if (step.ResultVariable is not null)
-                    context.Variables[step.ResultVariable] = jobResponse.Id.ToString();
-
-                StartTranscriptionEventLoop(context, jobResponse.Id);
-                return TaskStepExecutionResult.Continue;
-            }
-
-            case TaskStepKind.StopTranscription:
-            {
-                var requiredAgentJobService = agentJobService ?? throw new InvalidOperationException("AgentJobService is not available for task transcription steps.");
-                var jobIdStr = ResolveExpression(step.Expression, context);
-                if (!Guid.TryParse(jobIdStr, out var jobId))
-                    throw new InvalidOperationException($"Invalid transcription job ID: {jobIdStr}");
-
-                await requiredAgentJobService.StopTranscriptionAsync(jobId, context.CancellationToken);
-
-                await taskService.AppendLogAsync(
-                    context.InstanceId,
-                    $"Stopped transcription job {jobId}",
-                    ct: context.CancellationToken);
-                return TaskStepExecutionResult.Continue;
-            }
-
-            case TaskStepKind.GetDefaultInputAudio:
-            {
-                Guid deviceId = Guid.Empty;
-                var descriptor = moduleRegistry.GetResourceTypeDescriptor("TrAudio");
-                if (descriptor?.LoadLookupItems is not null)
-                {
-                    await using var scope = scopeFactory.CreateAsyncScope();
-                    var items = await descriptor.LoadLookupItems(scope.ServiceProvider, context.CancellationToken);
-                    deviceId = items.Count > 0 ? items[0].Id : Guid.Empty;
-                }
-
-                if (step.ResultVariable is not null)
-                    context.Variables[step.ResultVariable] = deviceId.ToString();
                 return TaskStepExecutionResult.Continue;
             }
 
@@ -663,8 +604,12 @@ public sealed class TaskOrchestrator(
                 return TaskStepExecutionResult.Continue;
 
             case TaskStepKind.EventHandler:
+                if (step.TriggerKind is null)
+                    throw new InvalidOperationException(
+                        "EventHandler step requires an explicit TriggerKind.");
                 context.EventHandlers.Add(new RegisteredEventHandler(
-                    step.TriggerKind ?? TaskTriggerKind.TranscriptionSegment,
+                    step.TriggerKind.Value,
+                    step.ModuleTriggerKey,
                     step.HandlerParameter, step.Body ?? []));
                 await taskService.AppendLogAsync(
                     context.InstanceId,
@@ -679,6 +624,20 @@ public sealed class TaskOrchestrator(
                 // Generic expression — log and store result
                 if (step.ResultVariable is not null)
                     context.Variables[step.ResultVariable] = step.Expression;
+                return TaskStepExecutionResult.Continue;
+
+            case TaskStepKind.ModuleStep:
+                if (step.ModuleStepKey is not null)
+                {
+                    var executor = _stepExtensions.FirstOrDefault(e => e.CanExecute(step.ModuleStepKey));
+                    if (executor is not null)
+                    {
+                        var moduleCtx = new TaskStepContextAdapter(context, this, taskService);
+                        var resolvedArgs = step.Arguments?.Select(a => ResolveExpression(a, context)).ToList();
+                        var resolvedExpr = step.Expression is not null ? ResolveExpression(step.Expression, context) : null;
+                        await executor.ExecuteAsync(step.ModuleStepKey, moduleCtx, resolvedArgs, resolvedExpr, step.ResultVariable);
+                    }
+                }
                 return TaskStepExecutionResult.Continue;
         }
 
@@ -1063,7 +1022,7 @@ public sealed class TaskOrchestrator(
 
     /// <summary>
     /// Resolve the <see cref="TaskInstanceDB.ChannelId"/> for a running instance.
-    /// Chat and transcription steps require a channel.
+    /// Steps that require a channel must have ChannelId set before execution.
     /// </summary>
     private async Task<Guid> GetInstanceChannelIdAsync(Guid instanceId, CancellationToken ct, SharpClawDbContext db)
     {
@@ -1075,7 +1034,7 @@ public sealed class TaskOrchestrator(
         return channelId
             ?? throw new InvalidOperationException(
                 $"Task instance {instanceId} has no ChannelId. " +
-                "Set ChannelId when starting the instance for Chat/Transcription steps.");
+                "Set ChannelId when starting the instance for steps that require a channel.");
     }
 
     /// <summary>
@@ -1089,60 +1048,6 @@ public sealed class TaskOrchestrator(
     private static Task<bool> AutoApproveAsync(AgentJobResponse _, CancellationToken __) =>
         Task.FromResult(false);
 
-    /// <summary>
-    /// Start a background loop that reads transcription segments from
-    /// <see cref="AgentJobService.Subscribe"/> and fires all matching
-    /// <see cref="RegisteredEventHandler"/>s in the execution context.
-    /// </summary>
-    private void StartTranscriptionEventLoop(TaskExecutionContext context, Guid jobId)
-    {
-        _ = Task.Run(async () =>
-        {
-            using var loopScope = scopeFactory.CreateScope();
-            var db = loopScope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
-            var taskService = loopScope.ServiceProvider.GetRequiredService<TaskService>();
-            var chatService = loopScope.ServiceProvider.GetRequiredService<ChatService>();
-            var agentJobService = loopScope.ServiceProvider.GetRequiredService<AgentJobService>();
-
-            try
-            {
-                var reader = agentJobService.Subscribe(jobId);
-                if (reader is null) return;
-
-                await foreach (var segment in reader.ReadAllAsync(context.CancellationToken))
-                {
-                    var handlers = context.EventHandlers
-                        .Where(h => h.TriggerKind == TaskTriggerKind.TranscriptionSegment)
-                        .ToList();
-
-                    foreach (var handler in handlers)
-                    {
-                        if (handler.ParameterName is not null)
-                        {
-                            context.Variables[handler.ParameterName] =
-                                JsonSerializer.Serialize(new { segment.Text, segment.StartTime, segment.EndTime, segment.Confidence });
-                            context.Variables[handler.ParameterName + ".Text"] = segment.Text;
-                        }
-
-                        foreach (var step in handler.Body)
-                        {
-                            context.CancellationToken.ThrowIfCancellationRequested();
-                            await ExecuteStepAsync(step, context, db, taskService, chatService, agentJobService);
-                        }
-                    }
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                await taskService.AppendLogAsync(
-                    context.InstanceId,
-                    $"Event loop error: {ex.Message}",
-                    "Error");
-            }
-        }, CancellationToken.None);
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Execution context
     // ═══════════════════════════════════════════════════════════════
@@ -1154,6 +1059,7 @@ public sealed class TaskOrchestrator(
         CancellationToken cancellationToken)
     {
         public Guid InstanceId { get; } = instanceId;
+        public Guid ChannelId { get; set; }
         public CompiledTaskPlan Plan { get; } = plan;
         public TaskRuntimeInstance Runtime { get; } = runtime;
         public CancellationToken CancellationToken { get; } = cancellationToken;
@@ -1163,8 +1069,71 @@ public sealed class TaskOrchestrator(
 
     private sealed record RegisteredEventHandler(
         TaskTriggerKind TriggerKind,
+        string? ModuleTriggerKey,
         string? ParameterName,
         IReadOnlyList<TaskStepDefinition> Body);
+
+    // ── Module extension adapters ────────────────────────────────────
+
+    /// <summary>
+    /// Wraps <see cref="TaskExecutionContext"/> as <see cref="ITaskStepExecutionContext"/>
+    /// so module step executors never reference the internal type directly.
+    /// </summary>
+    private sealed class TaskStepContextAdapter(
+        TaskExecutionContext ctx,
+        TaskOrchestrator orchestrator,
+        TaskService taskService) : ITaskStepExecutionContext
+    {
+        public Guid InstanceId => ctx.InstanceId;
+        public Guid ChannelId => ctx.ChannelId;
+        public CancellationToken CancellationToken => ctx.CancellationToken;
+        public IDictionary<string, object?> Variables => ctx.Variables;
+
+        public IReadOnlyList<ITaskEventHandler> EventHandlers =>
+            ctx.EventHandlers
+               .Select(h => (ITaskEventHandler)new EventHandlerAdapter(h, ctx, orchestrator, taskService))
+               .ToList();
+
+        public string ResolveExpression(string expression) =>
+            TaskOrchestrator.ResolveExpression(expression, ctx);
+
+        public Task AppendLogAsync(string message) =>
+            taskService.AppendLogAsync(ctx.InstanceId, message, ct: ctx.CancellationToken);
+    }
+
+    /// <summary>
+    /// Wraps <see cref="RegisteredEventHandler"/> as <see cref="ITaskEventHandler"/>
+    /// with a pre-bound <c>ExecuteBodyAsync</c> delegate, keeping
+    /// <see cref="TaskStepDefinition"/> invisible to modules.
+    /// </summary>
+    private sealed class EventHandlerAdapter(
+        RegisteredEventHandler handler,
+        TaskExecutionContext ctx,
+        TaskOrchestrator orchestrator,
+        TaskService taskService) : ITaskEventHandler
+    {
+        public TaskTriggerKind TriggerKind => handler.TriggerKind;
+        public string? ModuleTriggerKey => handler.ModuleTriggerKey;
+        public string? ParameterName => handler.ParameterName;
+
+        public async Task ExecuteBodyAsync(CancellationToken ct)
+        {
+            // Use a fresh scope so the scoped db/services inside ExecuteStepAsync
+            // remain valid even when called from a background event-loop Task.
+            using var scope = orchestrator._scopeFactory.CreateScope();
+            var db          = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+            var ts          = scope.ServiceProvider.GetRequiredService<TaskService>();
+            var chat        = scope.ServiceProvider.GetService<ChatService>();
+            var jobs        = scope.ServiceProvider.GetService<AgentJobService>();
+
+            foreach (var step in handler.Body)
+            {
+                ct.ThrowIfCancellationRequested();
+                var result = await orchestrator.ExecuteStepAsync(step, ctx, db, ts, chat, jobs);
+                if (result == TaskStepExecutionResult.Return) break;
+            }
+        }
+    }
 
     private enum TaskStepExecutionResult
     {

@@ -1,9 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Mk8.Shell.Models;
 using Mk8.Shell.Startup;
-using SharpClaw.Contracts.DTOs.Containers;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.Mk8Shell.Dtos;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Modules.Mk8Shell.Contracts;
 using SharpClaw.Modules.Mk8Shell.Models;
 
 namespace SharpClaw.Modules.Mk8Shell.Services;
@@ -75,7 +75,7 @@ public sealed class ContainerService(Mk8ShellDbContext db, IContainerProvisioner
             container.Name,
             "AccessContainerAsync",
             "ExecuteAsSafeShellAsync",
-            ContainerType.Mk8Shell,
+            nameof(ContainerType.Mk8Shell),
             userId,
             ct);
 

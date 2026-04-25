@@ -1,19 +1,19 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NAudio.Wave;
-
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.Transcription.Audio;
+using SharpClaw.Modules.Transcription.Clients;
+using SharpClaw.Modules.Transcription.Contracts;
+using SharpClaw.Modules.Transcription.DTOs;
+using SharpClaw.Modules.Transcription.Models;
 using SharpClaw.Utils.Security;
-
-using LanguageValidator = SharpClaw.Modules.Transcription.Clients.LanguageScriptValidator;
-using TranscriptionChunkResult = SharpClaw.Modules.Transcription.Clients.TranscriptionChunkResult;
-using TranscriptionChunkSegment = SharpClaw.Modules.Transcription.Clients.TranscriptionChunkSegment;
-
 namespace SharpClaw.Modules.Transcription.Services;
 
 /// <summary>
@@ -21,16 +21,19 @@ namespace SharpClaw.Modules.Transcription.Services;
 /// Audio flows: mic → ring buffer → silence gate → sliding window → Whisper → dedup → output.
 /// Two-pass mode emits provisional segments immediately, then finalizes
 /// them once the commit delay confirms they are stable.
+/// Also owns the per-job segment broadcast channels and implements
+/// <see cref="ITranscriptionSegmentPublisher"/> so streaming consumers
+/// can subscribe to live segments without coupling to the host.
 /// </summary>
 public sealed class LiveTranscriptionOrchestrator(
     IServiceScopeFactory scopeFactory,
-    Clients.SharedAudioCaptureManager sharedCapture,
-    Clients.TranscriptionApiClientFactory transcriptionClientFactory,
+    SharedAudioCaptureManager sharedCapture,
+    TranscriptionApiClientFactory transcriptionClientFactory,
     IHttpClientFactory httpClientFactory,
     IModelInfoProvider modelInfoProvider,
-    ITranscriptionJobSink jobSink,
+    TranscriptionJobSink jobSink,
     EncryptionOptions encryptionOptions,
-    ILogger<LiveTranscriptionOrchestrator> logger) : ILiveTranscriptionOrchestrator
+    ILogger<LiveTranscriptionOrchestrator> logger) : ILiveTranscriptionOrchestrator, ITranscriptionSegmentPublisher
 {
     private const int WindowSeconds = 10;
     private const int InferenceIntervalSeconds = 2;
@@ -40,6 +43,27 @@ public sealed class LiveTranscriptionOrchestrator(
     private const int SampleRate = 16_000;
 
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _activeSessions = new();
+    private readonly ConcurrentDictionary<Guid, Channel<TranscriptionSegmentResponse>> _channels = new();
+
+    /// <inheritdoc/>
+    public ChannelReader<TranscriptionSegmentResponse>? Subscribe(Guid jobId) =>
+        _channels.TryGetValue(jobId, out var ch) ? ch.Reader : null;
+
+    internal void OpenChannel(Guid jobId) =>
+        _channels.TryAdd(jobId, Channel.CreateUnbounded<TranscriptionSegmentResponse>());
+
+    internal void CloseChannel(Guid jobId)
+    {
+        if (_channels.TryRemove(jobId, out var ch))
+            ch.Writer.TryComplete();
+    }
+
+    internal async Task PushToChannelAsync(
+        Guid jobId, TranscriptionSegmentResponse segment, CancellationToken ct)
+    {
+        if (_channels.TryGetValue(jobId, out var ch))
+            await ch.Writer.WriteAsync(segment, ct);
+    }
 
     /// <summary>
     /// Returns <see langword="true"/> when the given provider type has a
@@ -51,11 +75,11 @@ public sealed class LiveTranscriptionOrchestrator(
 
     /// <summary>
     /// Starts live audio capture and transcription for a job.
-    /// The caller must have already created the <see cref="TranscriptionJobDB"/>
-    /// record in the database.
+    /// Resolves the audio device identifier from the module database using
+    /// <paramref name="deviceId"/>.
     /// </summary>
     public void Start(
-        Guid jobId, Guid modelId, string? deviceIdentifier, string? language,
+        Guid jobId, Guid modelId, Guid deviceId, string? language,
         TranscriptionMode? mode = null, int? windowSeconds = null, int? stepSeconds = null)
     {
         var cts = new CancellationTokenSource();
@@ -65,8 +89,10 @@ public sealed class LiveTranscriptionOrchestrator(
             throw new InvalidOperationException($"Transcription job {jobId} is already running.");
         }
 
+        OpenChannel(jobId);
+
         _ = Task.Run(() => RunSlidingWindowLoopAsync(
-            jobId, modelId, deviceIdentifier, language,
+            jobId, modelId, deviceId, language,
             mode ?? TranscriptionMode.SlidingWindow,
             windowSeconds, stepSeconds,
             cts.Token));
@@ -88,6 +114,16 @@ public sealed class LiveTranscriptionOrchestrator(
     public bool IsRunning(Guid jobId) => _activeSessions.ContainsKey(jobId);
 
     /// <inheritdoc/>
+    public async Task ResumeTranscriptionJobAsync(Guid jobId, CancellationToken ct = default)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TranscriptionDbContext>();
+        var tjob = await db.TranscriptionJobs.FirstOrDefaultAsync(j => j.AgentJobId == jobId, ct);
+        if (tjob is not null)
+            Start(jobId, tjob.ModelId, tjob.DeviceId, tjob.Language, tjob.Mode, tjob.WindowSeconds, tjob.StepSeconds);
+    }
+
+    /// <inheritdoc/>
     public Task StopAllAsync()
     {
         foreach (var (jobId, cts) in _activeSessions)
@@ -107,11 +143,21 @@ public sealed class LiveTranscriptionOrchestrator(
     // ═══════════════════════════════════════════════════════════════
 
     private async Task RunSlidingWindowLoopAsync(
-        Guid jobId, Guid modelId, string? deviceIdentifier,
+        Guid jobId, Guid modelId, Guid deviceId,
         string? language, TranscriptionMode mode,
         int? windowSecondsOverride, int? stepSecondsOverride,
         CancellationToken ct)
     {
+        // Resolve device identifier from the module database.
+        string? deviceIdentifier;
+        using (var deviceScope = scopeFactory.CreateScope())
+        {
+            var db = deviceScope.ServiceProvider.GetRequiredService<TranscriptionDbContext>();
+            var device = await db.InputAudios.FirstOrDefaultAsync(d => d.Id == deviceId, ct)
+                ?? throw new InvalidOperationException($"Audio device {deviceId} not found.");
+            deviceIdentifier = device.DeviceIdentifier;
+        }
+
         logger.LogInformation(
             "Starting sliding-window transcription for job {JobId} on device '{Device}'",
             jobId, deviceIdentifier ?? "default");
@@ -126,11 +172,14 @@ public sealed class LiveTranscriptionOrchestrator(
 
         providerType = modelInfo.ProviderType;
 
-        if (!transcriptionClientFactory.Supports(providerType))
+        var isLocal = transcriptionClientFactory.SupportsLocal()
+            && !transcriptionClientFactory.Supports(providerType);
+
+        if (!isLocal && !transcriptionClientFactory.Supports(providerType))
             throw new InvalidOperationException(
                 $"Provider ({providerType}) does not support transcription.");
 
-        if (providerType == ProviderType.Whisper)
+        if (isLocal)
         {
             modelName = await modelInfoProvider.GetLocalModelFilePathAsync(modelId, ct)
                 ?? throw new InvalidOperationException(
@@ -142,7 +191,9 @@ public sealed class LiveTranscriptionOrchestrator(
             modelName = modelInfo.ModelName;
         }
 
-        var sttClient = transcriptionClientFactory.GetClient(providerType);
+        var sttClient = isLocal
+            ? transcriptionClientFactory.GetLocalClient()
+            : transcriptionClientFactory.GetClient(providerType);
         var ringBuffer = sharedCapture.Acquire(deviceIdentifier, SampleRate, BufferCapacitySeconds);
         var lastSeenEnd = 0.0;
         var provisionals = new List<ProvisionalSegment>();
@@ -159,7 +210,7 @@ public sealed class LiveTranscriptionOrchestrator(
             : effectiveWindow;
         var isTwoPass = mode == TranscriptionMode.SlidingWindow;
         var promptBuffer = isTwoPass && language is not null
-            ? LanguageValidator.GetPromptSeed(language)
+            ? LanguageScriptValidator.GetPromptSeed(language)
             : "";
 
         // Poll cadence is always short (2 s) so the loop reacts
@@ -440,9 +491,8 @@ public sealed class LiveTranscriptionOrchestrator(
 
                             using (var mergeScope = scopeFactory.CreateScope())
                             {
-                                var mergeSvc = mergeScope.ServiceProvider.GetRequiredService<ITranscriptionJobSink>();
-                                await mergeSvc.UpdateProvisionalTextAsync(
-                                    jobId, last.SegmentId, mergedText, ct);
+                                var mergeDb = mergeScope.ServiceProvider.GetRequiredService<TranscriptionDbContext>();
+                                await UpdateProvisionalTextInternalAsync(mergeDb, jobId, last.SegmentId, mergedText, ct);
                             }
                             provisionals[^1] = last with { Text = mergedText };
                             emittedTexts.Add(mergedText.Trim().TrimEnd('.'));
@@ -485,7 +535,7 @@ public sealed class LiveTranscriptionOrchestrator(
                     }
 
                     using var scope = scopeFactory.CreateScope();
-                    var svc = scope.ServiceProvider.GetRequiredService<ITranscriptionJobSink>();
+                    var svc = scope.ServiceProvider.GetRequiredService<TranscriptionDbContext>();
 
                     foreach (var seg in segments)
                     {
@@ -514,8 +564,7 @@ public sealed class LiveTranscriptionOrchestrator(
                             await AddJobLogAsync(jobId,
                                 $"[tick {tickCount}] EMIT final [{absStart:F2},{absEnd:F2}]: " +
                                 $"\"{Truncate(seg.Text, 60)}\"", "Info");
-                            await svc.PushSegmentAsync(
-                                jobId, seg.Text, absStart, absEnd, seg.Confidence, ct: ct);
+                            await PushSegmentInternalAsync(svc, jobId, seg.Text, absStart, absEnd, seg.Confidence, isProvisional: false, ct);
                         }
                         else if (absEnd <= currentAbsTime - CommitDelaySeconds)
                         {
@@ -523,8 +572,7 @@ public sealed class LiveTranscriptionOrchestrator(
                                 $"[tick {tickCount}] EMIT confirmed [{absStart:F2},{absEnd:F2}] " +
                                 $"(absEnd <= {currentAbsTime - CommitDelaySeconds:F2}): " +
                                 $"\"{Truncate(seg.Text, 60)}\"", "Info");
-                            await svc.PushSegmentAsync(
-                                jobId, seg.Text, absStart, absEnd, seg.Confidence, ct: ct);
+                            await PushSegmentInternalAsync(svc, jobId, seg.Text, absStart, absEnd, seg.Confidence, isProvisional: false, ct);
                         }
                         else
                         {
@@ -532,9 +580,7 @@ public sealed class LiveTranscriptionOrchestrator(
                                 $"[tick {tickCount}] EMIT provisional [{absStart:F2},{absEnd:F2}] " +
                                 $"(absEnd > {currentAbsTime - CommitDelaySeconds:F2}): " +
                                 $"\"{Truncate(seg.Text, 60)}\"", "Info");
-                            var prov = await svc.PushSegmentAsync(
-                                jobId, seg.Text, absStart, absEnd, seg.Confidence,
-                                isProvisional: true, ct: ct);
+                            var prov = await PushSegmentInternalAsync(svc, jobId, seg.Text, absStart, absEnd, seg.Confidence, isProvisional: true, ct);
 
                             if (prov is not null)
                                 provisionals.Add(new ProvisionalSegment(
@@ -568,8 +614,7 @@ public sealed class LiveTranscriptionOrchestrator(
                                     $"[tick {tickCount}] FINALIZE stale provisional " +
                                     $"(absEnd {stale.AbsEnd:F2} < threshold {staleThreshold:F2}): " +
                                     $"\"{Truncate(stale.Text, 60)}\"", "Info");
-                                await svc.FinalizeSegmentAsync(
-                                    jobId, stale.SegmentId, stale.Text, ct: ct);
+                                await FinalizeSegmentInternalAsync(svc, jobId, stale.SegmentId, stale.Text, ct: ct);
                                 provisionals.RemoveAt(i);
                             }
                         }
@@ -639,6 +684,7 @@ public sealed class LiveTranscriptionOrchestrator(
         finally
         {
             await sharedCapture.ReleaseAsync(deviceIdentifier);
+            CloseChannel(jobId);
 
             if (_activeSessions.TryRemove(jobId, out var cts))
             {
@@ -648,8 +694,72 @@ public sealed class LiveTranscriptionOrchestrator(
         }
     }
 
-    private readonly record struct ProvisionalSegment(
-        Guid SegmentId, string Text, double AbsEnd);
+    // ═══════════════════════════════════════════════════════════════
+    // Segment persistence (module-internal; no host dependency)
+    // ═══════════════════════════════════════════════════════════════
+
+    private async Task<TranscriptionSegmentDB?> PushSegmentInternalAsync(
+        TranscriptionDbContext db, Guid jobId, string text,
+        double startTime, double endTime, double? confidence,
+        bool isProvisional, CancellationToken ct)
+    {
+        var segment = new TranscriptionSegmentDB
+        {
+            AgentJobId = jobId,
+            Text = text,
+            StartTime = startTime,
+            EndTime = endTime,
+            Confidence = confidence,
+            Timestamp = DateTimeOffset.UtcNow,
+            IsProvisional = isProvisional,
+        };
+        db.TranscriptionSegments.Add(segment);
+        await db.SaveChangesAsync(ct);
+
+        var response = new TranscriptionSegmentResponse(
+            segment.Id, segment.Text, segment.StartTime, segment.EndTime,
+            segment.Confidence, segment.Timestamp, segment.IsProvisional);
+        await PushToChannelAsync(jobId, response, ct);
+        return segment;
+    }
+
+    private async Task FinalizeSegmentInternalAsync(
+        TranscriptionDbContext db, Guid jobId, Guid segmentId, string text,
+        double? confidence = null, CancellationToken ct = default)
+    {
+        var segment = await db.TranscriptionSegments
+            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId, ct);
+        if (segment is null)
+            return;
+
+        segment.Text = text;
+        segment.IsProvisional = false;
+        segment.Timestamp = DateTimeOffset.UtcNow;
+        if (confidence.HasValue)
+            segment.Confidence = confidence;
+        await db.SaveChangesAsync(ct);
+
+        var response = new TranscriptionSegmentResponse(
+            segment.Id, segment.Text, segment.StartTime, segment.EndTime,
+            segment.Confidence, segment.Timestamp, IsProvisional: false);
+        await PushToChannelAsync(jobId, response, ct);
+    }
+
+    private static async Task UpdateProvisionalTextInternalAsync(
+        TranscriptionDbContext db, Guid jobId, Guid segmentId, string text,
+        CancellationToken ct)
+    {
+        var segment = await db.TranscriptionSegments
+            .FirstOrDefaultAsync(s => s.Id == segmentId && s.AgentJobId == jobId && s.IsProvisional, ct);
+        if (segment is null)
+            return;
+
+        segment.Text = text;
+        segment.Timestamp = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
+    private readonly record struct ProvisionalSegment(Guid SegmentId, string Text, double AbsEnd);
 
     private static string RemoveOverlap(string previous, string current)
     {

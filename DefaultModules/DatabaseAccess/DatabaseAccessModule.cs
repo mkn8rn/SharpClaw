@@ -9,8 +9,8 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Modules.DatabaseAccess.Services;
 using SharpClaw.Modules.DatabaseAccess.Handlers;
 using SharpClaw.Modules.DatabaseAccess.Triggers;
-using SharpClaw.Contracts.DTOs.Databases;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.DatabaseAccess.Dtos;
+using SharpClaw.Modules.DatabaseAccess.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Tasks;
@@ -35,6 +35,8 @@ public sealed class DatabaseAccessModule : ISharpClawModule
 
     public void ConfigureServices(IServiceCollection services)
     {
+        services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
+            .CreateDbContext<DatabaseAccessDbContext>());
         services.AddScoped<DatabaseResourceService>();
         services.AddSingleton<IDatabaseQueryExecutor, DatabaseQueryExecutor>();
         services.AddSingleton<ITaskTriggerSource, QueryRowsTriggerSource>();
@@ -67,7 +69,8 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<DatabaseAccessDbContext>();
             return await db.InternalDatabases.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "internaldb"),
         new("DbExternal", "ExternalDatabase", "AccessExternalDatabaseAsync", static async (sp, ct) =>
         {
             var db = sp.GetRequiredService<DatabaseAccessDbContext>();
@@ -77,7 +80,8 @@ public sealed class DatabaseAccessModule : ISharpClawModule
         {
             var db = sp.GetRequiredService<DatabaseAccessDbContext>();
             return await db.ExternalDatabases.Select(d => new ValueTuple<Guid, string>(d.Id, d.Name)).ToListAsync(ct);
-        }),
+        },
+        DefaultResourceKey: "externaldb"),
     ];
 
     // ═══════════════════════════════════════════════════════════════

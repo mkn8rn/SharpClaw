@@ -65,6 +65,7 @@ fastest way to make that happen.
 - [Custom chat header](#custom-chat-header)
 - [Tool awareness sets](#tool-awareness-sets)
 - [Permission Resolution](#permission-resolution)
+- [Modules](#modules)
 - [Bundled modules](#bundled-modules)
 
 ---
@@ -3197,6 +3198,85 @@ Accessible threads are surfaced in the chat header
 
 ---
 
+## Modules
+
+Modules are addressed by **module ID strings**, not GUIDs. Example:
+`sharpclaw_computer_use`.
+
+### GET /modules
+
+List all known bundled modules and their current state.
+
+### GET /modules/{moduleId}
+
+Return enriched detail for one module.
+
+### POST /modules/{moduleId}/enable
+
+Enable a bundled module at runtime.
+
+- **Response `200`**: enable result
+- **Response `404`**: unknown module ID
+- **Response `409`**: dependency or state conflict prevented enablement
+
+### POST /modules/{moduleId}/disable
+
+Disable a bundled module at runtime.
+
+- **Response `200`**: disable result
+- **Response `404`**: unknown module ID
+- **Response `409`**: another enabled module depends on one of its exported contracts
+
+### POST /modules/scan
+
+Scan the external modules directory and load newly discovered modules.
+
+### POST /modules/{moduleId}/reload
+
+Reload a previously loaded external module.
+
+### POST /modules/{moduleId}/unload
+
+Unload an external module.
+
+### GET /modules/{moduleId}/logs
+
+Read buffered logs for a module.
+
+Query parameters:
+
+| Query param | Type | Description |
+|---|---|---|
+| `since` | string | ISO 8601 cursor timestamp |
+| `level` | string | Minimum log level |
+| `take` | int | Page size, clamped to `1..500` |
+
+### DELETE /modules/{moduleId}/logs
+
+Clear the in-memory log buffer for a module.
+
+### GET /modules/{moduleId}/diagnostics
+
+Return warning/error-focused diagnostics for one module.
+
+### GET /modules/{moduleId}/metrics
+### GET /modules/metrics
+### POST /modules/{moduleId}/metrics/reset
+### POST /modules/metrics/reset
+
+Read or reset aggregated module execution metrics.
+
+### GET /modules/{moduleId}/health
+### GET /modules/health
+
+Read the last known health snapshot for one module or for all modules.
+
+For tutorial-style module workflows, see
+[guides/Module-User-Guide.md](guides/Module-User-Guide.md) and
+[guides/Module-Agent-Skill.md](guides/Module-Agent-Skill.md).
+
+---
+
 ## Bundled modules
 
 SharpClaw ships with a set of default modules that register their own
@@ -3222,3 +3302,4 @@ has its own documentation:
 
 For enabling/disabling modules, see the
 [Module Enablement Guide](modules/Module-Enablement-Guide.md).
+For task and module walkthroughs, also see the `docs/guides/` folder.

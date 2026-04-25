@@ -42,12 +42,12 @@ public class SharpClawDbContext(
     public DbSet<ChatMessageDB> ChatMessages => Set<ChatMessageDB>();
     public DbSet<ScheduledJobDB> ScheduledTasks => Set<ScheduledJobDB>();
 
-    public DbSet<TranscriptionSegmentDB> TranscriptionSegments => Set<TranscriptionSegmentDB>();
     public DbSet<ClearanceUserWhitelistEntryDB> ClearanceUserWhitelistEntries => Set<ClearanceUserWhitelistEntryDB>();
     public DbSet<ClearanceAgentWhitelistEntryDB> ClearanceAgentWhitelistEntries => Set<ClearanceAgentWhitelistEntryDB>();
     public DbSet<AgentJobDB> AgentJobs => Set<AgentJobDB>();
     public DbSet<AgentJobLogEntryDB> AgentJobLogEntries => Set<AgentJobLogEntryDB>();
     public DbSet<DefaultResourceSetDB> DefaultResourceSets => Set<DefaultResourceSetDB>();
+    public DbSet<DefaultResourceEntryDB> DefaultResourceEntries => Set<DefaultResourceEntryDB>();
     public DbSet<ToolAwarenessSetDB> ToolAwarenessSets => Set<ToolAwarenessSetDB>();
     public DbSet<LocalModelFileDB> LocalModelFiles => Set<LocalModelFileDB>();
 
@@ -330,9 +330,6 @@ public class SharpClawDbContext(
         {
             e.Property(j => j.Status).HasConversion<string>();
             e.Property(j => j.EffectiveClearance).HasConversion<string>();
-            e.Property(j => j.DangerousShellType).HasConversion<string>();
-            e.Property(j => j.SafeShellType).HasConversion<string>();
-            e.Property(j => j.TranscriptionMode).HasConversion<string>();
             e.HasOne(j => j.Agent)
                 .WithMany()
                 .HasForeignKey(j => j.AgentId)
@@ -341,22 +338,13 @@ public class SharpClawDbContext(
                 .WithOne(l => l.AgentJob)
                 .HasForeignKey(l => l.AgentJobId)
                 .OnDelete(DeleteBehavior.Cascade);
-            // Transcription
-            e.HasOne(j => j.TranscriptionModel)
-                .WithMany()
-                .HasForeignKey(j => j.TranscriptionModelId)
-                .OnDelete(DeleteBehavior.SetNull);
             e.HasOne(j => j.Channel)
                 .WithMany()
                 .HasForeignKey(j => j.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(j => j.TranscriptionSegments)
-                .WithOne(s => s.AgentJob)
-                .HasForeignKey(s => s.AgentJobId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
+            });
 
-        // ── Task definitions & instances ──────────────────────────
+            // ── Task definitions & instances
         modelBuilder.Entity<TaskDefinitionDB>(e =>
         {
             e.HasIndex(d => d.Name).IsUnique();
@@ -400,6 +388,18 @@ public class SharpClawDbContext(
             e.Property(c => c.ModuleId).HasMaxLength(128);
             e.Property(c => c.Key).HasMaxLength(128);
             e.Property(c => c.Value).HasMaxLength(4096);
+        });
+
+        // ── Default resource entries ──────────────────────────────
+        modelBuilder.Entity<DefaultResourceEntryDB>(e =>
+        {
+            e.ToTable("DefaultResourceEntries");
+            e.HasIndex(entry => new { entry.DefaultResourceSetId, entry.ResourceKey }).IsUnique();
+            e.Property(entry => entry.ResourceKey).HasMaxLength(128);
+            e.HasOne(entry => entry.DefaultResourceSet)
+                .WithMany(drs => drs.Entries)
+                .HasForeignKey(entry => entry.DefaultResourceSetId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         ConfigureForProvider(modelBuilder);
