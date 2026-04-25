@@ -9,7 +9,6 @@ using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Application.Infrastructure.Models.Context;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Attributes;
-using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Models;
@@ -63,8 +62,7 @@ public sealed partial class HeaderTagProcessor(
         string template,
         ChannelDB channel,
         AgentDB agent,
-        ChatClientType clientType,
-        EditorContext? editorContext,
+        string clientType,
         Guid? userId,
         CancellationToken ct,
         CompletionParameters? completionParameters = null,
@@ -74,7 +72,7 @@ public sealed partial class HeaderTagProcessor(
         if (matches.Count == 0)
             return template;
 
-        var context = await BuildContextAsync(channel, agent, clientType, editorContext, userId, ct,
+        var context = await BuildContextAsync(channel, agent, clientType, userId, ct,
             completionParameters, providerType);
 
         var sb = new StringBuilder(template.Length * 2);
@@ -101,8 +99,8 @@ public sealed partial class HeaderTagProcessor(
     // ═══════════════════════════════════════════════════════════════
 
     private async Task<HeaderContext> BuildContextAsync(
-        ChannelDB channel, AgentDB agent, ChatClientType clientType,
-        EditorContext? editorContext, Guid? userId, CancellationToken ct,
+        ChannelDB channel, AgentDB agent, string clientType,
+        Guid? userId, CancellationToken ct,
         CompletionParameters? completionParameters = null,
         ProviderType providerType = default)
     {
@@ -138,7 +136,7 @@ public sealed partial class HeaderTagProcessor(
         }
 
         return new HeaderContext(
-            channel, agent, clientType, editorContext,
+            channel, agent, clientType,
             user, userPs, agentWithRole?.Role, agentPs,
             completionParameters, providerType);
     }
@@ -155,7 +153,7 @@ public sealed partial class HeaderTagProcessor(
         {
             "time" => DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"),
             "user" => ctx.User?.Username ?? "(unknown)",
-            "via" => ctx.ClientType.ToString(),
+            "via" => ctx.ClientType,
             "role" => FormatUserRole(ctx),
             "bio" => ctx.User?.Bio ?? "",
             "agent-name" => ctx.Agent.Name,
@@ -164,10 +162,11 @@ public sealed partial class HeaderTagProcessor(
             "clearance" => "(per-action; see grants)",
             "grants" => FormatGrants(ctx.UserPs),
             "agent-grants" => await FormatAgentGrantsAsync(ctx, ct),
-            "editor" => FormatEditor(ctx.EditorContext),
             "accessible-threads" => await FormatAccessibleThreadsAsync(ctx, ct),
             "reasoning-effort" => FormatReasoningEffortNotice(ctx),
-            _ => await TryExpandResourceTagAsync(tagName, itemTemplate, ct)
+            _ => await TryExpandModuleTagAsync(tagName, ct)
+                 ?? await TryExpandResourceTagAsync(tagName, itemTemplate, ct)
+                 ?? $"{{{{unknown:{tagName}}}}}"
         };
 
         return expanded;
@@ -292,20 +291,11 @@ public sealed partial class HeaderTagProcessor(
         grants.Add($"{grantName}[{idList}]");
     }
 
-    private static string FormatEditor(EditorContext? ec)
+    private async Task<string?> TryExpandModuleTagAsync(string tagName, CancellationToken ct)
     {
-        if (ec is null) return "(none)";
-        var sb = new StringBuilder();
-        sb.Append(ec.EditorType);
-        if (ec.EditorVersion is not null) sb.Append(' ').Append(ec.EditorVersion);
-        if (ec.WorkspacePath is not null) sb.Append(" workspace=").Append(ec.WorkspacePath);
-        if (ec.ActiveFilePath is not null) sb.Append(" file=").Append(ec.ActiveFilePath);
-        if (ec.ActiveFileLanguage is not null) sb.Append(" lang=").Append(ec.ActiveFileLanguage);
-        if (ec.SelectionStartLine is not null)
-            sb.Append(" sel=").Append(ec.SelectionStartLine).Append('-').Append(ec.SelectionEndLine);
-        if (ec.SelectedText is { Length: > 0 and <= 200 })
-            sb.Append(" selection=\"").Append(ec.SelectedText).Append('"');
-        return sb.ToString();
+        var tag = moduleRegistry.GetHeaderTag(tagName);
+        if (tag is null) return null;
+        return await tag.Resolve(serviceProvider, ct);
     }
 
     /// <summary>
@@ -380,12 +370,12 @@ public sealed partial class HeaderTagProcessor(
     /// Returns entities as <see cref="BaseEntity"/> so we can reflect
     /// their properties for template expansion.
     /// </summary>
-    private async Task<string> TryExpandResourceTagAsync(
+    private async Task<string?> TryExpandResourceTagAsync(
         string tagName, string? itemTemplate, CancellationToken ct)
     {
         var entities = await LoadEntitiesAsync(tagName, ct);
         if (entities is null)
-            return $"{{{{unknown:{tagName}}}}}";
+            return null;
 
         if (entities.Count == 0)
             return "(none)";
@@ -474,8 +464,7 @@ public sealed partial class HeaderTagProcessor(
     private sealed record HeaderContext(
         ChannelDB Channel,
         AgentDB Agent,
-        ChatClientType ClientType,
-        EditorContext? EditorContext,
+        string ClientType,
         UserDB? User,
         PermissionSetDB? UserPs,
         RoleDB? AgentRole,

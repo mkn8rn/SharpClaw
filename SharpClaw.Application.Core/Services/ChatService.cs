@@ -16,9 +16,9 @@ using SharpClaw.Application.Infrastructure.Models.Messages;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.DTOs.Editor;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Models;
@@ -140,7 +140,7 @@ public sealed class ChatService(
         CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderType);
 
         // Build chat header for the user message (if enabled)
-        var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, request.EditorContext, ct,
+        var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, ct,
             taskContext: request.TaskContext, externalUsername: request.ExternalUsername, externalDisplayName: request.ExternalDisplayName,
             completionParameters: completionParams, providerType: provider.ProviderType);
         var messageForModel = chatHeader is not null
@@ -152,7 +152,7 @@ public sealed class ChatService(
 
         using var httpClient = httpClientFactory.CreateClient();
 
-        var modelCapabilities = model.Capabilities;
+        var modelCapabilityTags = model.CapabilityTags;
         var maxTokens = agent.MaxCompletionTokens;
         var providerParams = _disableCustomProviderParameters ? null : agent.ProviderParameters;
         var toolAwareness = enableTools ? (channel.ToolAwarenessSet?.Tools ?? agent.ToolAwarenessSet?.Tools) : null;
@@ -182,7 +182,7 @@ public sealed class ChatService(
         var loopResult = enableTools
             ? await RunNativeToolLoopAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
-                history, agent.Id, channelId, modelCapabilities, maxTokens, providerParams, completionParams, approvalCallback, ct,
+                history, agent.Id, channelId, modelCapabilityTags, maxTokens, providerParams, completionParams, approvalCallback, ct,
                 taskContext: request.TaskContext, toolAwareness: toolAwareness, threadId: threadId)
             : await RunPlainCompletionAsync(
                 client, httpClient, apiKey, model.Name, systemPrompt,
@@ -455,8 +455,8 @@ public sealed class ChatService(
     /// (either at channel level or inherited from the context).
     /// </summary>
     private async Task<string?> BuildChatHeaderAsync(
-        ChannelDB channel, AgentDB agent, ChatClientType clientType,
-        EditorContext? editorContext, CancellationToken ct,
+        ChannelDB channel, AgentDB agent, string clientType,
+        CancellationToken ct,
         TaskChatContext? taskContext = null,
         string? externalUsername = null, string? externalDisplayName = null,
         CompletionParameters? completionParameters = null,
@@ -493,7 +493,7 @@ public sealed class ChatService(
                 }
             }
 
-            await AppendAgentSuffixAsync(taskSb, agent.Id, channel.Id, editorContext: null, ct,
+            await AppendAgentSuffixAsync(taskSb, agent.Id, channel.Id, ct,
                 completionParameters, providerType);
             return taskSb.ToString();
         }
@@ -504,7 +504,7 @@ public sealed class ChatService(
         {
             var userId2 = jobService.GetSessionUserId();
             return await headerTagProcessor.ExpandAsync(
-                customTemplate, channel, agent, clientType, editorContext, userId2, ct,
+                customTemplate, channel, agent, clientType, userId2, ct,
                 completionParameters, providerType);
         }
 
@@ -520,7 +520,7 @@ public sealed class ChatService(
                 extSb.Append(" (@").Append(externalUsername).Append(')');
             extSb.Append(" | via: ").Append(clientType);
 
-            await AppendAgentSuffixAsync(extSb, agent.Id, channel.Id, editorContext: null, ct,
+            await AppendAgentSuffixAsync(extSb, agent.Id, channel.Id, ct,
                 completionParameters, providerType);
             return extSb.ToString();
         }
@@ -567,19 +567,19 @@ public sealed class ChatService(
         if (!string.IsNullOrWhiteSpace(user.Bio))
             sb.Append(" | bio: ").Append(user.Bio);
 
-        await AppendAgentSuffixAsync(sb, agent.Id, channel.Id, editorContext, ct,
+        await AppendAgentSuffixAsync(sb, agent.Id, channel.Id, ct,
             completionParameters, providerType);
         return sb.ToString();
     }
 
     /// <summary>
-    /// Appends the shared agent-role, policy, accessible-threads, optional
-    /// editor context, and closing bracket to a header being constructed.
+    /// Appends the shared agent-role, policy, accessible-threads, and closing
+    /// bracket to a header being constructed.
     /// Shared across all header paths (authenticated user, external user, task).
     /// </summary>
     private async Task AppendAgentSuffixAsync(
         StringBuilder sb, Guid agentId, Guid channelId,
-        EditorContext? editorContext, CancellationToken ct,
+        CancellationToken ct,
         CompletionParameters? completionParameters = null,
         ProviderType providerType = default)
     {
@@ -621,19 +621,6 @@ public sealed class ChatService(
             sb.Append(" | accessible-threads: ");
             sb.Append(string.Join(", ", accessibleThreads.Select(
                 t => $"{t.ThreadName} [{t.ChannelTitle}] ({t.ThreadId:D})")));
-        }
-
-        if (editorContext is not null)
-        {
-            sb.Append(" | editor: ").Append(editorContext.EditorType);
-            if (editorContext.EditorVersion is not null)
-                sb.Append(' ').Append(editorContext.EditorVersion);
-            if (editorContext.WorkspacePath is not null)
-                sb.Append(" workspace=").Append(editorContext.WorkspacePath);
-            if (editorContext.ActiveFilePath is not null)
-                sb.Append(" file=").Append(editorContext.ActiveFilePath);
-            if (editorContext.SelectedText is { Length: > 0 and <= 200 })
-                sb.Append(" selection=\"").Append(editorContext.SelectedText).Append('"');
         }
 
         // Informational notice: surfaced when the provider accepts
@@ -872,7 +859,7 @@ public sealed class ChatService(
         CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderType);
 
         // Build chat header for the user message (if enabled)
-        var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, request.EditorContext, ct,
+        var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, ct,
             taskContext: request.TaskContext, externalUsername: request.ExternalUsername, externalDisplayName: request.ExternalDisplayName,
             completionParameters: completionParams, providerType: provider.ProviderType);
         if (chatHeader is not null)
@@ -880,7 +867,7 @@ public sealed class ChatService(
 
         using var httpClient = httpClientFactory.CreateClient();
 
-        var supportsVision = model.Capabilities.HasFlag(ModelCapability.Vision);
+        var supportsVision = model.CapabilityTags.Contains(WellKnownCapabilityKeys.Vision);
         var maxTokens = agent.MaxCompletionTokens;
         var providerParams = _disableCustomProviderParameters ? null : agent.ProviderParameters;
         var toolAwareness = channel.DisableToolSchemas || agent.DisableToolSchemas
@@ -1532,7 +1519,7 @@ public sealed class ChatService(
         IReadOnlyList<ChatCompletionMessage> dbHistory,
         Guid agentId,
         Guid channelId,
-        ModelCapability modelCapabilities,
+        IReadOnlySet<string> modelCapabilityTags,
         int? maxCompletionTokens,
         Dictionary<string, JsonElement>? providerParameters,
         CompletionParameters? completionParameters,
@@ -1546,7 +1533,7 @@ public sealed class ChatService(
         foreach (var msg in dbHistory)
             messages.Add(new ToolAwareMessage { Role = msg.Role, Content = msg.Content });
 
-        var supportsVision = modelCapabilities.HasFlag(ModelCapability.Vision);
+        var supportsVision = modelCapabilityTags.Contains(WellKnownCapabilityKeys.Vision);
         var jobResults = new List<AgentJobResponse>();
         var toolNotation = new StringBuilder();
         var rounds = 0;

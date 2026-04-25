@@ -1,5 +1,4 @@
 using SharpClaw.Contracts.Entities;
-using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Modules.EditorCommon.Models;
 

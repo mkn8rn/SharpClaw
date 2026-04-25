@@ -9,6 +9,7 @@ using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Auth;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Models;
 using SharpClaw.Infrastructure.Models;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -302,7 +303,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
     {
         var models = await db.Models
             .Include(m => m.Provider)
-            .Where(m => (m.Capabilities & ModelCapability.Chat) != 0)
+            .Where(m => m.CapabilityTagsRaw != null && m.CapabilityTagsRaw.Contains(WellKnownCapabilityKeys.Chat))
             .ToListAsync(ct);
 
         // Pre-load source URLs for local models so we can derive the suffix.

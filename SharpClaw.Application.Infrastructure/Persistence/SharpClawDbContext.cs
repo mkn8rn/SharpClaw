@@ -114,7 +114,6 @@ public class SharpClawDbContext(
         modelBuilder.Entity<ModelDB>(e =>
         {
             e.HasIndex(m => new { m.Name, m.ProviderId }).IsUnique();
-            e.Property(m => m.Capabilities).HasConversion<string>();
             e.HasMany(m => m.Agents)
                 .WithOne(a => a.Model)
                 .HasForeignKey(a => a.ModelId)
@@ -234,12 +233,6 @@ public class SharpClawDbContext(
                 .WithOne(m => m.Thread!)
                 .HasForeignKey(m => m.ThreadId)
                 .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // ── Chat Messages ─────────────────────────────────────────
-        modelBuilder.Entity<ChatMessageDB>(e =>
-        {
-            e.Property(m => m.ClientType).HasConversion<string>();
         });
 
         // ── Scheduled Tasks ───────────────────────────────────────

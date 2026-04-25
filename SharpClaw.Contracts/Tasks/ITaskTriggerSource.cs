@@ -8,19 +8,19 @@ namespace SharpClaw.Contracts.Tasks;
 public interface ITaskTriggerSource
 {
     /// <summary>
-    /// The <see cref="TriggerKind"/> values that this source handles.
-    /// A source may handle more than one kind (e.g. <c>TaskCompleted</c> and
-    /// <c>TaskFailed</c> are both handled by <c>EventBusTriggerSource</c>).
+    /// String key for sources that handle a single trigger kind.
+    /// The host routes binding rows whose <c>Kind</c> column matches this value.
+    /// Sources that handle multiple kinds override <see cref="TriggerKeys"/> instead.
     /// </summary>
-    IReadOnlyList<TriggerKind> SupportedKinds { get; }
+    string? TriggerKey => null;
 
     /// <summary>
-    /// Optional source name for <see cref="TriggerKind.Custom"/> sources.
-    /// Module authors implementing custom trigger sources should return a unique
-    /// non-empty name that matches the value used in <c>[OnTrigger("SourceName")]</c>
-    /// attributes. Built-in sources may return null.
+    /// All string keys handled by this source. Defaults to a single-element list
+    /// derived from <see cref="TriggerKey"/> when non-null, or empty if neither
+    /// is overridden (invalid — every source must expose at least one key).
+    /// Multi-kind sources override this property directly.
     /// </summary>
-    string? SourceName => null;
+    IReadOnlyList<string> TriggerKeys => TriggerKey is not null ? [TriggerKey] : [];
 
     /// <summary>
     /// Start watching. Called by the host when bindings are loaded or reloaded.

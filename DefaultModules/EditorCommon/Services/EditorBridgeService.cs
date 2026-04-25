@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts.DTOs.Editor;
-using SharpClaw.Contracts.Enums;
+using SharpClaw.Modules.EditorCommon.Models;
 
 namespace SharpClaw.Modules.EditorCommon.Services;
 
@@ -126,6 +126,11 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
 
             connectionId = Guid.NewGuid().ToString("N");
 
+            // Parse the string key to the internal enum; fall back to Other for unknown keys.
+            var editorType = Enum.TryParse<EditorType>(regMsg.EditorKey, ignoreCase: true, out var et)
+                ? et
+                : EditorType.Other;
+
             // Auto-register the session resource in the database
             using (var scope = scopeFactory.CreateScope())
             {
@@ -133,11 +138,11 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
                 var workspaceName = regMsg.WorkspacePath is not null
                     ? Path.GetFileName(regMsg.WorkspacePath)
                     : null;
-                var name = $"{regMsg.EditorType}"
+                var name = $"{regMsg.EditorKey}"
                     + (workspaceName is not null ? $" — {workspaceName}" : "");
 
                 var session = await sessionSvc.GetOrCreateAsync(
-                    name, regMsg.EditorType, regMsg.EditorVersion,
+                    name, editorType, regMsg.EditorVersion,
                     regMsg.WorkspacePath, ct);
 
                 session.ConnectionId = connectionId;
@@ -150,7 +155,7 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
             var conn = new EditorConnection(
                 connectionId,
                 sessionId.Value,
-                regMsg.EditorType,
+                editorType,
                 regMsg.EditorVersion,
                 regMsg.WorkspacePath,
                 socket,
@@ -227,7 +232,7 @@ public sealed class EditorBridgeService(IServiceScopeFactory scopeFactory)
     private sealed class RegistrationEnvelope
     {
         public string? Type { get; set; }
-        public EditorType EditorType { get; set; }
+        public string EditorKey { get; set; } = "";
         public string? EditorVersion { get; set; }
         public string? WorkspacePath { get; set; }
     }

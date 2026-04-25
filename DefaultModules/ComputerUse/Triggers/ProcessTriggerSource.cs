@@ -17,8 +17,7 @@ public sealed class ProcessTriggerSource(
     private Task? _pollTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.ProcessStarted, TriggerKind.ProcessStopped];
+    public IReadOnlyList<string> TriggerKeys { get; } = ["ProcessStarted", "ProcessStopped"];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -74,10 +73,10 @@ public sealed class ProcessTriggerSource(
                     var wasRunning = seen.Contains(name);
                     var isRunning  = runningSet.Contains(name);
 
-                    if (ctx.Definition.Kind == TriggerKind.ProcessStarted && !wasRunning && isRunning)
+                    if (ctx.Definition.TriggerKey == "ProcessStarted" && !wasRunning && isRunning)
                         await FireAsync(ctx);
 
-                    if (ctx.Definition.Kind == TriggerKind.ProcessStopped && wasRunning && !isRunning)
+                    if (ctx.Definition.TriggerKey == "ProcessStopped" && wasRunning && !isRunning)
                         await FireAsync(ctx);
                 }
 

@@ -3,8 +3,6 @@ using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.DatabaseAccess.Services;
 
-using TriggerKind = SharpClaw.Contracts.Tasks.TriggerKind;
-
 namespace SharpClaw.Modules.DatabaseAccess.Triggers;
 
 /// <summary>
@@ -18,7 +16,7 @@ public sealed class QueryRowsTriggerSource(
     private Task? _pollTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.QueryReturnsRows];
+    public string? TriggerKey => "QueryReturnsRows";
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {

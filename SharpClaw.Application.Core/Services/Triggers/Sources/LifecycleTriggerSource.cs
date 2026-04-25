@@ -20,18 +20,18 @@ public sealed class LifecycleTriggerSource(
     private CancellationTokenRegistration _startReg;
     private CancellationTokenRegistration _stopReg;
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.Startup, TriggerKind.Shutdown];
+    public IReadOnlyList<string> TriggerKeys { get; } =
+        [WellKnownTriggerKeys.Startup, WellKnownTriggerKeys.Shutdown];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
         _contexts = contexts;
 
         _startReg = lifetime.ApplicationStarted.Register(() =>
-            _ = Task.Run(() => FireMatchingAsync(TriggerKind.Startup)));
+            _ = Task.Run(() => FireMatchingAsync(WellKnownTriggerKeys.Startup)));
 
         _stopReg = lifetime.ApplicationStopping.Register(() =>
-            _ = Task.Run(() => FireMatchingAsync(TriggerKind.Shutdown)));
+            _ = Task.Run(() => FireMatchingAsync(WellKnownTriggerKeys.Shutdown)));
 
         return Task.CompletedTask;
     }
@@ -44,16 +44,16 @@ public sealed class LifecycleTriggerSource(
         return Task.CompletedTask;
     }
 
-    private async Task FireMatchingAsync(TriggerKind kind)
+    private async Task FireMatchingAsync(string key)
     {
-        foreach (var ctx in _contexts.Where(c => c.Definition.Kind == kind))
+        foreach (var ctx in _contexts.Where(c => c.Definition.TriggerKey == key))
         {
             try { await ctx.FireAsync(); }
             catch (Exception ex)
             {
                 logger.LogWarning(ex,
-                    "LifecycleTriggerSource failed to fire {Kind} context for definition {Id}.",
-                    kind, ctx.TaskDefinitionId);
+                    "LifecycleTriggerSource failed to fire {Key} context for definition {Id}.",
+                    key, ctx.TaskDefinitionId);
             }
         }
     }

@@ -1,5 +1,3 @@
-using SharpClaw.Contracts.Enums;
-
 namespace SharpClaw.Contracts.DTOs.Editor;
 
 // ═══════════════════════════════════════════════════════════════
@@ -11,7 +9,7 @@ namespace SharpClaw.Contracts.DTOs.Editor;
 /// agent knows the user's current editor state.
 /// </summary>
 public sealed record EditorContext(
-    EditorType EditorType,
+    string EditorKey,
     string? EditorVersion = null,
     string? WorkspacePath = null,
     string? ActiveFilePath = null,
@@ -28,7 +26,7 @@ public sealed record EditorContext(
 /// Registration message sent by the extension when it connects.
 /// </summary>
 public sealed record EditorRegistrationMessage(
-    EditorType EditorType,
+    string EditorKey,
     string? EditorVersion,
     string? WorkspacePath);
 
@@ -59,7 +57,7 @@ public sealed record EditorActionResponse(
 public sealed record EditorSessionResponse(
     Guid Id,
     string Name,
-    EditorType EditorType,
+    string EditorKey,
     string? EditorVersion,
     string? WorkspacePath,
     string? Description,
@@ -68,7 +66,7 @@ public sealed record EditorSessionResponse(
 
 public sealed record CreateEditorSessionRequest(
     string Name,
-    EditorType EditorType,
+    string EditorKey,
     string? EditorVersion = null,
     string? WorkspacePath = null,
     string? Description = null);

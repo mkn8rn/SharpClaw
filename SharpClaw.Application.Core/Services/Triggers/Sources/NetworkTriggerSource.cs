@@ -15,7 +15,7 @@ public sealed class NetworkTriggerSource(
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
     private bool _subscribed;
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.NetworkChanged];
+    public string TriggerKey => WellKnownTriggerKeys.NetworkChanged;
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {

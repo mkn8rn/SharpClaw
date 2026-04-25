@@ -128,6 +128,32 @@ public sealed class EditorCommonModule : ISharpClawModule
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Header Tags
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleHeaderTag>? GetHeaderTags() =>
+    [
+        new ModuleHeaderTag(
+            Name: "editor",
+            Resolve: static (sp, ct) =>
+            {
+                var bridge = sp.GetRequiredService<EditorBridgeService>();
+                var connections = bridge.GetConnections();
+                if (connections.Count == 0)
+                    return Task.FromResult("(none)");
+
+                var sessions = string.Join(", ", connections.Select(c =>
+                {
+                    var s = c.EditorType.ToString();
+                    if (c.EditorVersion is not null) s += $" {c.EditorVersion}";
+                    if (c.WorkspacePath is not null) s += $" workspace={c.WorkspacePath}";
+                    return s;
+                }));
+                return Task.FromResult(sessions);
+            })
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
     // No LLM-callable tools
     // ═══════════════════════════════════════════════════════════════
 

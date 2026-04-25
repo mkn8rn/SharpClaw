@@ -17,7 +17,7 @@ public sealed class MetricTriggerSource(
     private Task? _pollTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } = [TriggerKind.MetricThreshold];
+    public string TriggerKey => WellKnownTriggerKeys.MetricThreshold;
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {

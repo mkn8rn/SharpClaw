@@ -18,8 +18,7 @@ public sealed class SessionTriggerSource(
     private Task? _listenTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.ScreenLocked, TriggerKind.ScreenUnlocked];
+    public IReadOnlyList<string> TriggerKeys { get; } = ["ScreenLocked", "ScreenUnlocked"];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -79,8 +78,8 @@ public sealed class SessionTriggerSource(
                 {
                     wasLocked = isLocked;
                     await FireMatchingAsync(isLocked
-                        ? TriggerKind.ScreenLocked
-                        : TriggerKind.ScreenUnlocked);
+                        ? "ScreenLocked"
+                        : "ScreenUnlocked");
                 }
             }
             catch (OperationCanceledException) { break; }
@@ -126,9 +125,9 @@ public sealed class SessionTriggerSource(
                 if (line is null) break;
 
                 if (line.Contains("boolean true"))
-                    await FireMatchingAsync(TriggerKind.ScreenLocked);
+                    await FireMatchingAsync("ScreenLocked");
                 else if (line.Contains("boolean false"))
-                    await FireMatchingAsync(TriggerKind.ScreenUnlocked);
+                    await FireMatchingAsync("ScreenUnlocked");
             }
         }
         catch (OperationCanceledException) { /* expected */ }
@@ -138,9 +137,9 @@ public sealed class SessionTriggerSource(
         }
     }
 
-    private async Task FireMatchingAsync(TriggerKind kind)
+    private async Task FireMatchingAsync(string triggerKey)
     {
-        foreach (var ctx in _contexts.Where(c => c.Definition.Kind == kind))
+        foreach (var ctx in _contexts.Where(c => c.Definition.TriggerKey == triggerKey))
         {
             try { await ctx.FireAsync(); }
             catch (Exception ex)

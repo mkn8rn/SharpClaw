@@ -17,8 +17,7 @@ public sealed class IdleTriggerSource(
     private Task? _pollTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.SystemIdle, TriggerKind.SystemActive];
+    public IReadOnlyList<string> TriggerKeys { get; } = ["SystemIdle", "SystemActive"];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -70,10 +69,10 @@ public sealed class IdleTriggerSource(
                     var threshold = (ctx.Definition.IdleMinutes ?? 5) * 60;
                     var isIdle    = idleSeconds >= threshold;
 
-                    if (ctx.Definition.Kind == TriggerKind.SystemIdle && !wasIdle && isIdle)
+                    if (ctx.Definition.TriggerKey == "SystemIdle" && !wasIdle && isIdle)
                         await FireAsync(ctx);
 
-                    if (ctx.Definition.Kind == TriggerKind.SystemActive && wasIdle && !isIdle)
+                    if (ctx.Definition.TriggerKey == "SystemActive" && wasIdle && !isIdle)
                         await FireAsync(ctx);
                 }
 

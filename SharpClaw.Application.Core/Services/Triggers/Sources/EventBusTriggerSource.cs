@@ -21,8 +21,8 @@ public sealed class EventBusTriggerSource(
 
     // ── ITaskTriggerSource ────────────────────────────────────────
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.Event, TriggerKind.TaskCompleted, TriggerKind.TaskFailed];
+    public IReadOnlyList<string> TriggerKeys { get; } =
+        [WellKnownTriggerKeys.Event, WellKnownTriggerKeys.TaskCompleted, WellKnownTriggerKeys.TaskFailed];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -67,15 +67,15 @@ public sealed class EventBusTriggerSource(
     private static bool MatchesContext(ITaskTriggerSourceContext ctx, SharpClawEvent evt)
     {
         var def = ctx.Definition;
-        switch (def.Kind)
+        switch (def.TriggerKey)
         {
-            case TriggerKind.TaskCompleted:
+            case WellKnownTriggerKeys.TaskCompleted:
                 if (!evt.Type.HasFlag(SharpClawEventType.JobCompleted)) return false;
                 break;
-            case TriggerKind.TaskFailed:
+            case WellKnownTriggerKeys.TaskFailed:
                 if (!evt.Type.HasFlag(SharpClawEventType.JobFailed)) return false;
                 break;
-            case TriggerKind.Event:
+            case WellKnownTriggerKeys.Event:
                 if (string.IsNullOrWhiteSpace(def.EventType)) return false;
                 // EventType may be a comma-separated list of SharpClawEventType flag names
                 if (!MatchesEventTypeFilter(def.EventType, evt.Type)) return false;

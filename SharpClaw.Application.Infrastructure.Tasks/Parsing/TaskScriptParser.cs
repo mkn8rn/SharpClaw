@@ -475,7 +475,7 @@ public sealed class TaskScriptParser
                     var tz   = GetNamedStringArg(attr, "Timezone");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind           = TriggerKind.Cron,
+                        TriggerKey     = WellKnownTriggerKeys.Cron,
                         CronExpression = cron,
                         CronTimezone   = tz,
                         Line           = line,
@@ -489,7 +489,7 @@ public sealed class TaskScriptParser
                     var filter    = GetNamedStringArg(attr, "Filter");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.Event,
+                        TriggerKey  = WellKnownTriggerKeys.Event,
                         EventType   = eventType,
                         EventFilter = filter,
                         Line        = line,
@@ -504,7 +504,7 @@ public sealed class TaskScriptParser
                     var events  = GetNamedEnumArg<FileWatchEvent>(attr, "Events") ?? FileWatchEvent.Any;
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.FileChanged,
+                        TriggerKey  = WellKnownTriggerKeys.FileChanged,
                         WatchPath   = path,
                         FilePattern = pattern,
                         FileEvents  = events,
@@ -518,7 +518,7 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.ProcessStarted,
+                        TriggerKey  = "ProcessStarted",
                         ProcessName = ExtractFirstStringArg(attr),
                         Line        = line,
                     });
@@ -530,7 +530,7 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.ProcessStopped,
+                        TriggerKey  = "ProcessStopped",
                         ProcessName = ExtractFirstStringArg(attr),
                         Line        = line,
                     });
@@ -544,7 +544,7 @@ public sealed class TaskScriptParser
                     var sigHdr  = GetNamedStringArg(attr, "SignatureHeader");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind                   = TriggerKind.Webhook,
+                        TriggerKey             = WellKnownTriggerKeys.Webhook,
                         WebhookRoute           = route,
                         WebhookSecretEnvVar    = secret,
                         WebhookSignatureHeader = sigHdr,
@@ -559,7 +559,7 @@ public sealed class TaskScriptParser
                     var port = GetNamedIntArg(attr, "Port");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind     = TriggerKind.HostReachable,
+                        TriggerKey = WellKnownTriggerKeys.HostReachable,
                         HostName = host,
                         HostPort = port,
                         Line     = line,
@@ -573,7 +573,7 @@ public sealed class TaskScriptParser
                     var port = GetNamedIntArg(attr, "Port");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind     = TriggerKind.HostUnreachable,
+                        TriggerKey = WellKnownTriggerKeys.HostUnreachable,
                         HostName = host,
                         HostPort = port,
                         Line     = line,
@@ -584,7 +584,7 @@ public sealed class TaskScriptParser
                 case "OnTaskCompleted" or "OnTaskCompletedAttribute":
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind           = TriggerKind.TaskCompleted,
+                        TriggerKey     = WellKnownTriggerKeys.TaskCompleted,
                         SourceTaskName = ExtractFirstStringArg(attr),
                         Line           = line,
                     });
@@ -593,7 +593,7 @@ public sealed class TaskScriptParser
                 case "OnTaskFailed" or "OnTaskFailedAttribute":
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind           = TriggerKind.TaskFailed,
+                        TriggerKey     = WellKnownTriggerKeys.TaskFailed,
                         SourceTaskName = ExtractFirstStringArg(attr),
                         Line           = line,
                     });
@@ -604,7 +604,7 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.WindowFocused,
+                        TriggerKey  = "WindowFocused",
                         ProcessName = ExtractFirstStringArg(attr),
                         Line        = line,
                     });
@@ -616,7 +616,7 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.WindowBlurred,
+                        TriggerKey  = "WindowBlurred",
                         ProcessName = ExtractFirstStringArg(attr),
                         Line        = line,
                     });
@@ -638,7 +638,7 @@ public sealed class TaskScriptParser
                     }
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.Hotkey,
+                        TriggerKey  = "Hotkey",
                         HotkeyCombo = combo,
                         Line        = line,
                     });
@@ -650,7 +650,7 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind        = TriggerKind.SystemIdle,
+                        TriggerKey  = "SystemIdle",
                         IdleMinutes = GetNamedIntArg(attr, "Minutes") ?? ExtractFirstIntArg(attr),
                         Line        = line,
                     });
@@ -662,8 +662,8 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind = TriggerKind.SystemActive,
-                        Line = line,
+                        TriggerKey = "SystemActive",
+                        Line       = line,
                     });
                     break;
                 }
@@ -673,8 +673,8 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind = TriggerKind.ScreenLocked,
-                        Line = line,
+                        TriggerKey = "ScreenLocked",
+                        Line       = line,
                     });
                     break;
                 }
@@ -684,8 +684,8 @@ public sealed class TaskScriptParser
                     EmitPlatformWarningIfNeeded(attrName, line, diagnostics);
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind = TriggerKind.ScreenUnlocked,
-                        Line = line,
+                        TriggerKey = "ScreenUnlocked",
+                        Line       = line,
                     });
                     break;
                 }
@@ -696,7 +696,7 @@ public sealed class TaskScriptParser
                     var state = GetNamedEnumArg<NetworkState>(attr, "State") ?? NetworkState.Any;
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind         = TriggerKind.NetworkChanged,
+                        TriggerKey   = WellKnownTriggerKeys.NetworkChanged,
                         NetworkSsid  = ssid,
                         NetworkState = state,
                         Line         = line,
@@ -710,7 +710,7 @@ public sealed class TaskScriptParser
                     var devPattern = GetNamedStringArg(attr, "Pattern");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind              = TriggerKind.DeviceConnected,
+                        TriggerKey        = "DeviceConnected",
                         DeviceClass       = devClass,
                         DeviceNamePattern = devPattern,
                         Line              = line,
@@ -724,7 +724,7 @@ public sealed class TaskScriptParser
                     var devPattern = GetNamedStringArg(attr, "Pattern");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind              = TriggerKind.DeviceDisconnected,
+                        TriggerKey        = "DeviceDisconnected",
                         DeviceClass       = devClass,
                         DeviceNamePattern = devPattern,
                         Line              = line,
@@ -747,10 +747,10 @@ public sealed class TaskScriptParser
                     }
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind                 = TriggerKind.QueryReturnsRows,
-                        SqlQuery             = query,
+                        TriggerKey            = "QueryReturnsRows",
+                        SqlQuery              = query,
                         QueryPollIntervalSecs = interval,
-                        Line                 = line,
+                        Line                  = line,
                     });
                     break;
                 }
@@ -763,22 +763,22 @@ public sealed class TaskScriptParser
                     var interval  = GetNamedIntArg(attr, "PollInterval");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind                  = TriggerKind.MetricThreshold,
-                        MetricSource          = source,
-                        MetricThreshold       = threshold,
-                        MetricDirection       = direction,
+                        TriggerKey             = WellKnownTriggerKeys.MetricThreshold,
+                        MetricSource           = source,
+                        MetricThreshold        = threshold,
+                        MetricDirection        = direction,
                         MetricPollIntervalSecs = interval,
-                        Line                  = line,
+                        Line                   = line,
                     });
                     break;
                 }
 
                 case "OnStartup" or "OnStartupAttribute":
-                    triggers.Add(new TaskTriggerDefinition { Kind = TriggerKind.Startup, Line = line });
+                    triggers.Add(new TaskTriggerDefinition { TriggerKey = WellKnownTriggerKeys.Startup, Line = line });
                     break;
 
                 case "OnShutdown" or "OnShutdownAttribute":
-                    triggers.Add(new TaskTriggerDefinition { Kind = TriggerKind.Shutdown, Line = line });
+                    triggers.Add(new TaskTriggerDefinition { TriggerKey = WellKnownTriggerKeys.Shutdown, Line = line });
                     break;
 
                 case "OsShortcut" or "OsShortcutAttribute":
@@ -788,7 +788,7 @@ public sealed class TaskScriptParser
                     var category = GetNamedStringArg(attr, "Category");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind             = TriggerKind.OsShortcut,
+                        TriggerKey       = "OsShortcut",
                         ShortcutLabel    = label,
                         ShortcutIcon     = icon,
                         ShortcutCategory = category,
@@ -803,8 +803,7 @@ public sealed class TaskScriptParser
                     var filter     = GetNamedStringArg(attr, "Filter");
                     triggers.Add(new TaskTriggerDefinition
                     {
-                        Kind               = TriggerKind.Custom,
-                        CustomSourceName   = sourceName,
+                        TriggerKey         = sourceName,
                         CustomSourceFilter = filter,
                         Line               = line,
                     });

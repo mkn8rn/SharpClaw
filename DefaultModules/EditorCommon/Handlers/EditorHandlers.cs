@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -16,7 +17,7 @@ internal static class EditorHandlers
     {
         var group = routes.MapGroup("/editor");
 
-        group.Map("/ws", HandleWebSocket);
+        group.Map("/ws", HandleWebSocket).AllowAnonymous();
         group.MapGet("/sessions", ListSessions);
     }
 

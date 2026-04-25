@@ -16,8 +16,8 @@ public sealed class HostProbeTriggerSource(
     private Task? _probeTask;
     private IReadOnlyList<ITaskTriggerSourceContext> _contexts = [];
 
-    public IReadOnlyList<TriggerKind> SupportedKinds { get; } =
-        [TriggerKind.HostReachable, TriggerKind.HostUnreachable];
+    public IReadOnlyList<string> TriggerKeys { get; } =
+        [WellKnownTriggerKeys.HostReachable, WellKnownTriggerKeys.HostUnreachable];
 
     public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
@@ -70,10 +70,10 @@ public sealed class HostProbeTriggerSource(
 
                     lastState[key] = reachable;
 
-                    if (ctx.Definition.Kind == TriggerKind.HostReachable && !wasReachable && reachable)
+                    if (ctx.Definition.TriggerKey == WellKnownTriggerKeys.HostReachable && !wasReachable && reachable)
                         await FireAsync(ctx);
 
-                    if (ctx.Definition.Kind == TriggerKind.HostUnreachable && wasReachable && !reachable)
+                    if (ctx.Definition.TriggerKey == WellKnownTriggerKeys.HostUnreachable && wasReachable && !reachable)
                         await FireAsync(ctx);
                 }
             }

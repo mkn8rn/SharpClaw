@@ -61,7 +61,7 @@ public sealed class TaskTriggerRegistrar(
         CancellationToken ct)
     {
         var incomingCron = triggers
-            .Where(t => t.Kind == TriggerKind.Cron && !string.IsNullOrWhiteSpace(t.CronExpression))
+            .Where(t => t.TriggerKey == WellKnownTriggerKeys.Cron && !string.IsNullOrWhiteSpace(t.CronExpression))
             .ToList();
 
         var existing = await db.ScheduledTasks
@@ -135,7 +135,7 @@ public sealed class TaskTriggerRegistrar(
         CancellationToken ct)
     {
         var nonCron = triggers
-            .Where(t => t.Kind != TriggerKind.Cron)
+            .Where(t => t.TriggerKey != WellKnownTriggerKeys.Cron)
             .ToList();
 
         var existing = await db.TaskTriggerBindings
@@ -166,16 +166,17 @@ public sealed class TaskTriggerRegistrar(
             if (existingKeys.ContainsKey(key))
                 continue; // already present
 
+            var kindColumn = t.TriggerKey ?? string.Empty;
             db.TaskTriggerBindings.Add(new TaskTriggerBindingDB
             {
                 TaskDefinitionId = entity.Id,
-                Kind             = t.Kind.ToString(),
+                Kind             = kindColumn,
                 TriggerValue     = TriggerValueFor(t),
                 Filter           = TriggerFilterFor(t),
                 DefinitionJson   = System.Text.Json.JsonSerializer.Serialize(t),
             });
 
-            if (t.Kind == TriggerKind.OsShortcut && shortcutLauncher is not null)
+            if (t.TriggerKey == "OsShortcut" && shortcutLauncher is not null)
             {
                 var customId = entity.Name;
                 await shortcutLauncher.WriteShortcutAsync(t, customId, ct);
@@ -183,7 +184,7 @@ public sealed class TaskTriggerRegistrar(
 
             logger.LogDebug(
                 "Created trigger binding for definition {DefinitionId}, kind {Kind}.",
-                entity.Id, t.Kind);
+                entity.Id, kindColumn);
         }
     }
 
@@ -195,7 +196,7 @@ public sealed class TaskTriggerRegistrar(
 
         if (shortcutLauncher is not null)
         {
-            foreach (var b in bindings.Where(b => b.Kind == TriggerKind.OsShortcut.ToString()))
+            foreach (var b in bindings.Where(b => b.Kind == "OsShortcut"))
             {
                 var customId = b.TriggerValue ?? b.TaskDefinitionId.ToString();
                 await shortcutLauncher.RemoveShortcutsAsync(customId, ct);
@@ -210,39 +211,33 @@ public sealed class TaskTriggerRegistrar(
     // ─────────────────────────────────────────────────────────────
 
     private static string BindingKey(Guid definitionId, TaskTriggerDefinition t) =>
-        $"{definitionId}|{t.Kind}|{TriggerValueFor(t)}";
+        $"{definitionId}|{t.TriggerKey}|{TriggerValueFor(t)}";
 
     private static string BindingKey(TaskTriggerBindingDB b) =>
         $"{b.TaskDefinitionId}|{b.Kind}|{b.TriggerValue}";
 
-    private static string? TriggerValueFor(TaskTriggerDefinition t) => t.Kind switch
+    private static string? TriggerValueFor(TaskTriggerDefinition t)
     {
-        TriggerKind.Event           => t.EventType,
-        TriggerKind.FileChanged     => t.WatchPath,
-        TriggerKind.ProcessStarted
-            or TriggerKind.ProcessStopped
-            or TriggerKind.WindowFocused
-            or TriggerKind.WindowBlurred => t.ProcessName,
-        TriggerKind.Webhook         => t.WebhookRoute,
-        TriggerKind.HostReachable
-            or TriggerKind.HostUnreachable => t.HostName,
-        TriggerKind.TaskCompleted
-            or TriggerKind.TaskFailed => t.SourceTaskName,
-        TriggerKind.Hotkey          => t.HotkeyCombo,
-        TriggerKind.NetworkChanged  => t.NetworkSsid,
-        TriggerKind.DeviceConnected
-            or TriggerKind.DeviceDisconnected => t.DeviceClass,
-        TriggerKind.QueryReturnsRows => t.SqlQuery,
-        TriggerKind.MetricThreshold  => t.MetricSource,
-        TriggerKind.OsShortcut       => t.ShortcutLabel,
-        TriggerKind.Custom           => t.CustomSourceName,
-        _ => null,
-    };
+        return t.TriggerKey switch
+        {
+            WellKnownTriggerKeys.Event           => t.EventType,
+            WellKnownTriggerKeys.FileChanged     => t.WatchPath,
+            WellKnownTriggerKeys.Webhook         => t.WebhookRoute,
+            WellKnownTriggerKeys.HostReachable
+                or WellKnownTriggerKeys.HostUnreachable => t.HostName,
+            WellKnownTriggerKeys.TaskCompleted
+                or WellKnownTriggerKeys.TaskFailed => t.SourceTaskName,
+            WellKnownTriggerKeys.NetworkChanged  => t.NetworkSsid,
+            WellKnownTriggerKeys.MetricThreshold => t.MetricSource,
+            // Module-owned: use the filter field the module source understands
+            _ => t.CustomSourceFilter ?? t.ProcessName ?? t.HotkeyCombo
+                 ?? t.SqlQuery ?? t.ShortcutLabel ?? t.DeviceClass,
+        };
+    }
 
-    private static string? TriggerFilterFor(TaskTriggerDefinition t) => t.Kind switch
+    private static string? TriggerFilterFor(TaskTriggerDefinition t)
     {
-        TriggerKind.Event  => t.EventFilter,
-        TriggerKind.Custom => t.CustomSourceFilter,
-        _                  => null,
-    };
+        if (t.TriggerKey == WellKnownTriggerKeys.Event) return t.EventFilter;
+        return t.CustomSourceFilter;
+    }
 }

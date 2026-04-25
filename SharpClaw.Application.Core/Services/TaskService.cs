@@ -520,7 +520,7 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
                 r.CapabilityValue,
                 r.ParameterName)).ToList(),
             triggers.Select(t => new TaskTriggerResponse(
-                t.Kind.ToString(),
+                t.TriggerKey ?? string.Empty,
                 TriggerValueFor(t),
                 TriggerFilterFor(t),
                 IsEnabled: true)).ToList(),
@@ -529,34 +529,31 @@ public sealed class TaskService(SharpClawDbContext db, ColdEntityStore coldStore
             entity.CustomId);
     }
 
-    private static string? TriggerValueFor(TaskTriggerDefinition t) => t.Kind switch
+    private static string? TriggerValueFor(TaskTriggerDefinition t)
     {
-        TriggerKind.Cron            => t.CronExpression,
-        TriggerKind.Event           => t.EventType,
-        TriggerKind.FileChanged     => t.WatchPath,
-        TriggerKind.ProcessStarted
-            or TriggerKind.ProcessStopped
-            or TriggerKind.WindowFocused
-            or TriggerKind.WindowBlurred => t.ProcessName,
-        TriggerKind.Webhook         => t.WebhookRoute,
-        TriggerKind.HostReachable
-            or TriggerKind.HostUnreachable => t.HostName,
-        TriggerKind.TaskCompleted
-            or TriggerKind.TaskFailed     => t.SourceTaskName,
-        TriggerKind.Hotkey          => t.HotkeyCombo,
-        TriggerKind.QueryReturnsRows => t.SqlQuery,
-        TriggerKind.MetricThreshold => t.MetricSource,
-        TriggerKind.OsShortcut      => t.ShortcutLabel,
-        TriggerKind.Custom          => t.CustomSourceName,
-        _                           => null,
-    };
+        return t.TriggerKey switch
+        {
+            WellKnownTriggerKeys.Cron            => t.CronExpression,
+            WellKnownTriggerKeys.Event           => t.EventType,
+            WellKnownTriggerKeys.FileChanged     => t.WatchPath,
+            WellKnownTriggerKeys.Webhook         => t.WebhookRoute,
+            WellKnownTriggerKeys.HostReachable
+                or WellKnownTriggerKeys.HostUnreachable => t.HostName,
+            WellKnownTriggerKeys.TaskCompleted
+                or WellKnownTriggerKeys.TaskFailed     => t.SourceTaskName,
+            WellKnownTriggerKeys.NetworkChanged  => t.NetworkSsid,
+            WellKnownTriggerKeys.MetricThreshold => t.MetricSource,
+            // Module-owned: use the filter field the module source understands
+            _ => t.CustomSourceFilter ?? t.ProcessName ?? t.HotkeyCombo
+                 ?? t.SqlQuery ?? t.ShortcutLabel ?? t.DeviceClass,
+        };
+    }
 
-    private static string? TriggerFilterFor(TaskTriggerDefinition t) => t.Kind switch
+    private static string? TriggerFilterFor(TaskTriggerDefinition t)
     {
-        TriggerKind.Event  => t.EventFilter,
-        TriggerKind.Custom => t.CustomSourceFilter,
-        _                  => null,
-    };
+        if (t.TriggerKey == WellKnownTriggerKeys.Event) return t.EventFilter;
+        return t.CustomSourceFilter;
+    }
 
     private static TaskInstanceResponse ToInstanceResponse(
         TaskInstanceDB instance,
