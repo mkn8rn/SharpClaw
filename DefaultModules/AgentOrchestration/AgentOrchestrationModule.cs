@@ -100,6 +100,359 @@ public sealed class AgentOrchestrationModule : ISharpClawModule
     ];
 
     // ═══════════════════════════════════════════════════════════════
+    // CLI Commands
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleCliCommand> GetCliCommands() =>
+    [
+        new(
+            Name: "aotask",
+            Aliases: ["aot"],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Agent Orchestration scheduled task management",
+            UsageLines:
+            [
+                "resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]",
+                "resource aotask get <id>                         Show an AO task",
+                "resource aotask list                             List AO tasks",
+                "resource aotask update <id> [--name <name>] [--repeat-minutes <n>] [--max-retries <n>]",
+                "resource aotask delete <id>                      Delete an AO task",
+            ],
+            Handler: HandleResourceAoTaskCommandAsync),
+        new(
+            Name: "aoskill",
+            Aliases: ["aos"],
+            Scope: ModuleCliScope.ResourceType,
+            Description: "Agent Orchestration skill management",
+            UsageLines:
+            [
+                "resource aoskill add <name> --text <skillText> [--description <description>]",
+                "resource aoskill get <id>                        Show an AO skill",
+                "resource aoskill list                            List AO skills",
+                "resource aoskill update <id> [--name <name>] [--description <description>] [--text <skillText>]",
+                "resource aoskill delete <id>                     Delete an AO skill",
+            ],
+            Handler: HandleResourceAoSkillCommandAsync),
+    ];
+
+    private static async Task HandleResourceAoTaskCommandAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+        var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
+
+        if (args.Length < 3)
+        {
+            PrintAoTaskUsage();
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        switch (sub)
+        {
+            case "add" when args.Length >= 4:
+            {
+                var flags = ParseFlags(args, 4);
+                var task = new Models.ScheduledJobDB
+                {
+                    Id = Guid.NewGuid(),
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                    Name = args[3],
+                    NextRunAt = ParseDateTimeOffset(flags, "next-run") ?? DateTimeOffset.UtcNow,
+                    RepeatInterval = ParsePositiveMinutes(flags, "repeat-minutes"),
+                    MaxRetries = ParseInt(flags, "max-retries") ?? 3,
+                };
+
+                db.ScheduledJobs.Add(task);
+                await db.SaveChangesAsync(ct);
+                ids.PrintJson(ToAoTaskDto(task));
+                break;
+            }
+            case "add":
+                Console.Error.WriteLine("resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]");
+                break;
+
+            case "get" when args.Length >= 4:
+            {
+                var task = await db.ScheduledJobs.FirstOrDefaultAsync(t => t.Id == ids.Resolve(args[3]), ct);
+                if (task is not null)
+                    ids.PrintJson(ToAoTaskDto(task));
+                else
+                    Console.Error.WriteLine("Not found.");
+                break;
+            }
+            case "get":
+                Console.Error.WriteLine("resource aotask get <id>");
+                break;
+
+            case "list":
+            {
+                var tasks = await db.ScheduledJobs.OrderBy(t => t.Name).ToListAsync(ct);
+                ids.PrintJson(tasks.Select(ToAoTaskDto).ToList());
+                break;
+            }
+
+            case "update" when args.Length >= 4:
+            {
+                var task = await db.ScheduledJobs.FirstOrDefaultAsync(t => t.Id == ids.Resolve(args[3]), ct);
+                if (task is null)
+                {
+                    Console.Error.WriteLine("Not found.");
+                    break;
+                }
+
+                var flags = ParseFlags(args, 4);
+                if (flags.TryGetValue("name", out var name) && !string.IsNullOrWhiteSpace(name))
+                    task.Name = name;
+                if (flags.TryGetValue("repeat-minutes", out _))
+                    task.RepeatInterval = ParsePositiveMinutes(flags, "repeat-minutes");
+                if (flags.TryGetValue("max-retries", out _))
+                    task.MaxRetries = ParseInt(flags, "max-retries") ?? task.MaxRetries;
+                if (flags.TryGetValue("next-run", out _))
+                    task.NextRunAt = ParseDateTimeOffset(flags, "next-run") ?? task.NextRunAt;
+
+                task.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                ids.PrintJson(ToAoTaskDto(task));
+                break;
+            }
+            case "update":
+                Console.Error.WriteLine("resource aotask update <id> [--name <name>] [--repeat-minutes <n>] [--max-retries <n>]");
+                break;
+
+            case "delete" when args.Length >= 4:
+            {
+                var task = await db.ScheduledJobs.FirstOrDefaultAsync(t => t.Id == ids.Resolve(args[3]), ct);
+                if (task is null)
+                {
+                    Console.WriteLine("Not found.");
+                    break;
+                }
+
+                db.ScheduledJobs.Remove(task);
+                await db.SaveChangesAsync(ct);
+                Console.WriteLine("Done.");
+                break;
+            }
+            case "delete":
+                Console.Error.WriteLine("resource aotask delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource aotask {sub}");
+                PrintAoTaskUsage();
+                break;
+        }
+    }
+
+    private static async Task HandleResourceAoSkillCommandAsync(
+        string[] args, IServiceProvider sp, CancellationToken ct)
+    {
+        var ids = sp.GetRequiredService<ICliIdResolver>();
+        var db = sp.GetRequiredService<AgentOrchestrationDbContext>();
+
+        if (args.Length < 3)
+        {
+            PrintAoSkillUsage();
+            return;
+        }
+
+        var sub = args[2].ToLowerInvariant();
+        switch (sub)
+        {
+            case "add" when args.Length >= 4:
+            {
+                var flags = ParseFlags(args, 4);
+                if (!flags.TryGetValue("text", out var skillText) || string.IsNullOrWhiteSpace(skillText))
+                {
+                    Console.Error.WriteLine("resource aoskill add requires --text <skillText>.");
+                    break;
+                }
+
+                flags.TryGetValue("description", out var description);
+                var skill = new Models.SkillDB
+                {
+                    Id = Guid.NewGuid(),
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                    Name = args[3],
+                    Description = description,
+                    SkillText = skillText,
+                };
+
+                db.Skills.Add(skill);
+                await db.SaveChangesAsync(ct);
+                ids.PrintJson(ToAoSkillDto(skill));
+                break;
+            }
+            case "add":
+                Console.Error.WriteLine("resource aoskill add <name> --text <skillText> [--description <description>]");
+                break;
+
+            case "get" when args.Length >= 4:
+            {
+                var skill = await db.Skills.FirstOrDefaultAsync(s => s.Id == ids.Resolve(args[3]), ct);
+                if (skill is not null)
+                    ids.PrintJson(ToAoSkillDto(skill));
+                else
+                    Console.Error.WriteLine("Not found.");
+                break;
+            }
+            case "get":
+                Console.Error.WriteLine("resource aoskill get <id>");
+                break;
+
+            case "list":
+            {
+                var skills = await db.Skills.OrderBy(s => s.Name).ToListAsync(ct);
+                ids.PrintJson(skills.Select(ToAoSkillDto).ToList());
+                break;
+            }
+
+            case "update" when args.Length >= 4:
+            {
+                var skill = await db.Skills.FirstOrDefaultAsync(s => s.Id == ids.Resolve(args[3]), ct);
+                if (skill is null)
+                {
+                    Console.Error.WriteLine("Not found.");
+                    break;
+                }
+
+                var flags = ParseFlags(args, 4);
+                if (flags.TryGetValue("name", out var name) && !string.IsNullOrWhiteSpace(name))
+                    skill.Name = name;
+                if (flags.TryGetValue("description", out var description))
+                    skill.Description = description;
+                if (flags.TryGetValue("text", out var text) && !string.IsNullOrWhiteSpace(text))
+                    skill.SkillText = text;
+
+                skill.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                ids.PrintJson(ToAoSkillDto(skill));
+                break;
+            }
+            case "update":
+                Console.Error.WriteLine("resource aoskill update <id> [--name <name>] [--description <description>] [--text <skillText>]");
+                break;
+
+            case "delete" when args.Length >= 4:
+            {
+                var skill = await db.Skills.FirstOrDefaultAsync(s => s.Id == ids.Resolve(args[3]), ct);
+                if (skill is null)
+                {
+                    Console.WriteLine("Not found.");
+                    break;
+                }
+
+                db.Skills.Remove(skill);
+                await db.SaveChangesAsync(ct);
+                Console.WriteLine("Done.");
+                break;
+            }
+            case "delete":
+                Console.Error.WriteLine("resource aoskill delete <id>");
+                break;
+
+            default:
+                Console.Error.WriteLine($"Unknown command: resource aoskill {sub}");
+                PrintAoSkillUsage();
+                break;
+        }
+    }
+
+    private static Dictionary<string, string> ParseFlags(string[] args, int start)
+    {
+        var flags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = start; i < args.Length; i++)
+        {
+            if (!args[i].StartsWith("--", StringComparison.Ordinal))
+                continue;
+
+            var key = args[i][2..];
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+
+            flags[key] = i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)
+                ? args[++i]
+                : string.Empty;
+        }
+
+        return flags;
+    }
+
+    private static int? ParseInt(IReadOnlyDictionary<string, string> flags, string key)
+        => flags.TryGetValue(key, out var value) && int.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+
+    private static TimeSpan? ParsePositiveMinutes(IReadOnlyDictionary<string, string> flags, string key)
+    {
+        var minutes = ParseInt(flags, key);
+        return minutes is > 0 ? TimeSpan.FromMinutes(minutes.Value) : null;
+    }
+
+    private static DateTimeOffset? ParseDateTimeOffset(IReadOnlyDictionary<string, string> flags, string key)
+        => flags.TryGetValue(key, out var value)
+            && DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed)
+                ? parsed
+                : null;
+
+    private static object ToAoTaskDto(Models.ScheduledJobDB task) => new
+    {
+        task.Id,
+        task.Name,
+        task.NextRunAt,
+        RepeatIntervalMinutes = task.RepeatInterval is null ? null : (int?)task.RepeatInterval.Value.TotalMinutes,
+        task.MaxRetries,
+        task.RetryCount,
+        task.Status,
+        task.LastRunAt,
+        task.LastError,
+        task.TaskDefinitionId,
+        task.CallerAgentId,
+        task.AgentContextId,
+        task.PermissionSetId,
+        task.CronExpression,
+        task.CronTimezone,
+        task.MissedFirePolicy,
+        task.CreatedAt,
+        task.UpdatedAt,
+    };
+
+    private static object ToAoSkillDto(Models.SkillDB skill) => new
+    {
+        skill.Id,
+        skill.Name,
+        skill.Description,
+        skill.SkillText,
+        skill.CreatedAt,
+        skill.UpdatedAt,
+    };
+
+    private static void PrintAoTaskUsage()
+    {
+        Console.Error.WriteLine("Usage:");
+        Console.Error.WriteLine("  resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]");
+        Console.Error.WriteLine("  resource aotask get <id>                         Show an AO task");
+        Console.Error.WriteLine("  resource aotask list                             List AO tasks");
+        Console.Error.WriteLine("  resource aotask update <id> [--name <name>] [--repeat-minutes <n>] [--max-retries <n>]");
+        Console.Error.WriteLine("  resource aotask delete <id>                      Delete an AO task");
+    }
+
+    private static void PrintAoSkillUsage()
+    {
+        Console.Error.WriteLine("Usage:");
+        Console.Error.WriteLine("  resource aoskill add <name> --text <skillText> [--description <description>]");
+        Console.Error.WriteLine("  resource aoskill get <id>                        Show an AO skill");
+        Console.Error.WriteLine("  resource aoskill list                            List AO skills");
+        Console.Error.WriteLine("  resource aoskill update <id> [--name <name>] [--description <description>] [--text <skillText>]");
+        Console.Error.WriteLine("  resource aoskill delete <id>                     Delete an AO skill");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Global Flag Descriptors
     // ═══════════════════════════════════════════════════════════════
 

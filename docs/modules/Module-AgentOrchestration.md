@@ -61,6 +61,7 @@ when sent to the model — for example, `manage_agent` becomes
   - [ao_access_skill](#ao_access_skill)
   - [ao_edit_agent_header](#ao_edit_agent_header)
   - [ao_edit_channel_header](#ao_edit_channel_header)
+- [Module-owned CLI resources](#module-owned-cli-resources)
 - [Resource Dependencies](#resource-dependencies)
 - [Role Permissions](#role-permissions)
 - [Module Manifest](#module-manifest)
@@ -106,7 +107,9 @@ Update an agent's name, systemPrompt, or modelId.
 
 ### ao_edit_task
 
-Edit a task's name, repeat interval, or max retries.
+Edit an Agent Orchestration task's name, repeat interval, or max retries.
+This tool targets the module-owned `AoTask` resource, not the Core host task
+scheduler's `task schedule` rows.
 
 **Parameters:**
 
@@ -117,15 +120,22 @@ Edit a task's name, repeat interval, or max retries.
 | `repeatIntervalMinutes` | integer | no | Minutes between repeats (0 = remove) |
 | `maxRetries` | integer | no | Max retries |
 
-**Permission:** Per-resource — requires `taskAccesses` grant.
+**Permission:** Per-resource — requires an `AoTask` resource grant.
 
 **Aliases:** `edit_task`
+
+Create testable target rows with the module CLI:
+
+```text
+resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]
+```
 
 ---
 
 ### ao_access_skill
 
-Retrieve a skill's instruction text.
+Retrieve an Agent Orchestration skill's instruction text. This tool targets the
+module-owned `AoSkill` resource.
 
 **Parameters:**
 
@@ -133,9 +143,15 @@ Retrieve a skill's instruction text.
 |-------|------|----------|-------------|
 | `resource_id` | string (GUID) | yes | Target skill GUID |
 
-**Permission:** Per-resource — requires `skillAccesses` grant.
+**Permission:** Per-resource — requires an `AoSkill` resource grant.
 
 **Aliases:** `access_skill`
+
+Create testable target rows with the module CLI:
+
+```text
+resource aoskill add <name> --text <skillText> [--description <description>]
+```
 
 ---
 
@@ -173,13 +189,55 @@ Set or clear the custom chat header for a channel.
 
 ---
 
+## Module-owned CLI resources
+
+Agent Orchestration owns the resources used by `edit_task` and `access_skill`.
+Use these commands under the Core CLI's module-resource dispatch surface:
+
+### AoTask
+
+`AoTask` rows live in `AgentOrchestrationDbContext.ScheduledJobs`. They are
+separate from Core host scheduled jobs managed by `task schedule ...`.
+
+```text
+resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]
+resource aotask get <id>
+resource aotask list
+resource aotask update <id> [--name <name>] [--repeat-minutes <n>] [--max-retries <n>]
+resource aotask delete <id>
+```
+
+Alias: `resource aot ...`
+
+Use `resource aotask add` to create a target resource before testing
+`job submit <channelId> edit_task <aotaskId> ...`.
+
+### AoSkill
+
+`AoSkill` rows live in `AgentOrchestrationDbContext.Skills`.
+
+```text
+resource aoskill add <name> --text <skillText> [--description <description>]
+resource aoskill get <id>
+resource aoskill list
+resource aoskill update <id> [--name <name>] [--description <description>] [--text <skillText>]
+resource aoskill delete <id>
+```
+
+Alias: `resource aos ...`
+
+Use `resource aoskill add` to create a target resource before testing
+`job submit <channelId> access_skill <aoskillId> ...`.
+
+---
+
 ## Resource Dependencies
 
 | Resource Type | Used by |
 |---------------|---------|
 | Agents | `ao_manage_agent`, `ao_edit_agent_header` |
-| Tasks | `ao_edit_task` |
-| Skills | `ao_access_skill` |
+| `AoTask` | `ao_edit_task` |
+| `AoSkill` | `ao_access_skill` |
 | Channels | `ao_edit_channel_header` |
 
 ---
@@ -199,8 +257,8 @@ Set or clear the custom chat header for a channel.
 | Array | Resource Type | Tools |
 |-------|---------------|-------|
 | `agentAccesses` | Agents | `ao_manage_agent` |
-| `taskAccesses` | Tasks | `ao_edit_task` |
-| `skillAccesses` | Skills | `ao_access_skill` |
+| `AoTask` grants | Agent Orchestration tasks | `ao_edit_task` |
+| `AoSkill` grants | Agent Orchestration skills | `ao_access_skill` |
 | `agentHeaderAccesses` | Agents | `ao_edit_agent_header` |
 | `channelHeaderAccesses` | Channels | `ao_edit_channel_header` |
 
