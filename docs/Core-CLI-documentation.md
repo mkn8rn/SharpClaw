@@ -514,9 +514,8 @@ job submit <channelId> <actionKey> [resourceId]
            [--mode <sliding|step|window>]
            [--window <seconds>] [--step <seconds>]
 ```
-`actionKey` is a module tool name (e.g. `execute_as_safe_shell`,
-`manage_agent`, `cu_click_desktop`, `tr_transcribe_audio_device`). Valid
-action keys are dynamic — see `module list` or `GET /modules`.
+`actionKey` is a module-contributed tool name. Valid action keys are dynamic —
+see `module list`, `GET /modules`, or the owning module's documentation.
 
 When `resourceId` is omitted, default resources are resolved from the
 channel's `DefaultResourceSet` → context's → permission-set defaults.

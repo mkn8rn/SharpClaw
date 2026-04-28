@@ -55,17 +55,17 @@ ao_manage_agent (alias: manage_agent)
   Permission: per-resource (Agent)
 
 ao_edit_task (alias: edit_task)
-  Edit task name, interval, or retries.
-  Params: resource_id (task GUID, required),
+  Edit Agent Orchestration task name, interval, or retries.
+  Params: resource_id (AoTask GUID, required),
           name (string, optional),
           repeatIntervalMinutes (int, optional — 0=remove),
           maxRetries (int, optional)
-  Permission: per-resource (Task)
+  Permission: per-resource (AoTask)
 
 ao_access_skill (alias: access_skill)
-  Retrieve a skill's instruction text.
-  Params: resource_id (skill GUID, required)
-  Permission: per-resource (Skill)
+  Retrieve an Agent Orchestration skill's instruction text.
+  Params: resource_id (AoSkill GUID, required)
+  Permission: per-resource (AoSkill)
 
 ao_edit_agent_header (alias: edit_agent_header)
   Set or clear the custom chat header for an agent.
@@ -80,11 +80,35 @@ ao_edit_channel_header (alias: edit_channel_header)
   Permission: per-resource (ChannelHeader)
 
 ────────────────────────────────────────
+MODULE-OWNED CLI RESOURCES
+────────────────────────────────────────
+AoTask resources live in AgentOrchestrationDbContext.ScheduledJobs. They are
+created and managed by this module, separately from Core task schedule rows.
+
+  resource aotask add <name> [--next-run <timestamp>] [--repeat-minutes <n>] [--max-retries <n>]
+  resource aotask get <id>
+  resource aotask list
+  resource aotask update <id> [--name <name>] [--repeat-minutes <n>] [--max-retries <n>]
+  resource aotask delete <id>
+
+Alias: resource aot ...
+
+AoSkill resources live in AgentOrchestrationDbContext.Skills.
+
+  resource aoskill add <name> --text <skillText> [--description <description>]
+  resource aoskill get <id>
+  resource aoskill list
+  resource aoskill update <id> [--name <name>] [--description <description>] [--text <skillText>]
+  resource aoskill delete <id>
+
+Alias: resource aos ...
+
+────────────────────────────────────────
 RESOURCE DEPENDENCIES
 ────────────────────────────────────────
 - Agents — for manage_agent, edit_agent_header
-- Tasks — for edit_task
-- Skills — for access_skill
+- AoTask — for edit_task
+- AoSkill — for access_skill
 - Channels — for edit_channel_header
 
 ────────────────────────────────────────
