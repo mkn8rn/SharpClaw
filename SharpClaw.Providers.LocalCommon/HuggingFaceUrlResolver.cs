@@ -7,7 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace SharpClaw.Application.Core.LocalInference;
+namespace SharpClaw.Providers.LocalCommon;
 
 /// <summary>
 /// Resolves HuggingFace model URLs to direct GGUF download links.

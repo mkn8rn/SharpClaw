@@ -1,4 +1,4 @@
-namespace SharpClaw.Application.Core.LocalInference;
+namespace SharpClaw.Providers.LocalCommon;
 
 using System.Net;
 using Microsoft.Extensions.Configuration;

@@ -1,4 +1,4 @@
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Providers.Common;
 
 /// <summary>
 /// Thrown by <see cref="LocalInferenceApiClient"/> when the model emits

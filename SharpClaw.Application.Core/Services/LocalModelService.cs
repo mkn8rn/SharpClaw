@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Providers.Common;
+using SharpClaw.Providers.LocalCommon;
 using SharpClaw.Contracts.DTOs.LocalModels;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.Enums;
