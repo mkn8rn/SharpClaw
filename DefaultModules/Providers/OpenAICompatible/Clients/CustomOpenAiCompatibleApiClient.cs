@@ -1,7 +1,7 @@
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 
 /// <summary>
 /// An OpenAI-compatible client whose endpoint is configured per-provider
