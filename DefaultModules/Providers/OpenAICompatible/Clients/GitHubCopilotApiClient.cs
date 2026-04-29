@@ -5,7 +5,7 @@ using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 
 public sealed class GitHubCopilotApiClient : OpenAiCompatibleApiClient, IDeviceCodeAuthClient
 {

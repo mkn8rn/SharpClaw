@@ -3,7 +3,7 @@ using System.Text.Json;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 
 public sealed class OpenAiApiClient : OpenAiCompatibleApiClient, IProviderCostClient
 {

@@ -1,7 +1,7 @@
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 
 /// <summary>
 /// Client for Zhipu AI (Z.AI / GLM). OpenAI-compatible API.

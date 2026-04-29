@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 
 /// <summary>
 /// Structural translator for Google providers that route through the
