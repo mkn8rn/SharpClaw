@@ -1,0 +1,7 @@
+{
+  "id": "sharpclaw_providers_anthropic",
+  "displayName": "Anthropic Provider",
+  "version": "1.0.0",
+  "enabled": true,
+  "toolPrefix": "pa"
+}

@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using SharpClaw.Contracts.Providers;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.Google.Clients;
 
 /// <summary>
 /// Native Google Vertex AI client (<c>generateContent</c> endpoint).

@@ -8,7 +8,7 @@ using System.Text.Json.Serialization;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.Google.Clients;
 
 /// <summary>
 /// Native Google Gemini client that calls the <c>generateContent</c> and
