@@ -11,6 +11,7 @@ using LLama.Sampling;
 using LLama.Transformers;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Contracts.Providers;
+using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Application.Core.Clients;
 

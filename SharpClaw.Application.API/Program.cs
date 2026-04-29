@@ -15,6 +15,7 @@ using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.API.Webhooks;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
+using SharpClaw.Providers.LocalCommon;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Providers;
 using SharpClaw.Application.Infrastructure.Tasks;

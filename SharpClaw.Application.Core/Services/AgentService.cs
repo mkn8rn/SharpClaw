@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.LocalInference;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Providers.LocalCommon;
 using SharpClaw.Application.Infrastructure.Models.Access;
 using SharpClaw.Application.Infrastructure.Models.Clearance;
 using SharpClaw.Contracts;
