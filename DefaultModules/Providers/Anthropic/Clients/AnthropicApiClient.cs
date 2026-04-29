@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
-namespace SharpClaw.Application.Core.Clients;
+namespace SharpClaw.Modules.Providers.Anthropic.Clients;
 
 public sealed class AnthropicApiClient : IProviderApiClient
 {

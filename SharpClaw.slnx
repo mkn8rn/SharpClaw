@@ -37,6 +37,8 @@
     <Project Path="DefaultModules/Mk8Shell/SharpClaw.Modules.Mk8Shell.csproj" />
     <Project Path="DefaultModules/ModuleDev/SharpClaw.Modules.ModuleDev.csproj" />
     <Project Path="DefaultModules/OfficeApps/SharpClaw.Modules.OfficeApps.csproj" />
+    <Project Path="DefaultModules/Providers/Anthropic/SharpClaw.Modules.Providers.Anthropic.csproj" />
+    <Project Path="DefaultModules/Providers/Google/SharpClaw.Modules.Providers.Google.csproj" />
     <Project Path="DefaultModules/Providers/OpenAICompatible/SharpClaw.Modules.Providers.OpenAICompatible.csproj" />
     <Project Path="DefaultModules/Transcription/SharpClaw.Modules.Transcription.csproj" />
     <Project Path="DefaultModules/VS2026Editor/SharpClaw.Modules.VS2026Editor.csproj" />
