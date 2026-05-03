@@ -1,0 +1,126 @@
+﻿=== CronExpression ===
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:43: request.CronExpression,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:61: CronExpression      = request.CronExpression,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:96: var effectiveCron     = request.CronExpression  ?? entity.CronExpression;
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:101: if (request.CronExpression is not null || request.CronTimezone is not null ||
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:115: if (request.CronExpression is not null) entity.CronExpression    = request.CronExpression;
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:168: if (!string.IsNullOrEmpty(entity.CronExpression))
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:171: entity.CronExpression,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:200: if (entity is null || string.IsNullOrEmpty(entity.CronExpression))
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:204: .GetNextOccurrences(entity.CronExpression, DateTimeOffset.UtcNow,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:208: return new CronPreviewResponse(entity.CronExpression, entity.CronTimezone, occurrences);
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:290: e.RepeatInterval, e.CronExpression, e.CronTimezone, e.MissedFirePolicy,
+DefaultModules\AgentOrchestration\Services\ScheduledJobWorker.cs:160: if (!string.IsNullOrEmpty(job.CronExpression))
+DefaultModules\AgentOrchestration\Services\ScheduledJobWorker.cs:163: job.CronExpression, now, job.CronTimezone);
+DefaultModules\AgentOrchestration\AgentOrchestrationModule.cs:647: task.CronExpression,
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:570: Set(nameof(t.CronExpression),         t.CronExpression);
+=== CronTimezone ===
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:44: request.CronTimezone,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:62: CronTimezone        = request.CronTimezone,
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:97: var effectiveTz       = request.CronTimezone    ?? entity.CronTimezone;
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:101: if (request.CronExpression is not null || request.CronTimezone is not null ||
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:116: if (request.CronTimezone   is not null) entity.CronTimezone      = request.CronTimezone;
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:173: entity.CronTimezone);
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:205: entity.CronTimezone, count)
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:208: return new CronPreviewResponse(entity.CronExpression, entity.CronTimezone, occurrences);
+DefaultModules\AgentOrchestration\Services\ScheduledJobService.cs:290: e.RepeatInterval, e.CronExpression, e.CronTimezone, e.MissedFirePolicy,
+DefaultModules\AgentOrchestration\Services\ScheduledJobWorker.cs:163: job.CronExpression, now, job.CronTimezone);
+DefaultModules\AgentOrchestration\AgentOrchestrationModule.cs:648: task.CronTimezone,
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:571: Set(nameof(t.CronTimezone),           t.CronTimezone);
+=== EventType ===
+DefaultModules\AgentOrchestration\EventBusTriggerSource.cs:51: def.Parameters.GetValueOrDefault(AgentOrchestrationTriggerKeys.EventType),
+DefaultModules\AgentOrchestration\EventBusTriggerSource.cs:93: def.Parameters.GetValueOrDefault(AgentOrchestrationTriggerKeys.EventType);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:572: Set(nameof(t.EventType),              t.EventType);
+=== EventFilter ===
+DefaultModules\AgentOrchestration\EventBusTriggerSource.cs:58: ? def.Parameters.GetValueOrDefault(AgentOrchestrationTriggerKeys.EventFilter)
+DefaultModules\AgentOrchestration\EventBusTriggerSource.cs:97: def.Parameters.GetValueOrDefault(AgentOrchestrationTriggerKeys.EventFilter);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:573: Set(nameof(t.EventFilter),            t.EventFilter);
+=== WatchPath ===
+DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:32: var path = ctx.Definition.Parameters.GetValueOrDefault(FilesystemTriggerKeys.WatchPath);
+DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:83: ? def.Parameters.GetValueOrDefault(FilesystemTriggerKeys.WatchPath)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:574: Set(nameof(t.WatchPath),              t.WatchPath);
+=== FilePattern ===
+DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:42: var pattern = ctx.Definition.Parameters.GetValueOrDefault(FilesystemTriggerKeys.FilePattern) ?? "*";
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:575: Set(nameof(t.FilePattern),            t.FilePattern);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:138: t.FilePattern.Should().Be("*.json");
+=== FileEvents ===
+DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:57: var rawEvents = ctx.Definition.Parameters.GetValueOrDefault(FilesystemTriggerKeys.FileEvents);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:576: if (t.FileEvents != default)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:577: p[nameof(t.FileEvents)] = t.FileEvents.ToString();
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:139: t.FileEvents.Should().Be(FileWatchEvent.Created | FileWatchEvent.Deleted);
+=== ProcessName ===
+DefaultModules\ComputerUse\Triggers\ProcessTriggerSource.cs:70: var name = ctx.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.ProcessName);
+DefaultModules\ComputerUse\Triggers\ProcessTriggerSource.cs:99: .Select(p => p.ProcessName)
+DefaultModules\ComputerUse\Triggers\WindowFocusTriggerSource.cs:70: var processName = ctx.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.ProcessName);
+DefaultModules\ComputerUse\DesktopAwarenessService.cs:97: processName = process.ProcessName,
+DefaultModules\ComputerUse\DesktopAwarenessService.cs:136: processName = process.ProcessName;
+DefaultModules\ComputerUse\DesktopAwarenessService.cs:226: if (!proc.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+DefaultModules\ModuleDev\Services\ProcessInspectionService.cs:71: process.Id, process.ProcessName, modules, windowClasses, threads, null);
+mk8.shell\Engine\Mk8ShellExecutor.cs:832: .OrderBy(p => p.ProcessName, StringComparer.OrdinalIgnoreCase)
+mk8.shell\Engine\Mk8ShellExecutor.cs:836: try { return $"{p.Id}\t{p.ProcessName}"; }
+mk8.shell\Engine\Mk8ShellExecutor.cs:2096: .Where(p => p.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase))
+mk8.shell\Engine\Mk8ShellExecutor.cs:2097: .OrderBy(p => p.ProcessName))
+mk8.shell\Engine\Mk8ShellExecutor.cs:2102: sb.AppendLine($"{proc.Id}\t{proc.ProcessName}\t{proc.WorkingSet64 / 1024}KB");
+mk8.shell\Engine\Mk8ShellExecutor.cs:2106: sb.AppendLine($"{proc.Id}\t{proc.ProcessName}\t(access denied)");
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:578: Set(nameof(t.ProcessName),            t.ProcessName);
+=== WebhookRoute ===
+DefaultModules\Http\WebhookTriggerSource.cs:64: var route = def.Parameters.GetValueOrDefault(HttpTriggerKeys.WebhookRoute);
+DefaultModules\Http\WebhookTriggerSource.cs:99: ? def.Parameters.GetValueOrDefault(HttpTriggerKeys.WebhookRoute)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:579: Set(nameof(t.WebhookRoute),           t.WebhookRoute);
+SharpClaw.Tests\Tasks\WebhookTriggerSourceTests.cs:298: [HttpTriggerKeys.WebhookRoute] = route,
+SharpClaw.Tests\Tasks\WebhookTriggerSourceTests.cs:360: [HttpTriggerKeys.WebhookRoute] = route,
+=== WebhookSecretEnvVar ===
+DefaultModules\Http\WebhookTriggerSource.cs:120: var secretEnvVar = def.Parameters.GetValueOrDefault(HttpTriggerKeys.WebhookSecretEnvVar);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:580: Set(nameof(t.WebhookSecretEnvVar),    t.WebhookSecretEnvVar);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:191: t.WebhookSecretEnvVar.Should().Be("GH_SECRET");
+SharpClaw.Tests\Tasks\WebhookTriggerSourceTests.cs:301: parameters[HttpTriggerKeys.WebhookSecretEnvVar] = secretEnvVar;
+=== WebhookSignatureHeader ===
+DefaultModules\Http\WebhookTriggerSource.cs:132: var configuredSigHeader = def.Parameters.GetValueOrDefault(HttpTriggerKeys.WebhookSignatureHeader);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:581: Set(nameof(t.WebhookSignatureHeader), t.WebhookSignatureHeader);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:192: t.WebhookSignatureHeader.Should().Be("X-Hub-Signature-256");
+SharpClaw.Tests\Tasks\WebhookTriggerSourceTests.cs:303: parameters[HttpTriggerKeys.WebhookSignatureHeader] = signatureHeader;
+=== HostName ===
+DefaultModules\NetworkTriggers\HostProbeTriggerSource.cs:58: def.Parameters.GetValueOrDefault(NetworkTriggerKeys.HostName),
+DefaultModules\NetworkTriggers\HostProbeTriggerSource.cs:77: var host = ctx.Definition.Parameters.GetValueOrDefault(NetworkTriggerKeys.HostName);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:582: Set(nameof(t.HostName),               t.HostName);
+=== HostPort ===
+DefaultModules\NetworkTriggers\HostProbeTriggerSource.cs:80: var port    = TryParseInt(ctx.Definition.Parameters.GetValueOrDefault(NetworkTriggerKeys.HostPort));
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:583: if (t.HostPort.HasValue)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:584: p[nameof(t.HostPort)] = t.HostPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:217: t.HostPort.Should().Be(5432);
+=== SourceTaskName ===
+DefaultModules\AgentOrchestration\TaskScripting\TaskChainTriggerSource.cs:46: def.Parameters.GetValueOrDefault(TaskScriptingTriggerKeys.SourceTaskName);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:585: Set(nameof(t.SourceTaskName),         t.SourceTaskName);
+=== HotkeyCombo ===
+DefaultModules\ComputerUse\Triggers\HotkeyTriggerSource.cs:66: var combo = ctx.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.HotkeyCombo);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:586: Set(nameof(t.HotkeyCombo),            t.HotkeyCombo);
+=== IdleMinutes ===
+DefaultModules\ComputerUse\Triggers\IdleTriggerSource.cs:69: var minutes = TryParseInt(ctx.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.IdleMinutes)) ?? 5;
+DefaultModules\ComputerUse\Triggers\IdleTriggerSource.cs:82: var m = TryParseInt(c.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.IdleMinutes)) ?? 5;
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:587: if (t.IdleMinutes.HasValue)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:588: p[nameof(t.IdleMinutes)] = t.IdleMinutes.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+=== NetworkSsid ===
+DefaultModules\NetworkTriggers\NetworkTriggerSource.cs:53: ? def.Parameters.GetValueOrDefault(NetworkTriggerKeys.NetworkSsid)
+DefaultModules\NetworkTriggers\NetworkTriggerSource.cs:71: var ssid = ctx.Definition.Parameters.GetValueOrDefault(NetworkTriggerKeys.NetworkSsid);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:589: Set(nameof(t.NetworkSsid),            t.NetworkSsid);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:367: t.NetworkSsid.Should().Be("HomeNet");
+=== NetworkState ===
+DefaultModules\NetworkTriggers\NetworkTriggerSource.cs:65: var requiredState = ParseState(ctx.Definition.Parameters.GetValueOrDefault(NetworkTriggerKeys.NetworkState));
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:590: if (t.NetworkState != default)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:591: p[nameof(t.NetworkState)] = t.NetworkState.ToString();
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:368: t.NetworkState.Should().Be(NetworkState.Connected);
+=== DeviceClass ===
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:592: Set(nameof(t.DeviceClass),            t.DeviceClass);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:381: t.DeviceClass.Should().Be("USB");
+=== DeviceNamePattern ===
+DefaultModules\ComputerUse\Triggers\DeviceTriggerSource.cs:158: var pattern = ctx.Definition.Parameters.GetValueOrDefault(ComputerUseTriggerKeys.DeviceNamePattern);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:593: Set(nameof(t.DeviceNamePattern),      t.DeviceNamePattern);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:382: t.DeviceNamePattern.Should().Be("YubiKey*");
+=== SqlQuery ===
+DefaultModules\DatabaseAccess\Triggers\QueryRowsTriggerSource.cs:64: var sql = ctx.Definition.Parameters.GetValueOrDefault(DatabaseAccessTriggerKeys.SqlQuery);
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:594: Set(nameof(t.SqlQuery),               t.SqlQuery);
+=== QueryPollIntervalSecs ===
+DefaultModules\DatabaseAccess\Triggers\QueryRowsTriggerSource.cs:56: .Select(c => TryParseInt(c.Definition.Parameters.GetValueOrDefault(DatabaseAccessTriggerKeys.QueryPollIntervalSecs)) ?? 60)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:595: if (t.QueryPollIntervalSecs.HasValue)
+SharpClaw.Application.Infrastructure.Tasks\Parsing\TaskScriptParser.cs:596: p[nameof(t.QueryPollIntervalSecs)] = t.QueryPollIntervalSecs.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+SharpClaw.Tests\Tasks\TaskTriggerAttributeParserTests.cs:417: .Which.QueryPollIntervalSecs.Should().Be(30);

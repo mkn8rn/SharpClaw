@@ -1,0 +1,15 @@
+﻿E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\DeviceTriggerSource.cs:158: var pattern = ctx.Definition.DeviceNamePattern;
+E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\HotkeyTriggerSource.cs:66: var combo = ctx.Definition.HotkeyCombo;
+E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\IdleTriggerSource.cs:69: var threshold = (ctx.Definition.IdleMinutes ?? 5) * 60;
+E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\IdleTriggerSource.cs:79: wasIdle = _contexts.Any(c => GetIdleSeconds() >= (c.Definition.IdleMinutes ?? 5) * 60);
+E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\ProcessTriggerSource.cs:70: var name = ctx.Definition.ProcessName;
+E:\source\SharpClaw\DefaultModules\ComputerUse\Triggers\WindowFocusTriggerSource.cs:70: var processName = ctx.Definition.ProcessName;
+E:\source\SharpClaw\DefaultModules\DatabaseAccess\Triggers\QueryRowsTriggerSource.cs:56: .Select(c => c.Definition.QueryPollIntervalSecs ?? 60)
+E:\source\SharpClaw\DefaultModules\DatabaseAccess\Triggers\QueryRowsTriggerSource.cs:64: var sql = ctx.Definition.SqlQuery;
+E:\source\SharpClaw\DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:32: var path = ctx.Definition.WatchPath;
+E:\source\SharpClaw\DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:42: var pattern = ctx.Definition.FilePattern ?? "*";
+E:\source\SharpClaw\DefaultModules\FilesystemTriggers\FileChangedTriggerSource.cs:57: var events = ctx.Definition.FileEvents == 0 ? FileWatchEvent.Any : ctx.Definition.FileEvents;
+E:\source\SharpClaw\DefaultModules\NetworkTriggers\HostProbeTriggerSource.cs:76: var host = ctx.Definition.HostName;
+E:\source\SharpClaw\DefaultModules\NetworkTriggers\HostProbeTriggerSource.cs:79: var port    = ctx.Definition.HostPort;
+E:\source\SharpClaw\DefaultModules\NetworkTriggers\NetworkTriggerSource.cs:63: var requiredState = ctx.Definition.NetworkState;
+E:\source\SharpClaw\DefaultModules\NetworkTriggers\NetworkTriggerSource.cs:69: var ssid = ctx.Definition.NetworkSsid;
