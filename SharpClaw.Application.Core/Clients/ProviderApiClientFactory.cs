@@ -1,6 +1,5 @@
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Application.Core.Clients;
 
@@ -40,7 +39,7 @@ public sealed class ProviderApiClientFactory
     /// <summary>
     /// Returns the API client for the given provider key. For providers
     /// whose plugin sets <see cref="IProviderPlugin.RequiresEndpoint"/>
-    /// (e.g. <see cref="WellKnownProviderKeys.Custom"/>), supply the
+    /// (e.g. Custom or Ollama), supply the
     /// <paramref name="apiEndpoint"/> stored on the provider record.
     /// </summary>
     /// <exception cref="ProviderUnavailableException">
@@ -62,4 +61,16 @@ public sealed class ProviderApiClientFactory
     /// </summary>
     public IProviderPlugin? GetPlugin(string providerKey)
         => _plugins.TryGetValue(providerKey, out var plugin) && IsActive(plugin) ? plugin : null;
+
+    /// <summary>
+    /// Resolves the <see cref="ICompletionParameterSpec"/> declared by the
+    /// active plugin for the given provider key. Falls back to
+    /// <see cref="ICompletionParameterSpec.Passthrough"/> when no plugin is
+    /// registered (e.g. unknown providers, or providers whose owning module
+    /// is currently disabled). Provider-shape ownership lives entirely on
+    /// plugins; <c>SharpClaw.Application.Core</c> no longer maintains its
+    /// own provider spec table.
+    /// </summary>
+    public ICompletionParameterSpec GetParameterSpec(string providerKey)
+        => GetPlugin(providerKey)?.ParameterSpec ?? ICompletionParameterSpec.Passthrough;
 }

@@ -1,7 +1,9 @@
-namespace SharpClaw.Modules.FilesystemTriggers;
+namespace SharpClaw.Modules.AgentOrchestration;
 
 /// <summary>
 /// File-system events that the <c>[OnFileChanged]</c> trigger watches for.
+/// Rolled into agent-orchestration from the former
+/// <c>sharpclaw_filesystem_triggers</c> module.
 /// </summary>
 [Flags]
 public enum FileWatchEvent

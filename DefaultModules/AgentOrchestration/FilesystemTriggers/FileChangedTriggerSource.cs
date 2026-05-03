@@ -2,17 +2,16 @@ using Microsoft.Extensions.Logging;
 
 using SharpClaw.Contracts.Tasks;
 
-namespace SharpClaw.Modules.FilesystemTriggers;
+namespace SharpClaw.Modules.AgentOrchestration;
 
 /// <summary>
 /// Trigger source that fires when files under a watched path are created,
 /// changed, deleted, or renamed via <see cref="FileSystemWatcher"/>.
-/// <para>
-/// Moved out of <c>SharpClaw.Application.Core</c> by the trigger-extraction
-/// plan; behavior is preserved verbatim. The persisted trigger-key value
+/// Rolled into agent-orchestration from the former
+/// <c>sharpclaw_filesystem_triggers</c> module; behavior is preserved
+/// verbatim. The persisted trigger-key value
 /// (<see cref="FilesystemTriggerKeys.FileChanged"/>) remains
 /// <c>"FileChanged"</c> so existing binding rows continue to round-trip.
-/// </para>
 /// </summary>
 public sealed class FileChangedTriggerSource(
     ILogger<FileChangedTriggerSource> logger) : ITaskTriggerSource, IAsyncDisposable

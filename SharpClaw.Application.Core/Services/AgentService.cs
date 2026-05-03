@@ -11,7 +11,6 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 
@@ -31,6 +30,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
 
         // Validate typed completion parameters against provider constraints
         ValidateCompletionParameters(request, model.Provider.ProviderKey);
+
 
         var agent = new AgentDB
         {
@@ -308,14 +308,10 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
             .Where(m => m.CapabilityTagsRaw != null && m.CapabilityTagsRaw.Contains(WellKnownCapabilityKeys.Chat))
             .ToListAsync(ct);
 
-        // Pre-load source URLs for local models so we can derive the suffix.
-        var localModelIds = models
-            .Where(m => m.Provider.ProviderKey == WellKnownProviderKeys.LlamaSharp)
-            .Select(m => m.Id)
-            .ToHashSet();
-
-        var localSourceUrls = localModelIds.Count > 0 && localModelLookup is not null
-            ? await localModelLookup.GetSourceUrlsForModelsAsync(localModelIds, ct)
+        // Pre-load source URLs (plugin decides whether to use them in the suffix).
+        var allModelIds = models.Select(m => m.Id).ToHashSet();
+        var localSourceUrls = allModelIds.Count > 0 && localModelLookup is not null
+            ? await localModelLookup.GetSourceUrlsForModelsAsync(allModelIds, ct)
             : (IReadOnlyDictionary<Guid, string>)new Dictionary<Guid, string>();
 
         var existingNames = await db.Agents
@@ -423,7 +419,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
     /// Validates the typed completion parameters from a create request
     /// against the target provider's constraints.
     /// </summary>
-    private static void ValidateCompletionParameters(CreateAgentRequest request, string providerKey)
+    private void ValidateCompletionParameters(CreateAgentRequest request, string providerKey)
     {
         var cp = new CompletionParameters
         {
@@ -437,14 +433,15 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
             ResponseFormat = request.ResponseFormat,
             ReasoningEffort = request.ReasoningEffort,
         };
-        CompletionParameterValidator.ValidateOrThrow(cp, providerKey);
+        CompletionParameterValidator.ValidateOrThrow(
+            cp, clientFactory.GetParameterSpec(providerKey), providerKey);
     }
 
     /// <summary>
     /// Validates the effective completion parameters on an agent entity
     /// (after fields have been applied) against the target provider.
     /// </summary>
-    private static void ValidateCompletionParameters(AgentDB agent, string providerKey)
+    private void ValidateCompletionParameters(AgentDB agent, string providerKey)
     {
         var cp = new CompletionParameters
         {
@@ -458,7 +455,8 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
             ResponseFormat = agent.ResponseFormat,
             ReasoningEffort = agent.ReasoningEffort,
         };
-        CompletionParameterValidator.ValidateOrThrow(cp, providerKey);
+        CompletionParameterValidator.ValidateOrThrow(
+            cp, clientFactory.GetParameterSpec(providerKey), providerKey);
     }
 
     private bool IsUniqueAgentNamesEnforced()

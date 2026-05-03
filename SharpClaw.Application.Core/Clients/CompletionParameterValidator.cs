@@ -3,8 +3,9 @@ using SharpClaw.Contracts.Providers;
 namespace SharpClaw.Application.Core.Clients;
 
 /// <summary>
-/// Validates <see cref="CompletionParameters"/> against the
-/// <see cref="CompletionParameterSpec"/> for a specific provider.
+/// Validates <see cref="CompletionParameters"/> against an
+/// <see cref="ICompletionParameterSpec"/> supplied by the active
+/// provider plugin.
 /// <para>
 /// Produces clear, actionable error messages that tell the developer
 /// exactly what went wrong, what the valid range is, and which provider
@@ -14,17 +15,16 @@ namespace SharpClaw.Application.Core.Clients;
 public static class CompletionParameterValidator
 {
     /// <summary>
-    /// Validates the completion parameters for the given provider.
+    /// Validates the completion parameters against a provider-supplied spec.
     /// Returns an empty list when everything is valid.
     /// </summary>
     public static List<string> Validate(
         CompletionParameters? parameters,
-        string providerKey)
+        ICompletionParameterSpec spec)
     {
         if (parameters is null || parameters.IsEmpty)
             return [];
 
-        var spec = CompletionParameterSpec.For(providerKey);
         var errors = new List<string>();
 
         // ── Temperature ──────────────────────────────────────────
@@ -149,7 +149,7 @@ public static class CompletionParameterValidator
                     "{\"type\": \"json_object\"}. Use the full json_schema variant instead " +
                     "(response_format: {\"type\": \"json_schema\", ...}) or instruct the model " +
                     "to respond in JSON via the system prompt.");
-            // NOTE: no provider in CompletionParameterSpec.Specs currently sets
+            // NOTE: no provider in ProviderParameterSpecs currently sets
             // OnlyJsonObjectResponseFormat = true (LlamaSharp was flipped to false
             // once json_schema shipped). This branch is retained as dead-but-correct
             // code so a future provider can opt in without re-deriving the validation.
@@ -187,9 +187,10 @@ public static class CompletionParameterValidator
     /// </summary>
     public static void ValidateOrThrow(
         CompletionParameters? parameters,
+        ICompletionParameterSpec spec,
         string providerKey)
     {
-        var errors = Validate(parameters, providerKey);
+        var errors = Validate(parameters, spec);
         if (errors.Count > 0)
             throw new CompletionParameterValidationException(providerKey, errors);
     }

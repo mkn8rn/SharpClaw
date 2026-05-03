@@ -40,7 +40,8 @@ public sealed partial class HeaderTagProcessor(
     SharpClawDbContext db,
     ModuleRegistry moduleRegistry,
     IChatProcessingBridge chatProcessingBridge,
-    IServiceProvider serviceProvider)
+    IServiceProvider serviceProvider,
+    ProviderApiClientFactory clientFactory)
 {
     // ── Tag regex ────────────────────────────────────────────────
     // Matches {{TagName}} or {{TagName:{template with {Field} placeholders}}}
@@ -307,12 +308,12 @@ public sealed partial class HeaderTagProcessor(
     /// Returns an empty string otherwise so the tag vanishes cleanly in
     /// templates that use it unconditionally.
     /// </summary>
-    private static string FormatReasoningEffortNotice(HeaderContext ctx)
+    private string FormatReasoningEffortNotice(HeaderContext ctx)
     {
         if (ctx.CompletionParameters?.ReasoningEffort is not { } effort)
             return "";
 
-        var spec = CompletionParameterSpec.For(ctx.ProviderKey);
+        var spec = clientFactory.GetParameterSpec(ctx.ProviderKey);
         if (!spec.ReasoningEffortInformationalOnly)
             return "";
 

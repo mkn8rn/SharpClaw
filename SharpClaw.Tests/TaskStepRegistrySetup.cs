@@ -6,7 +6,6 @@ using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.ComputerUse;
 using SharpClaw.Modules.DatabaseAccess;
-using SharpClaw.Modules.FilesystemTriggers;
 using SharpClaw.Modules.Http;
 using SharpClaw.Modules.Metrics;
 
@@ -40,7 +39,6 @@ public sealed class TaskStepRegistrySetup
 
         TaskScriptParser.RegisterModule(TaskScriptingParserExtension.Instance);
         TaskScriptParser.RegisterModule(ComputerUseParserExtension.Instance);
-        TaskScriptParser.RegisterModule(FilesystemTriggersParserExtension.Instance);
         TaskScriptParser.RegisterModule(HttpParserExtension.Instance);
         TaskScriptParser.RegisterModule(MetricsParserExtension.Instance);
         TaskScriptParser.RegisterModule(DatabaseAccessParserExtension.Instance);

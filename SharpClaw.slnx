@@ -1,4 +1,4 @@
-﻿<Solution>
+<Solution>
   <Folder Name="/Application/">
     <Project Path="SharpClaw.Application.API/SharpClaw.Application.API.csproj" />
     <Project Path="SharpClaw.Application.Core/SharpClaw.Application.Core.csproj" />
@@ -16,8 +16,8 @@
     </Project>
   </Folder>
   <Folder Name="/Gateway/">
-    <Project Path="SharpClaw.Gateway/SharpClaw.Gateway.csproj" />
     <Project Path="SharpClaw.Gateway.Abstractions/SharpClaw.Gateway.Abstractions.csproj" />
+    <Project Path="SharpClaw.Gateway/SharpClaw.Gateway.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="mk8.shell.startup/mk8.shell.startup.csproj" Id="77f11c7c-0e3d-41a2-ab70-1ef0c037a928" />
@@ -33,11 +33,9 @@
     <Project Path="DefaultModules/AgentOrchestration/SharpClaw.Modules.AgentOrchestration.csproj" />
     <Project Path="DefaultModules/BotIntegration/SharpClaw.Modules.BotIntegration.csproj" />
     <Project Path="DefaultModules/ComputerUse/SharpClaw.Modules.ComputerUse.csproj" />
-    <Project Path="DefaultModules/ContextTools/SharpClaw.Modules.ContextTools.csproj" />
     <Project Path="DefaultModules/DangerousShell/SharpClaw.Modules.DangerousShell.csproj" />
     <Project Path="DefaultModules/DatabaseAccess/SharpClaw.Modules.DatabaseAccess.csproj" />
     <Project Path="DefaultModules/EditorCommon/SharpClaw.Modules.EditorCommon.csproj" />
-    <Project Path="DefaultModules/FilesystemTriggers/SharpClaw.Modules.FilesystemTriggers.csproj" />
     <Project Path="DefaultModules/Http/SharpClaw.Modules.Http.csproj" />
     <Project Path="DefaultModules/Metrics/SharpClaw.Modules.Metrics.csproj" />
     <Project Path="DefaultModules/Mk8Shell/SharpClaw.Modules.Mk8Shell.csproj" />

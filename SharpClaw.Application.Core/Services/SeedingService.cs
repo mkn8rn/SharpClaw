@@ -10,7 +10,6 @@ using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -241,11 +240,10 @@ public sealed class SeedingService(
 
         // Plugins drive the seed list — disabling a provider module simply
         // means its IProviderPlugin is no longer registered, so it won't be
-        // seeded. The previous hardcoded key list is gone in Phase 5.
-        // Custom is excluded: it requires an operator-supplied endpoint and
-        // is created on demand via the providers/add CLI/API.
+        // seeded. Plugins that opt out of seeding (e.g. Custom, which needs
+        // an operator-supplied endpoint) set IsSeedable=false.
         var seedablePlugins = clientFactory.Plugins
-            .Where(p => p.ProviderKey != WellKnownProviderKeys.Custom
+            .Where(p => p.IsSeedable
                      && !existing.Contains(p.ProviderKey))
             .ToList();
 

@@ -9,7 +9,9 @@ using LLama.Common;
 using LLama.Native;
 using LLama.Sampling;
 using LLama.Transformers;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Modules.Providers.LlamaSharp.LocalInference;
+using SharpClaw.Modules.Providers.LlamaSharp.Services;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 
@@ -30,10 +32,14 @@ namespace SharpClaw.Modules.Providers.LlamaSharp.Clients;
 public sealed class LocalInferenceApiClient : IProviderApiClient
 {
     private readonly LocalInferenceProcessManager _modelManager;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
-    public LocalInferenceApiClient(LocalInferenceProcessManager modelManager)
+    public LocalInferenceApiClient(
+        LocalInferenceProcessManager modelManager,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _modelManager = modelManager;
+        _scopeFactory = scopeFactory;
         // L-007 — drop the probe cache for a model when it unloads so
         // the next request against a freshly reloaded instance runs a
         // real VRAM probe instead of trusting a stale success entry.
@@ -41,6 +47,79 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         {
             _lastProbeSuccess.TryRemove(id, out _);
         };
+    }
+
+    /// <summary>
+    /// Resolves the host model id for the current call from
+    /// <see cref="CompletionParameters.ModelId"/> (preferred) or the
+    /// ambient <see cref="CurrentModelId"/> (test/back-compat path),
+    /// stamps it onto <see cref="CurrentModelId"/> so all helpers in
+    /// this class see the same value, ensures the model is loaded via
+    /// the module's <see cref="LocalModelService"/>, and returns a
+    /// disposable that releases the chat-side reference count when the
+    /// call completes. Owns the local-model lifecycle internally so no
+    /// host-visible gate abstraction is required.
+    /// </summary>
+    private async Task<IAsyncDisposable> AcquireChatLifetimeAsync(
+        CompletionParameters? completionParameters, CancellationToken ct)
+    {
+        var modelId = completionParameters?.ModelId ?? CurrentModelId;
+        if (modelId == Guid.Empty)
+            throw new InvalidOperationException(
+                "LlamaSharp client invoked without a host ModelId. " +
+                "Set CompletionParameters.ModelId on the call so the " +
+                "local provider can resolve the loaded weights.");
+
+        CurrentModelId = modelId;
+
+        if (_scopeFactory is null)
+        {
+            // Test path (no DI): the caller is expected to have already
+            // pinned the model via the process manager directly.
+            return NoopAsyncDisposable.Instance;
+        }
+
+        var scope = _scopeFactory.CreateScope();
+        try
+        {
+            var local = scope.ServiceProvider.GetRequiredService<LocalModelService>();
+            await local.EnsureReadyForChatAsync(modelId, ct);
+            return new ChatLifetime(scope, _modelManager, modelId);
+        }
+        catch
+        {
+            scope.Dispose();
+            throw;
+        }
+    }
+
+    private sealed class ChatLifetime : IAsyncDisposable
+    {
+        private readonly IServiceScope _scope;
+        private readonly LocalInferenceProcessManager _manager;
+        private readonly Guid _modelId;
+        private int _disposed;
+
+        public ChatLifetime(IServiceScope scope, LocalInferenceProcessManager manager, Guid modelId)
+        {
+            _scope = scope;
+            _manager = manager;
+            _modelId = modelId;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+            try { _manager.Release(_modelId); }
+            finally { _scope.Dispose(); }
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class NoopAsyncDisposable : IAsyncDisposable
+    {
+        public static readonly NoopAsyncDisposable Instance = new();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     /// <summary>
     /// Common text-based stop sequences across model families.
@@ -119,6 +198,8 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         CompletionParameters? completionParameters = null,
         CancellationToken ct = default)
     {
+        await using var lifetime = await AcquireChatLifetimeAsync(completionParameters, ct);
+
         var loaded = GetLoadedOrThrow();
 
         EnsureContextAllocatable(loaded, CurrentModelId);
@@ -284,6 +365,8 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         CompletionParameters? completionParameters = null,
         CancellationToken ct = default)
     {
+        await using var lifetime = await AcquireChatLifetimeAsync(completionParameters, ct);
+
         var loaded = GetLoadedOrThrow();
 
         if (loaded.ClipModel is not null && messages.Any(m => m.HasImage))
@@ -368,6 +451,8 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
         CompletionParameters? completionParameters = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        await using var lifetime = await AcquireChatLifetimeAsync(completionParameters, ct);
+
         var loaded = GetLoadedOrThrow();
 
         if (loaded.ClipModel is not null && messages.Any(m => m.HasImage))

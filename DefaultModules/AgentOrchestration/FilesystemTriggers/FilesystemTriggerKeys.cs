@@ -1,9 +1,11 @@
-namespace SharpClaw.Modules.FilesystemTriggers;
+namespace SharpClaw.Modules.AgentOrchestration;
 
 /// <summary>
-/// Trigger and parameter keys owned by the filesystem-triggers module.
-/// String values are persisted verbatim in binding rows and serialized
-/// scripts.
+/// Trigger and parameter keys for the filesystem-trigger surface owned by
+/// the agent-orchestration module (rolled in from the former
+/// <c>sharpclaw_filesystem_triggers</c> module). String values are
+/// persisted verbatim in binding rows and serialized scripts and remain
+/// wire-compatible with the legacy module.
 /// </summary>
 public static class FilesystemTriggerKeys
 {

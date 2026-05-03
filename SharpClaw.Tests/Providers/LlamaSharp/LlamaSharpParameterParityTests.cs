@@ -5,7 +5,6 @@ using SharpClaw.Modules.Providers.LlamaSharp.LocalInference;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
-
 namespace SharpClaw.Tests.Providers.LlamaSharp;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -23,8 +22,7 @@ public class LlamaSharpValidatorStopAndSeedTests
             Stop = Enumerable.Range(0, 16).Select(i => $"STOP_{i}").ToArray(),
         };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -37,8 +35,7 @@ public class LlamaSharpValidatorStopAndSeedTests
             Stop = Enumerable.Range(0, 17).Select(i => $"STOP_{i}").ToArray(),
         };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().ContainSingle()
             .Which.Should().Contain("Too many stop sequences")
@@ -51,8 +48,7 @@ public class LlamaSharpValidatorStopAndSeedTests
     {
         var parameters = new CompletionParameters { Stop = ["<<END>>"] };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -62,8 +58,7 @@ public class LlamaSharpValidatorStopAndSeedTests
     {
         var parameters = new CompletionParameters { Seed = 42 };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -75,8 +70,7 @@ public class LlamaSharpValidatorStopAndSeedTests
         // the validator accepts any int and leaves the coercion to the client.
         var parameters = new CompletionParameters { Seed = -1 };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -84,7 +78,7 @@ public class LlamaSharpValidatorStopAndSeedTests
     [Test]
     public void Spec_LlamaSharp_ClaimsParityOnStopAndSeed()
     {
-        var spec = CompletionParameterSpec.For(WellKnownProviderKeys.LlamaSharp);
+        var spec = ProviderParameterSpecs.LlamaSharp;
 
         spec.SupportsStop.Should().BeTrue();
         spec.MaxStopSequences.Should().Be(16);
@@ -147,8 +141,7 @@ public class LlamaSharpValidatorResponseFormatTests
             ResponseFormat = Json("""{"type":"json_object"}"""),
         };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -166,8 +159,7 @@ public class LlamaSharpValidatorResponseFormatTests
                 """{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}"""),
         };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -183,8 +175,7 @@ public class LlamaSharpValidatorResponseFormatTests
             ResponseFormat = Json("""{"type":"text"}"""),
         };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -192,7 +183,7 @@ public class LlamaSharpValidatorResponseFormatTests
     [Test]
     public void Spec_LlamaSharp_ResponseFormat_AcceptsBothShapes()
     {
-        var spec = CompletionParameterSpec.For(WellKnownProviderKeys.LlamaSharp);
+        var spec = ProviderParameterSpecs.LlamaSharp;
 
         spec.SupportsResponseFormat.Should().BeTrue();
         spec.OnlyJsonObjectResponseFormat.Should().BeFalse();
@@ -247,8 +238,7 @@ public class LlamaSharpValidatorReasoningEffortTests
         // must no longer treat it as an unsupported-parameter error.
         var parameters = new CompletionParameters { ReasoningEffort = "medium" };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().BeEmpty();
     }
@@ -260,8 +250,7 @@ public class LlamaSharpValidatorReasoningEffortTests
         // of valid values still applies so typos are caught.
         var parameters = new CompletionParameters { ReasoningEffort = "ludicrous" };
 
-        var errors = CompletionParameterValidator.Validate(
-            parameters, WellKnownProviderKeys.LlamaSharp);
+        var errors = CompletionParameterValidator.Validate(parameters, ProviderParameterSpecs.LlamaSharp);
 
         errors.Should().ContainSingle()
             .Which.Should().Contain("ludicrous");
@@ -270,7 +259,7 @@ public class LlamaSharpValidatorReasoningEffortTests
     [Test]
     public void Spec_LlamaSharp_ReasoningEffort_IsInformationalOnly()
     {
-        var spec = CompletionParameterSpec.For(WellKnownProviderKeys.LlamaSharp);
+        var spec = ProviderParameterSpecs.LlamaSharp;
 
         spec.SupportsReasoningEffort.Should().BeTrue();
         spec.ReasoningEffortInformationalOnly.Should().BeTrue();
@@ -282,7 +271,7 @@ public class LlamaSharpValidatorReasoningEffortTests
         // Sanity check — the informational-only flag must remain scoped to
         // providers that genuinely lack a mechanical knob, not leak into
         // providers that consume reasoningEffort on the wire.
-        var spec = CompletionParameterSpec.For(WellKnownProviderKeys.OpenAI);
+        var spec = ProviderParameterSpecs.OpenAI;
 
         spec.ReasoningEffortInformationalOnly.Should().BeFalse();
     }

@@ -79,6 +79,14 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
         services.AddScoped<ScheduledJobService>();
         services.AddScoped<IScheduledJobService>(sp => sp.GetRequiredService<ScheduledJobService>());
         services.AddSingleton<ScheduledJobWorker>();
+
+        // ── Filesystem triggers (rolled in from sharpclaw_filesystem_triggers) ──
+        services.AddSingleton<ITaskTriggerSource, FileChangedTriggerSource>();
+
+        // ── Context tools (rolled in from sharpclaw_context_tools) ─────────────
+        services.TryAddScoped<ContextDataReader>();
+        services.TryAddScoped<ContextToolsService>();
+        services.AddScoped<IChatProcessingContributor, ContextToolsChatContributor>();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -692,6 +700,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
         new("CanEditChannelHeader", "Edit Channel Header", "Edit the custom chat header of specific channels.", "CanEditChannelHeaderAsync"),
         new(AgentOrchestrationPermissionKeys.CanInvokeTasksAsTool, "Invoke Tasks As Tool",
             "Expose active task definitions in the agent tool list.", "InvokeTaskAsToolAsync"),
+        new(ContextToolsPermissionKeys.CanReadCrossThreadHistory, "Read Cross-Thread History",
+            "Read conversation history from other threads/channels.", "ReadCrossThreadHistoryAsync"),
     ];
 
     // ═══════════════════════════════════════════════════════════════
@@ -805,6 +815,108 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
             _ => throw new InvalidOperationException(
                 $"Unknown Agent Orchestration tool: '{toolName}'."),
         };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Inline Tool Definitions (rolled in from sharpclaw_context_tools)
+    // ═══════════════════════════════════════════════════════════════
+
+    public IReadOnlyList<ModuleInlineToolDefinition> GetInlineToolDefinitions()
+    {
+        var crossThreadPerm = new ModuleToolPermission(
+            IsPerResource: false, Check: null,
+            DelegateTo: "ReadCrossThreadHistoryAsync");
+
+        return
+        [
+            new("wait",
+                "Pause for 1-300 seconds. No tokens consumed while waiting.",
+                BuildWaitSchema()),
+
+            new("list_accessible_threads",
+                "List readable threads from other channels (IDs, names, parent channel).",
+                BuildContextToolsGlobalActionSchema(),
+                crossThreadPerm),
+
+            new("read_thread_history",
+                "Read cross-channel thread history. Optional maxMessages (1-200, default 50).",
+                BuildReadThreadHistorySchema(),
+                crossThreadPerm),
+        ];
+    }
+
+    public async Task<string> ExecuteInlineToolAsync(
+        string toolName, JsonElement parameters, InlineToolContext context,
+        IServiceProvider sp, CancellationToken ct)
+    {
+        var svc = sp.GetRequiredService<ContextToolsService>();
+
+        return toolName switch
+        {
+            "wait"
+                => await ContextToolsService.WaitAsync(parameters, ct),
+
+            "list_accessible_threads"
+                => await svc.ListAccessibleThreadsAsync(
+                    context.AgentId, context.ChannelId, ct),
+
+            "read_thread_history"
+                => await svc.ReadThreadHistoryAsync(
+                    parameters, context.AgentId, context.ChannelId, ct),
+
+            _ => throw new InvalidOperationException(
+                $"Unknown Agent Orchestration inline tool: '{toolName}'."),
+        };
+    }
+
+    private static JsonElement BuildWaitSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "integer",
+                        "description": "Seconds (1-300)."
+                    }
+                },
+                "required": ["seconds"]
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildContextToolsGlobalActionSchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+            """);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildReadThreadHistorySchema()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "threadId": {
+                        "type": "string",
+                        "description": "Thread GUID (from list_accessible_threads)."
+                    },
+                    "maxMessages": {
+                        "type": "integer",
+                        "description": "Max messages (1-200, default 50)."
+                    }
+                },
+                "required": ["threadId"]
+            }
+            """);
+        return doc.RootElement.Clone();
     }
 
     // ═══════════════════════════════════════════════════════════════

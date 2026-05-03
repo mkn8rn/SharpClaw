@@ -4,7 +4,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 
-namespace SharpClaw.Modules.ContextTools.Services;
+namespace SharpClaw.Modules.AgentOrchestration;
 
 /// <summary>
 /// A single chat message returned by <see cref="ContextDataReader.GetThreadMessagesAsync"/>.
@@ -17,11 +17,12 @@ internal sealed record ChatMessageSummary(
     DateTimeOffset Timestamp);
 
 /// <summary>
-/// Module-owned read service that backs the ContextTools inline tools.
+/// Module-owned read service that backs the context-tools inline tools.
 /// Reads directly from the host's <see cref="ISharpClawDataContext"/>
 /// surface so the cross-thread visibility policy and the
-/// <c>CanReadCrossThreadHistory</c> permission key live in the module
-/// that owns them.
+/// <c>CanReadCrossThreadHistory</c> permission key live with the module
+/// that owns them. Rolled into agent-orchestration from the former
+/// <c>sharpclaw_context_tools</c> module.
 /// </summary>
 internal sealed class ContextDataReader(ISharpClawDataContext data)
 {

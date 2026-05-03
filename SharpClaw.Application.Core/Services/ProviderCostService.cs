@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
@@ -32,24 +31,16 @@ public sealed class ProviderCostService(
 
         var (periodStart, periodEnd) = ResolvePeriod(days, startDate, endDate);
 
-        // LlamaSharp providers have zero cloud cost
-        if (provider.ProviderKey == WellKnownProviderKeys.LlamaSharp)
-        {
-            return new ProviderCostResponse(
-                provider.Id, provider.Name, provider.ProviderKey,
-                IsLocal: true, CostApiSupported: false,
-                TotalCost: 0, Currency: "usd",
-                PeriodStart: periodStart, PeriodEnd: periodEnd,
-                DailyBreakdown: null,
-                Note: "Local provider — no cloud API costs incurred.");
-        }
+        var plugin = clientFactory.GetPlugin(provider.ProviderKey);
+        var costFeed = plugin?.CostFeed;
+        var isLocal = plugin is { RequiresApiKey: false };
 
-        // Try the provider's cost API (if implemented)
-        var costFeed = clientFactory.GetPlugin(provider.ProviderKey)?.CostFeed;
         if (costFeed is not null
-            && !string.IsNullOrEmpty(provider.EncryptedApiKey))
+            && (!plugin!.RequiresApiKey || !string.IsNullOrEmpty(provider.EncryptedApiKey)))
         {
-            var apiKey = ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
+            var apiKey = string.IsNullOrEmpty(provider.EncryptedApiKey)
+                ? string.Empty
+                : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
             using var httpClient = httpClientFactory.CreateClient();
 
             var result = await costFeed.GetCostsAsync(httpClient, apiKey, periodStart, periodEnd, ct);
@@ -57,20 +48,20 @@ public sealed class ProviderCostService(
             {
                 return new ProviderCostResponse(
                     provider.Id, provider.Name, provider.ProviderKey,
-                    IsLocal: false, CostApiSupported: true,
+                    IsLocal: isLocal, CostApiSupported: true,
                     TotalCost: result.TotalAmount,
                     Currency: result.Currency,
                     PeriodStart: periodStart, PeriodEnd: periodEnd,
                     DailyBreakdown: result.DailyBuckets
                         .Select(b => new CostDailyBucket(b.Start, b.End, b.Amount, result.Currency))
                         .ToList(),
-                    Note: null);
+                    Note: isLocal ? "Local provider — no cloud API costs incurred." : null);
             }
 
             // API returned null — key likely lacks admin permissions
             return new ProviderCostResponse(
                 provider.Id, provider.Name, provider.ProviderKey,
-                IsLocal: false, CostApiSupported: true,
+                IsLocal: isLocal, CostApiSupported: true,
                 TotalCost: 0, Currency: "usd",
                 PeriodStart: periodStart, PeriodEnd: periodEnd,
                 DailyBreakdown: null,
@@ -82,7 +73,7 @@ public sealed class ProviderCostService(
         // Provider does not implement a cost API
         return new ProviderCostResponse(
             provider.Id, provider.Name, provider.ProviderKey,
-            IsLocal: false, CostApiSupported: false,
+            IsLocal: isLocal, CostApiSupported: false,
             TotalCost: 0, Currency: "usd",
             PeriodStart: periodStart, PeriodEnd: periodEnd,
             DailyBreakdown: null,

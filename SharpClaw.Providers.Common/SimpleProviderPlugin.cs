@@ -15,24 +15,33 @@ public sealed class SimpleProviderPlugin(
     Func<string?, IProviderApiClient> clientFactory,
     IModelCapabilityResolver capabilities,
     IReadOnlyList<ProviderCostSeed>? costSeeds = null,
+    ICompletionParameterSpec? parameterSpec = null,
     IDeviceCodeFlow? deviceCodeFlow = null,
     IProviderCostFeed? costFeed = null,
     Func<string, string?, string>? agentIdentifierSuffix = null,
+    bool supportsAutomaticEndpointDiscovery = false,
+    bool isSeedable = true,
+    bool requiresApiKey = true,
     string? ownerModuleId = null) : IProviderPlugin
 {
     public string ProviderKey { get; } = providerKey;
     public string DisplayName { get; } = displayName;
     public string OwnerModuleId { get; } = ownerModuleId ?? string.Empty;
     public bool RequiresEndpoint { get; } = requiresEndpoint;
+    public bool SupportsAutomaticEndpointDiscovery { get; } = supportsAutomaticEndpointDiscovery;
+    public bool IsSeedable { get; } = isSeedable;
+    public bool RequiresApiKey { get; } = requiresApiKey;
     public IModelCapabilityResolver Capabilities { get; } = capabilities;
     public IReadOnlyList<ProviderCostSeed> CostSeeds { get; } = costSeeds ?? [];
+    public ICompletionParameterSpec ParameterSpec { get; } = parameterSpec ?? ICompletionParameterSpec.Passthrough;
     public IDeviceCodeFlow? DeviceCodeFlow { get; } = deviceCodeFlow;
     public IProviderCostFeed? CostFeed { get; } = costFeed;
 
     public IProviderApiClient CreateClient(string? endpoint)
     {
-        if (RequiresEndpoint && string.IsNullOrWhiteSpace(endpoint)
-            && ProviderKey == WellKnownProviderKeys.Custom)
+        if (RequiresEndpoint
+            && !SupportsAutomaticEndpointDiscovery
+            && string.IsNullOrWhiteSpace(endpoint))
         {
             throw new ArgumentException(
                 $"Provider '{ProviderKey}' requires a non-empty endpoint URL.",

@@ -31,7 +31,35 @@ public interface IProviderPlugin
     bool RequiresEndpoint { get; }
 
     /// <summary>
-    /// Returns the API client for this provider. Plugins with stateless
+    /// When <see langword="true"/>, the provider's client supports
+    /// automatic endpoint discovery (e.g. Ollama local-server detection).
+    /// Used by <c>ProviderService</c> to decide whether to invoke the
+    /// automatic discovery step when no endpoint is explicitly configured.
+    /// Defaults to <see langword="false"/>.
+    /// </summary>
+    bool SupportsAutomaticEndpointDiscovery => false;
+
+    /// <summary>
+    /// When <see langword="true"/>, this plugin should be included in the
+    /// startup seed data. When <see langword="false"/>, the plugin is
+    /// excluded from seeding (typically used for <c>Custom</c> providers
+    /// that require user-supplied endpoint configuration). Defaults to
+    /// <see langword="true"/>.
+    /// </summary>
+    bool IsSeedable => true;
+
+    /// <summary>
+    /// When <see langword="true"/>, this provider requires an API key to
+    /// authenticate requests; <c>ProviderService</c>/<c>ChatService</c>
+    /// will fail fast if no key is configured. When <see langword="false"/>
+    /// (e.g. local-inference or local HTTP servers), the key check is
+    /// skipped and the client is invoked with an empty/sentinel key.
+    /// Defaults to <see langword="true"/>.
+    /// </summary>
+    bool RequiresApiKey => true;
+
+    /// <summary>
+    /// Returns the API client for this provider.
     /// clients return a cached singleton; endpoint-bound providers
     /// construct a new client per call.
     /// </summary>
@@ -42,6 +70,14 @@ public interface IProviderPlugin
 
     /// <summary>Cost seeds inserted at startup for new (provider, model) pairs.</summary>
     IReadOnlyList<ProviderCostSeed> CostSeeds { get; }
+
+    /// <summary>
+    /// Completion parameter constraints and supported features. Used by
+    /// <c>CompletionParameterValidator</c> and the generated provider
+    /// parameter reference documentation. Defaults to a permissive
+    /// passthrough spec for unknown/custom providers.
+    /// </summary>
+    ICompletionParameterSpec ParameterSpec => ICompletionParameterSpec.Passthrough;
 
     /// <summary>
     /// Optional device-code authentication flow. <see langword="null"/>

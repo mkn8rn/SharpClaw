@@ -27,7 +27,30 @@ internal static class AgentOrchestrationTriggerAttributeHandlers
             ["OnTaskFailed"]    = new OnTaskFailedHandler(),
             ["OnTrigger"]       = new OnTriggerHandler(),
             ["OnEvent"]         = new OnEventHandler(),
+            ["OnFileChanged"]   = new OnFileChangedHandler(),
         };
+
+    private sealed class OnFileChangedHandler : ITaskTriggerAttributeHandler
+    {
+        public TaskTriggerDefinition? Handle(TaskTriggerAttributeContext context)
+        {
+            var p = new Dictionary<string, string?>(StringComparer.Ordinal);
+            var watchPath = context.GetStringArg(0);
+            if (!string.IsNullOrEmpty(watchPath))
+                p[FilesystemTriggerKeys.WatchPath] = watchPath;
+            var pattern = context.GetNamedStringArg("Pattern");
+            if (!string.IsNullOrEmpty(pattern))
+                p[FilesystemTriggerKeys.FilePattern] = pattern;
+            var events = context.GetNamedEnumArg<FileWatchEvent>("Events") ?? FileWatchEvent.Any;
+            if (events != default)
+                p[FilesystemTriggerKeys.FileEvents] = events.ToString();
+            return new TaskTriggerDefinition
+            {
+                TriggerKey = FilesystemTriggerKeys.FileChanged,
+                Parameters = p,
+            };
+        }
+    }
 
     private sealed class OnEventHandler : ITaskTriggerAttributeHandler
     {

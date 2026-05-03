@@ -23,6 +23,7 @@ public sealed class AnthropicProviderModule : ISharpClawModule
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Anthropic, "Anthropic", false,
             _ => new AnthropicApiClient(), caps,
+            parameterSpec: ProviderParameterSpecs.Anthropic,
             ownerModuleId: "sharpclaw_providers_anthropic"));
     }
 

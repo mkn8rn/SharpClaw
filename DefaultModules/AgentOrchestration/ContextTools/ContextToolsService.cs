@@ -1,10 +1,11 @@
 using System.Text.Json;
 
-namespace SharpClaw.Modules.ContextTools.Services;
+namespace SharpClaw.Modules.AgentOrchestration;
 
 /// <summary>
-/// Wraps cross-thread context and utility operations for the
-/// Context Tools module (inline tools).
+/// Wraps cross-thread context and utility operations for the context-tools
+/// inline tools. Rolled into agent-orchestration from the former
+/// <c>sharpclaw_context_tools</c> module.
 /// </summary>
 internal sealed class ContextToolsService(ContextDataReader dataReader)
 {
@@ -23,6 +24,7 @@ internal sealed class ContextToolsService(ContextDataReader dataReader)
 
         return $"Waited {seconds} second{(seconds == 1 ? "" : "s")}.";
     }
+
     public async Task<string> ListAccessibleThreadsAsync(
         Guid agentId, Guid channelId, CancellationToken ct)
     {

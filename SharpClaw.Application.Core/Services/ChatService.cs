@@ -19,7 +19,6 @@ using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Persistence;
@@ -37,7 +36,6 @@ public sealed class ChatService(
     ProviderApiClientFactory clientFactory,
     IHttpClientFactory httpClientFactory,
     AgentJobService jobService,
-    IChatLocalModelGate? localModelGate,
     HeaderTagProcessor headerTagProcessor,
     ThreadActivitySignal threadActivity,
     ModuleRegistry moduleRegistry,
@@ -93,13 +91,9 @@ public sealed class ChatService(
             ?? throw new InvalidOperationException(
                 $"Model '{model.Name}' ({model.Id}) has no provider assigned.");
 
-        var isLocal = provider.ProviderKey == WellKnownProviderKeys.LlamaSharp;
-        if (!isLocal && string.IsNullOrEmpty(provider.EncryptedApiKey))
+        var requiresApiKey = clientFactory.GetPlugin(provider.ProviderKey)?.RequiresApiKey ?? true;
+        if (requiresApiKey && string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
-
-        // Auto-load local model if not already loaded
-        if (isLocal && localModelGate is not null)
-            await localModelGate.EnsureReadyForChatAsync(model.Id, ct);
 
         // Acquire per-thread lock for sequential processing
         IDisposable? threadLock = null;
@@ -126,7 +120,7 @@ public sealed class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = isLocal ? "local" : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key);
+        var apiKey = requiresApiKey ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key) : "local";
         var client = clientFactory.GetClient(provider.ProviderKey, provider.ApiEndpoint);
         var useNativeTools = client.SupportsNativeToolCalling;
         var disableTools = channel.DisableToolSchemas || agent.DisableToolSchemas;
@@ -137,8 +131,9 @@ public sealed class ChatService(
 
         // Resolve completion parameters early so they can feed the chat header
         // (reasoning-effort informational notice) as well as the wire payload.
-        var completionParams = BuildCompletionParameters(agent);
-        CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderKey);
+        var completionParams = BuildCompletionParameters(agent, model.Id, threadId);
+        CompletionParameterValidator.ValidateOrThrow(
+            completionParams, clientFactory.GetParameterSpec(provider.ProviderKey), provider.ProviderKey);
 
         // Build chat header for the user message (if enabled)
         var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, ct,
@@ -237,8 +232,6 @@ public sealed class ChatService(
         finally
         {
             threadLock?.Dispose();
-            if (isLocal)
-                localModelGate?.ReleaseAfterChat(model.Id);
         }
     }
 
@@ -640,7 +633,7 @@ public sealed class ChatService(
         // CompletionParameterSpec.ReasoningEffortInformationalOnly).
         if (completionParameters?.ReasoningEffort is { } effort)
         {
-            var spec = CompletionParameterSpec.For(providerKey);
+            var spec = clientFactory.GetParameterSpec(providerKey);
             if (spec.ReasoningEffortInformationalOnly)
             {
                 var notice = ChatHeaderNotices.FormatReasoningEffortNotice(effort);
@@ -763,13 +756,9 @@ public sealed class ChatService(
             ?? throw new InvalidOperationException(
                 $"Model '{model.Name}' ({model.Id}) has no provider assigned.");
 
-        var isLocal = provider.ProviderKey == WellKnownProviderKeys.LlamaSharp;
-        if (!isLocal && string.IsNullOrEmpty(provider.EncryptedApiKey))
+        var requiresApiKey = clientFactory.GetPlugin(provider.ProviderKey)?.RequiresApiKey ?? true;
+        if (requiresApiKey && string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
-
-        // Auto-load local model if not already loaded
-        if (isLocal && localModelGate is not null)
-            await localModelGate.EnsureReadyForChatAsync(model.Id, ct);
 
         // Acquire per-thread lock for sequential processing
         IDisposable? threadLock = null;
@@ -796,7 +785,7 @@ public sealed class ChatService(
 
         history.Add(new ChatCompletionMessage("user", request.Message));
 
-        var apiKey = isLocal ? "local" : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key);
+        var apiKey = requiresApiKey ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key) : "local";
         var client = clientFactory.GetClient(provider.ProviderKey, provider.ApiEndpoint);
         var systemPrompt = channel.DisableToolSchemas || agent.DisableToolSchemas
             ? agent.SystemPrompt ?? ""
@@ -804,8 +793,9 @@ public sealed class ChatService(
 
         // Resolve completion parameters early so they can feed the chat header
         // (reasoning-effort informational notice) as well as the wire payload.
-        var completionParams = BuildCompletionParameters(agent);
-        CompletionParameterValidator.ValidateOrThrow(completionParams, provider.ProviderKey);
+        var completionParams = BuildCompletionParameters(agent, model.Id, threadId);
+        CompletionParameterValidator.ValidateOrThrow(
+            completionParams, clientFactory.GetParameterSpec(provider.ProviderKey), provider.ProviderKey);
 
         // Build chat header for the user message (if enabled)
         var chatHeader = await BuildChatHeaderAsync(channel, agent, request.ClientType, ct,
@@ -1031,8 +1021,6 @@ public sealed class ChatService(
         finally
         {
             threadLock?.Dispose();
-            if (isLocal)
-                localModelGate?.ReleaseAfterChat(model.Id);
         }
     }
 
@@ -1903,12 +1891,15 @@ public sealed class ChatService(
 
     /// <summary>
     /// Maps the typed provider parameter fields from <see cref="AgentDB"/> into
-    /// a <see cref="CompletionParameters"/> instance. Returns <see langword="null"/>
-    /// when all fields are their default (null) values.
+    /// a <see cref="CompletionParameters"/> instance and stamps the host model
+    /// id and (optional) thread id so providers that need either to manage
+    /// internal state — currently the LlamaSharp in-process client for model
+    /// acquire/release and KV-cache reuse — can resolve them from the call
+    /// parameters instead of relying on out-of-band ambient state.
     /// </summary>
-    private static CompletionParameters? BuildCompletionParameters(AgentDB agent)
+    private static CompletionParameters BuildCompletionParameters(AgentDB agent, Guid modelId, Guid? threadId)
     {
-        var cp = new CompletionParameters
+        return new CompletionParameters
         {
             Temperature = agent.Temperature,
             TopP = agent.TopP,
@@ -1919,7 +1910,8 @@ public sealed class ChatService(
             Seed = agent.Seed,
             ResponseFormat = agent.ResponseFormat,
             ReasoningEffort = agent.ReasoningEffort,
+            ModelId = modelId,
+            ThreadId = threadId,
         };
-        return cp.IsEmpty ? null : cp;
     }
 }

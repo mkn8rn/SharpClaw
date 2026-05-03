@@ -4,8 +4,8 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
@@ -20,7 +20,8 @@ namespace SharpClaw.Application.Services;
 /// </summary>
 public sealed class TaskPreflightChecker(
     SharpClawDbContext db,
-    ModuleRegistry moduleRegistry)
+    ModuleRegistry moduleRegistry,
+    ProviderApiClientFactory clientFactory)
 {
     // ═══════════════════════════════════════════════════════════════
     // Static check (no DB access)
@@ -96,14 +97,14 @@ public sealed class TaskPreflightChecker(
                     bool passed;
                     string message;
 
-                    var knownKeys = WellKnownProviderKeys.All;
-                    if (knownKeys.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    var match = clientFactory.Plugins
+                        .FirstOrDefault(p => p.ProviderKey.Equals(value, StringComparison.OrdinalIgnoreCase));
+                    if (match is not null)
                     {
-                        var normalised = knownKeys.First(k =>
-                            k.Equals(value, StringComparison.OrdinalIgnoreCase));
+                        var normalised = match.ProviderKey;
                         passed = await db.Providers
                             .AnyAsync(p => p.ProviderKey == normalised
-                                          && p.EncryptedApiKey != null, ct);
+                                          && (!match.RequiresApiKey || p.EncryptedApiKey != null), ct);
                         message = passed
                             ? $"Provider '{value}' is configured."
                             : $"Provider '{value}' is not configured or has no API key.";

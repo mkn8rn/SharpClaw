@@ -6,7 +6,6 @@ using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.ComputerUse.Triggers;
 using SharpClaw.Modules.DatabaseAccess.Triggers;
-using SharpClaw.Modules.FilesystemTriggers;
 using SharpClaw.Modules.Http;
 using SharpClaw.Modules.Metrics;
 

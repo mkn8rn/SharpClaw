@@ -80,7 +80,6 @@ public sealed class LlamaSharpProviderModule : ISharpClawModule
         // Module services.
         services.AddScoped<LocalModelService>();
         services.AddScoped<ILocalModelLookup, LocalModelLookup>();
-        services.AddScoped<IChatLocalModelGate, ChatLocalModelGate>();
 
         // Provider plugin — in-process LLamaSharp client.
         services.AddSingleton<IProviderPlugin>(sp =>
@@ -93,10 +92,13 @@ public sealed class LlamaSharpProviderModule : ISharpClawModule
                 requiresEndpoint: false,
                 _ => new LocalInferenceApiClient(pm),
                 caps,
+                parameterSpec: ProviderParameterSpecs.LlamaSharp,
+                costFeed: LocalProviderCostFeed.Instance,
                 agentIdentifierSuffix: (providerName, sourceUrl) =>
                     string.IsNullOrEmpty(sourceUrl)
                         ? providerName.Replace(" ", "-").ToLowerInvariant()
                         : ModelDownloadManager.ResolveSourceFolder(sourceUrl).ToLowerInvariant(),
+                requiresApiKey: false,
                 ownerModuleId: "sharpclaw_providers_llamasharp");
         });
     }

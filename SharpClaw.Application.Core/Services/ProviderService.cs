@@ -4,7 +4,6 @@ using SharpClaw.Application.Core.Clients;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
@@ -21,15 +20,28 @@ public sealed class ProviderService(
 {
     public async Task<ProviderResponse> CreateAsync(CreateProviderRequest request, CancellationToken ct = default)
     {
-        if (request.ProviderKey == WellKnownProviderKeys.Custom && string.IsNullOrWhiteSpace(request.ApiEndpoint))
-            throw new ArgumentException("ApiEndpoint is required for custom providers.");
+        var plugin = clientFactory.GetPlugin(request.ProviderKey);
+
+        if (plugin is not null
+            && plugin.RequiresEndpoint
+            && !plugin.SupportsAutomaticEndpointDiscovery
+            && string.IsNullOrWhiteSpace(request.ApiEndpoint))
+        {
+            throw new ArgumentException(
+                $"ApiEndpoint is required for provider '{request.ProviderKey}'.");
+        }
 
         if (IsUniqueProviderNamesEnforced())
             await EnsureProviderNameUniqueAsync(request.Name, excludeId: null, ct);
 
-        var storeEndpoint = request.ProviderKey is WellKnownProviderKeys.Custom or WellKnownProviderKeys.Ollama
-            ? request.ApiEndpoint
-            : null;
+        // Persist the endpoint whenever the plugin can use one (either it is
+        // mandatory, or the plugin supports automatic discovery and the user
+        // chose to override the default). For plugins that have no endpoint
+        // concept at all, drop the value to avoid leaking unused state.
+        var storeEndpoint = plugin is not null
+            && (plugin.RequiresEndpoint || plugin.SupportsAutomaticEndpointDiscovery)
+                ? request.ApiEndpoint
+                : null;
 
         var provider = new ProviderDB
         {
@@ -212,15 +224,15 @@ public sealed class ProviderService(
             .FirstOrDefaultAsync(p => p.Id == providerId, ct)
             ?? throw new ArgumentException($"Provider {providerId} not found.");
 
-        if (string.IsNullOrEmpty(provider.EncryptedApiKey)
-            && provider.ProviderKey != WellKnownProviderKeys.Ollama)
+        var plugin = clientFactory.GetPlugin(provider.ProviderKey)
+            ?? throw new ProviderUnavailableException(provider.ProviderKey);
+
+        if (plugin.RequiresApiKey && string.IsNullOrEmpty(provider.EncryptedApiKey))
             throw new InvalidOperationException("Provider does not have an API key configured.");
 
         var apiKey = string.IsNullOrEmpty(provider.EncryptedApiKey)
             ? string.Empty
             : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
-        var plugin = clientFactory.GetPlugin(provider.ProviderKey)
-            ?? throw new ProviderUnavailableException(provider.ProviderKey);
         var client = plugin.CreateClient(provider.ApiEndpoint);
 
         using var httpClient = httpClientFactory.CreateClient();

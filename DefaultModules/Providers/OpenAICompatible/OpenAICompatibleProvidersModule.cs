@@ -35,52 +35,62 @@ public sealed class OpenAICompatibleProvidersModule : ISharpClawModule
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.OpenAI, "OpenAI", false,
             _ => new OpenAiApiClient(), openAiCaps,
+            parameterSpec: ProviderParameterSpecs.OpenAI,
             costFeed: new OpenAiApiClient(),
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.OpenRouter, "OpenRouter", false,
             _ => new OpenRouterApiClient(), genericCaps,
+            parameterSpec: ProviderParameterSpecs.OpenRouter,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.GoogleGeminiOpenAi, "Google Gemini (OpenAI)", false,
             _ => new GoogleGeminiOpenAiApiClient(), googleCaps,
+            parameterSpec: ProviderParameterSpecs.GoogleGeminiOpenAi,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.GoogleVertexAIOpenAi, "Google Vertex AI (OpenAI)", false,
             _ => new GoogleVertexAIOpenAiApiClient(), googleCaps,
+            parameterSpec: ProviderParameterSpecs.GoogleVertexAIOpenAi,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.ZAI, "Z.AI", false,
             _ => new ZAIApiClient(), genericCaps,
+            parameterSpec: ProviderParameterSpecs.ZAI,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.VercelAIGateway, "Vercel AI Gateway", false,
             _ => new VercelAIGatewayApiClient(), genericCaps,
+            parameterSpec: ProviderParameterSpecs.VercelAIGateway,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.XAI, "xAI", false,
             _ => new XAIApiClient(), xaiCaps,
+            parameterSpec: ProviderParameterSpecs.XAI,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Groq, "Groq", false,
             _ => new GroqApiClient(), genericCaps,
+            parameterSpec: ProviderParameterSpecs.Groq,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Cerebras, "Cerebras", false,
             _ => new CerebrasApiClient(), genericCaps,
+            parameterSpec: ProviderParameterSpecs.Cerebras,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Mistral, "Mistral", false,
             _ => new MistralApiClient(), mistralCaps,
+            parameterSpec: ProviderParameterSpecs.Mistral,
             ownerModuleId: owner));
 
         // GitHub Copilot reuses one client instance for both the API
@@ -90,17 +100,21 @@ public sealed class OpenAICompatibleProvidersModule : ISharpClawModule
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.GitHubCopilot, "GitHub Copilot", false,
             _ => copilot, genericCaps,
+            parameterSpec: ProviderParameterSpecs.GitHubCopilot,
             deviceCodeFlow: new DeviceCodeAuthClientFlow(copilot),
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Minimax, "MiniMax", false,
             _ => new MinimaxApiClient(), minimaxCaps,
+            parameterSpec: ProviderParameterSpecs.Minimax,
             ownerModuleId: owner));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             WellKnownProviderKeys.Custom, "Custom (OpenAI-compatible)", true,
             endpoint => new CustomOpenAiCompatibleApiClient(endpoint!), genericCaps,
+            parameterSpec: ProviderParameterSpecs.Custom,
+            isSeedable: false,
             ownerModuleId: owner));
     }
 

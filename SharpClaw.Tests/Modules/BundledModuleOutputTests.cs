@@ -15,7 +15,6 @@ public class BundledModuleOutputTests
         "SharpClaw.Modules.AgentOrchestration.dll",
         "SharpClaw.Modules.BotIntegration.dll",
         "SharpClaw.Modules.ComputerUse.dll",
-        "SharpClaw.Modules.ContextTools.dll",
         "SharpClaw.Modules.DangerousShell.dll",
         "SharpClaw.Modules.DatabaseAccess.dll",
         "SharpClaw.Modules.EditorCommon.dll",

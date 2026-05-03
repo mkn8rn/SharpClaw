@@ -122,6 +122,16 @@ public sealed record CompletionParameters
     /// </summary>
     public Guid? ThreadId { get; init; }
 
+    /// <summary>
+    /// SharpClaw <c>ModelDB</c> id for the target model. Used by
+    /// providers that need to look up provider-local state keyed on
+    /// the host model id (currently LlamaSharp, which uses it to
+    /// resolve the loaded weights and to manage acquire/release of
+    /// the in-process inference session). Network providers ignore
+    /// this field; they are routed by <c>model</c> name on the wire.
+    /// </summary>
+    public Guid? ModelId { get; init; }
+
     /// <summary>Returns <see langword="true"/> when all fields are null.</summary>
     public bool IsEmpty =>
         Temperature is null && TopP is null && TopK is null &&
@@ -129,5 +139,5 @@ public sealed record CompletionParameters
         Stop is null && Seed is null && ResponseFormat is null &&
         ReasoningEffort is null &&
         ToolChoice is null && ParallelToolCalls is null &&
-        StrictTools is null && ThreadId is null;
+        StrictTools is null && ThreadId is null && ModelId is null;
 }
