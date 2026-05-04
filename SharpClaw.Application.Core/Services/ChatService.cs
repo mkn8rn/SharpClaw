@@ -54,7 +54,7 @@ public sealed class ChatService(
     /// response.  Prevents infinite loops when the model keeps emitting
     /// tool calls.
     /// </summary>
-    private const int MaxToolCallRounds = 10;
+    private const int MaxToolCallRounds = 50;
 
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");

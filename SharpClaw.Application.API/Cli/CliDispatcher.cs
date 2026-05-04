@@ -33,6 +33,7 @@ using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Chat;
 
 namespace SharpClaw.Application.API.Cli;
 
@@ -1125,12 +1126,19 @@ public static class CliDispatcher
             return Results.Ok();
         }
 
+        // ── chat replay ──────────────────────────────────────────
+        if (args.Length >= 2 && args[1].Equals("replay", StringComparison.OrdinalIgnoreCase))
+            return await HandleChatReplayCommand(args, sp);
+
         if (args.Length < 2)
         {
             PrintUsage(
                 "chat [--agent <id>] [--thread <id>] <message>",
                 "  chat <threadId> <message>               Send to a thread (infers channel)",
                 "  chat toggle                             Toggle chat mode on/off",
+                "  chat replay [--channel <id>] [--thread <id>] [--limit <N>]",
+                "              [--cps <chars/sec>] [--tool-delay <ms>] [--instant]",
+                "                                          Replay a thread/channel as a live demo",
                 "  --agent overrides the channel's default agent.",
                 "  --thread sends the message in a thread (with history).",
                 "  A thread ID can be used anywhere a channel ID is expected.");
@@ -1277,6 +1285,232 @@ public static class CliDispatcher
         }
 
         return Results.Ok();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // chat replay — CLI-only.
+    //
+    // Loads the persisted message history for the active (or specified)
+    // channel/thread and re-emits it as if it were happening live: the
+    // user prompt is "typed" at the chat prompt, assistant text streams in
+    // at a configurable characters-per-second rate, and persisted tool-call
+    // notation lines (the "⚙ [...] → ..." / "⏳ [...]" markers injected by
+    // ChatService) are surfaced as instant-looking tool events with a small
+    // pause between them. Purely a time-saving feature for demos.
+    // ════════════════════════════════════════════════════════════════════
+    private static async Task<IResult?> HandleChatReplayCommand(string[] args, IServiceProvider sp)
+    {
+        Guid? channelId = _currentChannelId;
+        Guid? threadId = _currentThreadId;
+        var limit = 200;
+        var charsPerSecond = 80.0;
+        var toolDelayMs = 350;
+        var instant = false;
+
+        for (var i = 2; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--channel" or "-c" when i + 1 < args.Length:
+                    channelId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--thread" or "-t" when i + 1 < args.Length:
+                    threadId = CliIdMap.Resolve(args[++i]);
+                    break;
+                case "--limit" or "-n" when i + 1 < args.Length && int.TryParse(args[i + 1], out var n):
+                    limit = n; i++;
+                    break;
+                case "--cps" when i + 1 < args.Length && double.TryParse(args[i + 1], out var cps):
+                    charsPerSecond = Math.Max(1, cps); i++;
+                    break;
+                case "--tool-delay" when i + 1 < args.Length && int.TryParse(args[i + 1], out var td):
+                    toolDelayMs = Math.Max(0, td); i++;
+                    break;
+                case "--instant":
+                    instant = true;
+                    break;
+                default:
+                    Console.Error.WriteLine($"Unknown argument: {args[i]}");
+                    return Results.Ok();
+            }
+        }
+
+        var channelSvc = sp.GetRequiredService<ChannelService>();
+        var threadSvc = sp.GetRequiredService<ThreadService>();
+
+        // If --thread given but no channel, infer the channel from the thread.
+        if (threadId is not null && channelId is null)
+        {
+            var t = await threadSvc.GetByIdAsync(threadId.Value);
+            if (t is not null) channelId = t.ChannelId;
+        }
+
+        if (channelId is null)
+        {
+            var latest = await channelSvc.GetLatestActiveAsync();
+            if (latest is null)
+            {
+                Console.Error.WriteLine("Error: No channel selected and no channels exist to replay.");
+                return Results.Ok();
+            }
+            channelId = latest.Id;
+            Console.WriteLine($"No channel selected. Replaying latest channel: \"{latest.Title}\" ({CliIdMap.GetOrAssign(latest.Id)})");
+        }
+
+        var chatService = sp.GetRequiredService<ChatService>();
+        var messages = await chatService.GetHistoryAsync(channelId.Value, threadId, limit);
+
+        if (messages.Count == 0)
+        {
+            Console.WriteLine("(no messages to replay)");
+            return Results.Ok();
+        }
+
+        var scope = threadId is not null
+            ? $"thread #{CliIdMap.GetOrAssign(threadId.Value)}"
+            : $"channel #{CliIdMap.GetOrAssign(channelId.Value)}";
+        Console.WriteLine($"\u25B6 Replaying {messages.Count} message(s) from {scope}.");
+        Console.WriteLine(instant
+            ? "  (instant mode)"
+            : $"  (~{charsPerSecond:0} cps, {toolDelayMs} ms between tool calls). Press Ctrl+C to stop.");
+        Console.WriteLine();
+
+        var perCharDelayMs = instant ? 0 : Math.Max(1, (int)(1000.0 / charsPerSecond));
+        var promptUser = _currentUser ?? "you";
+
+        try
+        {
+            foreach (var m in messages)
+            {
+                if (string.Equals(m.Role, ChatRoles.User, StringComparison.OrdinalIgnoreCase))
+                {
+                    await ReplayUserMessageAsync(m, promptUser, perCharDelayMs, instant);
+                }
+                else if (string.Equals(m.Role, ChatRoles.Assistant, StringComparison.OrdinalIgnoreCase))
+                {
+                    await ReplayAssistantMessageAsync(m, perCharDelayMs, toolDelayMs, instant);
+                }
+                else
+                {
+                    Console.WriteLine($"  [{m.Role}] {m.Content}");
+                }
+
+                if (!instant) await Task.Delay(150);
+            }
+        }
+        catch (OperationCanceledException) { /* user-cancelled */ }
+
+        Console.WriteLine();
+        Console.WriteLine("\u25A0 Replay complete.");
+        return Results.Ok();
+    }
+
+    private static async Task ReplayUserMessageAsync(
+        ChatMessageResponse m, string promptUser, int perCharDelayMs, bool instant)
+    {
+        // Make it look like the operator pasted the message at the prompt:
+        // print the prompt, brief "thinking" pause, then dump the entire
+        // message at once instead of streaming it character by character.
+        // Add a blank line above so the user turn is visually separated
+        // from the previous assistant turn (real chat ergonomics).
+        Console.WriteLine();
+        var sender = !string.IsNullOrWhiteSpace(m.SenderUsername) ? m.SenderUsername! : promptUser;
+        Console.Write($"sharpclaw ({sender}) 💬> ");
+        var visible = StripChatHeader(m.Content);
+        if (!instant) await Task.Delay(600);
+        Console.WriteLine(visible);
+    }
+
+    private static async Task ReplayAssistantMessageAsync(
+        ChatMessageResponse m, int perCharDelayMs, int toolDelayMs, bool instant)
+    {
+        // Blank line above the assistant header so it visually peels away
+        // from the user's prompt block, matching the spacing of a real
+        // streaming chat exchange.
+        Console.WriteLine();
+        var who = !string.IsNullOrWhiteSpace(m.SenderAgentName) ? m.SenderAgentName! : "assistant";
+        Console.WriteLine($"↳ {who}:");
+        Console.WriteLine();
+
+        // The persisted assistant content interleaves tool-call notation
+        // lines (starting with ⚙ or ⏳) with model text. Replay text as a
+        // chunked stream and tool-call lines as discrete instant-looking
+        // events. Render flush-left (no extra indent) so the body reads
+        // like a normal chat reply rather than a tabbed quote-block.
+        foreach (var line in (m.Content ?? string.Empty).Split('\n'))
+        {
+            var trimmed = line.TrimEnd('\r');
+            if (trimmed.Length == 0) { Console.WriteLine(); continue; }
+
+            var leftTrimmed = trimmed.TrimStart();
+            if (leftTrimmed.StartsWith("\u2699") /* ⚙ */ ||
+                leftTrimmed.StartsWith("\u23F3") /* ⏳ */)
+            {
+                // Render as: "→ [tool_name] status" so the brackets stand
+                // out and the line is visually distinct from model prose.
+                // We strip the leading glyph and keep the rest verbatim,
+                // which already contains the [bracketed] tool name.
+                var rest = leftTrimmed.Length > 1 ? leftTrimmed[1..].TrimStart() : leftTrimmed;
+                Console.WriteLine($"  → {rest}");
+                if (!instant && toolDelayMs > 0) await Task.Delay(toolDelayMs);
+            }
+            else
+            {
+                await StreamTextAsync(trimmed, perCharDelayMs, instant);
+                Console.WriteLine();
+            }
+        }
+    }
+
+    // Random source for the chunked streaming effect. Tokens from real
+    // model SSE arrive in irregular small bursts, not single characters,
+    // so the replay mimics that rhythm by writing a few characters at a
+    // time with jittered delays.
+    private static readonly Random _streamRng = new();
+
+    private static async Task StreamTextAsync(string text, int perCharDelayMs, bool instant)
+    {
+        if (instant || perCharDelayMs <= 0)
+        {
+            Console.Write(text);
+            return;
+        }
+
+        int i = 0;
+        while (i < text.Length)
+        {
+            // Chunk size mimics tokenizer-sized bursts (roughly 2–8 chars).
+            var remaining = text.Length - i;
+            var chunkSize = Math.Min(_streamRng.Next(2, 9), remaining);
+            Console.Write(text.AsSpan(i, chunkSize));
+            i += chunkSize;
+
+            // Delay scales with chunk size and gets a small jitter so
+            // adjacent bursts don't feel mechanically metered.
+            var baseDelay = perCharDelayMs * chunkSize;
+            var jitter = baseDelay > 2 ? _streamRng.Next(-baseDelay / 3, baseDelay / 3 + 1) : 0;
+            await Task.Delay(Math.Max(1, baseDelay + jitter));
+        }
+    }
+
+    /// <summary>
+    /// Removes the leading metadata header that SharpClaw injects into user
+    /// messages so the replay shows what a human would have typed, not the
+    /// machine-augmented payload the model actually saw.
+    /// </summary>
+    private static string StripChatHeader(string? content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
+        // Header convention: lines like "key: value" terminated by a blank
+        // line, followed by the real user text. If no blank line, return
+        // the original content unchanged.
+        var idx = content.IndexOf("\n\n", StringComparison.Ordinal);
+        if (idx < 0) return content;
+        var head = content[..idx];
+        // Heuristic: header lines are short "key: value" pairs.
+        var looksLikeHeader = head.Split('\n')
+            .All(l => l.Contains(':') && l.Length < 240);
+        return looksLikeHeader ? content[(idx + 2)..] : content;
     }
 
     private static async Task<IResult?> HandleChannelCommand(string[] args, IServiceProvider sp)
