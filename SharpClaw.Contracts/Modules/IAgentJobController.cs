@@ -1,4 +1,5 @@
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.Entities.Core.Jobs;
 
 namespace SharpClaw.Contracts.Modules;
 
@@ -24,7 +25,7 @@ public interface IAgentJobController
     Task AddJobLogAsync(
         Guid jobId,
         string message,
-        string level = "Info",
+        string level = JobLogLevels.Info,
         CancellationToken ct = default);
 
     /// <summary>Marks a job as failed and records the exception details.</summary>

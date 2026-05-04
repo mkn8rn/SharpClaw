@@ -296,11 +296,21 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
             .FirstOrDefaultAsync(p => p.Id == psId, ct);
 
     /// <summary>
-    /// Creates a <c>default-{modelName}</c> agent for every chat-capable model
-    /// that does not already have one.  Returns the list of newly created agents.
-    /// For local models the suffix is derived from the download source
-    /// (e.g. "huggingface") instead of the provider name.
+    /// Creates a <c>default-{modelName}-{providerSuffix}</c> agent for every
+    /// chat-capable model that does not already have one. Returns the list of
+    /// newly created agents. The provider suffix is supplied by the owning
+    /// <see cref="IProviderPlugin"/> via
+    /// <see cref="IProviderPlugin.GetAgentIdentifierSuffixAsync"/> so that
+    /// plugins can derive stable identifiers from module-owned data
+    /// (e.g. local models keyed by download source).
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a chat-capable model belongs to a provider with no
+    /// registered plugin. Provider plugins are the single source of truth
+    /// for the agent-identifier suffix; falling back to the provider's
+    /// display name would silently desynchronise agent names from plugin
+    /// state, so this is treated as a hard configuration error.
+    /// </exception>
     public async Task<IReadOnlyList<AgentResponse>> SyncWithModelsAsync(CancellationToken ct = default)
     {
         var models = await db.Models
@@ -317,10 +327,15 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
 
         foreach (var model in models)
         {
-            var plugin = clientFactory.GetPlugin(model.Provider.ProviderKey);
-            var providerSuffix = plugin is not null
-                ? await plugin.GetAgentIdentifierSuffixAsync(model.Provider.Name, model.Id, ct)
-                : model.Provider.Name.Replace(" ", "-").ToLowerInvariant();
+            var plugin = clientFactory.GetPlugin(model.Provider.ProviderKey)
+                ?? throw new InvalidOperationException(
+                    $"Cannot synthesise default agent for model '{model.Name}' "
+                    + $"(provider '{model.Provider.Name}', key '{model.Provider.ProviderKey}'): "
+                    + "no provider plugin is registered. Ensure the owning module is "
+                    + "loaded and enabled before running agent sync.");
+
+            var providerSuffix = await plugin.GetAgentIdentifierSuffixAsync(
+                model.Provider.Name, model.Id, ct);
 
             var agentName = $"default-{model.Name}-{providerSuffix}";
             if (nameSet.Contains(agentName)) continue;

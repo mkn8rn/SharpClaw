@@ -580,16 +580,26 @@ public sealed class TaskService(
     // Parameter serialisation
     // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// JSON shape persisted in <c>TaskDefinitionDB.ParametersJson</c>.
+    /// Property names mirror <see cref="TaskParameterDefinition"/> so
+    /// existing on-disk data round-trips unchanged. Defined as a typed
+    /// DTO so a rename on the source record produces a compile error
+    /// rather than a silent deserialisation drop.
+    /// </summary>
+    private sealed record ParameterDto(
+        string Name,
+        string TypeName,
+        string? Description,
+        string? DefaultValue,
+        bool IsRequired);
+
     private static string SerializeParameters(IReadOnlyList<TaskParameterDefinition> parameters)
     {
-        return JsonSerializer.Serialize(parameters.Select(p => new
-        {
-            p.Name,
-            p.TypeName,
-            p.Description,
-            p.DefaultValue,
-            p.IsRequired,
-        }));
+        var dtos = parameters
+            .Select(p => new ParameterDto(p.Name, p.TypeName, p.Description, p.DefaultValue, p.IsRequired))
+            .ToList();
+        return JsonSerializer.Serialize(dtos);
     }
 
     private static IReadOnlyList<TaskParameterDefinition> DeserializeParameters(string? json)
@@ -597,14 +607,14 @@ public sealed class TaskService(
         if (string.IsNullOrWhiteSpace(json))
             return [];
 
-        using var doc = JsonDocument.Parse(json);
-        return doc.RootElement.EnumerateArray()
-            .Select(e => new TaskParameterDefinition(
-                Name: e.GetProperty("Name").GetString() ?? "",
-                TypeName: e.GetProperty("TypeName").GetString() ?? "string",
-                Description: e.TryGetProperty("Description", out var d) ? d.GetString() : null,
-                DefaultValue: e.TryGetProperty("DefaultValue", out var dv) ? dv.GetString() : null,
-                IsRequired: e.TryGetProperty("IsRequired", out var r) && r.GetBoolean()))
+        var dtos = JsonSerializer.Deserialize<List<ParameterDto>>(json) ?? [];
+        return dtos
+            .Select(d => new TaskParameterDefinition(
+                Name: d.Name ?? "",
+                TypeName: d.TypeName ?? "string",
+                Description: d.Description,
+                DefaultValue: d.DefaultValue,
+                IsRequired: d.IsRequired))
             .ToList();
     }
 
@@ -612,17 +622,34 @@ public sealed class TaskService(
     // Requirement serialisation
     // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// JSON shape persisted in <c>TaskDefinitionDB.RequirementsJson</c>.
+    /// <see cref="Kind"/> and <see cref="Severity"/> are stored as their
+    /// enum names (string) for forward/back compatibility with existing
+    /// data files. Unknown names parse to the enum's default value, and
+    /// a missing <see cref="Severity"/> defaults to
+    /// <see cref="TaskDiagnosticSeverity.Error"/>.
+    /// </summary>
+    private sealed record RequirementDto(
+        string? Kind,
+        string? Severity,
+        string? Value,
+        string? CapabilityValue,
+        string? ParameterName,
+        int Line);
+
     private static string SerializeRequirements(IReadOnlyList<TaskRequirementDefinition> requirements)
     {
-        return JsonSerializer.Serialize(requirements.Select(r => new
-        {
-            Kind = r.Kind.ToString(),
-            Severity = r.Severity.ToString(),
-            r.Value,
-            r.CapabilityValue,
-            r.ParameterName,
-            r.Line,
-        }));
+        var dtos = requirements
+            .Select(r => new RequirementDto(
+                r.Kind.ToString(),
+                r.Severity.ToString(),
+                r.Value,
+                r.CapabilityValue,
+                r.ParameterName,
+                r.Line))
+            .ToList();
+        return JsonSerializer.Serialize(dtos);
     }
 
     private static IReadOnlyList<TaskRequirementDefinition> DeserializeRequirements(string? json)
@@ -630,24 +657,23 @@ public sealed class TaskService(
         if (string.IsNullOrWhiteSpace(json))
             return [];
 
-        using var doc = JsonDocument.Parse(json);
-        return doc.RootElement.EnumerateArray()
-            .Select(e =>
+        var dtos = JsonSerializer.Deserialize<List<RequirementDto>>(json) ?? [];
+        return dtos
+            .Select(d =>
             {
-                var kindStr = e.GetProperty("Kind").GetString() ?? "";
-                var sevStr = e.GetProperty("Severity").GetString() ?? "Error";
-
-                Enum.TryParse<TaskRequirementKind>(kindStr, out var kind);
-                Enum.TryParse<TaskDiagnosticSeverity>(sevStr, out var severity);
+                Enum.TryParse<TaskRequirementKind>(d.Kind ?? string.Empty, out var kind);
+                Enum.TryParse<TaskDiagnosticSeverity>(
+                    d.Severity ?? nameof(TaskDiagnosticSeverity.Error),
+                    out var severity);
 
                 return new TaskRequirementDefinition
                 {
-                    Kind           = kind,
-                    Severity       = severity,
-                    Value          = e.TryGetProperty("Value",           out var v)  ? v.GetString()  : null,
-                    CapabilityValue= e.TryGetProperty("CapabilityValue", out var cv) ? cv.GetString() : null,
-                    ParameterName  = e.TryGetProperty("ParameterName",  out var pn) ? pn.GetString() : null,
-                    Line           = e.TryGetProperty("Line",            out var ln) ? ln.GetInt32()  : 0,
+                    Kind            = kind,
+                    Severity        = severity,
+                    Value           = d.Value,
+                    CapabilityValue = d.CapabilityValue,
+                    ParameterName   = d.ParameterName,
+                    Line            = d.Line,
                 };
             })
             .ToList();

@@ -12,6 +12,6 @@ public class AgentJobLogEntryDB : BaseEntity
 
     public required string Message { get; set; }
 
-    /// <summary>"Info", "Warning", or "Error".</summary>
-    public string Level { get; set; } = "Info";
+    /// <summary>One of <see cref="JobLogLevels"/> ("Info", "Warning", or "Error").</summary>
+    public string Level { get; set; } = JobLogLevels.Info;
 }

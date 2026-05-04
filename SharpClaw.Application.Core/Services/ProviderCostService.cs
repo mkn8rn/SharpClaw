@@ -15,6 +15,14 @@ public sealed class ProviderCostService(
     IHttpClientFactory httpClientFactory)
 {
     /// <summary>
+    /// Currency reported when no cost feed data is available (no API support,
+    /// permission denied, or empty totals). USD is used because every provider
+    /// plugin that currently exposes a cost feed reports in USD; the value is
+    /// only ever paired with a zero <c>TotalCost</c> in fallback responses.
+    /// </summary>
+    private const string DefaultFallbackCurrency = "usd";
+
+    /// <summary>
     /// Fetches cost data for a single provider. If the provider exposes a
     /// billing API (e.g. OpenAI) and the API key has sufficient privileges,
     /// real cost data is returned. Otherwise a response is returned with
@@ -58,23 +66,22 @@ public sealed class ProviderCostService(
                     Note: isLocal ? "Local provider — no cloud API costs incurred." : null);
             }
 
-            // API returned null — key likely lacks admin permissions
+            // API returned null — key likely lacks the required billing permissions.
+            // The plugin owns the provider-specific remediation message.
             return new ProviderCostResponse(
                 provider.Id, provider.Name, provider.ProviderKey,
                 IsLocal: isLocal, CostApiSupported: true,
-                TotalCost: 0, Currency: "usd",
+                TotalCost: 0, Currency: DefaultFallbackCurrency,
                 PeriodStart: periodStart, PeriodEnd: periodEnd,
                 DailyBreakdown: null,
-                Note: "Cost API is available for this provider but the current API key "
-                    + "lacks the required permissions (e.g. OpenAI requires an admin key). "
-                    + "Update the API key to an admin key to retrieve cost data.");
+                Note: costFeed.PermissionDeniedNote);
         }
 
         // Provider does not implement a cost API
         return new ProviderCostResponse(
             provider.Id, provider.Name, provider.ProviderKey,
             IsLocal: isLocal, CostApiSupported: false,
-            TotalCost: 0, Currency: "usd",
+            TotalCost: 0, Currency: DefaultFallbackCurrency,
             PeriodStart: periodStart, PeriodEnd: periodEnd,
             DailyBreakdown: null,
             Note: $"Provider type '{provider.ProviderKey}' does not expose a cost API. "
@@ -117,7 +124,8 @@ public sealed class ProviderCostService(
         }
 
         var totalCost = results.Sum(r => r.TotalCost);
-        var currency = results.FirstOrDefault(r => r.CostApiSupported && r.TotalCost > 0)?.Currency ?? "usd";
+        var currency = results.FirstOrDefault(r => r.CostApiSupported && r.TotalCost > 0)?.Currency
+            ?? DefaultFallbackCurrency;
 
         return new ProviderCostTotalResponse(totalCost, currency, periodStart, periodEnd, results);
     }

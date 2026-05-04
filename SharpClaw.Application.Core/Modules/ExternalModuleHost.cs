@@ -178,14 +178,28 @@ public sealed class ExternalModuleHost : IAsyncDisposable
     /// Best-effort verification that the collectible ALC was garbage-collected.
     /// Returns <c>true</c> if the context is no longer alive.
     /// </summary>
-    public bool VerifyUnloaded(int maxAttempts = 10)
+    /// <param name="maxAttempts">
+    /// Maximum number of GC sweeps to perform. Bound by
+    /// <c>Modules:UnloadVerifyMaxAttempts</c> (default 10).
+    /// </param>
+    /// <param name="delay">
+    /// Delay between GC sweeps. Bound by
+    /// <c>Modules:UnloadVerifyDelayMs</c> (default 100 ms).
+    /// </param>
+    /// <param name="ct">Cooperative cancellation token.</param>
+    public async Task<bool> VerifyUnloadedAsync(
+        int maxAttempts = 10,
+        TimeSpan? delay = null,
+        CancellationToken ct = default)
     {
+        var step = delay ?? TimeSpan.FromMilliseconds(100);
         for (var i = 0; i < maxAttempts; i++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
             if (!_contextRef.IsAlive) return true;
-            Thread.Sleep(100);
+            try { await Task.Delay(step, ct); }
+            catch (OperationCanceledException) { return !_contextRef.IsAlive; }
         }
 
         return false;

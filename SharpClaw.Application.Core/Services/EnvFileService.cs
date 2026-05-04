@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using SharpClaw.Application.Core.Modules;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 
@@ -90,6 +91,6 @@ public sealed class EnvFileService(
     {
         return Path.Combine(
             Path.GetDirectoryName(typeof(EnvFileService).Assembly.Location)!,
-            "Environment", ".env");
+            ModuleFileNames.EnvironmentDir, ModuleFileNames.EnvFile);
     }
 }

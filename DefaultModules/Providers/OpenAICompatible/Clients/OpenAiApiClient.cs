@@ -17,6 +17,11 @@ public sealed class OpenAiApiClient : OpenAiCompatibleApiClient, IProviderCostFe
     protected override bool UseResponsesApi(string model)
         => !RequiresLegacyChatCompletions(model);
 
+    public string PermissionDeniedNote =>
+        "Cost API is available for this provider but the current API key "
+        + "lacks the required permissions. OpenAI requires an admin key — "
+        + "replace the configured key with an admin key to retrieve cost data.";
+
     /// <summary>
     /// Fetches cost data from the OpenAI Organization Costs API.
     /// Requires an admin API key; returns <see langword="null"/> if the

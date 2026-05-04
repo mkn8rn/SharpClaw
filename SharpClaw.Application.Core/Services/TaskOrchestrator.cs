@@ -5,18 +5,12 @@ using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Contracts.Entities.Core.Context;
+using Microsoft.Extensions.Logging;
+using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Entities.Core.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Compilation;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
-using SharpClaw.Application.Core.Modules;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts;
-using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Tasks;
@@ -41,7 +35,8 @@ public sealed class TaskOrchestrator(
     TaskService taskService,
     IServiceScopeFactory scopeFactory,
     TaskRuntimeHost runtimeHost,
-    IEnumerable<ITaskStepExecutorExtension> stepExtensions)
+    IEnumerable<ITaskStepExecutorExtension> stepExtensions,
+    ILogger<TaskOrchestrator> logger)
 {
     private readonly IReadOnlyList<ITaskStepExecutorExtension> _stepExtensions = [.. stepExtensions];
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
@@ -351,7 +346,7 @@ public sealed class TaskOrchestrator(
             await db.SaveChangesAsync();
         }
 
-        await taskService.AppendLogAsync(instanceId, $"Task failed: {error}", "Error");
+        await taskService.AppendLogAsync(instanceId, $"Task failed: {error}", JobLogLevels.Error);
         await runtime.WriteEventAsync(TaskOutputEventType.StatusChange, $"Failed: {error}");
         await runtime.WriteEventAsync(TaskOutputEventType.Done, null);
     }

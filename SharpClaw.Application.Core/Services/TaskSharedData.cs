@@ -81,7 +81,7 @@ public sealed class TaskSharedDataStore
 
     /// <summary>
     /// Set the light-data text.  Returns <c>false</c> if
-    /// <paramref name="text"/> exceeds the 500-word limit.
+    /// <paramref name="text"/> exceeds <see cref="MaxLightDataWords"/>.
     /// </summary>
     public bool TrySetLight(string text)
     {
@@ -185,25 +185,42 @@ public sealed class TaskSharedDataStore
             .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    /// <summary>
+    /// JSON property names for built-in task-tool argument payloads. Kept
+    /// as named constants so the advertised JSON schemas and the parser
+    /// in this file cannot drift apart.
+    /// </summary>
+    internal static class ToolArgKeys
+    {
+        public const string Text = "text";
+        public const string Title = "title";
+        public const string Content = "content";
+        public const string Id = "id";
+        public const string Data = "data";
+    }
+
     /// <summary>Register the built-in task tools for this store.</summary>
     public void RegisterBuiltInTools()
     {
+        var lightWordLimit = MaxLightDataWords;
+        var lightWriteSchema = $$"""
+            {
+                "type": "object",
+                "properties": {
+                    "{{ToolArgKeys.Text}}": { "type": "string", "description": "Text (max {{lightWordLimit}} words)." }
+                },
+                "required": ["{{ToolArgKeys.Text}}"]
+            }
+            """;
+
         RegisterTool(new TaskToolDescriptor(
             new ChatToolDefinition(
                 "task_write_light_data",
-                "Write to light shared data (visible in header, max 500 words). Replaces previous.",
-                BuildJsonSchema("""
-                    {
-                        "type": "object",
-                        "properties": {
-                            "text": { "type": "string", "description": "Text (max 500 words)." }
-                        },
-                        "required": ["text"]
-                    }
-                    """)),
+                $"Write to light shared data (visible in header, max {lightWordLimit} words). Replaces previous.",
+                BuildJsonSchema(lightWriteSchema)),
             async (args, _) =>
             {
-                var text = args?.GetProperty("text").GetString() ?? string.Empty;
+                var text = args?.GetProperty(ToolArgKeys.Text).GetString() ?? string.Empty;
                 var ok = TrySetLight(text);
                 if (ok && OnSharedDataChanged is not null)
                     await OnSharedDataChanged(
@@ -212,7 +229,7 @@ public sealed class TaskSharedDataStore
                         BuildBigDataSnapshotJson()).ConfigureAwait(false);
                 return ok
                     ? "OK: light shared data written."
-                    : "Error: text exceeds the 500-word limit for light shared data.";
+                    : $"Error: text exceeds the {lightWordLimit}-word limit for light shared data.";
             }));
 
         RegisterTool(new TaskToolDescriptor(
@@ -231,22 +248,22 @@ public sealed class TaskSharedDataStore
             new ChatToolDefinition(
                 "task_write_big_data",
                 "Write a large entry to big shared data. Only ID+title in header; use task_read_big_data for content.",
-                BuildJsonSchema("""
+                BuildJsonSchema($$"""
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Entry ID (auto-generated if omitted)." },
-                            "title": { "type": "string", "description": "Short title." },
-                            "content": { "type": "string", "description": "Full content." }
+                            "{{ToolArgKeys.Id}}": { "type": "string", "description": "Entry ID (auto-generated if omitted)." },
+                            "{{ToolArgKeys.Title}}": { "type": "string", "description": "Short title." },
+                            "{{ToolArgKeys.Content}}": { "type": "string", "description": "Full content." }
                         },
-                        "required": ["title", "content"]
+                        "required": ["{{ToolArgKeys.Title}}", "{{ToolArgKeys.Content}}"]
                     }
                     """)),
             async (args, _) =>
             {
-                var title = args?.GetProperty("title").GetString() ?? "Untitled";
-                var content = args?.GetProperty("content").GetString() ?? string.Empty;
-                var id = args?.TryGetProperty("id", out var idElement) == true ? idElement.GetString() : null;
+                var title = args?.GetProperty(ToolArgKeys.Title).GetString() ?? "Untitled";
+                var content = args?.GetProperty(ToolArgKeys.Content).GetString() ?? string.Empty;
+                var id = args?.TryGetProperty(ToolArgKeys.Id, out var idElement) == true ? idElement.GetString() : null;
                 var ok = TryWriteBig(id, title, content, out var resultId);
                 if (!ok)
                     return $"Error: big-data content exceeds the {MaxBigDataCharacters} character limit.";
@@ -264,18 +281,18 @@ public sealed class TaskSharedDataStore
             new ChatToolDefinition(
                 "task_read_big_data",
                 "Read a big shared data entry by ID.",
-                BuildJsonSchema("""
+                BuildJsonSchema($$"""
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Entry ID." }
+                            "{{ToolArgKeys.Id}}": { "type": "string", "description": "Entry ID." }
                         },
-                        "required": ["id"]
+                        "required": ["{{ToolArgKeys.Id}}"]
                     }
                     """)),
             (args, ct) =>
             {
-                var id = args?.GetProperty("id").GetString() ?? string.Empty;
+                var id = args?.GetProperty(ToolArgKeys.Id).GetString() ?? string.Empty;
                 var entry = GetBig(id);
                 return Task.FromResult(entry is not null
                     ? $"[{entry.Id}] {entry.Title}\n{entry.Content}"
@@ -341,13 +358,13 @@ public sealed class TaskSharedDataStore
                 new ChatToolDefinition(
                     "task_output",
                     "Write structured output to the task. Format must match [AgentOutput] annotation.",
-                    BuildJsonSchema("""
+                    BuildJsonSchema($$"""
                         {
                             "type": "object",
                             "properties": {
-                                "data": { "type": "string", "description": "Output data." }
+                                "{{ToolArgKeys.Data}}": { "type": "string", "description": "Output data." }
                             },
-                            "required": ["data"]
+                            "required": ["{{ToolArgKeys.Data}}"]
                         }
                         """)),
                 async (args, _) =>
@@ -355,7 +372,7 @@ public sealed class TaskSharedDataStore
                     if (AllowedOutputFormat is null)
                         return "Error: task_output is not enabled for this task. The task must declare [AgentOutput(\"format\")].";
 
-                    var data = args?.GetProperty("data").GetString() ?? string.Empty;
+                    var data = args?.GetProperty(ToolArgKeys.Data).GetString() ?? string.Empty;
                     if (OnAgentOutput is not null)
                         await OnAgentOutput(data).ConfigureAwait(false);
                     return "OK: output written to task.";

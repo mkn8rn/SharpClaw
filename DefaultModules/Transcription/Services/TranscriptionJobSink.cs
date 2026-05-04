@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Modules;
 
 namespace SharpClaw.Modules.Transcription.Services;
@@ -10,7 +11,7 @@ public sealed class TranscriptionJobSink(
 {
     private const string TranscriptionActionPrefix = "transcribe_from_audio";
 
-    public async Task AddJobLogAsync(Guid jobId, string message, string level = "Info")
+    public async Task AddJobLogAsync(Guid jobId, string message, string level = JobLogLevels.Info)
     {
         try
         {

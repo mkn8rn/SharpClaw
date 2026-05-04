@@ -26,6 +26,20 @@ public interface IProviderCostFeed
         DateTimeOffset startTime,
         DateTimeOffset? endTime,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Human-readable explanation surfaced to the caller when
+    /// <see cref="GetCostsAsync"/> returns <see langword="null"/> because the
+    /// configured API key lacks the privileges required by the provider's
+    /// billing API. Plugins should describe the specific remediation step
+    /// (e.g. "OpenAI requires an admin key — replace the key with an admin
+    /// key to retrieve cost data."). The default keeps the message generic
+    /// so the cost service does not have to know provider-specific semantics.
+    /// </summary>
+    string PermissionDeniedNote =>
+        "Cost API is available for this provider but the current API key "
+        + "lacks the required permissions. Update the API key to one with "
+        + "billing/usage access to retrieve cost data.";
 }
 
 public sealed record ProviderCostResult(

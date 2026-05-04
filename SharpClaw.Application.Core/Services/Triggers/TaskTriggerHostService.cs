@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -18,11 +19,20 @@ namespace SharpClaw.Application.Core.Services.Triggers;
 public sealed class TaskTriggerHostService(
     IServiceProvider services,
     IEnumerable<ITaskTriggerSource> sources,
+    IConfiguration configuration,
     ILogger<TaskTriggerHostService> logger) : BackgroundService
 {
     private readonly IReadOnlyList<ITaskTriggerSource> _sources = sources.ToList().AsReadOnly();
     private readonly SemaphoreSlim _reloadLock = new(1, 1);
     private CancellationToken _stoppingToken;
+
+    /// <summary>
+    /// Per-source stop timeout, configured via <c>Triggers:StopTimeoutSeconds</c>
+    /// (default 5 seconds). Applied to every <see cref="ITaskTriggerSource.StopAsync"/>
+    /// invocation in this host.
+    /// </summary>
+    private TimeSpan StopTimeout =>
+        TimeSpan.FromSeconds(Math.Max(1, configuration.GetValue("Triggers:StopTimeoutSeconds", 5)));
 
     // ──────────────────────────────────────────────────────────────
     // BackgroundService
@@ -42,7 +52,7 @@ public sealed class TaskTriggerHostService(
 
         var stops = _sources.Select(async s =>
         {
-            try { await s.StopAsync().WaitAsync(TimeSpan.FromSeconds(5), cancellationToken); }
+            try { await s.StopAsync().WaitAsync(StopTimeout, cancellationToken); }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Trigger source {SourceType} did not stop cleanly.", s.GetType().Name);
@@ -100,7 +110,7 @@ public sealed class TaskTriggerHostService(
             // Stop the source
             try
             {
-                await source.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                await source.StopAsync().WaitAsync(StopTimeout);
             }
             catch (Exception ex)
             {
@@ -217,7 +227,7 @@ public sealed class TaskTriggerHostService(
     {
         foreach (var source in _sources)
         {
-            try { await source.StopAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+            try { await source.StopAsync().WaitAsync(StopTimeout); }
             catch (Exception ex)
             {
                 logger.LogWarning(ex,

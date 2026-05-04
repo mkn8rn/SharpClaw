@@ -74,11 +74,15 @@ public sealed class ChatService(
         var channel = await db.Channels
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.Agent!).ThenInclude(a => a.Role)
             .Include(c => c.ToolAwarenessSet)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -118,7 +122,7 @@ public sealed class ChatService(
             history = [];
         }
 
-        history.Add(new ChatCompletionMessage("user", request.Message));
+        history.Add(new ChatCompletionMessage(ChatRoles.User, request.Message));
 
         var apiKey = requiresApiKey ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key) : "local";
         var client = clientFactory.GetClient(provider.ProviderKey, provider.ApiEndpoint);
@@ -144,7 +148,7 @@ public sealed class ChatService(
             : request.Message;
 
         // Replace last history entry with the header-prefixed version for model
-        history[^1] = new ChatCompletionMessage("user", messageForModel);
+        history[^1] = new ChatCompletionMessage(ChatRoles.User, messageForModel);
 
         using var httpClient = httpClientFactory.CreateClient();
 
@@ -156,18 +160,20 @@ public sealed class ChatService(
         // Persist user message immediately so it gets an accurate
         // CreatedAt and survives crashes during LLM inference.
         var senderUserId = jobService.GetSessionUserId();
-        var senderUsername = senderUserId.HasValue
-            ? (await db.Users.Where(u => u.Id == senderUserId.Value).Select(u => u.Username).FirstOrDefaultAsync(ct))
-            : request.ExternalDisplayName ?? request.ExternalUsername;
+        var senderUserSnapshot = await ResolveUserSenderSnapshotAsync(
+            senderUserId, request.ExternalDisplayName, request.ExternalUsername, ct);
 
         var userMessage = new ChatMessageDB
         {
-            Role = "user",
+            Role = ChatRoles.User,
+            Origin = MessageOrigin.User,
             Content = request.Message,
             ChannelId = channelId,
             ThreadId = threadId,
             SenderUserId = senderUserId,
-            SenderUsername = senderUsername,
+            SenderUsername = senderUserSnapshot.Username,
+            PermissionRoleId = senderUserSnapshot.RoleId,
+            PermissionRoleName = senderUserSnapshot.RoleName,
             ClientType = request.ClientType
         };
 
@@ -187,12 +193,15 @@ public sealed class ChatService(
         // Persist assistant message after LLM completes
         var assistantMessage = new ChatMessageDB
         {
-            Role = "assistant",
+            Role = ChatRoles.Assistant,
+            Origin = MessageOrigin.Assistant,
             Content = loopResult.AssistantContent,
             ChannelId = channelId,
             ThreadId = threadId,
             SenderAgentId = agent.Id,
             SenderAgentName = agent.Name,
+            PermissionRoleId = agent.RoleId,
+            PermissionRoleName = agent.Role?.Name,
             ClientType = request.ClientType,
             PromptTokens = loopResult.TotalPromptTokens > 0 ? loopResult.TotalPromptTokens : null,
             CompletionTokens = loopResult.TotalCompletionTokens > 0 ? loopResult.TotalCompletionTokens : null
@@ -371,6 +380,29 @@ public sealed class ChatService(
     // ═══════════════════════════════════════════════════════════════
     // Agent resolution
     // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Snapshot of the sender (user) at the moment a chat message is
+    /// persisted: their display username and a copy of their currently
+    /// assigned permission role. Captured at send time so historical
+    /// messages stay accurate even if the user is later renamed or
+    /// reassigned to a different role.
+    /// </summary>
+    private async Task<(string? Username, Guid? RoleId, string? RoleName)> ResolveUserSenderSnapshotAsync(
+        Guid? senderUserId, string? externalDisplayName, string? externalUsername, CancellationToken ct)
+    {
+        if (!senderUserId.HasValue)
+            return (externalDisplayName ?? externalUsername, null, null);
+
+        var snapshot = await db.Users
+            .Where(u => u.Id == senderUserId.Value)
+            .Select(u => new { u.Username, u.RoleId, RoleName = u.Role != null ? u.Role.Name : null })
+            .FirstOrDefaultAsync(ct);
+
+        return snapshot is null
+            ? (null, null, null)
+            : (snapshot.Username, snapshot.RoleId, snapshot.RoleName);
+    }
 
     /// <summary>
     /// Resolves the effective agent for a channel operation.  If no
@@ -739,11 +771,15 @@ public sealed class ChatService(
         var channel = await db.Channels
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.Agent!).ThenInclude(a => a.Role)
             .Include(c => c.ToolAwarenessSet)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.ToolAwarenessSet)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -783,7 +819,7 @@ public sealed class ChatService(
             history = [];
         }
 
-        history.Add(new ChatCompletionMessage("user", request.Message));
+        history.Add(new ChatCompletionMessage(ChatRoles.User, request.Message));
 
         var apiKey = requiresApiKey ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key) : "local";
         var client = clientFactory.GetClient(provider.ProviderKey, provider.ApiEndpoint);
@@ -802,7 +838,7 @@ public sealed class ChatService(
             taskContext: request.TaskContext, externalUsername: request.ExternalUsername, externalDisplayName: request.ExternalDisplayName,
             completionParameters: completionParams, providerKey: provider.ProviderKey);
         if (chatHeader is not null)
-            history[^1] = new ChatCompletionMessage("user", chatHeader + request.Message);
+            history[^1] = new ChatCompletionMessage(ChatRoles.User, chatHeader + request.Message);
 
         using var httpClient = httpClientFactory.CreateClient();
 
@@ -819,18 +855,20 @@ public sealed class ChatService(
         // Persist user message immediately so it gets an accurate
         // CreatedAt and survives crashes during LLM inference.
         var senderUserId = jobService.GetSessionUserId();
-        var senderUsername = senderUserId.HasValue
-            ? (await db.Users.Where(u => u.Id == senderUserId.Value).Select(u => u.Username).FirstOrDefaultAsync(ct))
-            : request.ExternalDisplayName ?? request.ExternalUsername;
+        var senderUserSnapshot = await ResolveUserSenderSnapshotAsync(
+            senderUserId, request.ExternalDisplayName, request.ExternalUsername, ct);
 
         var userMessage = new ChatMessageDB
         {
-            Role = "user",
+            Role = ChatRoles.User,
+            Origin = MessageOrigin.User,
             Content = request.Message,
             ChannelId = channelId,
             ThreadId = threadId,
             SenderUserId = senderUserId,
-            SenderUsername = senderUsername,
+            SenderUsername = senderUserSnapshot.Username,
+            PermissionRoleId = senderUserSnapshot.RoleId,
+            PermissionRoleName = senderUserSnapshot.RoleName,
             ClientType = request.ClientType
         };
 
@@ -985,12 +1023,15 @@ public sealed class ChatService(
 
         var assistantMessage = new ChatMessageDB
         {
-            Role = "assistant",
+            Role = ChatRoles.Assistant,
+            Origin = MessageOrigin.Assistant,
             Content = assistantContent,
             ChannelId = channelId,
             ThreadId = threadId,
             SenderAgentId = agent.Id,
             SenderAgentName = agent.Name,
+            PermissionRoleId = agent.RoleId,
+            PermissionRoleName = agent.Role?.Name,
             ClientType = request.ClientType,
             PromptTokens = totalPromptTokens > 0 ? totalPromptTokens : null,
             CompletionTokens = totalCompletionTokens > 0 ? totalCompletionTokens : null
@@ -1039,26 +1080,28 @@ public sealed class ChatService(
             if (!userMessageAlreadyPersisted)
             {
                 var senderUserId = jobService.GetSessionUserId();
-                var senderUsername = senderUserId.HasValue
-                    ? (await db.Users.Where(u => u.Id == senderUserId.Value)
-                        .Select(u => u.Username).FirstOrDefaultAsync(ct))
-                    : request.ExternalDisplayName ?? request.ExternalUsername;
+                var senderUserSnapshot = await ResolveUserSenderSnapshotAsync(
+                    senderUserId, request.ExternalDisplayName, request.ExternalUsername, ct);
 
                 db.ChatMessages.Add(new ChatMessageDB
                 {
-                    Role = "user",
+                    Role = ChatRoles.User,
+                    Origin = MessageOrigin.User,
                     Content = request.Message,
                     ChannelId = channelId,
                     ThreadId = threadId,
                     SenderUserId = senderUserId,
-                    SenderUsername = senderUsername,
+                    SenderUsername = senderUserSnapshot.Username,
+                    PermissionRoleId = senderUserSnapshot.RoleId,
+                    PermissionRoleName = senderUserSnapshot.RoleName,
                     ClientType = request.ClientType
                 });
             }
 
             db.ChatMessages.Add(new ChatMessageDB
             {
-                Role = "system",
+                Role = ChatRoles.System,
+                Origin = MessageOrigin.System,
                 Content = $"⚠ Error: {ex.Message}",
                 ChannelId = channelId,
                 ThreadId = threadId,
@@ -1088,36 +1131,41 @@ public sealed class ChatService(
             // Check whether a user message was already persisted for this
             // request. The user message is the most recent user-role message
             // matching the content + channel + thread.
+            // Internal dedup uses Origin where available; legacy rows
+            // (Origin == null) are matched on the provider Role string.
             var userAlreadySaved = await db.ChatMessages.AnyAsync(
                 m => m.ChannelId == channelId
                     && m.ThreadId == threadId
-                    && m.Role == "user"
+                    && (m.Origin == MessageOrigin.User
+                        || (m.Origin == null && m.Role == ChatRoles.User))
                     && m.Content == request.Message,
                 ct);
 
             if (!userAlreadySaved)
             {
                 var senderUserId = jobService.GetSessionUserId();
-                var senderUsername = senderUserId.HasValue
-                    ? (await db.Users.Where(u => u.Id == senderUserId.Value)
-                        .Select(u => u.Username).FirstOrDefaultAsync(ct))
-                    : request.ExternalDisplayName ?? request.ExternalUsername;
+                var senderUserSnapshot = await ResolveUserSenderSnapshotAsync(
+                    senderUserId, request.ExternalDisplayName, request.ExternalUsername, ct);
 
                 db.ChatMessages.Add(new ChatMessageDB
                 {
-                    Role = "user",
+                    Role = ChatRoles.User,
+                    Origin = MessageOrigin.User,
                     Content = request.Message,
                     ChannelId = channelId,
                     ThreadId = threadId,
                     SenderUserId = senderUserId,
-                    SenderUsername = senderUsername,
+                    SenderUsername = senderUserSnapshot.Username,
+                    PermissionRoleId = senderUserSnapshot.RoleId,
+                    PermissionRoleName = senderUserSnapshot.RoleName,
                     ClientType = request.ClientType
                 });
             }
 
             db.ChatMessages.Add(new ChatMessageDB
             {
-                Role = "system",
+                Role = ChatRoles.System,
+                Origin = MessageOrigin.System,
                 Content = $"⚠ Error: {errorMessage}",
                 ChannelId = channelId,
                 ThreadId = threadId,
@@ -1864,30 +1912,20 @@ public sealed class ChatService(
     // ═══════════════════════════════════════════════════════════════
     // Tool call notation (persisted in assistant message content)
     // ═══════════════════════════════════════════════════════════════
+    //
+    // The actual format strings live on ToolNotationFormatter so that
+    // tests, clients, and any non-Core call site share one source of
+    // truth for the persisted "⚙ [...] → ..." surface.  These thin
+    // wrappers exist only to keep the in-file call sites readable.
 
-    /// <summary>
-    /// Formats a standardized tool call notation line for a job that
-    /// was submitted and executed (no approval flow).
-    /// Format: <c>\n⚙ [ActionKey] → Status</c>
-    /// </summary>
     private static string FormatToolNotation(AgentJobResponse job)
-        => $"\n⚙ [{job.ActionKey ?? "unknown"}] → {job.Status}";
+        => ToolNotationFormatter.ForJob(job);
 
-    /// <summary>
-    /// Formats a tool call notation line for an inline tool (wait,
-    /// list_accessible_threads, etc.) that does not go through the
-    /// job pipeline.
-    /// Format: <c>\n⚙ [tool_name] → done</c>
-    /// </summary>
     private static string FormatInlineToolNotation(string toolName)
-        => $"\n⚙ [{toolName}] → done";
+        => ToolNotationFormatter.ForInlineTool(toolName);
 
-    /// <summary>
-    /// Formats a tool call notation line for task-specific tools.
-    /// Format: <c>\n⚙ [tool_name] → done</c>
-    /// </summary>
     private static string FormatTaskToolNotation(string toolName)
-        => $"\n⚙ [{toolName}] → done";
+        => ToolNotationFormatter.ForTaskTool(toolName);
 
     /// <summary>
     /// Maps the typed provider parameter fields from <see cref="AgentDB"/> into

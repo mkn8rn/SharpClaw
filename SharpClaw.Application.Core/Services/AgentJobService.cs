@@ -156,7 +156,7 @@ public sealed class AgentJobService(
             case ClearanceVerdict.Denied:
             default:
                 job.Status = AgentJobStatus.Denied;
-                AddLog(job, $"Denied: {result.Reason}", "Warning");
+                AddLog(job, $"Denied: {result.Reason}", JobLogLevels.Warning);
                 await db.SaveChangesAsync(ct);
                 break;
         }
@@ -177,7 +177,7 @@ public sealed class AgentJobService(
 
         if (job.Status != AgentJobStatus.AwaitingApproval)
         {
-            AddLog(job, $"Approve rejected: job is {job.Status}, not AwaitingApproval.", "Warning");
+            AddLog(job, $"Approve rejected: job is {job.Status}, not AwaitingApproval.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -203,7 +203,7 @@ public sealed class AgentJobService(
                 break;
 
             case ClearanceVerdict.PendingApproval:
-                AddLog(job, $"Approval attempt by {FormatCaller(approver)} insufficient: {result.Reason}", "Warning");
+                AddLog(job, $"Approval attempt by {FormatCaller(approver)} insufficient: {result.Reason}", JobLogLevels.Warning);
                 await db.SaveChangesAsync(ct);
                 break;
 
@@ -211,7 +211,7 @@ public sealed class AgentJobService(
             default:
                 job.Status = AgentJobStatus.Denied;
                 job.CompletedAt = DateTimeOffset.UtcNow;
-                AddLog(job, $"Denied: agent permission revoked. Attempt by {FormatCaller(approver)}: {result.Reason}", "Warning");
+                AddLog(job, $"Denied: agent permission revoked. Attempt by {FormatCaller(approver)}: {result.Reason}", JobLogLevels.Warning);
                 await db.SaveChangesAsync(ct);
                 break;
         }
@@ -229,7 +229,7 @@ public sealed class AgentJobService(
         if (job.Status is AgentJobStatus.Completed or AgentJobStatus.Failed
                        or AgentJobStatus.Denied or AgentJobStatus.Cancelled)
         {
-            AddLog(job, $"Cancel rejected: job is already {job.Status}.", "Warning");
+            AddLog(job, $"Cancel rejected: job is already {job.Status}.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -252,14 +252,14 @@ public sealed class AgentJobService(
         if (!string.IsNullOrWhiteSpace(requiredActionPrefix)
             && job.ActionKey?.StartsWith(requiredActionPrefix, StringComparison.OrdinalIgnoreCase) != true)
         {
-            AddLog(job, "Stop rejected: job action does not match the requested action prefix.", "Warning");
+            AddLog(job, "Stop rejected: job action does not match the requested action prefix.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
 
         if (job.Status is not AgentJobStatus.Executing and not AgentJobStatus.Paused)
         {
-            AddLog(job, $"Stop rejected: job is {job.Status}, not Executing or Paused.", "Warning");
+            AddLog(job, $"Stop rejected: job is {job.Status}, not Executing or Paused.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -284,7 +284,7 @@ public sealed class AgentJobService(
 
         if (job.Status != AgentJobStatus.Executing)
         {
-            AddLog(job, $"Pause rejected: job is {job.Status}, not Executing.", "Warning");
+            AddLog(job, $"Pause rejected: job is {job.Status}, not Executing.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -309,7 +309,7 @@ public sealed class AgentJobService(
 
         if (job.Status != AgentJobStatus.Paused)
         {
-            AddLog(job, $"Resume rejected: job is {job.Status}, not Paused.", "Warning");
+            AddLog(job, $"Resume rejected: job is {job.Status}, not Paused.", JobLogLevels.Warning);
             await db.SaveChangesAsync(ct);
             return ToResponse(job);
         }
@@ -470,7 +470,7 @@ public sealed class AgentJobService(
             job.Status = AgentJobStatus.Failed;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ErrorLog = ex.ToString();
-            AddLog(job, $"Job failed: {ex.Message}", "Error");
+            AddLog(job, $"Job failed: {ex.Message}", JobLogLevels.Error);
         }
 
         await db.SaveChangesAsync(ct);
@@ -502,9 +502,10 @@ public sealed class AgentJobService(
             throw new InvalidOperationException(
                 "Module action requires a ScriptJson envelope.");
 
-        if (job.ScriptJson.Length > SecureJsonOptions.MaxEnvelopeSize)
+        var maxEnvelopeSize = SecureJsonOptions.GetMaxEnvelopeSize(_configuration);
+        if (job.ScriptJson.Length > maxEnvelopeSize)
             throw new InvalidOperationException(
-                $"ScriptJson exceeds maximum envelope size ({SecureJsonOptions.MaxEnvelopeSize} bytes).");
+                $"ScriptJson exceeds maximum envelope size ({maxEnvelopeSize} bytes).");
 
         var envelope = JsonSerializer.Deserialize<ModuleEnvelope>(
             job.ScriptJson, SecureJsonOptions.Envelope)
@@ -995,7 +996,7 @@ public sealed class AgentJobService(
         return job;
     }
 
-    private static void AddLog(AgentJobDB job, string message, string level = "Info")
+    private static void AddLog(AgentJobDB job, string message, string level = JobLogLevels.Info)
     {
         job.LogEntries.Add(new AgentJobLogEntryDB
         {

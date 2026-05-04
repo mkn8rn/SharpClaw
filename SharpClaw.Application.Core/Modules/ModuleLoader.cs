@@ -117,14 +117,14 @@ public sealed class ModuleLoader
         _manifestsCache = new Dictionary<string, ModuleManifest>(StringComparer.Ordinal);
 
         var baseDir = Path.GetDirectoryName(typeof(ModuleLoader).Assembly.Location)!;
-        var modulesDir = Path.Combine(baseDir, "modules");
+        var modulesDir = Path.Combine(baseDir, ModuleFileNames.BundledModulesDir);
 
         if (!Directory.Exists(modulesDir)) return _manifestsCache;
 
         foreach (var dir in Directory.EnumerateDirectories(modulesDir))
         {
             var safeDir = PathGuard.EnsureContainedIn(dir, modulesDir);
-            var manifestPath = Path.Combine(safeDir, "module.json");
+            var manifestPath = Path.Combine(safeDir, ModuleFileNames.ManifestFile);
             if (!File.Exists(manifestPath)) continue;
 
             try

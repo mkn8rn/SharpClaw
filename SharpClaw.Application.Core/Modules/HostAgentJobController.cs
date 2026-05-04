@@ -27,7 +27,7 @@ public sealed class HostAgentJobController(
     public async Task AddJobLogAsync(
         Guid jobId,
         string message,
-        string level = "Info",
+        string level = JobLogLevels.Info,
         CancellationToken ct = default)
     {
         var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
@@ -58,7 +58,7 @@ public sealed class HostAgentJobController(
         {
             AgentJobId = jobId,
             Message = $"Job failed: {exception.Message}",
-            Level = "Error",
+            Level = JobLogLevels.Error,
         });
 
         await db.SaveChangesAsync(ct);
@@ -85,7 +85,7 @@ public sealed class HostAgentJobController(
             {
                 AgentJobId = job.Id,
                 Message = "Cancelled: stale from previous session.",
-                Level = "Warning",
+                Level = JobLogLevels.Warning,
             });
         }
 

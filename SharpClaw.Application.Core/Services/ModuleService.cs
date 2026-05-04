@@ -34,7 +34,8 @@ public sealed class ModuleService(
     ModuleJsonPersistenceService? moduleJsonPersistence,
     ModuleEventDispatcher eventDispatcher,
     ILoggerFactory loggerFactory,
-    ILogger<ModuleService> logger)
+    ILogger<ModuleService> logger,
+    IConfiguration? configuration = null)
 {
     // ═══════════════════════════════════════════════════════════════
     // Queries
@@ -308,9 +309,9 @@ public sealed class ModuleService(
         var canonicalModuleDir = PathGuard.EnsureContainedIn(combinedModuleDir, externalRoot);
 
         var manifestPath = PathGuard.EnsureContainedIn(
-            Path.Combine(canonicalModuleDir, "module.json"), canonicalModuleDir);
+            Path.Combine(canonicalModuleDir, ModuleFileNames.ManifestFile), canonicalModuleDir);
         if (!File.Exists(manifestPath))
-            throw new FileNotFoundException($"No module.json found in '{canonicalModuleDir}'.", manifestPath);
+            throw new FileNotFoundException($"No {ModuleFileNames.ManifestFile} found in '{canonicalModuleDir}'.", manifestPath);
 
         var json = await File.ReadAllTextAsync(manifestPath, ct);
         var manifest = System.Text.Json.JsonSerializer.Deserialize<ModuleManifest>(json, SecureJsonOptions.Manifest)
@@ -361,9 +362,19 @@ public sealed class ModuleService(
         registry.Unregister(moduleId);
         await host.DisposeAsync();
 
-        var unloaded = host.VerifyUnloaded();
+        var (attempts, delay) = ResolveUnloadVerifyOptions();
+        var unloaded = await host.VerifyUnloadedAsync(attempts, delay, ct);
         logger.LogInformation(
             "External module '{ModuleId}' unloaded (GC verified: {Verified})", moduleId, unloaded);
+    }
+
+    private (int Attempts, TimeSpan Delay) ResolveUnloadVerifyOptions()
+    {
+        var attempts = configuration?.GetValue("Modules:UnloadVerifyMaxAttempts", 10) ?? 10;
+        var delayMs = configuration?.GetValue("Modules:UnloadVerifyDelayMs", 100) ?? 100;
+        if (attempts < 1) attempts = 1;
+        if (delayMs < 0) delayMs = 0;
+        return (attempts, TimeSpan.FromMilliseconds(delayMs));
     }
 
     /// <summary>Unload then re-load an external module from its original directory.</summary>
@@ -394,7 +405,7 @@ public sealed class ModuleService(
             // Validate that the enumerated subdirectory is actually inside the
             // external-modules root (guards against symlink / junction escapes).
             var canonicalSubDir = PathGuard.EnsureContainedIn(subDir, dir);
-            var manifestPath = Path.Combine(canonicalSubDir, "module.json");
+            var manifestPath = Path.Combine(canonicalSubDir, ModuleFileNames.ManifestFile);
             if (!File.Exists(manifestPath)) continue;
 
             try
@@ -427,9 +438,9 @@ public sealed class ModuleService(
         if (!Directory.Exists(canonicalDir))
             throw new DirectoryNotFoundException($"External module directory not found: '{canonicalDir}'.");
 
-        var manifestPath = Path.Combine(canonicalDir, "module.json");
+        var manifestPath = Path.Combine(canonicalDir, ModuleFileNames.ManifestFile);
         if (!File.Exists(manifestPath))
-            throw new FileNotFoundException($"No module.json found in '{canonicalDir}'.", manifestPath);
+            throw new FileNotFoundException($"No {ModuleFileNames.ManifestFile} found in '{canonicalDir}'.", manifestPath);
 
         var json = await File.ReadAllTextAsync(manifestPath, ct);
         var manifest = System.Text.Json.JsonSerializer.Deserialize<ModuleManifest>(json, SecureJsonOptions.Manifest)
@@ -545,7 +556,7 @@ public sealed class ModuleService(
     {
         return Path.Combine(
             Path.GetDirectoryName(typeof(ModuleService).Assembly.Location)!,
-            "external-modules");
+            ModuleFileNames.ExternalModulesDir);
     }
 
     /// <summary>
@@ -562,18 +573,23 @@ public sealed class ModuleService(
             if (!File.Exists(envPath)) return;
 
             var content = File.ReadAllText(envPath);
-            var normalised = Path.GetFullPath(absoluteDir).Replace("\\", "\\\\");
+            var canonical = Path.GetFullPath(absoluteDir);
 
-            // Already registered — nothing to do.
-            if (content.Contains(normalised, StringComparison.OrdinalIgnoreCase))
+            // Duplicate detection — parse the .env as JSON-with-comments and
+            // walk the typed ExternalModules array. This survives reformatting
+            // and comment changes that the legacy raw-text Contains check
+            // would have missed (audit section 3.2).
+            if (IsExternalModuleAlreadyRegistered(content, canonical))
                 return;
 
+            var normalised = canonical.Replace("\\", "\\\\");
             var entry = $"    {{ \"Path\": \"{normalised}\", \"Enabled\": true }}";
 
             // Case 1: ExternalModules array already exists (commented-out or active).
             //   – Active array: insert before the closing ']'.
             //   – Commented-out array: uncomment it and insert the entry.
-            var activeArrayIdx = content.IndexOf("\"ExternalModules\": [", StringComparison.Ordinal);
+            var activeArrayIdx = content.IndexOf(
+                ModuleFileNames.ExternalModulesArrayHeader, StringComparison.Ordinal);
             if (activeArrayIdx >= 0)
             {
                 // Find the matching ']'.
@@ -592,9 +608,11 @@ public sealed class ModuleService(
             else
             {
                 // Case 2: No ExternalModules section at all — insert before "Modules".
-                var modulesIdx = content.IndexOf("\"Modules\"", StringComparison.Ordinal);
+                var modulesIdx = content.IndexOf(
+                    ModuleFileNames.ModulesObjectKey, StringComparison.Ordinal);
                 var commentIdx = modulesIdx >= 0
-                    ? content.LastIndexOf("// ── Modules", modulesIdx, StringComparison.Ordinal)
+                    ? content.LastIndexOf(
+                        ModuleFileNames.ModulesSectionComment, modulesIdx, StringComparison.Ordinal)
                     : -1;
 
                 var insertionPoint = commentIdx >= 0
@@ -617,11 +635,59 @@ public sealed class ModuleService(
         }
     }
 
+    /// <summary>
+    /// Parses the <c>.env</c> JSON-with-comments and returns <c>true</c> when
+    /// the canonical path already appears as an entry in the
+    /// <c>ExternalModules</c> array. Returns <c>false</c> on parse failure so
+    /// the caller falls back to text-based mutation.
+    /// </summary>
+    private static bool IsExternalModuleAlreadyRegistered(string content, string canonicalPath)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(content,
+                new System.Text.Json.JsonDocumentOptions
+                {
+                    AllowTrailingCommas = true,
+                    CommentHandling = System.Text.Json.JsonCommentHandling.Skip,
+                });
+
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+            if (!doc.RootElement.TryGetProperty("ExternalModules", out var arr)
+                || arr.ValueKind != System.Text.Json.JsonValueKind.Array) return false;
+
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                if (!item.TryGetProperty("Path", out var pathProp)) continue;
+                if (pathProp.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+
+                var existing = pathProp.GetString();
+                if (string.IsNullOrEmpty(existing)) continue;
+
+                if (string.Equals(
+                        Path.GetFullPath(existing),
+                        canonicalPath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Malformed .env or unexpected shape — let the caller try the
+            // text-splice path. The duplicate check is best-effort.
+        }
+
+        return false;
+    }
+
     private static string ResolveEnvFilePath()
     {
         return Path.Combine(
             Path.GetDirectoryName(typeof(ModuleService).Assembly.Location)!,
-            "Environment", ".env");
+            ModuleFileNames.EnvironmentDir, ModuleFileNames.EnvFile);
     }
 
     // ═══════════════════════════════════════════════════════════════

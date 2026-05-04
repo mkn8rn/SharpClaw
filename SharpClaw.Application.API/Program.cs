@@ -36,6 +36,66 @@ using Serilog.Events;
 using SharpClaw.Contracts.Permissions;
 using SharpClaw.Contracts.Tasks;
 
+// ════════════════════════════════════════════════════════════════════════════
+//  SharpClaw API host — composition root
+// ════════════════════════════════════════════════════════════════════════════
+//
+//  This file is the single startup entrypoint for the backend.  It runs in
+//  three flavours from the same binary:
+//
+//    1. Long-running API server (default)         → API mode block
+//    2. One-shot CLI command                      → CliDispatcher.TryHandleAsync
+//    3. Interactive REPL                          → CliDispatcher.RunInteractiveAsync
+//
+//  The startup is intentionally chronological — every later phase reads
+//  state produced by an earlier one — so resist the temptation to extract
+//  helpers that hide the ordering.  The phases are:
+//
+//    PHASE 1  Instance discovery + filesystem layout         (per-process paths,
+//             early config, exception capture, Serilog).
+//    PHASE 2  WebApplication builder + URL binding.
+//    PHASE 3  Configuration + Serilog wire-up + per-instance singletons
+//             (SessionLogWriter, instance paths, instance lock).
+//    PHASE 4  Module log capture (ILoggerProvider feeding /modules/{id}/logs).
+//    PHASE 5  Encryption key resolution + validation
+//             (must run before infrastructure, which uses it for at-rest enc).
+//    PHASE 6  Infrastructure persistence (DbContext, JSON file store, etc.).
+//    PHASE 7  Cross-cutting middleware-shaped services (CORS, auth/JWT).
+//    PHASE 8  Domain services (chat, agents, channels, threads, tasks,
+//             permissions, env editor, …) and host-side module bridges.
+//    PHASE 9  Task runtime + trigger host + host metric probes.
+//    PHASE 10 Module system services (registry, dispatcher, health checks,
+//             config store, execution context).
+//    PHASE 11 Bundled-module discovery + per-module ConfigureServices.
+//             ⚠ All modules — enabled OR disabled — must register their DI
+//             services here, because the container is sealed at Build().
+//    PHASE 12 Misc post-module singletons (DB init gate, seeding, API key,
+//             CLI short-id resolver).
+//    PHASE 13 builder.Build() — container is now immutable.
+//    PHASE 14 Post-build infrastructure init + relational migration check.
+//    PHASE 15 Module enable-state sync from config + per-module persistence
+//             registration + bundled persistence load.
+//    PHASE 16 Module initialisation in dependency order with cascade
+//             unregistration on failure.
+//    PHASE 17 External-module scan (filesystem + .env entries).
+//    PHASE 18 ApplicationStarted hook (FlushWorker start).
+//    PHASE 19 CLI command dispatch — exits the process if a CLI verb matches.
+//    PHASE 20 HTTP pipeline (middleware order is load-bearing — see comments).
+//    PHASE 21 Endpoint mapping (handlers, modules, webhooks).
+//    PHASE 22 Shutdown registrations (api key cleanup, module shutdown).
+//    PHASE 23 StartAsync + discovery publication.
+//    PHASE 24 Interactive REPL (suppresses console logging when attached to
+//             a real TTY; stays verbose in headless mode).
+//
+//  Read the banner comments below for the per-phase contract.  When adding
+//  a new service, find the phase whose theme matches and slot it in there
+//  rather than appending to the bottom of phase 8.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ──────── PHASE 1 ──── Instance discovery + filesystem layout ──────────────
+// Resolve per-instance data/log directories before anything else so that
+// crash diagnostics, the instance lock, and Serilog all agree on paths.
+
 var dataDir = Environment.GetEnvironmentVariable("SHARPCLAW_DATA_DIR");
 var instanceRoot = Environment.GetEnvironmentVariable("SHARPCLAW_INSTANCE_ROOT");
 if (string.IsNullOrWhiteSpace(instanceRoot) && !string.IsNullOrWhiteSpace(dataDir))
@@ -50,6 +110,11 @@ using var backendInstanceLock = new SharpClawInstanceLock(backendInstancePaths);
 
 await using var sessionLogs = new SessionLogWriter("core", backendInstancePaths.LogsDirectory);
 
+// Early configuration is read once, *before* the WebApplication builder
+// exists, so that Serilog can be configured against .env values during
+// the bootstrap window.  The "real" configuration is rebuilt below on
+// builder.Configuration; the two sources are reconciled by reading the
+// same .env files.
 var earlyConfiguration = new ConfigurationBuilder()
     .AddLocalEnvironment(isDevelopment: false)
     .Build();
@@ -71,6 +136,8 @@ TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 
 var consoleLevelSwitch = new Serilog.Core.LoggingLevelSwitch(LogEventLevel.Information);
 
+// Serilog configuration.  When disabled in .env we still install a
+// minimum-level Fatal logger so accidental Log.X calls don't NRE.
 if (serilogOptions.Enabled)
 {
     var loggerConfiguration = new LoggerConfiguration()
@@ -157,6 +224,7 @@ try
             "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.");
     }
 
+    // ──────── PHASE 6 ──── Infrastructure persistence ──────────────────────
     // Infrastructure — resolve provider from .env
     var storageMode = Enum.TryParse<StorageMode>(
         builder.Configuration["Database:Provider"], ignoreCase: true, out var parsed)
@@ -221,7 +289,9 @@ try
     builder.Services.AddScoped<AuthService>();
     builder.Services.AddScoped<SessionService>();
 
-    // Domain services
+    // ──────── PHASE 8 ──── Domain services + host module bridges ──────────
+    // EncryptionOptions is consumed by ProviderService (decrypts API keys
+    // before each provider call) — keep it singleton.
     var encryptionOptions = new EncryptionOptions
     {
         Key = encryptionKey,
@@ -248,6 +318,10 @@ try
     builder.Services.AddScoped<ToolAwarenessSetService>();
     builder.Services.AddScoped<AgentActionService>();
     builder.Services.AddScoped<AgentJobService>();
+
+    // Host bridges — concrete services that adapt Core/Infrastructure to
+    // the abstract IXxx contracts modules consume.  Modules only see the
+    // interfaces from SharpClaw.Contracts.Modules.
     builder.Services.AddScoped<IAgentJobController, HostAgentJobController>();
     builder.Services.AddScoped<IAgentManager, HostAgentManager>();
     builder.Services.AddScoped<IAgentJobReader, HostAgentJobReader>();
@@ -258,10 +332,13 @@ try
     builder.Services.AddScoped<IThreadResolver, HostThreadResolver>();
     builder.Services.AddSingleton<IModuleLifecycleManager, HostModuleLifecycleManager>();
     builder.Services.AddSingleton<IModuleInfoProvider, HostModuleInfoProvider>();
+
     builder.Services.AddScoped<HeaderTagProcessor>();
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<ThreadActivitySignal>();
     builder.Services.AddScoped<RoleService>();
+
+    // ──────── PHASE 9 ──── Task runtime + trigger host + host metric probes
     builder.Services.AddScoped<TaskPreflightChecker>();
     builder.Services.AddScoped<TaskTriggerRegistrar>();
     builder.Services.AddScoped<TaskService>();
@@ -280,7 +357,12 @@ try
     builder.Services.AddSingleton<ITaskTriggerSourceRegistry, TaskTriggerSourceRegistry>();
     // Host-side metric probes consumed by the Metrics module's built-in providers.
     builder.Services.AddSingleton<IHostQueueMetrics, HostQueueMetrics>();
-    // Module system
+
+    // ──────── PHASE 10 ─── Module system services ──────────────────────────
+    // Registry, dispatcher, metrics, health checks, and per-request execution
+    // context.  These are pure host-side plumbing — no module code has loaded
+    // yet — and must exist before PHASE 11's per-module ConfigureServices
+    // hooks try to register dependencies on them.
     builder.Services.AddSingleton<ModuleRegistry>();
     builder.Services.AddSingleton<ModuleMetricsCollector>();
     builder.Services.AddSingleton<ModuleEventDispatcher>();
@@ -295,8 +377,13 @@ try
     builder.Services.AddSingleton<ModuleHealthCheckService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ModuleHealthCheckService>());
 
-    // Default modules — discovered from loaded assemblies.
-    // DI services must be registered for ALL modules before Build (container is immutable after).
+    // ──────── PHASE 11 ─── Bundled-module discovery + ConfigureServices ────
+    // Discover every bundled module's assembly, give each one a chance to
+    // contribute DI services and task-step descriptors, and gather task-script
+    // parser extensions.  ⚠ This MUST happen before builder.Build() because
+    // the container is sealed at that point — disabled modules still need to
+    // register their DbContext factories etc. so other services can resolve
+    // optional dependencies on them lazily without throwing.
     var moduleLoader = ModuleLoader.DiscoverBundled();
 
     foreach (var bundledModule in moduleLoader.GetAllBundled())
@@ -324,22 +411,23 @@ try
     builder.Services.AddSingleton(moduleLoader);
     builder.Services.AddScoped<ModuleService>();
 
-    // Background tasks
-    // (Scheduled-job loop now lives in DefaultModules/AgentOrchestration as
-    // ScheduledJobWorker, started from the module's InitializeAsync.)
-
+    // ──────── PHASE 12 ─── Misc post-module singletons ─────────────────────
+    // (The legacy in-process scheduled-job loop has moved to
+    //  DefaultModules/AgentOrchestration/ScheduledJobWorker; it is started
+    //  from that module's InitializeAsync, not here.)
     builder.Services.AddSingleton<DatabaseInitializationGate>();
 
-    // Seeding
+    // Seeding hosted service runs admin/role/provider seeding on startup.
     builder.Services.AddHostedService<SeedingService>();
 
-    // API key
+    // Per-instance API key file consumed by ApiKeyMiddleware (PHASE 20).
     var apiKeyProvider = new ApiKeyProvider(backendInstancePaths);
     builder.Services.AddSingleton(apiKeyProvider);
 
-    // CLI short-ID resolver (used by module CLI handlers)
+    // Short-ID resolver shared by core CLI verbs and module CLI handlers.
     builder.Services.AddSingleton<ICliIdResolver, CliIdResolver>();
 
+    // ──────── PHASE 13 ─── Build the container (now immutable) ─────────────
     var app = builder.Build();
 
     // Configure JSON serialisation for minimal API responses to match
@@ -347,8 +435,12 @@ try
     app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
         .Value.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 
-    // Initialize infrastructure (loads persisted data into InMemory DB) before
-    // any command, hosted-service, or HTTP handler can execute against it.
+    // ──────── PHASE 14 ─── Post-build infrastructure init ──────────────────
+    // The InMemory DbContext is empty at this point.  InitializeInfrastructureAsync
+    // hydrates it from the JSON file store (or warms relational connections),
+    // and the gate gets toggled so middleware/CLI/hosted-services can know
+    // when it is safe to read.  Anything that depends on persistent data must
+    // wait on DatabaseInitializationGate or run after this block.
     var databaseInitializationGate = app.Services.GetRequiredService<DatabaseInitializationGate>();
     try
     {
@@ -378,7 +470,12 @@ try
         }
     }
 
-    // Wire up module loader with built service provider
+    // ──────── PHASE 15 ─── Module enable-state sync + persistence ─────────
+    // Wire the module loader to the built service provider, load each
+    // bundled module's manifest, then reconcile the .env-driven enabled
+    // set against the database.  After this block we know which modules
+    // are enabled, and every module's DbContext type is registered so
+    // optional cross-module dependencies can be resolved lazily.
     moduleLoader.SetRootServices(app.Services);
     moduleLoader.LoadAllManifests();
 
@@ -445,7 +542,11 @@ try
     Log.Information("Bundled modules: {Registered} registered, {Disabled} disabled, {Total} discovered",
         registeredBundledCount, disabledBundledCount, allBundled.Count);
 
-    // Initialize enabled modules in dependency order (providers before consumers).
+    // ──────── PHASE 16 ─── Module initialization in dependency order ──────
+    // Topological sort over RequiredContracts/ExportedContracts.  A module
+    // whose required contract has no surviving provider is excluded; a
+    // module whose InitializeAsync throws gets unregistered AND poisons its
+    // exported contracts so dependents cascade-skip too.
     var initOrder = registry.GetInitializationOrder(out var excludedModules);
 
     // Unregister modules excluded during dependency resolution (missing deps, cycles).
@@ -511,7 +612,11 @@ try
         }
     }
 
-    // Scan external-modules directory and hot-load any found modules
+    // ──────── PHASE 17 ─── External modules (filesystem + .env entries) ───
+    // External modules live outside the bundled set: a directory scan picks
+    // up drop-in modules and the .env ExternalModules section adds explicit
+    // absolute-path entries.  Both are best-effort — failures here log a
+    // warning and continue rather than aborting startup.
     var externalLoadedCount = 0;
     try
     {
@@ -553,13 +658,20 @@ try
         totalLoaded, initializedCount, externalLoadedCount, envExternalLoadedCount,
         failedInitCount, disabledBundledCount, excludedModules.Count);
 
+    // ──────── PHASE 18 ─── ApplicationStarted hook ────────────────────────
+    // Start the JSON persistence FlushWorker only after the host signals
+    // ApplicationStarted, so transient startup writes go through the
+    // synchronous fallback rather than racing the worker's pump.
     app.Lifetime.ApplicationStarted.Register(() =>
     {
         var flushWorker = app.Services.GetService<FlushWorker>();
         flushWorker?.Start();
     });
 
-    // CLI mode: handle command and exit
+    // ──────── PHASE 19 ─── CLI command dispatch (one-shot) ────────────────
+    // If the process was launched with a recognised CLI verb, handle it
+    // and exit; we never enter API mode in this case.  Errors are written
+    // to stderr to keep CLI exit codes / stdout clean.
     try
     {
         if (await CliDispatcher.TryHandleAsync(args, app.Services))
@@ -572,7 +684,17 @@ try
         return;
     }
 
-    // API mode
+    // ──────── PHASE 20 ─── HTTP pipeline (middleware order is load-bearing)
+    //
+    //   DiagnosticMiddleware (DEBUG only)        — request tracing for dev.
+    //   DatabaseInitializationGateMiddleware     — 503s until PHASE 14 done.
+    //   ExceptionHandlingMiddleware              — must wrap everything below.
+    //   SerilogRequestLogging (optional)         — only when enabled in .env.
+    //   UseCors / UseRouting                     — standard ASP.NET Core order.
+    //   ApiKeyMiddleware                         — validates X-Api-Key.
+    //   JwtSessionMiddleware                     — populates SessionService.
+    //   MigrationGateMiddleware (relational)     — pauses traffic mid-migration.
+    //   UseWebSockets                            — required for SSE/WS handlers.
 #if DEBUG
     app.UseMiddleware<DiagnosticMiddleware>();
 #endif
@@ -591,12 +713,14 @@ try
 
     app.UseWebSockets();
 
+    // ──────── PHASE 21 ─── Endpoint mapping ───────────────────────────────
     // Liveness check — no auth required.
     app.MapGet("/echo", () => Results.Ok(new { status = "ok" }));
 
     // API key validation — requires valid X-Api-Key header.
     app.MapGet("/ping", () => Results.Ok(new { status = "authenticated" }));
 
+    // Core attribute-discovered handlers (see SharpClaw.Application.API.Routing).
     app.MapHandlers();
 
     // Module-registered endpoints: each module maps its own REST routes.
@@ -613,7 +737,9 @@ try
     }
 
     // Webhook trigger routes — registered lazily after ApplicationStarted so
-    // that TaskTriggerHostService has loaded its first binding set.
+    // that TaskTriggerHostService has loaded its first binding set.  The
+    // WebhookRouteRegistry holds an IRouteBuilder reference and rebinds
+    // routes whenever a webhook trigger source's binding set changes.
     var webhookSource = app.Services.GetRequiredService<IWebhookTriggerHost>();
     var webhookRegistry = new WebhookRouteRegistry(
         app,
@@ -621,13 +747,17 @@ try
         app.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<WebhookRouteRegistry>>());
     webhookSource.SetRouteRegistrar(webhookRegistry);
 
+    // ──────── PHASE 22 ─── Shutdown registrations ─────────────────────────
+    // Two ApplicationStopping hooks: one for host-side cleanup (api key,
+    // discovery entry), one for graceful per-module ShutdownAsync.  Module
+    // shutdown is best-effort — exceptions are logged at Warning so a
+    // misbehaving module can't block the host from stopping.
     app.Lifetime.ApplicationStopping.Register(() =>
     {
         apiKeyProvider.Cleanup();
         backendInstancePaths.DeleteDiscoveryEntry();
     });
 
-    // Module lifecycle: graceful shutdown
     app.Lifetime.ApplicationStopping.Register(() =>
     {
         foreach (var module in registry.GetAllModules())
@@ -640,6 +770,10 @@ try
         }
     });
 
+    // ──────── PHASE 23 ─── Start + discovery publication ──────────────────
+    // Start the host, then publish the bound URL to the per-instance
+    // discovery directory so sibling processes (frontend, gateway, CLI)
+    // can find this backend without any prior configuration.
     await app.StartAsync();
 
     var urls = string.Join(", ", app.Urls);
@@ -660,7 +794,8 @@ try
     Log.Information("SharpClaw API listening on {Urls}", urls);
     Log.Information("API key written to: {KeyFilePath}", apiKeyProvider.KeyFilePath);
 
-    // Interactive-mode console logging discipline: when the REPL is actually
+    // ──────── PHASE 24 ─── Interactive REPL / headless wait ───────────────
+    // Interactive-mode console logging discipline:
     // running, we suppress console logging so Serilog output doesn't scroll
     // over the user's prompt. CLI command/response logs still go to
     // System.Diagnostics.Debug (VS Output > Debug pane).
