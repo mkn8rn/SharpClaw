@@ -5,8 +5,8 @@
 > **Version:** 1.0.0
 > **Tool Prefix:** `tr`
 > **Platforms:** Windows only
-> **Exports:** `transcription_stt` (`ITranscriptionApiClient`), `transcription_audio_capture` (`IAudioCaptureProvider`)
-> **Requires:** none
+> **Exports:** `transcription_stt` (`ITranscriptionApiClient`)
+> **Requires:** `sharpclaw_systemaudio` (provides `system_audio_capture`)
 
 ---
 
@@ -16,18 +16,20 @@
 |---------|-------|
 | **.env key** | `Modules:sharpclaw_transcription` |
 | **Default** | ❌ Disabled |
-| **Prerequisites** | None |
-| **Platform** | Windows only (WASAPI audio capture) |
+| **Prerequisites** | **System Audio** (`sharpclaw_systemaudio`) |
+| **Platform** | Windows only (depends on WASAPI capture from System Audio) |
 
 To enable, add to your core `.env` (`Infrastructure/Environment/.env`) Modules section:
 
 ```jsonc
+"sharpclaw_systemaudio": "true",
 "sharpclaw_transcription": "true"
 ```
 
 To disable, set to `"false"` or remove the key (missing = disabled).
 
-> **Note:** Exports `transcription_stt` and `transcription_audio_capture` contracts.
+> **Note:** Exports `transcription_stt`. Audio capture and the
+> `InputAudio` resource type live in the System Audio module.
 
 **Runtime toggle** (no restart required):
 
@@ -282,6 +284,32 @@ When `language` is set:
 - If auto-detected language (`effectiveLanguage`) is null and the API
   response includes a language tag, the orchestrator adopts it for
   subsequent ticks.
+
+---
+
+## Task-script Steps
+
+Transcription contributes the following step methods through
+`TranscriptionParserExtension`. They are dispatched via the central
+`TaskStepRegistry`:
+
+| Method | Step key | Purpose |
+|--------|----------|---------|
+| `StartTranscription` | `StartTranscription` | Start a transcription session against a target. |
+| `StopTranscription`  | `StopTranscription`  | Stop an in-progress transcription session. |
+| `GetDefaultInputAudio` | `GetDefaultInputAudio` | Resolve the default input audio device for the host. |
+
+`StartTranscription` and `StopTranscription` accept a single expression
+argument captured by the parser.
+
+### Event triggers
+
+| Handler | Trigger key | Notes |
+|---------|-------------|-------|
+| `OnTranscriptionSegment` | `TranscriptionSegment` | In-script handler that fires per emitted segment. |
+
+If this module is disabled, scripts using these methods or the
+`OnTranscriptionSegment` handler are flagged by `task preflight`.
 
 ---
 

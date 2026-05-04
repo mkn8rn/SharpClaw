@@ -189,6 +189,85 @@ Set or clear the custom chat header for a channel.
 
 ---
 
+## Task-script Steps
+
+Agent Orchestration owns the **statement primitives** of the task script
+grammar plus the agent/entity step methods. None of these live in the core
+parser — they are contributed via `TaskScriptingParserExtension` and
+`AgentOrchestrationStepDescriptorProvider`.
+
+### Statement primitives
+
+The parser emits these directly from script syntax (variables, assignments,
+event handlers, control flow, etc.):
+
+| Primitive | Wire step key |
+|-----------|---------------|
+| `DeclareVariable` | `task_scripting.declare_variable` |
+| `Assign` | `task_scripting.assign` |
+| `EventHandler` | `task_scripting.event_handler` |
+| `Conditional` | `task_scripting.conditional` |
+| `Loop` | `task_scripting.loop` |
+| `Return` | `task_scripting.return` |
+| `Delay` | `task_scripting.delay` |
+| `Evaluate` | `task_scripting.evaluate` |
+| `Log` | `task_scripting.log` |
+| `ParseResponse` | `task_scripting.parse_response` |
+
+### Step methods
+
+Method calls in the task body are dispatched via the central
+`TaskStepRegistry`. Agent Orchestration registers the following method names:
+
+| Method | Purpose |
+|--------|---------|
+| `Chat` | Send a chat turn to an agent and capture the response. |
+| `ChatStream` | Stream a chat turn to an agent. |
+| `ChatToThread` | Send a chat turn into a specific thread. |
+| `Emit` | Emit a structured output value from the task. |
+| `ParseResponse` | Parse a previous response into a typed shape (generic capture). |
+| `FindModel` | Resolve a model by name / id. |
+| `FindProvider` | Resolve a provider by name / id. |
+| `FindAgent` | Resolve an agent by name / id. |
+| `CreateAgent` | Provision a new agent. |
+| `CreateThread` | Provision a new thread. |
+| `CreateRole` | Provision a new role. |
+| `FindRole` | Resolve a role by name / id. |
+| `SetRolePermissions` | Update a role's permission set. |
+| `AssignRole` | Assign a role to an agent. |
+| `CreateChannel` | Provision a new channel. |
+| `FindChannel` | Resolve a channel by name / id. |
+| `AddAllowedAgent` | Add an allowed agent to a channel. |
+
+When this module is disabled, scripts that use these methods or the
+statement primitives will be rejected by `task preflight`.
+
+---
+
+## Triggers
+
+Agent Orchestration owns the lifecycle, scripting, event-bus, task-chain,
+and filesystem trigger attributes. Each is registered through
+`AgentOrchestrationTriggerAttributeHandlers` and surfaced as a runtime
+`ITaskTriggerSource`.
+
+| Attribute | Trigger source | Notes |
+|-----------|----------------|-------|
+| `[Schedule(...)]` | Cron scheduler | Cron expression + optional timezone. |
+| `[OnStartup]` | `LifecycleTriggerSource` | Fires once at host startup. |
+| `[OnShutdown]` | `LifecycleTriggerSource` | Fires once at host shutdown. |
+| `[OnTaskCompleted]` | `TaskChainTriggerSource` | Fires when a named source task completes. |
+| `[OnTaskFailed]` | `TaskChainTriggerSource` | Fires when a named source task fails. |
+| `[OnTrigger(name)]` | Custom dispatch | Routes to an arbitrary named trigger key. |
+| `[OnEvent(type, Filter)]` | `EventBusTriggerSource` | Fires on internal event-bus messages. |
+| `[OnFileChanged(path, Pattern, Events)]` | `FileChangedTriggerSource` | Fires on filesystem changes. |
+| `OnTimer` event handler | `LifecycleTriggerSource` | In-script timer event handler (key `sharpclaw.task_scripting.timer`). |
+
+If this module is disabled, tasks using these triggers are flagged by
+`task preflight` and removed from `task trigger-sources`.
+
+---
+
 ## Module-owned CLI resources
 
 Agent Orchestration owns the resources used by `edit_task` and `access_skill`.

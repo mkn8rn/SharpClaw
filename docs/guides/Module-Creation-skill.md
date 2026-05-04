@@ -80,15 +80,53 @@ Require — declare in RequiredContracts:
 Initialization order is sorted by contract dependency graph automatically.
 
 ────────────────────────────────────────
-TASK TRIGGER OWNERSHIP
+TASK PIPELINE CONTRIBUTIONS
 ────────────────────────────────────────
-Implement ITaskTriggerSourceProvider alongside ISharpClawModule.
-Register: services.AddSingleton<ITaskTriggerSourceProvider, MySource>()
-Members: SourceName (string), SupportedKinds (IReadOnlyList<TaskTriggerKind>)
-         EnableTriggerAsync(TaskDefinition, ct), DisableTriggerAsync(taskId, ct)
+Tasks have no fixed step or trigger surface in core. Modules contribute via
+four interfaces in SharpClaw.Contracts.Tasks:
 
-Module must be enabled for owned trigger kinds to fire.
-Check ownership: GET /tasks/trigger-sources
+ITaskStepDescriptorProvider
+  Method-call step descriptors registered with TaskStepRegistry.
+  Members: ModuleId, Descriptors (IReadOnlyList<TaskStepDescriptor>)
+  Each descriptor's OwnerId must equal ModuleId.
+  Method names and step keys are unique across all modules.
+  Register: services.AddSingleton<ITaskStepDescriptorProvider, MyProvider>()
+
+ITaskParserModuleExtension
+  Parser hints, event-handler trigger keys, and statement primitives.
+  Members:
+    StepKeyMappings: name → (StepKey, ModuleId) for context-API methods.
+    EventTriggerMappings: name → (TriggerKey, ModuleId) for OnXxx handlers.
+    SingleArgExpressionMethods: methods whose first arg is captured as Expression.
+    Primitives (TaskParserPrimitives?): wire-format step keys for statements
+      (declarations, assignments, control flow, return, delay, evaluate, log,
+      parse-response). Exactly one loaded module must supply this.
+    TriggerAttributeHandlers: name → ITaskTriggerAttributeHandler.
+  Register: services.AddSingleton<ITaskParserModuleExtension, MyExtension>()
+
+ITaskTriggerAttributeHandler
+  Recogniser for one trigger attribute name (short form, e.g. "Schedule";
+  long form "ScheduleAttribute" is also accepted by the parser).
+  Member: Handle(TaskTriggerAttributeContext) → TaskTriggerDefinition?
+  Returning null declines the attribute.
+  Two modules cannot claim the same attribute name; conflicts fail at startup.
+  Exposed to the parser via ITaskParserModuleExtension.TriggerAttributeHandlers.
+
+ITaskTriggerSource
+  Runtime watcher for one or more trigger keys.
+  Members:
+    TriggerKey (string?) or TriggerKeys (IReadOnlyList<string>)
+    StartAsync(IReadOnlyList<ITaskTriggerSourceContext>, ct) — must be idempotent
+    StopAsync()
+    GetBindingValue(def), GetBindingFilter(def) — persisted onto bindings
+    OwnsBindingPersistence (bool, default false)
+    SyncBindingsAsync(definition, ownedTriggers, ct) — when source owns persistence
+    RemoveBindingsAsync(definitionId, ct) — when source owns persistence
+  Register: services.AddSingleton<ITaskTriggerSource, MyTriggerSource>()
+
+Tasks bound to keys whose owning module is disabled are flagged by
+`task preflight`. Active sources are listed under `task trigger-sources`
+and `GET /tasks/trigger-sources`.
 
 ────────────────────────────────────────
 CLI COMMANDS
@@ -115,4 +153,6 @@ Tool not reaching handler  → permission check denied; verify ModuleToolPermiss
 Inline tool produces nothing → ExecuteInlineToolAsync returned NotHandled or threw
 Contract not satisfied     → provider module disabled or failed; check module list
 SeedDataAsync not running  → .seeded marker exists; delete it to force re-seed
-Trigger never fires        → check EnableTriggerAsync was called; check OS permissions
+Trigger never fires        → check StartAsync was called on ITaskTriggerSource;
+                             check binding Kind matches a declared TriggerKey;
+                             check OS permissions for the underlying hook

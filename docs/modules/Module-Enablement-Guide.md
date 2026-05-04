@@ -44,9 +44,9 @@ format.
 
 ```jsonc
 "Modules": {
-  "sharpclaw_agent_orchestration": "true",
-  "sharpclaw_computer_use": "true",
-  "sharpclaw_editor_common": "true"
+  "sharpclaw_providers_openai_compat": "true",
+  "sharpclaw_providers_anthropic": "true",
+  "sharpclaw_web_access": "true"
   // ...
 }
 ```
@@ -57,6 +57,15 @@ format.
 - `"false"` or **missing key** → disabled
 - `.dev.env` overrides `.env` in development mode
 - `.modules.env` (if present) is loaded between `.env` and `.dev.env`
+
+**Defaults policy:**
+
+- The base `.env` enables only the **provider modules** so a clean install
+  can talk to LLM and STT backends out of the box. Every feature module
+  (computer use, editor bridges, web access, transcription, etc.) ships
+  set to `"false"` and must be opted into per deployment.
+- The development override `.dev.env` enables **every** bundled module so
+  contributors get full coverage during local work.
 
 ### CLI Runtime Management
 
@@ -80,19 +89,30 @@ feature backed by that contract is unavailable.
 
 ## Quick Reference Table
 
-| Module | ID | Default | Platform | Requires |
-|--------|----|---------|----------|----------|
+Feature modules are disabled in the base `.env`; provider modules are enabled.
+The development override (`.dev.env`) enables everything.
+
+| Module | ID | Base default | Platform | Requires |
+|--------|----|--------------|----------|----------|
 | [Agent Orchestration](#agent-orchestration) | `sharpclaw_agent_orchestration` | ❌ Disabled | All | — |
 | [Bot Integration](#bot-integration) | `sharpclaw_bot_integration` | ❌ Disabled | All | — |
 | [Computer Use](#computer-use) | `sharpclaw_computer_use` | ❌ Disabled | Windows | — |
-| [Context Tools](#context-tools) | `sharpclaw_context_tools` | ❌ Disabled | All | — |
 | [Dangerous Shell](#dangerous-shell) | `sharpclaw_dangerous_shell` | ❌ Disabled | Win / Linux / macOS | — |
 | [Database Access](#database-access) | `sharpclaw_database_access` | ❌ Disabled | Win / Linux / macOS | — |
 | [Editor Common](#editor-common) | `sharpclaw_editor_common` | ❌ Disabled | All | — |
+| [HTTP](#http) | `sharpclaw_http` | ❌ Disabled | All | — |
+| [Metrics](#metrics) | `sharpclaw_metrics` | ❌ Disabled | All | — |
 | [mk8.shell](#mk8shell) | `sharpclaw_mk8shell` | ❌ Disabled | Win / Linux / macOS | — |
 | [Module Dev Kit](#module-development-kit) | `sharpclaw_module_dev` | ❌ Disabled | All | Computer Use *(optional)* |
 | [Office Apps](#office-apps) | `sharpclaw_office_apps` | ❌ Disabled | Win / Linux / macOS | — |
-| [Transcription](#transcription) | `sharpclaw_transcription` | ❌ Disabled | Windows | — |
+| [Providers — Anthropic](#providers--anthropic) | `sharpclaw_providers_anthropic` | ✅ Enabled | All | — |
+| [Providers — Google](#providers--google) | `sharpclaw_providers_google` | ✅ Enabled | All | — |
+| [Providers — LlamaSharp](#providers--llamasharp) | `sharpclaw_providers_llamasharp` | ✅ Enabled | All | — |
+| [Providers — Ollama](#providers--ollama) | `sharpclaw_providers_ollama` | ✅ Enabled | All | — |
+| [Providers — OpenAI-Compatible](#providers--openai-compatible) | `sharpclaw_providers_openai_compat` | ✅ Enabled | All | — |
+| [Providers — Whisper (local)](#providers--whisper-local) | `sharpclaw_providers_whisper` | ✅ Enabled | All | — |
+| [System Audio](#system-audio) | `sharpclaw_systemaudio` | ❌ Disabled | Windows | — |
+| [Transcription](#transcription) | `sharpclaw_transcription` | ❌ Disabled | Windows | **System Audio** |
 | [VS 2026 Editor](#vs-2026-editor) | `sharpclaw_vs2026_editor` | ❌ Disabled | Windows | **Editor Common** |
 | [VS Code Editor](#vs-code-editor) | `sharpclaw_vscode_editor` | ❌ Disabled | All | **Editor Common** |
 | [Web Access](#web-access) | `sharpclaw_web_access` | ❌ Disabled | All | — |
@@ -121,9 +141,29 @@ feature backed by that contract is unavailable.
 ┌──────────────────┐
 │   Module Dev     │  (falls back to Process.GetProcessesByName)
 └──────────────────┘
+
+┌──────────────────┐
+│  System Audio    │──exports──▶ system_audio_capture
+└────────┬─────────┘
+         │ required by
+         ▼
+┌──────────────────┐
+│  Transcription   │  (consumes IAudioCaptureProvider)
+└──────────────────┘
+
+┌──────────────────────────┐
+│ Providers — Whisper      │──exports──▶ transcription_stt_local
+└──────────┬───────────────┘
+           │ optional consumer
+           ▼
+┌──────────────────┐
+│  Transcription   │  (cloud STT always available; local backend appears
+└──────────────────┘   in the factory only when this module is enabled)
 ```
 
-All other modules are standalone with no inter-module dependencies.
+Provider modules (`sharpclaw_providers_*`) are otherwise standalone — each
+registers one or more `IProviderPlugin` instances and disappears from the
+factory's catalogue when disabled.
 
 ---
 
@@ -135,7 +175,9 @@ available on the current host.
 
 | Trigger area | Owner |
 |---|---|
-| Cron, event bus, task-completed, task-failed, file changed, webhook, host reachable/unreachable, network changed, startup/shutdown, generic metric polling, custom trigger contracts | Core |
+| Cron, event bus, task-completed, task-failed, file changed, startup/shutdown, custom trigger contracts | Core / Agent Orchestration |
+| Webhook, host reachable/unreachable, network changed | HTTP |
+| Generic metric polling (`MetricThreshold`) | Metrics |
 | Window focus/blur, hotkeys, idle/active, screen lock/unlock, device connected/disconnected, process started/stopped, OS shortcut launchers | Computer Use |
 | Query returns rows | Database Access |
 
@@ -146,6 +188,8 @@ Practical effect:
 - `task trigger-sources` and `GET /tasks/trigger-sources` show the active sources for the
   current host
 - enabling the owning module makes those sources available to the trigger host again
+- the HTTP and Metrics modules are required for any task that uses webhook,
+  host-reachability, network, or metric-threshold triggers
 
 ---
 
@@ -206,25 +250,6 @@ optionally by Module Dev.
 
 ```jsonc
 "sharpclaw_computer_use": "true"
-```
-
----
-
-### Context Tools
-
-| Setting | Value |
-|---------|-------|
-| **.env key** | `Modules:sharpclaw_context_tools` |
-| **Default** | ❌ Disabled |
-| **Platform** | All |
-| **Prerequisites** | None |
-| **Exports** | None |
-
-Lightweight inline tools that execute directly in the ChatService
-streaming loop: `wait`, `list_accessible_threads`, `read_thread_history`.
-
-```jsonc
-"sharpclaw_context_tools": "true"
 ```
 
 ---
@@ -294,6 +319,53 @@ VS Code Editor modules.
 
 ---
 
+### HTTP
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_http` |
+| **Default** | ❌ Disabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+Owns the task-script HTTP request step
+(`HttpGet`/`HttpPost`/`HttpPut`/`HttpDelete` → `http_request`) and the
+network-trigger family (webhook, host reachable/unreachable, network
+changed). No LLM-callable tools — pure task-pipeline contributions.
+
+```jsonc
+"sharpclaw_http": "true"
+```
+
+> Required for any task that uses HTTP request steps or network/webhook
+> triggers. See [Module-Http.md](Module-Http.md).
+
+---
+
+### Metrics
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_metrics` |
+| **Default** | ❌ Disabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+Owns the `MetricThreshold` task trigger and the built-in
+`ITaskMetricProvider` implementations (pending job count, pending task
+count, scheduler pending job count). No LLM-callable tools.
+
+```jsonc
+"sharpclaw_metrics": "true"
+```
+
+> Required for any task that uses the metric-threshold trigger. See
+> [Module-Metrics.md](Module-Metrics.md).
+
+---
+
 ### mk8.shell
 
 | Setting | Value |
@@ -359,23 +431,178 @@ Document session management, file-based spreadsheet operations
 
 ---
 
+### Providers — Anthropic
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_anthropic` |
+| **Default** | ✅ Enabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+Registers the native Anthropic `IProviderPlugin` (Anthropic
+`/v1/messages` wire format, not OpenAI-compatible).
+
+```jsonc
+"sharpclaw_providers_anthropic": "true"
+```
+
+---
+
+### Providers — Google
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_google` |
+| **Default** | ✅ Enabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+Registers the native Google plugins (Gemini and Vertex AI), using
+Google's `generateContent` wire format. The OpenAI-compatible Gemini
+/ Vertex AI shims are owned by the OpenAI-Compatible providers module.
+
+```jsonc
+"sharpclaw_providers_google": "true"
+```
+
+---
+
+### Providers — LlamaSharp
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_llamasharp` |
+| **Default** | ✅ Enabled |
+| **Platform** | All (CPU fallback when no GPU) |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+In-process llama.cpp inference via LlamaSharp. Owns the
+`LocalModelFile` entity and exposes `/models/local` REST and
+`localmodel` CLI surfaces. Configured by the `Local:*` keys in
+`.env`.
+
+```jsonc
+"sharpclaw_providers_llamasharp": "true"
+```
+
+---
+
+### Providers — Ollama
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_ollama` |
+| **Default** | ✅ Enabled |
+| **Platform** | All |
+| **Prerequisites** | None (user-managed Ollama server) |
+| **Exports** | None |
+
+Thin OpenAI-compatible client targeting a user-managed Ollama server,
+with model listing routed through Ollama's `/api/tags` endpoint.
+Supports automatic endpoint discovery and does not require an API
+key.
+
+```jsonc
+"sharpclaw_providers_ollama": "true"
+```
+
+---
+
+### Providers — OpenAI-Compatible
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_openai_compat` |
+| **Default** | ✅ Enabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | None |
+
+Registers the OpenAI-protocol plugin family — OpenAI, OpenRouter,
+ZAI, Vercel AI Gateway, xAI, Groq, Cerebras, Mistral, GitHub Copilot,
+Minimax, Custom, plus Google Gemini and Vertex AI OpenAI-compatible
+shims. All share `OpenAiCompatibleApiClient` as their wire-format
+base.
+
+```jsonc
+"sharpclaw_providers_openai_compat": "true"
+```
+
+---
+
+### Providers — Whisper (local)
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_providers_whisper` |
+| **Default** | ✅ Enabled |
+| **Platform** | All |
+| **Prerequisites** | None |
+| **Exports** | `transcription_stt_local` (`ITranscriptionApiClient`) |
+
+Local Whisper.net STT backend. Contributes an additional
+`ITranscriptionApiClient` to the catalog consumed by the Transcription
+module's factory; when this module is disabled the local backend
+simply disappears and Transcription falls back to cloud STT (OpenAI /
+Groq).
+
+```jsonc
+"sharpclaw_providers_whisper": "true"
+```
+
+---
+
+### System Audio
+
+| Setting | Value |
+|---------|-------|
+| **.env key** | `Modules:sharpclaw_systemaudio` |
+| **Default** | ❌ Disabled |
+| **Platform** | **Windows only** (WASAPI audio capture) |
+| **Prerequisites** | None |
+| **Exports** | `system_audio_capture` (`IAudioCaptureProvider`) |
+
+Input audio device CRUD and WASAPI audio capture. Owns the
+`InputAudio` resource type and exports the `system_audio_capture`
+contract consumed by Transcription.
+
+```jsonc
+"sharpclaw_systemaudio": "true"
+```
+
+> **Important:** Required by Transcription. Disabling this module
+> cascade-disables `sharpclaw_transcription`. See
+> [Module-SystemAudio.md](Module-SystemAudio.md).
+
+---
+
 ### Transcription
 
 | Setting | Value |
 |---------|-------|
 | **.env key** | `Modules:sharpclaw_transcription` |
 | **Default** | ❌ Disabled |
-| **Platform** | **Windows only** (WASAPI audio capture) |
-| **Prerequisites** | None |
-| **Exports** | `transcription_stt` (`ITranscriptionApiClient`), `transcription_audio_capture` (`IAudioCaptureProvider`) |
+| **Platform** | **Windows only** (depends on WASAPI audio capture) |
+| **Prerequisites** | **System Audio** (`system_audio_capture`) |
+| **Exports** | `transcription_stt` (`ITranscriptionApiClient`) |
 
-Live audio transcription, input audio device management, and STT
-provider integration. Audio captured via WASAPI, normalised to mono
-16 kHz 16-bit PCM. Providers: OpenAI Whisper, Groq, local Whisper.net.
+Live audio transcription and STT provider integration. Audio is
+captured via the System Audio module (WASAPI, normalised to mono
+16 kHz 16-bit PCM). Cloud providers: OpenAI Whisper, Groq. The
+local Whisper.net backend is contributed by the
+`sharpclaw_providers_whisper` module when enabled.
 
 ```jsonc
+"sharpclaw_systemaudio": "true",
 "sharpclaw_transcription": "true"
 ```
+
+> **If System Audio is disabled**, Transcription will be excluded
+> during dependency resolution with a missing-contract error.
 
 ---
 
@@ -454,30 +681,40 @@ access with SSRF protection, and multi-provider search engine queries.
 
 ## Full `.env.template` Modules Section
 
-This is the complete `Modules` section from the `.env.template`.
-All modules are **disabled by default** (commented out). Uncomment the
-block and the modules you want to enable.
+This is the complete `Modules` section from the base `.env.template`.
+Provider modules ship enabled so a clean install can talk to LLM and
+STT backends; every feature module ships disabled and must be opted
+into per deployment.
 
 ```jsonc
-// "Modules": {
-//   "sharpclaw_agent_orchestration": "true",
-//   "sharpclaw_bot_integration": "true",
-//   "sharpclaw_computer_use": "true",
-//   "sharpclaw_context_tools": "true",
-//   "sharpclaw_dangerous_shell": "true",
-//   "sharpclaw_database_access": "true",
-//   "sharpclaw_editor_common": "true",
-//   "sharpclaw_mk8shell": "true",
-//   "sharpclaw_module_dev": "true",
-//   "sharpclaw_office_apps": "true",
-//   "sharpclaw_transcription": "true",
-//   "sharpclaw_vs2026_editor": "true",
-//   "sharpclaw_vscode_editor": "true",
-//   "sharpclaw_web_access": "true"
-// }
+"Modules": {
+  "sharpclaw_agent_orchestration": "false",
+  "sharpclaw_bot_integration": "false",
+  "sharpclaw_computer_use": "false",
+  "sharpclaw_dangerous_shell": "false",
+  "sharpclaw_database_access": "false",
+  "sharpclaw_editor_common": "false",
+  "sharpclaw_http": "false",
+  "sharpclaw_metrics": "false",
+  "sharpclaw_mk8shell": "false",
+  "sharpclaw_module_dev": "false",
+  "sharpclaw_office_apps": "false",
+  "sharpclaw_providers_anthropic": "true",
+  "sharpclaw_providers_google": "true",
+  "sharpclaw_providers_llamasharp": "true",
+  "sharpclaw_providers_ollama": "true",
+  "sharpclaw_providers_openai_compat": "true",
+  "sharpclaw_providers_whisper": "true",
+  "sharpclaw_systemaudio": "false",
+  "sharpclaw_transcription": "false",
+  "sharpclaw_vs2026_editor": "false",
+  "sharpclaw_vscode_editor": "false",
+  "sharpclaw_web_access": "false"
+}
 ```
 
-The `.dev.env.template` enables all modules for development environments.
+The `.dev.env.template` mirrors this block with **every** module set to
+`"true"` for local development.
 
 ---
 
@@ -517,6 +754,8 @@ Runtime changes take effect immediately. Endpoints remain mapped
 1. Run `task preflight <taskId>` and look for warning-level module recommendations.
 2. Run `task trigger-sources` to confirm the source exists on the current host.
 3. Make sure the owning module is enabled:
+   - `sharpclaw_http` for webhook, host-reachable/unreachable, network-changed
+   - `sharpclaw_metrics` for `MetricThreshold`
    - `sharpclaw_computer_use` for hotkeys, process events, desktop events, and
      `OsShortcut`
    - `sharpclaw_database_access` for `OnQueryReturnsRows`

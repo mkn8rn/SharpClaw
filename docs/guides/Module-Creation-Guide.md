@@ -23,7 +23,11 @@ task triggers, and troubleshooting at runtime.
 - [Adding CLI commands](#adding-cli-commands)
 - [Exporting and consuming contracts](#exporting-and-consuming-contracts)
 - [Seed data](#seed-data)
-- [Owning task trigger sources](#owning-task-trigger-sources)
+- [Contributing to the task pipeline](#contributing-to-the-task-pipeline)
+  - [Step methods (`ITaskStepDescriptorProvider`)](#step-methods-itaskstepdescriptorprovider)
+  - [Parser primitives and event handlers (`ITaskParserModuleExtension`)](#parser-primitives-and-event-handlers-itaskparsermoduleextension)
+  - [Trigger attributes (`ITaskTriggerAttributeHandler`)](#trigger-attributes-itasktriggerattributehandler)
+  - [Trigger sources (`ITaskTriggerSource`)](#trigger-sources-itasktriggersource)
 - [Enabling your module](#enabling-your-module)
 - [Ideas for what to build](#ideas-for-what-to-build)
 - [Debugging and troubleshooting](#debugging-and-troubleshooting)
@@ -43,7 +47,7 @@ Modules can contribute any combination of:
 - **REST endpoints** — standard minimal-API routes, mounted at startup
 - **CLI commands** — additional verbs in the SharpClaw CLI
 - **Service contracts** — typed DI interfaces exported to other modules
-- **Task trigger sources** — runtime integrations that fire tasks on external events
+- **Task pipeline contributions** — step methods, parser primitives, trigger attributes, and runtime trigger sources
 - **Seed data** — one-time database rows or config inserted on first install
 
 ---
@@ -438,27 +442,155 @@ Guard with an existence check so re-seeding manually doesn't produce duplicates.
 
 ---
 
-## Owning task trigger sources
+## Contributing to the task pipeline
 
-A module can fire tasks in response to external events by implementing
-`ITaskTriggerSource`. The task system routes activation for the declared
-module-owned trigger keys to your module.
+Tasks have no fixed step or trigger surface in core. Every step method, every
+statement primitive, every trigger attribute, and every runtime trigger source
+is contributed by a module. There are four small interfaces in
+`SharpClaw.Contracts.Tasks` that work together:
+
+| Interface | What it contributes |
+|-----------|---------------------|
+| `ITaskStepDescriptorProvider` | Method-call step descriptors (e.g. `Chat(...)`, `HttpGet(...)`). |
+| `ITaskParserModuleExtension` | Statement primitives, event-handler names (`OnTimer`), and per-method parser hints. |
+| `ITaskTriggerAttributeHandler` | One trigger attribute (e.g. `[Schedule]`, `[OnWebhook]`). |
+| `ITaskTriggerSource` | Runtime watcher that fires bound trigger keys. |
+
+Most modules need only one or two of these. A pure tool module needs none.
+
+### Step methods (`ITaskStepDescriptorProvider`)
+
+Use this when your module wants the parser to recognise a method call inside a
+task body and dispatch it through the central `TaskStepRegistry`.
+
+```csharp
+public sealed class MyStepProvider : ITaskStepDescriptorProvider
+{
+    public string ModuleId => "my_module";
+
+    public IReadOnlyList<TaskStepDescriptor> Descriptors { get; } =
+    [
+        new TaskStepDescriptor
+        {
+            MethodName           = "DoThing",
+            StepKey              = "my_module.do_thing",
+            OwnerId              = "my_module",
+            FirstArgIsExpression = true,
+        },
+    ];
+}
+```
+
+Register it in `ConfigureServices`:
+
+```csharp
+services.AddSingleton<ITaskStepDescriptorProvider, MyStepProvider>();
+```
+
+The `OwnerId` on every descriptor must match `ModuleId`. Method names and
+step keys are unique across all modules — duplicates fail at startup.
+
+### Parser primitives and event handlers (`ITaskParserModuleExtension`)
+
+Use this when your module wants to:
+
+- Map a method name to a step key with extra parser hints.
+- Map an event-handler name (e.g. `OnTimer`, `OnTranscriptionSegment`) to a
+  module-owned trigger key.
+- Contribute the wire-format step keys for the parser's statement primitives
+  (variables, assignments, control flow, return, delay, evaluate, log,
+  parse-response). Exactly one loaded module supplies these via
+  `TaskParserPrimitives`.
+
+```csharp
+public sealed class MyParserExtension : ITaskParserModuleExtension
+{
+    public IReadOnlyDictionary<string, (string StepKey, string ModuleId)> StepKeyMappings { get; } =
+        new Dictionary<string, (string, string)>
+        {
+            ["DoThing"] = ("my_module.do_thing", "my_module"),
+        };
+
+    public IReadOnlyDictionary<string, (string TriggerKey, string ModuleId)> EventTriggerMappings { get; } =
+        new Dictionary<string, (string, string)>
+        {
+            ["OnMyEvent"] = ("my_module.on_my_event", "my_module"),
+        };
+
+    public IReadOnlySet<string> SingleArgExpressionMethods { get; } =
+        new HashSet<string> { "DoThing" };
+}
+```
+
+Register it in `ConfigureServices`:
+
+```csharp
+services.AddSingleton<ITaskParserModuleExtension, MyParserExtension>();
+```
+
+### Trigger attributes (`ITaskTriggerAttributeHandler`)
+
+Task scripts are parsed but not compiled, so trigger attributes (`[Schedule]`,
+`[OnWebhook]`, `[OnHotkey]`, etc.) are recognised by name. Each attribute name
+is owned by exactly one module via a registered handler. The parser routes
+matching occurrences to the handler and uses the returned
+`TaskTriggerDefinition` directly.
+
+```csharp
+public sealed class OnMyEventHandler : ITaskTriggerAttributeHandler
+{
+    public TaskTriggerDefinition? Handle(TaskTriggerAttributeContext context)
+    {
+        var p = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var name = context.GetStringArg(0);
+        if (!string.IsNullOrEmpty(name))
+            p["my_module.event_name"] = name;
+        return new TaskTriggerDefinition
+        {
+            TriggerKey = "my_module.on_my_event",
+            Parameters = p,
+        };
+    }
+}
+```
+
+Expose handlers from your `ITaskParserModuleExtension`:
+
+```csharp
+public IReadOnlyDictionary<string, ITaskTriggerAttributeHandler> TriggerAttributeHandlers { get; } =
+    new Dictionary<string, ITaskTriggerAttributeHandler>(StringComparer.Ordinal)
+    {
+        ["OnMyEvent"] = new OnMyEventHandler(),
+    };
+```
+
+The parser also accepts the `OnMyEventAttribute` long form for the same
+handler. Returning `null` declines the attribute.
+
+> Two modules cannot claim the same attribute name. Conflicts are surfaced at
+> startup with both claimants and their assemblies.
+
+### Trigger sources (`ITaskTriggerSource`)
+
+Use this for the runtime side of a trigger: the OS hook, the timer loop, the
+webhook listener, the metric watcher. The host routes `TaskTriggerBindingDB`
+rows whose `Kind` matches one of your `TriggerKeys` to your source.
 
 ```csharp
 public sealed class MyTriggerSource : ITaskTriggerSource
 {
     public IReadOnlyList<string> TriggerKeys =>
-        ["my_module.on_hotkey", "my_module.on_process_started"];
+        ["my_module.on_my_event"];
 
-    public Task EnableTriggerAsync(TaskDefinition def, CancellationToken ct)
+    public Task StartAsync(IReadOnlyList<ITaskTriggerSourceContext> contexts, CancellationToken ct)
     {
-        // Start listening for the event defined in def.Triggers.
+        // Wire up listeners for each context. Must be idempotent.
         return Task.CompletedTask;
     }
 
-    public Task DisableTriggerAsync(Guid taskId, CancellationToken ct)
+    public Task StopAsync()
     {
-        // Stop listening.
+        // Release listeners.
         return Task.CompletedTask;
     }
 }
@@ -467,12 +599,18 @@ public sealed class MyTriggerSource : ITaskTriggerSource
 Register it in `ConfigureServices`:
 
 ```csharp
-services.AddSingleton<ITaskTriggerSourceProvider, MyTriggerSource>();
+services.AddSingleton<ITaskTriggerSource, MyTriggerSource>();
 ```
 
+Sources that need to persist their own bookkeeping (cron rows, on-disk
+shortcuts, etc.) can override `OwnsBindingPersistence`, `SyncBindingsAsync`,
+and `RemoveBindingsAsync` instead of relying on the default
+`TaskTriggerBindingDB` upsert. See `ITaskTriggerSource` xmldoc for details.
+
 Users will see your module listed in `GET /tasks/trigger-sources` and
-`task trigger-sources`. Tasks that declare a trigger kind you own will depend on
-your module being enabled — document this prominently in your module's own doc.
+`task trigger-sources`. Document the trigger keys you own in your module's own
+doc — when the module is disabled, tasks bound to those keys are flagged by
+`task preflight`.
 
 ---
 
@@ -512,8 +650,8 @@ your module being enabled — document this prominently in your module's own doc
   file system events without polling.
 - **Hardware sensor module** — export an `ISensorReader` contract; other modules or
   tasks can consume live temperature, battery, or GPU data.
-- **Calendar integration** — own a `OnCalendarEvent` trigger; fire tasks at meeting
-  start/end without a cron job.
+- **Calendar integration** — own an `OnCalendarEvent` trigger attribute and
+  source; fire tasks at meeting start/end without a cron job.
 - **Data pipeline module** — expose a `transform_data` tool that agents can call to
   reshape JSON payloads between steps.
 - **Local LLM router** — export an `ILocalModelProvider` contract; point the model
@@ -554,6 +692,8 @@ The `.seeded` marker already exists. Delete it from the module's data directory 
 restart to force a re-seed.
 
 **Trigger never fires**
-Confirm `EnableTriggerAsync` was called — add a log line. If it was called but
-events still don't fire, the OS-level hook (e.g. hotkey registration, process watcher)
-may have failed silently. Check platform prerequisites and permission levels.
+Confirm `StartAsync` was called on your `ITaskTriggerSource` — add a log line.
+If it was called but events still don't fire, the OS-level hook (e.g. hotkey
+registration, process watcher) may have failed silently. Check platform
+prerequisites and permission levels. Confirm the binding row's `Kind` matches
+one of your declared `TriggerKeys`.

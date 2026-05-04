@@ -5,23 +5,25 @@ Display Name: Transcription
 Tool Prefix: tr
 Version: 1.0.0
 Platforms: Windows only
-Exports: transcription_stt, transcription_audio_capture
-Requires: none
+Exports: transcription_stt
+Requires: sharpclaw_systemaudio (system_audio_capture)
 
 ────────────────────────────────────────
 ENABLING
 ────────────────────────────────────────
 .env key: Modules:sharpclaw_transcription
 Default: disabled
-Prerequisites: none
-Platform: Windows only (WASAPI audio capture)
+Prerequisites: sharpclaw_systemaudio (system_audio_capture)
+Platform: Windows only (depends on WASAPI capture from System Audio)
 
 To enable, add to your core .env (Infrastructure/Environment/.env) Modules section:
+  "sharpclaw_systemaudio": "true",
   "sharpclaw_transcription": "true"
 
 To disable, set to "false" or remove the key (missing = disabled).
 
-Exports: transcription_stt, transcription_audio_capture.
+Exports: transcription_stt. Audio capture and the InputAudio resource
+type live in the System Audio module.
 
 Runtime toggle (no restart required):
   module disable sharpclaw_transcription
@@ -85,6 +87,22 @@ StrictWindow:
 
 Pipeline constants: WindowSeconds=10, InferenceInterval=2,
   BufferCapacity=15, CommitDelay=2.0, MaxPromptChars=250, SampleRate=16000.
+
+────────────────────────────────────────
+TASK-SCRIPT STEPS
+────────────────────────────────────────
+Step methods (registered with TaskStepRegistry):
+  StartTranscription      — start a session against a target (single
+                            expression arg captured by the parser)
+  StopTranscription       — stop an in-progress session (single
+                            expression arg captured by the parser)
+  GetDefaultInputAudio    — resolve the default input audio device
+
+Event triggers:
+  OnTranscriptionSegment  — in-script handler, key "TranscriptionSegment"
+
+If this module is disabled, scripts using these methods or the
+OnTranscriptionSegment handler are flagged by `task preflight`.
 
 ────────────────────────────────────────
 STREAMING

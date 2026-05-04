@@ -80,6 +80,43 @@ ao_edit_channel_header (alias: edit_channel_header)
   Permission: per-resource (ChannelHeader)
 
 ────────────────────────────────────────
+TASK-SCRIPT STEPS
+────────────────────────────────────────
+Statement primitives (parser-emitted, owned by this module):
+  DeclareVariable, Assign, EventHandler, Conditional, Loop, Return,
+  Delay, Evaluate, Log, ParseResponse
+
+Step methods (registered with TaskStepRegistry):
+  Chat, ChatStream, ChatToThread        — agent chat
+  Emit, ParseResponse                   — output / parsing
+  FindModel, FindProvider, FindAgent    — entity lookup
+  CreateAgent, CreateThread             — entity creation
+  CreateRole, FindRole,
+    SetRolePermissions, AssignRole      — roles / permissions
+  CreateChannel, FindChannel,
+    AddAllowedAgent                     — channels
+
+If this module is disabled, scripts using these methods or primitives
+are rejected by `task preflight`.
+
+────────────────────────────────────────
+TRIGGERS
+────────────────────────────────────────
+Schedule           — cron scheduler (cron expression + timezone)
+OnStartup          — LifecycleTriggerSource (host startup)
+OnShutdown         — LifecycleTriggerSource (host shutdown)
+OnTaskCompleted    — TaskChainTriggerSource (source task completes)
+OnTaskFailed       — TaskChainTriggerSource (source task fails)
+OnTrigger(name)    — custom dispatch to arbitrary trigger key
+OnEvent(type, ...) — EventBusTriggerSource (internal event bus)
+OnFileChanged(...) — FileChangedTriggerSource (filesystem watch)
+OnTimer (handler)  — LifecycleTriggerSource in-script timer
+                     (key: sharpclaw.task_scripting.timer)
+
+If this module is disabled, these triggers are flagged by `task preflight`
+and removed from `task trigger-sources`.
+
+────────────────────────────────────────
 MODULE-OWNED CLI RESOURCES
 ────────────────────────────────────────
 AoTask resources live in AgentOrchestrationDbContext.ScheduledJobs. They are
