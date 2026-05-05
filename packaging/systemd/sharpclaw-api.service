@@ -1,0 +1,25 @@
+[Unit]
+Description=SharpClaw API
+Documentation=https://github.com/mkn8rn/SharpClaw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/lib/sharpclaw/api
+ExecStart=/usr/lib/sharpclaw/api/SharpClaw.Application.API
+Restart=on-failure
+RestartSec=5
+User=sharpclaw
+Group=sharpclaw
+EnvironmentFile=-/etc/sharpclaw/.env
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sharpclaw
+
+[Install]
+WantedBy=multi-user.target

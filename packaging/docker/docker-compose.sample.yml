@@ -1,0 +1,36 @@
+# Sample docker-compose for SharpClaw Server deployment.
+# Usage:
+#   .\publish.ps1 -Include Server -ServerRid linux-x64 -Package Container
+#   docker compose -f docker-compose.sample.yml up -d
+#
+# Both images are produced by `dotnet publish /t:PublishContainer`. Tag the
+# images for your registry before deploying.
+
+services:
+  sharpclaw-api:
+    image: sharpclaw-api:latest
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      - sharpclaw-data:/var/lib/sharpclaw
+    networks:
+      - sharpclaw
+
+  sharpclaw-gateway:
+    image: sharpclaw-gateway:latest
+    restart: unless-stopped
+    depends_on:
+      - sharpclaw-api
+    env_file:
+      - ./.env
+    ports:
+      - "8080:8080"
+    networks:
+      - sharpclaw
+
+networks:
+  sharpclaw:
+
+volumes:
+  sharpclaw-data:

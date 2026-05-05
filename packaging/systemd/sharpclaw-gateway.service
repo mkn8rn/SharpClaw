@@ -1,0 +1,24 @@
+[Unit]
+Description=SharpClaw Public Gateway
+Documentation=https://github.com/mkn8rn/SharpClaw
+After=network-online.target sharpclaw-api.service
+Wants=network-online.target
+Requires=sharpclaw-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/lib/sharpclaw/gateway
+ExecStart=/usr/lib/sharpclaw/gateway/SharpClaw.Gateway
+Restart=on-failure
+RestartSec=5
+User=sharpclaw
+Group=sharpclaw
+EnvironmentFile=-/etc/sharpclaw/.env
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -33,7 +33,7 @@ public class ChatController(InternalApiClient api) : ControllerBase
         }
     }
 
-    [HttpGet("history")]
+    [HttpGet]
     public async Task<IActionResult> History(Guid channelId, CancellationToken ct)
     {
         try

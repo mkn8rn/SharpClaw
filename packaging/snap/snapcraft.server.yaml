@@ -1,0 +1,36 @@
+# Snapcraft manifest for SharpClaw Server (headless)
+# Used by publish.ps1 -Package Snap when staging Server/Core builds.
+# __VERSION__ is replaced at build time.
+
+name: sharpclaw-server
+base: core24
+version: '__VERSION__'
+summary: SharpClaw Server -- API + Gateway (headless)
+description: |
+  Headless SharpClaw deployment containing the API and (optionally) the
+  public Gateway. Intended for server hosts behind a reverse proxy or
+  inside an orchestration platform.
+
+grade: devel
+confinement: strict
+
+apps:
+  api:
+    command: api/SharpClaw.Application.API
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+  gateway:
+    command: gateway/SharpClaw.Gateway
+    daemon: simple
+    install-mode: disable
+    plugs:
+      - network
+      - network-bind
+
+parts:
+  sharpclaw:
+    plugin: dump
+    source: publish/

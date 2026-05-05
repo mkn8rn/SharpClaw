@@ -15,6 +15,9 @@
       | MSIX        | Windows MSIX (sideload + store). Windows only.    |
       | Server      | Headless API + Gateway (no Uno frontend).         |
       |             | For deployment on a remote server / Docker host.   |
+      | Core        | Headless API only (no Gateway, no Uno).           |
+      |             | Smallest useful deployment; behind an existing    |
+      |             | reverse proxy or for container-only hosts.         |
       | WASM        | Static WebAssembly build of the Uno frontend.     |
       +-------------+---------------------------------------------------+
 
@@ -26,7 +29,7 @@
 
 .PARAMETER Include
     Comma-separated list of build types to include.
-    Values: Desktop, MSIX, Server, WASM, All (default: All).
+    Values: Desktop, MSIX, Server, Core, WASM, All (default: All).
 
 .PARAMETER Exclude
     Comma-separated list of build types to skip.
@@ -50,6 +53,10 @@
     RID(s) for Server builds.
     Default: all.  Shorthands: win, linux, osx, all.
 
+.PARAMETER CoreRid
+    RID(s) for Core builds.
+    Default: all.  Shorthands: win, linux, osx, all.
+
 .PARAMETER Configuration
     Build configuration. Default: Release.
 
@@ -58,6 +65,25 @@
 
 .PARAMETER SkipZip
     If set, skips creating zip archives for Desktop and Server builds.
+
+.PARAMETER Package
+    Comma-separated post-stage packaging targets to run after staging
+    Desktop, Server, or Core builds. Each target warns-and-skips when its
+    tooling or host OS is unavailable.
+    Values: Snap, Flatpak, Deb, Rpm, Pkg, Container, All, None.
+    Default: None.
+
+      Snap       -> Linux .snap (desktop variant for Desktop, server variant
+                    for Server/Core). Requires snapcraft.
+      Flatpak    -> Linux .flatpak (Desktop only). Requires flatpak-builder.
+      Deb / Rpm  -> Linux native packages for Server/Core. Requires fpm.
+      Pkg        -> macOS .pkg installer (Server/Core/Desktop). Requires
+                    pkgbuild (macOS host).
+      Container  -> SDK container publish for API + Gateway (Server only,
+                    linux-x64/linux-arm64). Requires Docker.
+
+.PARAMETER SkipPackaging
+    If set, all post-stage packaging is bypassed regardless of -Package.
 
 .PARAMETER Parallel
     If set, publishes multiple RIDs concurrently (Desktop + Server).
@@ -95,10 +121,16 @@ param(
     [string]$MsixVersion           = "",
     [string]$MsixRid               = "win-x64",
     [string]$ServerRid             = "all",
+    [string]$CoreRid               = "all",
     [string]$Configuration         = "Release",
     [string]$OutputDir             = (Join-Path $PSScriptRoot "publish"),
     [switch]$SkipZip,
     [switch]$Parallel,
+    # Comma-separated packaging targets to run after staging Desktop/Server/Core builds.
+    # Values: Snap, Flatpak, Deb, Rpm, Pkg, Container, All, None. Default: None.
+    # Each target warns-and-skips when its tooling or host OS isn't available.
+    [string]$Package               = "None",
+    [switch]$SkipPackaging,
     [string]$CertPassword          = $(if ($env:MSIX_CERT_PASSWORD) { $env:MSIX_CERT_PASSWORD } else { "SharpClaw123!" }),
     [string]$IdentityName          = "mkn8rn.SharpClaw",
     [string]$IdentityPublisher     = "CN=SharpClaw Dev",
@@ -155,7 +187,7 @@ $ridGroups = @{
 #  Resolve build types
 # ===================================================================
 
-$allTypes = @("Desktop", "MSIX", "Server", "WASM")
+$allTypes = @("Desktop", "MSIX", "Server", "Core", "WASM")
 
 function Resolve-Types {
     param([string]$Inc, [string]$Exc)
@@ -318,6 +350,8 @@ function Publish-Desktop {
 
     Write-Host "  [OK] Desktop/$TargetRid complete" -ForegroundColor Green
     Add-Result "Desktop" $TargetRid $true $stageDir $totalMB
+
+    Invoke-PostStagePackaging "Desktop" $stageDir $TargetRid
 }
 
 # ===================================================================
@@ -624,6 +658,69 @@ function Publish-Server {
 
     Write-Host "  [OK] Server/$TargetRid complete" -ForegroundColor Magenta
     Add-Result "Server" $TargetRid $true $stageDir $totalMB
+
+    Invoke-PostStagePackaging "Server" $stageDir $TargetRid
+}
+
+# ===================================================================
+#  Core: headless API only (no Gateway, no Uno frontend)
+# ===================================================================
+
+function Publish-Core {
+    param([string]$TargetRid)
+
+    $label    = "Core/$TargetRid"
+    $stageDir = Join-Path $OutputDir "SharpClaw-Core-$TargetRid"
+    $zipPath  = Join-Path $OutputDir "SharpClaw-Core-$TargetRid.zip"
+
+    Write-Host ""
+    Write-Host "-- Core: $TargetRid --------------------------------" -ForegroundColor Magenta
+
+    if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
+    if (Test-Path $zipPath)  { Remove-Item $zipPath -Force }
+
+    $apiDir = Join-Path $stageDir "api"
+
+    # Publish API only
+    Write-Host "  Publishing API ..." -ForegroundColor DarkGray
+    $apiArgs = @(
+        "publish", $apiProject,
+        "-c", $Configuration,
+        "-r", $TargetRid,
+        "--self-contained",
+        "-p:PublishReadyToRun=true",
+        "-p:PublishTrimmed=false",
+        "-o", $apiDir
+    )
+    & dotnet @apiArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [X] API publish failed (exit $LASTEXITCODE)" -ForegroundColor Red
+        Add-Result "Core" $TargetRid $false
+        return
+    }
+
+    # Verify
+    $apiExe = Join-Path $apiDir (Get-ExeName "SharpClaw.Application.API" $TargetRid)
+    if (-not (Test-Path $apiExe)) {
+        Write-Host "  [X] API executable not found at $apiExe" -ForegroundColor Red
+        Add-Result "Core" $TargetRid $false
+        return
+    }
+
+    Strip-ForeignNatives $stageDir $TargetRid
+
+    $totalMB = Get-DirSizeMB $stageDir
+    Write-Host "  API:      $apiExe" -ForegroundColor DarkGray
+    Write-Host "  Size:     $totalMB MB" -ForegroundColor DarkGray
+
+    if (-not $SkipZip) {
+        New-ZipArchive $stageDir $zipPath | Out-Null
+    }
+
+    Write-Host "  [OK] Core/$TargetRid complete" -ForegroundColor Magenta
+    Add-Result "Core" $TargetRid $true $stageDir $totalMB
+
+    Invoke-PostStagePackaging "Core" $stageDir $TargetRid
 }
 
 # ===================================================================
@@ -684,6 +781,362 @@ function Find-SdkTool {
         Sort-Object FullName -Descending |
         Select-Object -First 1 -ExpandProperty FullName
     return $tool
+}
+
+# ===================================================================
+#  Packaging helpers (Snap / Flatpak / Deb / Rpm / Pkg / Container)
+# ===================================================================
+
+$allPackageTargets = @("Snap", "Flatpak", "Deb", "Rpm", "Pkg", "Container")
+
+function Resolve-PackageTargets {
+    param([string]$Value)
+    if ($SkipPackaging) { return @() }
+    if (-not $Value -or $Value -eq "None") { return @() }
+    if ($Value -eq "All") { return $allPackageTargets }
+    $set = $Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    foreach ($t in $set) {
+        if ($t -notin $allPackageTargets) {
+            Write-Error "Unknown package target '$t'. Valid: $($allPackageTargets -join ', '), All, None"
+            exit 1
+        }
+    }
+    return @($set)
+}
+
+$packageTargets = Resolve-PackageTargets $Package
+
+function Get-ProjectVersion {
+    $propsPath = Join-Path $repoRoot "Directory.Build.props"
+    if (-not (Test-Path $propsPath)) { return "0.0.0" }
+    [xml]$xml = Get-Content $propsPath -Raw
+    $v = $xml.Project.PropertyGroup.Version
+    if ($v) { return $v } else { return "0.0.0" }
+}
+
+# Snap (Linux): warns-and-skips when snapcraft is missing.
+# $Profile selects the snap template variant: "desktop" (Uno + backend + gateway)
+# or "server" (headless API + optional gateway, daemon-style).
+function Package-Snap {
+    param([string]$StageDir, [string]$TargetRid, [string]$Profile = "desktop")
+
+    if ($TargetRid -notlike "linux-*") { return }
+    Write-Host ""
+    Write-Host "-- Snap ($Profile/$TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command snapcraft -ErrorAction SilentlyContinue)) {
+        Write-Warning "snapcraft not found - skipping Snap packaging."
+        Write-Warning "  Linux: sudo snap install snapcraft --classic"
+        return
+    }
+
+    $version    = Get-ProjectVersion
+    $snapArch   = if ($TargetRid -like "*arm64") { "arm64" } else { "amd64" }
+    $yamlSrc    = if ($Profile -eq "server") {
+        Join-Path $repoRoot "packaging\snap\snapcraft.server.yaml"
+    } else {
+        Join-Path $repoRoot "packaging\snap\snapcraft.yaml"
+    }
+    if (-not (Test-Path $yamlSrc)) {
+        Write-Warning "Snap template missing: $yamlSrc - skipping."
+        return
+    }
+
+    $workDir = Join-Path $OutputDir "_snap-$Profile-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    New-Item $workDir -ItemType Directory | Out-Null
+    New-Item (Join-Path $workDir "snap") -ItemType Directory | Out-Null
+
+    Copy-Item $StageDir -Destination (Join-Path $workDir "publish") -Recurse
+
+    $yaml = (Get-Content $yamlSrc -Raw) -replace '__VERSION__', $version
+    Set-Content (Join-Path $workDir "snap\snapcraft.yaml") $yaml -Encoding UTF8
+
+    if ($Profile -eq "desktop") {
+        New-Item (Join-Path $workDir "snap\gui") -ItemType Directory | Out-Null
+        Copy-Item (Join-Path $repoRoot "packaging\snap\gui\sharpclaw.desktop") (Join-Path $workDir "snap\gui\sharpclaw.desktop") -Force
+        Copy-Item (Join-Path $repoRoot "SharpClaw.Uno\Environment\icon.png")   (Join-Path $workDir "snap\gui\icon.png")          -Force
+    }
+
+    Push-Location $workDir
+    try {
+        & snapcraft pack --build-for $snapArch
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Snap packaging failed (exit $LASTEXITCODE)."; return }
+        $snap = Get-ChildItem $workDir -Filter "*.snap" | Select-Object -First 1
+        if ($snap) {
+            $dest = Join-Path $OutputDir $snap.Name
+            Move-Item $snap.FullName $dest -Force
+            $sz = [math]::Round((Get-Item $dest).Length / 1MB, 1)
+            Write-Host "  Snap: $dest ($sz MB)" -ForegroundColor Green
+        }
+    } finally {
+        Pop-Location
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Flatpak (Linux desktop only): warns-and-skips when flatpak-builder is missing.
+function Package-Flatpak {
+    param([string]$StageDir, [string]$TargetRid)
+
+    if ($TargetRid -notlike "linux-*") { return }
+    Write-Host ""
+    Write-Host "-- Flatpak ($TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command flatpak-builder -ErrorAction SilentlyContinue)) {
+        Write-Warning "flatpak-builder not found - skipping Flatpak packaging."
+        return
+    }
+
+    $version = Get-ProjectVersion
+    $fpArch  = if ($TargetRid -like "*arm64") { "aarch64" } else { "x86_64" }
+
+    $workDir = Join-Path $OutputDir "_flatpak-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    New-Item $workDir -ItemType Directory | Out-Null
+    Copy-Item $StageDir -Destination (Join-Path $workDir "publish") -Recurse
+
+    $meta = (Get-Content (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.metainfo.xml") -Raw)
+    $meta = $meta -replace '__VERSION__', $version
+    $meta = $meta -replace '__DATE__', (Get-Date -Format "yyyy-MM-dd")
+    Set-Content (Join-Path $workDir "com.mkn8rn.SharpClaw.metainfo.xml") $meta -Encoding UTF8
+
+    Copy-Item (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.yml")     (Join-Path $workDir "com.mkn8rn.SharpClaw.yml")     -Force
+    Copy-Item (Join-Path $repoRoot "packaging\flatpak\com.mkn8rn.SharpClaw.desktop") (Join-Path $workDir "com.mkn8rn.SharpClaw.desktop") -Force
+    Copy-Item (Join-Path $repoRoot "SharpClaw.Uno\Environment\icon.png")             (Join-Path $workDir "icon.png")                     -Force
+
+    $buildDir = Join-Path $workDir "build"
+    $repoDir  = Join-Path $workDir "repo"
+
+    Push-Location $workDir
+    try {
+        & flatpak-builder --force-clean "--repo=$repoDir" "--arch=$fpArch" $buildDir "com.mkn8rn.SharpClaw.yml"
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Flatpak build failed (exit $LASTEXITCODE)."; return }
+
+        $bundlePath = Join-Path $OutputDir "SharpClaw-$version-$TargetRid.flatpak"
+        & flatpak build-bundle $repoDir $bundlePath com.mkn8rn.SharpClaw "--arch=$fpArch"
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Flatpak bundle creation failed."; return }
+
+        $sz = [math]::Round((Get-Item $bundlePath).Length / 1MB, 1)
+        Write-Host "  Flatpak: $bundlePath ($sz MB)" -ForegroundColor Green
+    } finally {
+        Pop-Location
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# .deb / .rpm via fpm (Linux only). Stages the API (and gateway, when present)
+# under /usr/lib/sharpclaw and installs a systemd unit to /lib/systemd/system.
+function Package-LinuxNative {
+    param(
+        [string]$StageDir,
+        [string]$TargetRid,
+        [ValidateSet("deb", "rpm")]
+        [string]$Format,
+        [string]$ProfileName  # "Server" or "Core"
+    )
+
+    if ($TargetRid -notlike "linux-*") { return }
+    Write-Host ""
+    Write-Host "-- $($Format.ToUpper()) ($ProfileName/$TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command fpm -ErrorAction SilentlyContinue)) {
+        Write-Warning "fpm not found - skipping $Format packaging."
+        Write-Warning "  Install: gem install --no-document fpm"
+        return
+    }
+
+    $version = Get-ProjectVersion
+    $arch    = if ($TargetRid -like "*arm64") {
+        if ($Format -eq "deb") { "arm64" } else { "aarch64" }
+    } else {
+        if ($Format -eq "deb") { "amd64" } else { "x86_64" }
+    }
+
+    $workDir = Join-Path $OutputDir "_$Format-$ProfileName-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    $rootDir = Join-Path $workDir "rootfs"
+    $libDir  = Join-Path $rootDir "usr/lib/sharpclaw"
+    $sysdDir = Join-Path $rootDir "lib/systemd/system"
+    $etcDir  = Join-Path $rootDir "etc/sharpclaw"
+    New-Item $libDir  -ItemType Directory -Force | Out-Null
+    New-Item $sysdDir -ItemType Directory -Force | Out-Null
+    New-Item $etcDir  -ItemType Directory -Force | Out-Null
+
+    Copy-Item (Join-Path $StageDir "*") -Destination $libDir -Recurse -Force
+
+    $unitTemplate = Join-Path $repoRoot "packaging\systemd\sharpclaw-api.service"
+    $unitDest     = Join-Path $sysdDir "sharpclaw-api.service"
+    if (Test-Path $unitTemplate) {
+        Copy-Item $unitTemplate $unitDest -Force
+    }
+
+    if ($ProfileName -eq "Server") {
+        $gwUnit = Join-Path $repoRoot "packaging\systemd\sharpclaw-gateway.service"
+        if (Test-Path $gwUnit) {
+            Copy-Item $gwUnit (Join-Path $sysdDir "sharpclaw-gateway.service") -Force
+        }
+    }
+
+    $envSample = Join-Path $repoRoot "packaging\systemd\sharpclaw.env.sample"
+    if (Test-Path $envSample) {
+        Copy-Item $envSample (Join-Path $etcDir ".env.sample") -Force
+    }
+
+    $pkgName = "sharpclaw-$($ProfileName.ToLower())"
+    $outFile = Join-Path $OutputDir "$pkgName-$version-$arch.$Format"
+    if (Test-Path $outFile) { Remove-Item $outFile -Force }
+
+    Push-Location $workDir
+    try {
+        & fpm -s dir -t $Format -n $pkgName -v $version -a $arch `
+              --description "SharpClaw $ProfileName build" `
+              --url "https://github.com/mkn8rn/SharpClaw" `
+              --license "Proprietary" `
+              -p $outFile `
+              -C $rootDir .
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "$Format packaging failed (exit $LASTEXITCODE)."
+            return
+        }
+        $sz = [math]::Round((Get-Item $outFile).Length / 1MB, 1)
+        Write-Host "  $($Format.ToUpper()): $outFile ($sz MB)" -ForegroundColor Green
+    } finally {
+        Pop-Location
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# macOS .pkg via pkgbuild/productbuild (macOS host only).
+function Package-MacPkg {
+    param(
+        [string]$StageDir,
+        [string]$TargetRid,
+        [string]$ProfileName
+    )
+
+    if ($TargetRid -notlike "osx-*") { return }
+    Write-Host ""
+    Write-Host "-- PKG ($ProfileName/$TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command pkgbuild -ErrorAction SilentlyContinue)) {
+        Write-Warning "pkgbuild not found (macOS-only) - skipping .pkg packaging."
+        return
+    }
+
+    $version = Get-ProjectVersion
+    $workDir = Join-Path $OutputDir "_pkg-$ProfileName-$TargetRid"
+    if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+    $rootDir = Join-Path $workDir "rootfs"
+    $instDir = Join-Path $rootDir "usr/local/sharpclaw"
+    $launchd = Join-Path $rootDir "Library/LaunchDaemons"
+    New-Item $instDir -ItemType Directory -Force | Out-Null
+    New-Item $launchd -ItemType Directory -Force | Out-Null
+
+    Copy-Item (Join-Path $StageDir "*") -Destination $instDir -Recurse -Force
+
+    $plistTemplate = Join-Path $repoRoot "packaging\macos\com.mkn8rn.sharpclaw.api.plist"
+    if (Test-Path $plistTemplate) {
+        Copy-Item $plistTemplate (Join-Path $launchd "com.mkn8rn.sharpclaw.api.plist") -Force
+    }
+
+    $pkgName = "sharpclaw-$($ProfileName.ToLower())"
+    $outFile = Join-Path $OutputDir "$pkgName-$version-$TargetRid.pkg"
+
+    & pkgbuild --root $rootDir `
+               --identifier "com.mkn8rn.sharpclaw.$($ProfileName.ToLower())" `
+               --version $version `
+               --install-location "/" `
+               $outFile
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning ".pkg build failed (exit $LASTEXITCODE)."
+        Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+    $sz = [math]::Round((Get-Item $outFile).Length / 1MB, 1)
+    Write-Host "  PKG: $outFile ($sz MB)" -ForegroundColor Green
+    Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# SDK container publish for API and Gateway (linux-x64 / linux-arm64).
+# Driven by `dotnet publish /t:PublishContainer`. Warns-and-skips when Docker
+# isn't available locally.
+function Package-Container {
+    param([string]$TargetRid)
+
+    if ($TargetRid -notlike "linux-*") { return }
+    Write-Host ""
+    Write-Host "-- Container ($TargetRid) --" -ForegroundColor Cyan
+
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        Write-Warning "docker not found - skipping container publish."
+        return
+    }
+
+    $containerArch = if ($TargetRid -like "*arm64") { "linux-arm64" } else { "linux-x64" }
+    $version = Get-ProjectVersion
+
+    foreach ($spec in @(
+        @{ Project = $apiProject;     Repo = "sharpclaw-api" },
+        @{ Project = $gatewayProject; Repo = "sharpclaw-gateway" }
+    )) {
+        Write-Host "  Publishing container: $($spec.Repo) ..." -ForegroundColor DarkGray
+        $args = @(
+            "publish", $spec.Project,
+            "-c", $Configuration,
+            "-r", $containerArch,
+            "/t:PublishContainer",
+            "/p:ContainerRepository=$($spec.Repo)",
+            "/p:ContainerImageTag=$version"
+        )
+        & dotnet @args
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Container publish failed for $($spec.Repo) (exit $LASTEXITCODE)."
+        } else {
+            Write-Host "  [OK] $($spec.Repo):$version" -ForegroundColor Green
+        }
+    }
+}
+
+function Invoke-PostStagePackaging {
+    param(
+        [string]$ProfileName,   # Desktop | Server | Core
+        [string]$StageDir,
+        [string]$TargetRid
+    )
+
+    if ($packageTargets.Count -eq 0) { return }
+    if (-not (Test-Path $StageDir)) { return }
+
+    foreach ($t in $packageTargets) {
+        switch ($t) {
+            "Snap" {
+                $variant = if ($ProfileName -eq "Desktop") { "desktop" } else { "server" }
+                Package-Snap $StageDir $TargetRid $variant
+            }
+            "Flatpak" {
+                if ($ProfileName -eq "Desktop") { Package-Flatpak $StageDir $TargetRid }
+            }
+            "Deb" {
+                if ($ProfileName -in @("Server", "Core")) {
+                    Package-LinuxNative $StageDir $TargetRid "deb" $ProfileName
+                }
+            }
+            "Rpm" {
+                if ($ProfileName -in @("Server", "Core")) {
+                    Package-LinuxNative $StageDir $TargetRid "rpm" $ProfileName
+                }
+            }
+            "Pkg" {
+                if ($ProfileName -in @("Server", "Core", "Desktop")) {
+                    Package-MacPkg $StageDir $TargetRid $ProfileName
+                }
+            }
+            "Container" {
+                if ($ProfileName -eq "Server") { Package-Container $TargetRid }
+            }
+        }
+    }
 }
 
 # ===================================================================
@@ -763,6 +1216,33 @@ if ("Server" -in $buildTypes) {
     } else {
         foreach ($sRid in $serverRids) {
             Publish-Server $sRid
+        }
+    }
+}
+
+# -- Core --------------------------------------------------------
+if ("Core" -in $buildTypes) {
+    $coreRids = Resolve-Rids $CoreRid $supportedServerRids
+
+    if ($Parallel -and $coreRids.Count -gt 1) {
+        Write-Host ""
+        Write-Host "Launching $($coreRids.Count) Core builds in parallel ..." -ForegroundColor Cyan
+
+        $jobs = @()
+        foreach ($cRid in $coreRids) {
+            $jobs += Start-Job -ScriptBlock {
+                param($Script, $TargetRid, $Config, $Out, $NoZip)
+                & $Script -Include Core -CoreRid $TargetRid -Configuration $Config -OutputDir $Out $(if ($NoZip) { "-SkipZip" })
+            } -ArgumentList (Join-Path $repoRoot "publish.ps1"), $cRid, $Configuration, $OutputDir, $SkipZip.IsPresent
+        }
+
+        $jobs | Wait-Job | ForEach-Object {
+            Receive-Job $_
+            Remove-Job $_
+        }
+    } else {
+        foreach ($cRid in $coreRids) {
+            Publish-Core $cRid
         }
     }
 }

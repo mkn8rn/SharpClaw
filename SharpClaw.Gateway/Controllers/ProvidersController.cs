@@ -10,6 +10,25 @@ namespace SharpClaw.Gateway.Controllers;
 [EnableRateLimiting(Security.RateLimiterConfiguration.GlobalPolicy)]
 public class ProvidersController(InternalApiClient api) : ControllerBase
 {
+    [HttpPost]
+    public async Task<IActionResult> Create(CreateProviderRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PostAsync<CreateProviderRequest, ProviderResponse>(
+                "/providers", request, ct);
+            return Ok(result);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            return BadRequest(new { error = "Invalid provider request." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
@@ -31,6 +50,119 @@ public class ProvidersController(InternalApiClient api) : ControllerBase
         {
             var result = await api.GetAsync<ProviderResponse>($"/providers/{id}", ct);
             return result is not null ? Ok(result) : NotFound();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "Provider not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPut("{id:guid}")]
+    public async Task<IActionResult> Update(Guid id, UpdateProviderRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PutAsync<UpdateProviderRequest, ProviderResponse>(
+                $"/providers/{id}", request, ct);
+            return result is not null ? Ok(result) : NotFound();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "Provider not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var success = await api.DeleteAsync($"/providers/{id}", ct);
+            return success ? NoContent() : NotFound();
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("{id:guid}/sync-models")]
+    public async Task<IActionResult> SyncModels(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PostAsync<object, IReadOnlyList<ProviderResponse>>(
+                $"/providers/{id}/sync-models", new { }, ct);
+            return Ok(result);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "Provider not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("{id:guid}/set-key")]
+    public async Task<IActionResult> SetApiKey(Guid id, SetApiKeyRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await api.PostAsync($"/providers/{id}/set-key", request, ct);
+            return NoContent();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "Provider not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("{id:guid}/auth/device-code")]
+    public async Task<IActionResult> StartDeviceCodeFlow(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PostAsync<object, DeviceCodeResponse>(
+                $"/providers/{id}/auth/device-code", new { }, ct);
+            return Ok(result);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "Provider not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("{id:guid}/auth/device-code/poll")]
+    public async Task<IActionResult> PollDeviceCodeFlow(
+        Guid id, DeviceCodePollRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PostAsync<DeviceCodePollRequest, object>(
+                $"/providers/{id}/auth/device-code/poll", request, ct);
+            return Ok(result);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+        {
+            return StatusCode(StatusCodes.Status408RequestTimeout, new { status = "expired" });
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {

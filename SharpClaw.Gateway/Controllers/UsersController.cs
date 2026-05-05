@@ -27,4 +27,32 @@ public class UsersController(InternalApiClient api) : ControllerBase
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
         }
     }
+
+    [HttpPut("{id:guid}/role")]
+    public async Task<IActionResult> AssignRole(
+        Guid id, SetUserRoleRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.PutAsync<SetUserRoleRequest, UserEntry>(
+                $"/users/{id}/role", request, ct);
+            return result is not null ? Ok(result) : NotFound();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return NotFound(new { error = "User not found." });
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Admin access required." });
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            return BadRequest(new { error = "Invalid role assignment." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
 }

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Auth;
-using SharpClaw.Contracts.DTOs.Roles;
 using SharpClaw.Gateway.Infrastructure;
 
 namespace SharpClaw.Gateway.Controllers;
@@ -79,21 +79,69 @@ public class AuthController(InternalApiClient api) : ControllerBase
         }
     }
 
-    [HttpGet("me/role")]
-    public async Task<IActionResult> MeRole(CancellationToken ct)
+    [HttpPut("me/role")]
+    public async Task<IActionResult> AssignSelfRole(AssignAgentRoleRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await api.GetAsync<RolePermissionsResponse>("/auth/me/role", ct);
-            return result is not null ? Ok(result) : NotFound(new { error = "No role assigned." });
+            var result = await api.PutAsync<AssignAgentRoleRequest, MeResponse>("/auth/me/role", request, ct);
+            return result is not null ? Ok(result) : NotFound();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
             return Unauthorized(new { error = "Not authenticated." });
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden." });
+        }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return NotFound(new { error = "No role assigned." });
+            return NotFound(new { error = "Role not found." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("invalidate-access-tokens")]
+    public async Task<IActionResult> InvalidateAccessTokens(InvalidateRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await api.PostAsync<InvalidateRequest>("/auth/invalidate-access-tokens", request, ct);
+            return NoContent();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            return Unauthorized(new { error = "Not authenticated." });
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden." });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
+    [HttpPost("invalidate-refresh-tokens")]
+    public async Task<IActionResult> InvalidateRefreshTokens(InvalidateRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await api.PostAsync<InvalidateRequest>("/auth/invalidate-refresh-tokens", request, ct);
+            return NoContent();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            return Unauthorized(new { error = "Not authenticated." });
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Forbidden." });
         }
         catch (HttpRequestException)
         {

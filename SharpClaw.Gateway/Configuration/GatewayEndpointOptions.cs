@@ -34,6 +34,39 @@ public sealed class GatewayEndpointOptions
     public bool Cost { get; set; }
 
     /// <summary>
+    /// Scheduler REST surface (<c>/api/tasks</c>). Default off. Pairs with
+    /// <see cref="TaskStreaming"/> for the SSE side.
+    /// </summary>
+    public bool Tasks { get; set; }
+
+    /// <summary>
+    /// Scheduler SSE surface (<c>/api/tasks/.../stream</c>). Default off.
+    /// </summary>
+    public bool TaskStreaming { get; set; }
+
+    /// <summary>
+    /// Tool awareness set CRUD (<c>/api/toolawarenesssets</c>). Default off.
+    /// </summary>
+    public bool ToolAwarenessSets { get; set; }
+
+    /// <summary>
+    /// Resource lookup (<c>/api/resources/lookup/...</c>). Default off.
+    /// </summary>
+    public bool Resources { get; set; }
+
+    /// <summary>
+    /// Thread watch SSE surface
+    /// (<c>/api/channels/{id}/chat/threads/{threadId}/watch</c>). Default off.
+    /// </summary>
+    public bool ThreadWatch { get; set; }
+
+    /// <summary>
+    /// Local model management (<c>/api/models/local/...</c>). Default off.
+    /// Distinct from <see cref="Models"/>, which gates remote model CRUD.
+    /// </summary>
+    public bool LocalModels { get; set; }
+
+    /// <summary>
     /// Per-module endpoint-group toggles, keyed by <c>{moduleId}/{groupId}</c>
     /// (case-insensitive). A missing entry is treated as disabled, matching
     /// the secure-by-default posture of the static toggles above.
@@ -77,6 +110,12 @@ public sealed class GatewayEndpointOptions
             nameof(Roles) => Roles,
             nameof(Users) => Users,
             nameof(Cost) => Cost,
+            nameof(Tasks) => Tasks,
+            nameof(TaskStreaming) => TaskStreaming,
+            nameof(ToolAwarenessSets) => ToolAwarenessSets,
+            nameof(Resources) => Resources,
+            nameof(ThreadWatch) => ThreadWatch,
+            nameof(LocalModels) => LocalModels,
             _ => true
         };
     }

@@ -88,6 +88,10 @@ public sealed class EndpointGateMiddleware(
         if (lower.Contains("/chat/cost") || lower.Contains("/cost"))
             return nameof(GatewayEndpointOptions.Cost);
 
+        // Thread watch SSE — must precede ThreadChat / Threads checks
+        if (lower.Contains("/threads/") && lower.Contains("/watch"))
+            return nameof(GatewayEndpointOptions.ThreadWatch);
+
         // Thread chat
         if (lower.Contains("/threads/") && lower.Contains("/chat"))
             return nameof(GatewayEndpointOptions.ThreadChat);
@@ -113,6 +117,10 @@ public sealed class EndpointGateMiddleware(
         if (lower.StartsWith("/api/channelcontexts") || lower.StartsWith("/api/channel-contexts"))
             return nameof(GatewayEndpointOptions.ChannelContexts);
 
+        // Local models (/api/models/local/...) — must precede generic /api/models
+        if (lower.StartsWith("/api/models/local"))
+            return nameof(GatewayEndpointOptions.LocalModels);
+
         if (lower.StartsWith("/api/models"))
             return nameof(GatewayEndpointOptions.Models);
 
@@ -124,6 +132,19 @@ public sealed class EndpointGateMiddleware(
 
         if (lower.StartsWith("/api/users"))
             return nameof(GatewayEndpointOptions.Users);
+
+        // Task SSE (/api/tasks/.../stream) — must precede generic /api/tasks
+        if (lower.StartsWith("/api/tasks") && lower.Contains("/stream"))
+            return nameof(GatewayEndpointOptions.TaskStreaming);
+
+        if (lower.StartsWith("/api/tasks"))
+            return nameof(GatewayEndpointOptions.Tasks);
+
+        if (lower.StartsWith("/api/toolawarenesssets") || lower.StartsWith("/api/tool-awareness-sets"))
+            return nameof(GatewayEndpointOptions.ToolAwarenessSets);
+
+        if (lower.StartsWith("/api/resources"))
+            return nameof(GatewayEndpointOptions.Resources);
 
         return null;
     }
