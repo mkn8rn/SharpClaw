@@ -422,8 +422,9 @@ try
     builder.Services.AddHostedService<SeedingService>();
 
     // Per-instance API key file consumed by ApiKeyMiddleware (PHASE 20).
-    var apiKeyProvider = new ApiKeyProvider(backendInstancePaths);
-    builder.Services.AddSingleton(apiKeyProvider);
+    // Register lazily so one-shot CLI commands do not rotate a live API
+    // server's auth files before exiting.
+    builder.Services.AddSingleton<ApiKeyProvider>();
 
     // Short-ID resolver shared by core CLI verbs and module CLI handlers.
     builder.Services.AddSingleton<ICliIdResolver, CliIdResolver>();
@@ -685,6 +686,8 @@ try
         Log.Error(ex, "CLI command failed");
         return;
     }
+
+    var apiKeyProvider = app.Services.GetRequiredService<ApiKeyProvider>();
 
     // ──────── PHASE 20 ─── HTTP pipeline (middleware order is load-bearing)
     //

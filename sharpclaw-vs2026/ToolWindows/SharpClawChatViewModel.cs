@@ -1957,7 +1957,12 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
                 .Append("\" />");
         }
 
-        AppendMarkdownBodyXaml(xaml, turn.Body, foreground, textAlign);
+        // Keep message bodies plain. Remote UI XamlFragment is reliable for
+        // small, controlled WPF object payloads, but generated markdown trees
+        // from chat text have produced InvalidRemoteObjectReference in the VS
+        // host. A uniform single-TextBlock body preserves all text and keeps
+        // the IDE stable.
+        AppendPlainBodyXaml(xaml, turn.Body, foreground, textAlign);
         xaml.Append("</StackPanel></Border></Grid>");
     }
 
@@ -1987,211 +1992,20 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
         return align == "Right" ? "1" : "0";
     }
 
-    private static void AppendMarkdownBodyXaml(StringBuilder xaml, string? body, string foreground, string textAlign)
+    private static void AppendPlainBodyXaml(StringBuilder xaml, string? body, string foreground, string textAlign)
     {
-        var text = NormalizeMarkdownText(body);
+        var text = NormalizeTranscriptText(body);
         if (string.IsNullOrEmpty(text))
         {
             xaml.Append("<TextBlock />");
             return;
         }
 
-        var paragraph = new System.Collections.Generic.List<string>();
-        var code = new StringBuilder();
-        var inCodeFence = false;
-        var lines = text.Split('\n');
-
-        void FlushParagraph()
-        {
-            if (paragraph.Count == 0)
-                return;
-
-            AppendMarkdownParagraphXaml(xaml, paragraph, foreground, textAlign);
-            paragraph.Clear();
-        }
-
-        void FlushCodeBlock()
-        {
-            AppendCodeBlockXaml(xaml, code.ToString(), foreground);
-            code.Clear();
-        }
-
-        foreach (var line in lines)
-        {
-            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
-            {
-                if (inCodeFence)
-                {
-                    FlushCodeBlock();
-                    inCodeFence = false;
-                }
-                else
-                {
-                    FlushParagraph();
-                    inCodeFence = true;
-                }
-
-                continue;
-            }
-
-            if (inCodeFence)
-            {
-                code.AppendLine(line);
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                FlushParagraph();
-                continue;
-            }
-
-            paragraph.Add(line);
-        }
-
-        if (inCodeFence)
-            FlushCodeBlock();
-        FlushParagraph();
-    }
-
-    private static void AppendMarkdownParagraphXaml(
-        StringBuilder xaml,
-        System.Collections.Generic.IReadOnlyList<string> lines,
-        string foreground,
-        string textAlign)
-    {
-        var heading = TryParseHeading(lines);
-        var fontSize = heading.Level switch
-        {
-            1 => "15",
-            2 => "13",
-            3 => "12",
-            _ => string.Empty,
-        };
-
-        xaml.Append("<TextBlock TextWrapping=\"Wrap\" FontFamily=\"Consolas\" Margin=\"0,")
-            .Append(heading.IsHeading ? "6,0,3" : "2,0,2")
-            .Append("\" TextAlignment=\"")
+        xaml.Append("<TextBlock TextWrapping=\"Wrap\" FontFamily=\"Consolas\" Margin=\"0,2,0,2\" TextAlignment=\"")
             .Append(textAlign)
             .Append("\" Foreground=\"")
             .Append(foreground)
-            .Append("\"");
-
-        if (heading.IsHeading)
-        {
-            xaml.Append(" FontWeight=\"SemiBold\" FontSize=\"")
-                .Append(fontSize)
-                .Append("\"");
-        }
-
-        xaml.Append(">");
-
-        for (var i = 0; i < lines.Count; i++)
-        {
-            if (i > 0)
-                xaml.Append("<LineBreak />");
-
-            var line = heading.IsHeading ? heading.Text : lines[i];
-            AppendInlineMarkdownXaml(xaml, line);
-        }
-
-        xaml.Append("</TextBlock>");
-    }
-
-    private static (bool IsHeading, int Level, string Text) TryParseHeading(System.Collections.Generic.IReadOnlyList<string> lines)
-    {
-        if (lines.Count != 1)
-            return (false, 0, string.Empty);
-
-        var trimmed = lines[0].TrimStart();
-        var level = 0;
-        while (level < trimmed.Length && level < 3 && trimmed[level] == '#')
-            level++;
-
-        if (level == 0 || level >= trimmed.Length || trimmed[level] != ' ')
-            return (false, 0, string.Empty);
-
-        return (true, level, trimmed[(level + 1)..]);
-    }
-
-    private static void AppendCodeBlockXaml(StringBuilder xaml, string code, string foreground)
-    {
-        xaml.Append("<Border Margin=\"0,6,0,6\" Padding=\"8\" CornerRadius=\"0\" ")
-            .Append("Background=\"#26000000\" BorderBrush=\"#50808080\" BorderThickness=\"1\">")
-            .Append("<TextBlock TextWrapping=\"Wrap\" FontFamily=\"Consolas\" Foreground=\"")
-            .Append(foreground)
             .Append("\" Text=\"")
-            .Append(XmlEscape(code.TrimEnd('\r', '\n')))
-            .Append("\" /></Border>");
-    }
-
-    private static void AppendInlineMarkdownXaml(StringBuilder xaml, string text)
-    {
-        var i = 0;
-        while (i < text.Length)
-        {
-            if (text[i] == '`')
-            {
-                var end = text.IndexOf('`', i + 1);
-                if (end > i + 1)
-                {
-                    AppendInlineRunXaml(xaml, text[(i + 1)..end], " FontFamily=\"Consolas\" FontWeight=\"SemiBold\"");
-                    i = end + 1;
-                    continue;
-                }
-            }
-
-            if (i + 1 < text.Length && text[i] == '*' && text[i + 1] == '*')
-            {
-                var end = text.IndexOf("**", i + 2, StringComparison.Ordinal);
-                if (end > i + 2)
-                {
-                    xaml.Append("<Bold>");
-                    AppendInlineRunXaml(xaml, text[(i + 2)..end], string.Empty);
-                    xaml.Append("</Bold>");
-                    i = end + 2;
-                    continue;
-                }
-            }
-
-            if (text[i] == '*')
-            {
-                var end = text.IndexOf('*', i + 1);
-                if (end > i + 1)
-                {
-                    xaml.Append("<Italic>");
-                    AppendInlineRunXaml(xaml, text[(i + 1)..end], string.Empty);
-                    xaml.Append("</Italic>");
-                    i = end + 1;
-                    continue;
-                }
-            }
-
-            var next = FindNextMarkdownMarker(text, i + 1);
-            AppendInlineRunXaml(xaml, text[i..next], string.Empty);
-            i = next;
-        }
-    }
-
-    private static int FindNextMarkdownMarker(string text, int start)
-    {
-        for (var i = start; i < text.Length; i++)
-        {
-            if (text[i] is '`' or '*')
-                return i;
-        }
-
-        return text.Length;
-    }
-
-    private static void AppendInlineRunXaml(StringBuilder xaml, string text, string attributes)
-    {
-        if (string.IsNullOrEmpty(text))
-            return;
-
-        xaml.Append("<Run")
-            .Append(attributes)
-            .Append(" Text=\"")
             .Append(XmlEscape(text))
             .Append("\" />");
     }
@@ -2215,7 +2029,7 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
     private static string XmlEscape(string? text)
     {
-        var escaped = SecurityElement.Escape(text ?? string.Empty) ?? string.Empty;
+        var escaped = SecurityElement.Escape(SanitizeForXmlText(text ?? string.Empty)) ?? string.Empty;
         return escaped
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace("\r", "\n", StringComparison.Ordinal)
@@ -2223,7 +2037,46 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
             .Replace("\t", "&#x09;", StringComparison.Ordinal);
     }
 
-    private static string NormalizeMarkdownText(string? text)
+    private static string SanitizeForXmlText(string text)
+    {
+        StringBuilder? builder = null;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var ch = text[i];
+            if (IsLegalXmlTextChar(ch))
+            {
+                builder?.Append(ch);
+                continue;
+            }
+
+            if (char.IsHighSurrogate(ch)
+                && i + 1 < text.Length
+                && char.IsLowSurrogate(text[i + 1]))
+            {
+                if (builder is not null)
+                {
+                    builder.Append(ch);
+                    builder.Append(text[i + 1]);
+                }
+                i++;
+                continue;
+            }
+
+            builder ??= new StringBuilder(text.Length).Append(text, 0, i);
+            builder.Append(' ');
+        }
+
+        return builder?.ToString() ?? text;
+    }
+
+    private static bool IsLegalXmlTextChar(char ch)
+        => ch == '\t'
+            || ch == '\n'
+            || ch == '\r'
+            || (ch >= ' ' && ch <= '\uD7FF')
+            || (ch >= '\uE000' && ch <= '\uFFFD');
+
+    private static string NormalizeTranscriptText(string? text)
         => (text ?? string.Empty)
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace("\r", "\n", StringComparison.Ordinal);

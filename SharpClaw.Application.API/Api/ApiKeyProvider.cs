@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 
 using SharpClaw.Utils.Instances;
 
@@ -51,6 +52,27 @@ public sealed class ApiKeyProvider
 
     public void Cleanup()
     {
-        _instancePaths.DeleteRuntimeFiles();
+        DeleteFileIfOwned(KeyFilePath, ApiKey);
+        DeleteFileIfOwned(GatewayTokenFilePath, GatewayToken);
+    }
+
+    private static void DeleteFileIfOwned(string path, string expectedContent)
+    {
+        try
+        {
+            if (!File.Exists(path))
+                return;
+
+            var current = File.ReadAllText(path).Trim();
+            var currentBytes = Encoding.UTF8.GetBytes(current);
+            var expectedBytes = Encoding.UTF8.GetBytes(expectedContent);
+            if (!CryptographicOperations.FixedTimeEquals(currentBytes, expectedBytes))
+                return;
+
+            File.Delete(path);
+        }
+        catch
+        {
+        }
     }
 }
