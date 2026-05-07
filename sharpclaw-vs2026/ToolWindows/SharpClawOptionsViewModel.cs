@@ -276,9 +276,10 @@ internal sealed class SharpClawOptionsViewModel : NotifyPropertyChangedObject
     private static string FormatEntry(SharpClawDiscoveryEntry entry)
     {
         var alive = entry.IsAlive ? "alive" : "not running";
+        var usable = entry.HasApiKeyOnDisk ? "usable" : "unusable";
         var api = entry.HasApiKeyOnDisk ? "API key present" : "API key missing";
         var gateway = entry.HasGatewayTokenOnDisk ? "gateway present" : "gateway absent";
-        return $"{entry.BaseUrl ?? "<no base url>"}  |  instance {SharpClawConnectionOptionsStore.Short(entry.InstanceId)}  |  pid {entry.ProcessId?.ToString() ?? "?"}  |  {alive}, {api}, {gateway}";
+        return $"{entry.BaseUrl ?? "<no base url>"}  |  {usable}  |  instance {SharpClawConnectionOptionsStore.Short(entry.InstanceId)}  |  pid {entry.ProcessId?.ToString() ?? "?"}  |  {alive}, {api}, {gateway}";
     }
 
     private static string? ToNull(string? value)

@@ -13,6 +13,33 @@
                 <Setter Property="CaretBrush" Value="{DynamicResource {x:Static styles:VsBrushes.ToolWindowTextKey}}" />
             </Style>
 
+            <Style x:Key="SharpClawComboBoxItemStyle" TargetType="ComboBoxItem">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static styles:VsBrushes.ToolWindowTextKey}}" />
+                <Setter Property="Padding" Value="6,3" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBoxItem">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="Bd" Property="Background"
+                                            Value="{DynamicResource {x:Static styles:VsBrushes.CommandBarMouseOverBackgroundBeginKey}}" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bd" Property="Background"
+                                            Value="{DynamicResource {x:Static styles:VsBrushes.CommandBarSelectedKey}}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style TargetType="ComboBox">
                 <Setter Property="Background" Value="{DynamicResource {x:Static styles:VsBrushes.ComboBoxBackgroundKey}}" />
                 <Setter Property="Foreground" Value="{DynamicResource {x:Static styles:VsBrushes.ToolWindowTextKey}}" />
@@ -20,6 +47,69 @@
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="Padding" Value="6,3" />
                 <Setter Property="MinHeight" Value="26" />
+                <Setter Property="ItemContainerStyle" Value="{StaticResource SharpClawComboBoxItemStyle}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="22" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.ColumnSpan="2"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}" />
+
+                                <ContentPresenter Grid.Column="0"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                                  IsHitTestVisible="False"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center" />
+
+                                <ToggleButton Grid.Column="1"
+                                              Focusable="False"
+                                              ClickMode="Press"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border Background="{TemplateBinding Background}">
+                                                <Path HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      Data="M 0 0 L 4 4 L 8 0 Z"
+                                                      Fill="{DynamicResource {x:Static styles:VsBrushes.ToolWindowTextKey}}" />
+                                            </Border>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+
+                                <Popup x:Name="PART_Popup"
+                                       Placement="Bottom"
+                                       IsOpen="{TemplateBinding IsDropDownOpen}"
+                                       AllowsTransparency="True"
+                                       Focusable="False"
+                                       PopupAnimation="Slide">
+                                    <Border MinWidth="{TemplateBinding ActualWidth}"
+                                            MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                            Background="{DynamicResource {x:Static styles:VsBrushes.ComboBoxPopupBackgroundBeginKey}}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="1">
+                                        <ScrollViewer>
+                                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
 
             <Style TargetType="Button">
