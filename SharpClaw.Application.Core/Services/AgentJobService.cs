@@ -9,6 +9,7 @@ using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Entities.Core.Context;
@@ -37,10 +38,12 @@ public sealed class AgentJobService(
     ModuleMetricsCollector metricsCollector,
     ModuleEventDispatcher eventDispatcher,
     IServiceScopeFactory serviceScopeFactory,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    ILogger<AgentJobService> logger)
 {
     private readonly ModuleEventDispatcher _eventDispatcher = eventDispatcher;
     private readonly IConfiguration _configuration = configuration;
+    private readonly ILogger<AgentJobService> _logger = logger;
 
     // ═══════════════════════════════════════════════════════════════
     // Public API
@@ -51,9 +54,9 @@ public sealed class AgentJobService(
     /// is inferred from the channel unless explicitly overridden in the
     /// request.  Permission is evaluated immediately:
     /// <list type="bullet">
-    ///   <item>Approved → executes inline, returns <see cref="AgentJobStatus.Completed/>
+    ///   <item>Approved → executes inline, returns <see cref="AgentJobStatus.Completed"/>
     ///         or <see cref="AgentJobStatus.Failed"/> (or <see cref="AgentJobStatus.Executing"/>
-    ///         for long-running jobs like transcription).</item>
+    ///         for long-running work declared by the module).</item>
     ///   <item>PendingApproval → returns <see cref="AgentJobStatus.AwaitingApproval"/>.</item>
     ///   <item>Denied → returns <see cref="AgentJobStatus.Denied"/>.</item>
     /// </list>
@@ -459,11 +462,25 @@ public sealed class AgentJobService(
 
         try
         {
-            var resultData = await DispatchExecutionAsync(job, ct);
-            job.Status = AgentJobStatus.Completed;
-            job.CompletedAt = DateTimeOffset.UtcNow;
-            job.ResultData = resultData;
-            AddLog(job, "Job completed successfully.");
+            var execution = await DispatchExecutionAsync(job, ct);
+            job.ResultData = execution.ResultData;
+
+            if (execution.CompletionBehavior == ModuleJobCompletionBehavior.RemainExecuting)
+            {
+                job.Status = AgentJobStatus.Executing;
+                job.CompletedAt = null;
+                AddLog(job,
+                    "Module reported long-running work started; job remains Executing until the module or host lifecycle transitions it.");
+                _logger.LogInformation(
+                    "Long-running module job {JobId} for action {ActionKey} started and remains Executing.",
+                    job.Id, job.ActionKey);
+            }
+            else
+            {
+                job.Status = AgentJobStatus.Completed;
+                job.CompletedAt = DateTimeOffset.UtcNow;
+                AddLog(job, "Job completed successfully.");
+            }
         }
         catch (Exception ex)
         {
@@ -471,17 +488,20 @@ public sealed class AgentJobService(
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ErrorLog = ex.ToString();
             AddLog(job, $"Job failed: {ex.Message}", JobLogLevels.Error);
+            _logger.LogError(ex,
+                "Agent job {JobId} for action {ActionKey} failed during execution.",
+                job.Id, job.ActionKey);
         }
 
         await db.SaveChangesAsync(ct);
     }
 
-    private async Task<string?> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
+    private async Task<AgentJobExecutionOutcome> DispatchExecutionAsync(AgentJobDB job, CancellationToken ct)
     {
         // Try ActionKey-based dispatch first (synthesizes envelope from raw params).
         // Falls back to full envelope deserialization.
-        return await TryDispatchByActionKeyAsync(job, ct)
-               ?? await DispatchModuleExecutionAsync(job, ct);
+        var actionKeyResult = await TryDispatchByActionKeyAsync(job, ct);
+        return actionKeyResult ?? await DispatchModuleExecutionAsync(job, ct);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -495,7 +515,7 @@ public sealed class AgentJobService(
     /// <see cref="ISharpClawModule.ExecuteToolAsync"/> inside a restricted
     /// <see cref="ModuleServiceScope"/> with a per-manifest timeout.
     /// </summary>
-    private async Task<string?> DispatchModuleExecutionAsync(
+    private async Task<AgentJobExecutionOutcome> DispatchModuleExecutionAsync(
         AgentJobDB job, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(job.ScriptJson))
@@ -544,11 +564,18 @@ public sealed class AgentJobService(
             if (execCtx is not null) execCtx.ModuleId = module.Id;
 
             var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
+            var completionBehavior = module.GetJobCompletionBehavior(
+                envelope.Tool, envelope.Params, jobContext);
 
             // Timeout: per-tool override → manifest default → 30s.
             var manifest = moduleRegistry.GetManifest(envelope.Module);
             var toolTimeout = moduleRegistry.GetToolTimeout(envelope.Module, envelope.Tool);
             var timeoutSeconds = toolTimeout ?? manifest?.ExecutionTimeoutSeconds ?? 30;
+            AddLog(job,
+                $"Module dispatch resolved: {job.ActionKey ?? envelope.Tool} -> {envelope.Module}.{envelope.Tool} (timeout {timeoutSeconds}s).");
+            _logger.LogInformation(
+                "Dispatching agent job {JobId}: action {ActionKey} -> module {ModuleId}.{ToolName} with timeout {TimeoutSeconds}s.",
+                job.Id, job.ActionKey, envelope.Module, envelope.Tool, timeoutSeconds);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
@@ -574,12 +601,15 @@ public sealed class AgentJobService(
 
                 sw.Stop();
                 metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
-                return result;
+                return new AgentJobExecutionOutcome(result, completionBehavior);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
                 sw.Stop();
                 metricsCollector.RecordTimeout(prefixedToolName);
+                _logger.LogWarning(
+                    "Module tool {ModuleId}.{ToolName} timed out after {TimeoutSeconds}s for job {JobId}.",
+                    envelope.Module, envelope.Tool, timeoutSeconds, job.Id);
                 throw new InvalidOperationException(
                     $"Module tool '{envelope.Module}.{envelope.Tool}' " +
                     $"exceeded timeout ({timeoutSeconds}s).");
@@ -588,6 +618,9 @@ public sealed class AgentJobService(
             {
                 sw.Stop();
                 metricsCollector.RecordFailure(prefixedToolName);
+                _logger.LogError(ex,
+                    "Module tool {ModuleId}.{ToolName} failed for job {JobId}.",
+                    envelope.Module, envelope.Tool, job.Id);
                 throw new InvalidOperationException(
                     $"[{ex.GetType().Name}] " +
                     ExceptionSanitizer.Sanitize(envelope.Module, envelope.Tool, ex.Message),
@@ -663,7 +696,7 @@ public sealed class AgentJobService(
     /// explicit <see cref="AgentJobDB.ActionKey"/>.
     /// Returns <c>null</c> if no module owns the resolved tool name.
     /// </summary>
-    private async Task<string?> TryDispatchByActionKeyAsync(
+    private async Task<AgentJobExecutionOutcome?> TryDispatchByActionKeyAsync(
         AgentJobDB job, CancellationToken ct)
     {
         var actionKey = job.ActionKey;
@@ -1010,6 +1043,10 @@ public sealed class AgentJobService(
         caller.UserId is not null ? $"user {caller.UserId}"
         : caller.AgentId is not null ? $"agent {caller.AgentId}"
         : "unknown";
+
+    private sealed record AgentJobExecutionOutcome(
+        string? ResultData,
+        ModuleJobCompletionBehavior CompletionBehavior);
 
     private static AgentJobResponse ToResponse(AgentJobDB job)
     {

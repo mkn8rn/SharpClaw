@@ -50,6 +50,7 @@ public sealed class HostAgentJobController(
     {
         var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
         if (job is null) return;
+        if (job.Status.IsTerminal()) return;
 
         job.Status = AgentJobStatus.Failed;
         job.CompletedAt = DateTimeOffset.UtcNow;
@@ -64,6 +65,56 @@ public sealed class HostAgentJobController(
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task MarkJobCompletedAsync(
+        Guid jobId,
+        string? resultData = null,
+        string? message = null,
+        CancellationToken ct = default)
+    {
+        var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
+        if (job is null) return;
+        if (job.Status.IsTerminal()) return;
+
+        job.Status = AgentJobStatus.Completed;
+        job.CompletedAt = DateTimeOffset.UtcNow;
+        if (resultData is not null)
+            job.ResultData = resultData;
+
+        job.LogEntries.Add(new AgentJobLogEntryDB
+        {
+            AgentJobId = jobId,
+            Message = string.IsNullOrWhiteSpace(message)
+                ? "Job completed by module."
+                : message,
+            Level = JobLogLevels.Info,
+        });
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task MarkJobCancelledAsync(
+        Guid jobId,
+        string? message = null,
+        CancellationToken ct = default)
+    {
+        var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
+        if (job is null) return;
+        if (job.Status.IsTerminal()) return;
+
+        job.Status = AgentJobStatus.Cancelled;
+        job.CompletedAt = DateTimeOffset.UtcNow;
+        job.LogEntries.Add(new AgentJobLogEntryDB
+        {
+            AgentJobId = jobId,
+            Message = string.IsNullOrWhiteSpace(message)
+                ? "Job cancelled by module."
+                : message,
+            Level = JobLogLevels.Warning,
+        });
+
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task CancelStaleJobsByActionPrefixAsync(
         string actionKeyPrefix,
         CancellationToken ct = default)
@@ -71,11 +122,14 @@ public sealed class HostAgentJobController(
         if (string.IsNullOrWhiteSpace(actionKeyPrefix))
             throw new ArgumentException("Action key prefix is required.", nameof(actionKeyPrefix));
 
-        var stale = await db.AgentJobs
+        var candidates = await db.AgentJobs
             .Where(j => (j.Status == AgentJobStatus.Executing || j.Status == AgentJobStatus.Queued)
-                && j.ActionKey != null
-                && j.ActionKey.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase))
+                && j.ActionKey != null)
             .ToListAsync(ct);
+
+        var stale = candidates
+            .Where(j => j.ActionKey!.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
         foreach (var job in stale)
         {

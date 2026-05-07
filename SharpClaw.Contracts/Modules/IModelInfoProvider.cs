@@ -19,6 +19,15 @@ public interface IModelInfoProvider
     /// </returns>
     Task<ModelProviderInfo?> GetModelProviderInfoAsync(
         Guid modelId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns a ready local model file path for providers that need an on-disk
+    /// transcription model. Hosts that do not support local transcription return
+    /// <see langword="null"/>.
+    /// </summary>
+    Task<string?> GetLocalModelFilePathAsync(
+        Guid modelId, CancellationToken ct = default) =>
+        Task.FromResult<string?>(null);
 }
 
 /// <summary>

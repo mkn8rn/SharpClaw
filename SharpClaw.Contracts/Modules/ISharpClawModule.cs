@@ -94,6 +94,19 @@ public interface ISharpClawModule
         CancellationToken ct);
 
     /// <summary>
+    /// Return the lifecycle behavior for a job-pipeline tool. Most tools are
+    /// complete when <see cref="ExecuteToolAsync"/> returns. Tools that only
+    /// start background work should return <see cref="ModuleJobCompletionBehavior.RemainExecuting"/>
+    /// so the host keeps the job active until it is stopped, cancelled, fails,
+    /// or the host shuts down.
+    /// </summary>
+    ModuleJobCompletionBehavior GetJobCompletionBehavior(
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job) =>
+        ModuleJobCompletionBehavior.CompleteWhenExecutionReturns;
+
+    /// <summary>
     /// Execute an inline tool by name. Called directly from the ChatService
     /// streaming loop for tools declared in <see cref="GetInlineToolDefinitions"/>.
     /// Must be fast and lightweight — no job record is created.
