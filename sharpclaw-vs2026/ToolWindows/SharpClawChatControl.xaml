@@ -254,7 +254,8 @@
 
             <Button Grid.Column="1" Margin="8,0,0,0"
                     Padding="16,4"
-                    VerticalAlignment="Bottom"
+                    VerticalAlignment="Stretch"
+                    MinHeight="60"
                     Content="Send"
                     IsEnabled="{Binding SendCommand.RunningCommandsCount.IsZero}"
                     Command="{Binding SendCommand}" />

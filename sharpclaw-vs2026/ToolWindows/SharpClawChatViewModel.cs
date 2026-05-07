@@ -433,13 +433,13 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
     [DataMember] public ObservableList<SharpClawSelectorItem> Threads { get; } = new();
 
     /// <summary>Subtitle shown beneath the Context dropdown.</summary>
-    [DataMember] public string ContextHint => "Created in SharpClaw (permissions only configurable there)";
+    [DataMember] public string ContextHint => "Contexts cannot be managed from this window.";
 
     /// <summary>Subtitle shown beneath the Channel dropdown.</summary>
-    [DataMember] public string ChannelHint => "Created in SharpClaw (permissions only configurable there)";
+    [DataMember] public string ChannelHint => "Channels cannot be managed from this window.";
 
     /// <summary>Subtitle shown beneath the Thread dropdown.</summary>
-    [DataMember] public string ThreadHint => "Threads can be added here — just give them a name.";
+    [DataMember] public string ThreadHint => "Create a thread. Just set a name:";
 
     [DataMember]
     public SharpClawSelectorItem? SelectedContext
@@ -808,7 +808,7 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
         if (channelId is not Guid chId || threadId is not Guid thId)
         {
-            Status = "Select a channel and thread before opening.";
+            Status = "Select a channel and thread before loading.";
             return;
         }
 
@@ -834,7 +834,7 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
         if (channelId is not Guid chId || threadId is not Guid thId)
         {
-            Status = "Select a channel and thread before opening.";
+            Status = "Select a channel and thread before loading.";
             return;
         }
 
@@ -1707,41 +1707,47 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
     private static void AppendBubbleXaml(StringBuilder xaml, SharpClawChatTurn turn)
     {
-        var background = "#5022C55E";
-        var border = "#AA22C55E";
+        var background = "#3022C55E";
+        var border = "#8822C55E";
         var align = "Left";
         var textAlign = "Left";
         var foreground = "{DynamicResource {x:Static styles:VsBrushes.ToolWindowTextKey}}";
+        var isSystem = turn.IsSystem;
+        var isSystemError = isSystem && IsErrorSystemTurn(turn);
 
         if (turn.IsLocalUser)
         {
-            background = "#508B5CF6";
-            border = "#AA8B5CF6";
+            background = "#308B5CF6";
+            border = "#888B5CF6";
             align = "Right";
         }
         else if (turn.IsRemoteUser)
         {
-            background = "#503B82F6";
-            border = "#AA3B82F6";
+            background = "#303B82F6";
+            border = "#883B82F6";
             align = "Right";
         }
-        else if (turn.IsSystem)
+        else if (isSystem)
         {
-            background = "Transparent";
-            border = "Transparent";
-            align = "Stretch";
+            background = isSystemError ? "#30EF4444" : "#30F59E0B";
+            border = isSystemError ? "#AAEF4444" : "#AAF59E0B";
+            align = "Center";
             textAlign = "Center";
-            foreground = "{DynamicResource {x:Static styles:VsBrushes.GrayTextKey}}";
         }
 
-        xaml.Append("<Grid Margin=\"8,5\" HorizontalAlignment=\"Stretch\">")
-            .Append("<Border Padding=\"10,7\" CornerRadius=\"6\" HorizontalAlignment=\"")
+        AppendBubbleGridOpen(xaml, align, isSystem);
+
+        xaml.Append("<Border Grid.Column=\"")
+            .Append(BubbleColumn(align, isSystem))
+            .Append("\" Padding=\"10,7\" CornerRadius=\"0\" HorizontalAlignment=\"")
             .Append(align)
             .Append("\" Background=\"")
             .Append(background)
             .Append("\" BorderBrush=\"")
             .Append(border)
-            .Append("\" BorderThickness=\"1\" MinWidth=\"240\" MaxWidth=\"980\">")
+            .Append("\" BorderThickness=\"1\" MinWidth=\"")
+            .Append(isSystem ? "180" : "240")
+            .Append("\">")
             .Append("<StackPanel>");
 
         if (!string.IsNullOrWhiteSpace(turn.Sender) || !string.IsNullOrWhiteSpace(turn.Timestamp))
@@ -1755,6 +1761,32 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
         AppendMarkdownBodyXaml(xaml, turn.Body, foreground, textAlign);
         xaml.Append("</StackPanel></Border></Grid>");
+    }
+
+    private static void AppendBubbleGridOpen(StringBuilder xaml, string align, bool isSystem)
+    {
+        xaml.Append("<Grid Margin=\"8,5\" HorizontalAlignment=\"Stretch\"><Grid.ColumnDefinitions>");
+        if (isSystem)
+        {
+            xaml.Append("<ColumnDefinition Width=\"1*\" /><ColumnDefinition Width=\"3*\" /><ColumnDefinition Width=\"1*\" />");
+        }
+        else if (align == "Right")
+        {
+            xaml.Append("<ColumnDefinition Width=\"1*\" /><ColumnDefinition Width=\"4*\" />");
+        }
+        else
+        {
+            xaml.Append("<ColumnDefinition Width=\"4*\" /><ColumnDefinition Width=\"1*\" />");
+        }
+
+        xaml.Append("</Grid.ColumnDefinitions>");
+    }
+
+    private static string BubbleColumn(string align, bool isSystem)
+    {
+        if (isSystem)
+            return "1";
+        return align == "Right" ? "1" : "0";
     }
 
     private static void AppendMarkdownBodyXaml(StringBuilder xaml, string? body, string foreground, string textAlign)
@@ -1886,7 +1918,7 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
 
     private static void AppendCodeBlockXaml(StringBuilder xaml, string code, string foreground)
     {
-        xaml.Append("<Border Margin=\"0,6,0,6\" Padding=\"8\" CornerRadius=\"4\" ")
+        xaml.Append("<Border Margin=\"0,6,0,6\" Padding=\"8\" CornerRadius=\"0\" ")
             .Append("Background=\"#26000000\" BorderBrush=\"#50808080\" BorderThickness=\"1\">")
             .Append("<TextBlock TextWrapping=\"Wrap\" FontFamily=\"Consolas\" Foreground=\"")
             .Append(foreground)
@@ -1973,6 +2005,14 @@ internal sealed class SharpClawChatViewModel : NotifyPropertyChangedObject, IDis
         if (string.IsNullOrWhiteSpace(turn.Sender))
             return turn.Timestamp;
         return $"[{turn.Timestamp}] {turn.Sender}";
+    }
+
+    private static bool IsErrorSystemTurn(SharpClawChatTurn turn)
+    {
+        var text = $"{turn.Sender} {turn.Body}";
+        return text.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("exception", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string XmlEscape(string? text)
