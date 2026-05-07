@@ -4,9 +4,6 @@ using SharpClaw.Application.Infrastructure.Tasks.Parsing;
 using SharpClaw.Application.Infrastructure.Tasks.Registry;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
-using SharpClaw.Modules.ComputerUse;
-using SharpClaw.Modules.DatabaseAccess;
-using SharpClaw.Modules.Http;
 using SharpClaw.Modules.Metrics;
 
 namespace SharpClaw.Tests;
@@ -28,7 +25,6 @@ public sealed class TaskStepRegistrySetup
         [
             new TaskScriptingStepDescriptorProvider(),
             new AgentOrchestrationStepDescriptorProvider(),
-            new HttpStepDescriptorProvider(),
         ];
 
         foreach (var provider in providers)
@@ -38,9 +34,6 @@ public sealed class TaskStepRegistrySetup
         }
 
         TaskScriptParser.RegisterModule(TaskScriptingParserExtension.Instance);
-        TaskScriptParser.RegisterModule(ComputerUseParserExtension.Instance);
-        TaskScriptParser.RegisterModule(HttpParserExtension.Instance);
         TaskScriptParser.RegisterModule(MetricsParserExtension.Instance);
-        TaskScriptParser.RegisterModule(DatabaseAccessParserExtension.Instance);
     }
 }

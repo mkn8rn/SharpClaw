@@ -21,10 +21,6 @@
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Bots\" />
-  </ItemGroup>
-
   <!--
     Copy bundled module DLLs into the gateway output so GatewayModuleLoader
     can discover them at runtime. Unlike the API's variant, the gateway
@@ -37,6 +33,13 @@
       <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\*\*\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CleanBundledModules" AfterTargets="Clean">
+    <ItemGroup>
+      <_CopiedBundledModuleDll Include="$(OutputPath)SharpClaw.Modules.*.dll" />
+    </ItemGroup>
+    <Delete Files="@(_CopiedBundledModuleDll)" Condition="'@(_CopiedBundledModuleDll)' != ''" />
   </Target>
 
 </Project>

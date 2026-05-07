@@ -46,37 +46,13 @@
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\BotIntegration\SharpClaw.Modules.BotIntegration.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\ComputerUse\SharpClaw.Modules.ComputerUse.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\DangerousShell\SharpClaw.Modules.DangerousShell.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\DatabaseAccess\SharpClaw.Modules.DatabaseAccess.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
     <ProjectReference Include="..\DefaultModules\EditorCommon\SharpClaw.Modules.EditorCommon.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\Http\SharpClaw.Modules.Http.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\Mk8Shell\SharpClaw.Modules.Mk8Shell.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\Metrics\SharpClaw.Modules.Metrics.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\OfficeApps\SharpClaw.Modules.OfficeApps.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\Transcription\SharpClaw.Modules.Transcription.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\Providers\Anthropic\SharpClaw.Modules.Providers.Anthropic.csproj">
@@ -94,16 +70,10 @@
     <ProjectReference Include="..\DefaultModules\Providers\OpenAICompatible\SharpClaw.Modules.Providers.OpenAICompatible.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\Providers\Whisper\SharpClaw.Modules.Providers.Whisper.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
     <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\DefaultModules\VSCodeEditor\SharpClaw.Modules.VSCodeEditor.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\WebAccess\SharpClaw.Modules.WebAccess.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>
@@ -121,6 +91,15 @@
       <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\*\*\bin\$(Configuration)\$(TargetFramework)\*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CleanBundledModules" AfterTargets="Clean">
+    <ItemGroup>
+      <_CopiedBundledModuleDll Include="$(OutputPath)SharpClaw.Modules.*.dll" />
+      <_CopiedBundledModuleManifest Include="$(OutputPath)modules\**\*" />
+    </ItemGroup>
+    <Delete Files="@(_CopiedBundledModuleDll)" Condition="'@(_CopiedBundledModuleDll)' != ''" />
+    <Delete Files="@(_CopiedBundledModuleManifest)" Condition="'@(_CopiedBundledModuleManifest)' != ''" />
   </Target>
 
 </Project>

@@ -4,7 +4,6 @@ using NUnit.Framework;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Contracts.Tasks;
-using SharpClaw.Modules.Http;
 using SharpClaw.Modules.AgentOrchestration;
 
 namespace SharpClaw.Tests.Tasks;
@@ -247,26 +246,5 @@ public class LoopTask
         loop.VariableName.Should().NotBeNull();
     }
 
-    [Test]
-    public void Compile_HttpGetStep_HttpMethodIsGet()
-    {
-        var source = """
-[Task("http-get")]
-public class HttpGetTask
-{
-    public async Task RunAsync(CancellationToken ct)
-    {
-        var resp = await HttpGet("https://api.example.com/data");
-    }
-}
-""";
-
-        var result = TaskScriptEngine.ProcessScript(source);
-
-        result.Success.Should().BeTrue();
-        var httpStep = result.Plan!.ExecutionSteps.Single(s => s.StepKey == HttpStepKeys.HttpRequest);
-        httpStep.Arguments.Should().NotBeNull();
-        httpStep.Arguments![0].Should().Be("GET");
-    }
 }
 

@@ -4,7 +4,6 @@ using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
-using SharpClaw.Modules.Http;
 
 namespace SharpClaw.Tests.Tasks;
 
@@ -242,29 +241,6 @@ public class ChatTask
 
         result.Success.Should().BeTrue();
         result.Definition!.Steps.Should().ContainSingle(s => s.StepKey == AgentOrchestrationStepKeys.Chat);
-    }
-
-    [Test]
-    public void Parse_HttpGetCall_ProducesHttpRequestStep()
-    {
-        var source = """
-[Task("http")]
-public class HttpTask
-{
-    public async Task RunAsync(CancellationToken ct)
-    {
-        var response = await HttpGet("https://example.com/api");
-    }
-}
-""";
-
-        var result = TaskScriptEngine.Parse(source);
-
-        result.Success.Should().BeTrue();
-        var step = result.Definition!.Steps.Single(s => s.StepKey == HttpStepKeys.HttpRequest);
-        step.Arguments.Should().NotBeNull();
-        step.Arguments![0].Should().Be("GET");
-        step.Expression.Should().Contain("example.com");
     }
 
     // ─────────────────────────────────────────────────────────────

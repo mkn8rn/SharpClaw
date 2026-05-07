@@ -149,41 +149,6 @@ public sealed class GatewayRouteParityTests
             string.Join("\n  ", orphans));
     }
 
-    [Test]
-    public void DiscoveredModuleGatewayExtensions_DeclareValidEndpointGroups()
-    {
-        // Force-load known module assemblies that ship a gateway extension
-        // and are referenced by the test project. Modules without a project
-        // reference here cannot be discovered; that is by design.
-        var seedType = typeof(SharpClaw.Modules.WebAccess.Gateway.WebAccessGatewayExtension);
-        seedType.Assembly.GetName().Name.Should().Be("SharpClaw.Modules.WebAccess");
-
-        var extensions = DiscoverModuleExtensions();
-        extensions.Should().NotBeEmpty(
-            "at least one in-tree module gateway extension must be discoverable " +
-            "(WebAccess is referenced by SharpClaw.Tests).");
-
-        foreach (var ext in extensions)
-        {
-            ext.ModuleId.Should().NotBeNullOrWhiteSpace(
-                $"{ext.GetType().FullName} must declare a non-empty ModuleId");
-            ext.DisplayName.Should().NotBeNullOrWhiteSpace(
-                $"{ext.GetType().FullName} must declare a non-empty DisplayName");
-
-            var groups = ext.GetEndpointGroups();
-            groups.Should().NotBeEmpty(
-                $"module {ext.ModuleId} must declare at least one endpoint group");
-
-            foreach (var group in groups)
-            {
-                group.GroupId.Should().NotBeNullOrWhiteSpace(
-                    $"module {ext.ModuleId} declared a group with empty GroupId");
-                group.DisplayName.Should().NotBeNullOrWhiteSpace(
-                    $"module {ext.ModuleId}/{group.GroupId} declared an empty DisplayName");
-            }
-        }
-    }
-
     private static HashSet<string> DiscoverCoreRoutes()
     {
         var apiAssembly = typeof(EndpointMapper).Assembly;
@@ -251,31 +216,6 @@ public sealed class GatewayRouteParityTests
         }
 
         return routes;
-    }
-
-    private static IReadOnlyList<IGatewayModuleExtension> DiscoverModuleExtensions()
-    {
-        var bag = new List<IGatewayModuleExtension>();
-        var seen = new HashSet<Type>();
-
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var name = asm.GetName().Name;
-            if (string.IsNullOrEmpty(name)) continue;
-            if (!name.StartsWith("SharpClaw.Modules.", StringComparison.Ordinal)) continue;
-
-            foreach (var t in SafeGetTypes(asm))
-            {
-                if (!t.IsClass || t.IsAbstract) continue;
-                if (!typeof(IGatewayModuleExtension).IsAssignableFrom(t)) continue;
-                if (t.GetConstructor(Type.EmptyTypes) is null) continue;
-                if (!seen.Add(t)) continue;
-
-                bag.Add((IGatewayModuleExtension)Activator.CreateInstance(t)!);
-            }
-        }
-
-        return bag;
     }
 
     private static bool IsExcludedHandlerPrefix(string prefix)

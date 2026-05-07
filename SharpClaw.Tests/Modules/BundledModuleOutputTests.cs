@@ -13,18 +13,16 @@ public class BundledModuleOutputTests
     private static readonly string[] ExpectedModuleDlls =
     [
         "SharpClaw.Modules.AgentOrchestration.dll",
-        "SharpClaw.Modules.BotIntegration.dll",
-        "SharpClaw.Modules.ComputerUse.dll",
-        "SharpClaw.Modules.DangerousShell.dll",
-        "SharpClaw.Modules.DatabaseAccess.dll",
         "SharpClaw.Modules.EditorCommon.dll",
-        "SharpClaw.Modules.Mk8Shell.dll",
+        "SharpClaw.Modules.Metrics.dll",
         "SharpClaw.Modules.ModuleDev.dll",
-        "SharpClaw.Modules.OfficeApps.dll",
-        "SharpClaw.Modules.Transcription.dll",
+        "SharpClaw.Modules.Providers.Anthropic.dll",
+        "SharpClaw.Modules.Providers.Google.dll",
+        "SharpClaw.Modules.Providers.LlamaSharp.dll",
+        "SharpClaw.Modules.Providers.Ollama.dll",
+        "SharpClaw.Modules.Providers.OpenAICompatible.dll",
         "SharpClaw.Modules.VS2026Editor.dll",
         "SharpClaw.Modules.VSCodeEditor.dll",
-        "SharpClaw.Modules.WebAccess.dll",
     ];
 
     /// <summary>

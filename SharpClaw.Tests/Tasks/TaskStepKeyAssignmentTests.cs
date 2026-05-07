@@ -3,15 +3,14 @@ using NUnit.Framework;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
-using SharpClaw.Modules.Http;
 
 namespace SharpClaw.Tests.Tasks;
 
 /// <summary>
 /// Verifies that the parser sets the correct module-owned step key on every
 /// parsed <see cref="TaskStepDefinition.StepKey"/> for representative step
-/// kinds. Step keys are owned by the TaskScripting, AgentOrchestration, and
-/// HTTP modules; the literal string values intentionally match the legacy
+/// kinds. Step keys are owned by the TaskScripting and AgentOrchestration
+/// modules; the literal string values intentionally match the legacy
 /// <c>core.*</c> wire format for backward compatibility.
 /// </summary>
 [TestFixture]
@@ -131,24 +130,6 @@ public class TestTask
 
         result.Success.Should().BeTrue();
         result.Definition!.Steps.Single().StepKey.Should().Be(AgentOrchestrationStepKeys.ParseResponse);
-    }
-
-    [Test]
-    public void Parse_HttpGetCall_HasHttpRequestKey()
-    {
-        var result = TaskScriptEngine.Parse(Wrap("var r = await HttpGet(\"https://example.com\");"));
-
-        result.Success.Should().BeTrue();
-        result.Definition!.Steps.Single().StepKey.Should().Be(HttpStepKeys.HttpRequest);
-    }
-
-    [Test]
-    public void Parse_HttpPostCall_HasHttpRequestKey()
-    {
-        var result = TaskScriptEngine.Parse(Wrap("var r = await HttpPost(\"https://example.com\");"));
-
-        result.Success.Should().BeTrue();
-        result.Definition!.Steps.Single().StepKey.Should().Be(HttpStepKeys.HttpRequest);
     }
 
     [Test]
