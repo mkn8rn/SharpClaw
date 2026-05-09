@@ -190,7 +190,9 @@ public partial class App : Application
                     services.AddSingleton(new FirstSetupMarker(frontendInstance));
                     services.AddSingleton(new ClientSettings(frontendInstance));
                     services.AddSingleton(new AccountStore(frontendInstance));
-                    services.AddSingleton(new ModuleStateCache());
+                    var moduleStateCache = new ModuleStateCache();
+                    services.AddSingleton(moduleStateCache);
+                    services.AddSingleton(new ModuleFrontendContributionRegistry(moduleStateCache));
                     services.AddSingleton(new ModuleUiHookService());
                 })
                 .UseNavigation(ReactiveViewModelMappings.ViewModelMappings, RegisterRoutes)

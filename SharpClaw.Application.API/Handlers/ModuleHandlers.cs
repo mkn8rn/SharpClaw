@@ -7,6 +7,7 @@ using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Infrastructure.Logging;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Application.Services;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.API.Handlers;
@@ -465,5 +466,28 @@ public static class ModuleHandlers
         }
 
         return Results.Ok(contributions);
+    }
+
+    /// <summary>
+    /// Return typed frontend contributions from all enabled modules.
+    /// Clients should prefer this endpoint over the legacy stringly
+    /// <c>/modules/ui-contributions</c> hook surface.
+    /// </summary>
+    [MapGet("/frontend-contributions")]
+    public static IResult GetFrontendContributions(ModuleRegistry registry)
+    {
+        var contributions = registry.GetAllModules()
+            .SelectMany(module => module.GetFrontendContributions()
+                .Select(item => item with
+                {
+                    ModuleId = string.IsNullOrWhiteSpace(item.ModuleId) ? module.Id : item.ModuleId,
+                    RequiredModuleId = item.RequiredModuleId ?? module.Id,
+                }))
+            .OrderBy(item => item.Point)
+            .ThenBy(item => item.Order)
+            .ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Results.Ok(new ModuleFrontendContributionResponse(contributions));
     }
 }

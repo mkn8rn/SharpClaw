@@ -59,7 +59,7 @@ public sealed partial class SettingsPage
                 if (resp.IsSuccessStatusCode)
                 {
                     Status("✓ Scan complete.", 0x00FF00);
-                    _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+                    await RefreshModuleFrontendStateAsync();
                     BuildTabs();
                     await LoadManageModulesAsync();
                     return;
@@ -71,7 +71,7 @@ public sealed partial class SettingsPage
         };
         ContentPanel.Children.Add(scanBtn);
 
-        _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+        await RefreshModuleFrontendStateAsync();
         if (_cachedModuleStates is null or { Count: 0 })
         {
             Lbl("No modules found.", 0x808080);
@@ -165,7 +165,7 @@ public sealed partial class SettingsPage
                 var resp = await Api.PostAsync(endpoint, null);
                 if (resp.IsSuccessStatusCode)
                 {
-                    _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+                    await RefreshModuleFrontendStateAsync();
                     BuildTabs();
                     await LoadManageModulesAsync();
                     return;
@@ -197,7 +197,7 @@ public sealed partial class SettingsPage
                     var resp = await Api.PostAsync($"/modules/{capturedModule.ModuleId}/reload", null);
                     if (resp.IsSuccessStatusCode)
                     {
-                        _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+                        await RefreshModuleFrontendStateAsync();
                         BuildTabs();
                         await LoadManageModulesAsync();
                         return;
@@ -224,7 +224,7 @@ public sealed partial class SettingsPage
                     var resp = await Api.PostAsync($"/modules/{capturedModule.ModuleId}/unload", null);
                     if (resp.IsSuccessStatusCode)
                     {
-                        _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+                        await RefreshModuleFrontendStateAsync();
                         BuildTabs();
                         await LoadManageModulesAsync();
                         return;

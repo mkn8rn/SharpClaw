@@ -112,6 +112,29 @@ public sealed class LlamaSharpProviderModule : ISharpClawModule
 
     public IReadOnlyList<ModuleToolDefinition> GetToolDefinitions() => [];
 
+    public IReadOnlyList<ModuleFrontendContribution> GetFrontendContributions() =>
+    [
+        new(
+            Id: "llamasharp.local-models.settings",
+            ModuleId: Id,
+            Point: FrontendContributionPoint.SettingsPage,
+            BuilderKey: "model-list",
+            Label: "Local Models",
+            Icon: "\uE8B7",
+            Tooltip: "Manage local GGUF models owned by the LlamaSharp provider module.",
+            RequiredModuleId: Id,
+            Order: 200,
+            List: new ModuleFrontendList(
+                ListInternalApiPath: "/models/local",
+                DeleteInternalApiPathTemplate: "/models/local/{id}",
+                EmptyText: "No local models have been downloaded yet.",
+                Columns:
+                [
+                    new("sourceUrl", "Source"),
+                    new("filePath", "File"),
+                ])),
+    ];
+
     public IReadOnlyList<ModuleCliCommand> GetCliCommands() =>
     [
         new(

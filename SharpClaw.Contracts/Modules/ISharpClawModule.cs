@@ -151,6 +151,14 @@ public interface ISharpClawModule
     IReadOnlyList<ModuleUiContribution> GetUiContributions() => [];
 
     /// <summary>
+    /// Optional. Return typed frontend contribution descriptors for this
+    /// module. This is the maintainable replacement for stringly UI hooks:
+    /// modules declare builder keys, contribution points, and internal API
+    /// endpoints, and clients render native UI from that contract.
+    /// </summary>
+    IReadOnlyList<ModuleFrontendContribution> GetFrontendContributions() => [];
+
+    /// <summary>
     /// Optional. Return CLI commands this module provides.
     /// Commands are registered in the CLI REPL at their declared
     /// <see cref="ModuleCliScope"/> (top-level verb or resource type).

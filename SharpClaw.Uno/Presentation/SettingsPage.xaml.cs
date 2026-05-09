@@ -59,7 +59,7 @@ public sealed partial class SettingsPage : Page
     {
         Cursor.SetCommand("sharpclaw settings ");
         await FetchCurrentUserInfoAsync();
-        _cachedModuleStates = await FetchListAsync<ModuleStateEntry>("/modules");
+        await RefreshModuleFrontendStateAsync();
         BuildTabs();
         SelectTab("Providers");
     }
@@ -89,6 +89,7 @@ public sealed partial class SettingsPage : Page
 
     private void BuildTabs()
     {
+        _moduleContributionTabs.Clear();
         TabPanel.Children.Clear();
         AddTabSection("Models");
         AddTabButton("Providers", "sharpclaw provider list");
@@ -107,6 +108,7 @@ public sealed partial class SettingsPage : Page
         AddConditionalTabButton("Native Applications", "sharpclaw resource nativeapp list");
         AddConditionalTabButton("Editor Sessions", "sharpclaw resource editorsession list");
         AddConditionalTabButton("Documents", "sharpclaw resource document list");
+        AddContributionTabs();
         AddTabSection("Gateway");
         AddTabButton("Gateway", "sharpclaw gateway status");
         AddConditionalTabButton("Bot Integrations", "sharpclaw bot list");
@@ -187,6 +189,13 @@ public sealed partial class SettingsPage : Page
         StopModuleLogTimer();
         HighlightTabs();
         ContentPanel.Children.Clear();
+
+        if (_moduleContributionTabs.TryGetValue(tab, out var contribution))
+        {
+            _ = LoadContributionSettingsAsync(contribution);
+            return;
+        }
+
         _ = tab switch
         {
             "Providers" => LoadProvidersAsync(),
