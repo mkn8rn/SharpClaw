@@ -68,24 +68,6 @@ public sealed partial class SettingsPage : Page
     // Sidebar tabs
     // ═══════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// Maps existing sidebar tabs to the module that must be enabled for them to appear.
-    /// Tabs not in this dictionary are always visible.
-    /// </summary>
-    private static readonly Dictionary<string, string> TabRequiredModules = new()
-    {
-        ["Containers"]          = "sharpclaw_mk8shell",
-        ["Websites"]            = "sharpclaw_web_access",
-        ["Search Engines"]      = "sharpclaw_web_access",
-        ["Internal Databases"]  = "sharpclaw_database_access",
-        ["External Databases"]  = "sharpclaw_database_access",
-        ["Sound Input"]         = "sharpclaw_transcription",
-        ["Display Devices"]     = "sharpclaw_computer_use",
-        ["Native Applications"] = "sharpclaw_computer_use",
-        ["Editor Sessions"]     = "sharpclaw_editor_common",
-        ["Documents"]           = "sharpclaw_office_apps",
-        ["Bot Integrations"]    = "sharpclaw_bot_integration",
-    };
 
     private void BuildTabs()
     {
@@ -97,21 +79,9 @@ public sealed partial class SettingsPage : Page
         AddTabSection("Agents");
         AddTabButton("Agents", "sharpclaw agent list");
         AddTabButton("Roles", "sharpclaw role list");
-        AddTabSection("Resources");
-        AddConditionalTabButton("Containers", "sharpclaw resource container list");
-        AddConditionalTabButton("Websites", "sharpclaw resource website list");
-        AddConditionalTabButton("Search Engines", "sharpclaw resource searchengine list");
-        AddConditionalTabButton("Internal Databases", "sharpclaw resource internaldatabase list");
-        AddConditionalTabButton("External Databases", "sharpclaw resource externaldatabase list");
-        AddConditionalTabButton("Sound Input", "sharpclaw resource inputaudio list");
-        AddConditionalTabButton("Display Devices", "sharpclaw resource displaydevice list");
-        AddConditionalTabButton("Native Applications", "sharpclaw resource nativeapp list");
-        AddConditionalTabButton("Editor Sessions", "sharpclaw resource editorsession list");
-        AddConditionalTabButton("Documents", "sharpclaw resource document list");
         AddContributionTabs();
         AddTabSection("Gateway");
         AddTabButton("Gateway", "sharpclaw gateway status");
-        AddConditionalTabButton("Bot Integrations", "sharpclaw bot list");
         AddTabSection("Modules");
         AddTabButton("Manage Modules", "sharpclaw module list");
         if (_cachedModuleStates is not null)
@@ -126,20 +96,6 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    /// <summary>Only adds the tab button if its required module is enabled.</summary>
-    private void AddConditionalTabButton(string label, string cursorCmd)
-    {
-        if (TabRequiredModules.TryGetValue(label, out var requiredModule))
-        {
-            var moduleCache = App.Services?.GetService<ModuleStateCache>();
-            if (moduleCache is not null && !moduleCache.IsEnabled(requiredModule))
-                return;
-            if (moduleCache is null
-                && _cachedModuleStates?.Any(m => m.ModuleId == requiredModule && m.Enabled) != true)
-                return;
-        }
-        AddTabButton(label, cursorCmd);
-    }
 
     private void AddTabSection(string title) => TabPanel.Children.Add(new TextBlock
     {
@@ -170,19 +126,6 @@ public sealed partial class SettingsPage : Page
 
     private void SelectTab(string tab)
     {
-        // Guard: if a selected tab requires a disabled module, redirect.
-        if (TabRequiredModules.TryGetValue(tab, out var req))
-        {
-            var moduleCache = App.Services?.GetService<ModuleStateCache>();
-            var enabled = moduleCache is not null
-                ? moduleCache.IsEnabled(req)
-                : _cachedModuleStates?.Any(m => m.ModuleId == req && m.Enabled) == true;
-            if (!enabled)
-            {
-                SelectTab("Manage Modules");
-                return;
-            }
-        }
 
         _activeTab = tab;
         StopGatewayLogTimer();
@@ -202,18 +145,7 @@ public sealed partial class SettingsPage : Page
             "Models" => LoadModelsAsync(),
             "Agents" => LoadAgentsAsync(),
             "Roles" => LoadRolesListAsync(),
-            "Containers" => LoadGenericResourceAsync("Containers", "Sandboxed environments for shell execution.", "/resources/containers", hasSync: true),
-            "Websites" => LoadGenericResourceAsync("Websites", "Allowed websites for web browsing tools.", "/resources/websites"),
-            "Search Engines" => LoadGenericResourceAsync("Search Engines", "Search engines available for web search tools.", "/searchengines"),
-            "Internal Databases" => LoadGenericResourceAsync("Internal Databases", "Local information stores for knowledge retrieval.", "/resources/internaldatabases"),
-            "External Databases" => LoadGenericResourceAsync("External Databases", "External database connections for data access.", "/resources/externaldatabases"),
-            "Sound Input" => LoadSoundInputAsync(),
-            "Display Devices" => LoadGenericResourceAsync("Display Devices", "Display devices for screen capture and interaction.", "/resources/displaydevices", hasSync: true),
-            "Native Applications" => LoadGenericResourceAsync("Native Applications", "Registered native applications for automation.", "/resources/nativeapplications"),
-            "Editor Sessions" => LoadGenericResourceAsync("Editor Sessions", "Active editor bridge connections.", "/resources/editorsessions"),
-            "Documents" => LoadGenericResourceAsync("Documents", "Document sessions for office automation.", "/resources/documents"),
             "Gateway" => LoadGatewayAsync(),
-            "Bot Integrations" => LoadBotIntegrationsAsync(),
             "Users" => LoadUsersAsync(),
             "Danger Zone" => LoadDangerZoneAsync(),
             "Manage Modules" => LoadManageModulesAsync(),
@@ -669,183 +601,6 @@ public sealed partial class SettingsPage : Page
         ContentPanel.Children.Add(assignBtn);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // GENERIC RESOURCE LIST
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task LoadGenericResourceAsync(string title, string description, string apiPath, bool hasSync = false)
-    {
-        ContentPanel.Children.Clear();
-        H(title);
-        Lbl(description, 0x808080);
-
-        if (hasSync)
-        {
-            var syncBtn = GreenButton("↻ Sync");
-            syncBtn.Click += async (_, _) =>
-            {
-                syncBtn.IsEnabled = false;
-                try
-                {
-                    var resp = await Api.PostAsync($"{apiPath}/sync", null);
-                    if (resp.IsSuccessStatusCode)
-                    {
-                        Status("✓ Synced.", 0x00FF00);
-                        await LoadGenericResourceAsync(title, description, apiPath, hasSync);
-                    }
-                    else Status("✗ Sync failed.", 0xFF4444);
-                }
-                catch (Exception ex) { Status($"✗ {ex.Message}", 0xFF4444); }
-                finally { syncBtn.IsEnabled = true; }
-            };
-            ContentPanel.Children.Add(syncBtn);
-        }
-
-        try
-        {
-            using var resp = await Api.GetAsync(apiPath);
-            if (!resp.IsSuccessStatusCode)
-            {
-                Status($"Failed to load: {(int)resp.StatusCode}", 0xFF4444);
-                return;
-            }
-
-            using var stream = await resp.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
-            var items = doc.RootElement;
-
-            if (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() == 0)
-            {
-                Lbl("No items found.", 0x808080);
-                return;
-            }
-
-            Sub($"{items.GetArrayLength()} item(s)");
-            var list = new StackPanel { Spacing = 2 };
-
-            foreach (var item in items.EnumerateArray())
-            {
-                var name = item.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
-                    ? n.GetString()
-                    : item.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String
-                        ? t.GetString()
-                        : null;
-                var id = item.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String
-                    ? idProp.GetString()
-                    : null;
-
-                var idShort = id is { Length: >= 8 } ? id[..8] + "…" : id;
-
-                var capturedApiPath = apiPath;
-                var capturedId = id;
-                var capturedTitle = title;
-                var capturedDesc = description;
-                var capturedSync = hasSync;
-
-                Func<Task>? onDelete = capturedId is not null
-                    ? async () =>
-                    {
-                        try
-                        {
-                            var delResp = await Api.DeleteAsync($"{capturedApiPath}/{capturedId}");
-                            if (delResp.IsSuccessStatusCode)
-                                await LoadGenericResourceAsync(capturedTitle, capturedDesc, capturedApiPath, capturedSync);
-                            else
-                                Status($"✗ Delete failed: {(int)delResp.StatusCode}", 0xFF4444);
-                        }
-                        catch (Exception ex) { Status($"✗ {ex.Message}", 0xFF4444); }
-                    }
-                    : null;
-
-                list.Children.Add(MakeListRow(name ?? "(unnamed)", idShort, onClick: null, onDelete));
-            }
-
-            ContentPanel.Children.Add(list);
-        }
-        catch (Exception ex)
-        {
-            Status($"✗ {ex.Message}", 0xFF4444);
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // SOUND INPUT
-    // ═══════════════════════════════════════════════════════════════
-
-    private async Task LoadSoundInputAsync()
-    {
-        ContentPanel.Children.Clear();
-        H("Sound Input");
-        Lbl("Audio input device used for transcription.", 0x808080);
-
-        var syncBtn = GreenButton("↻ Sync audio devices");
-        syncBtn.Click += async (_, _) =>
-        {
-            syncBtn.IsEnabled = false;
-            try
-            {
-                var resp = await Api.PostAsync("/resources/inputaudios/sync", null);
-                if (resp.IsSuccessStatusCode)
-                {
-                    using var s = await resp.Content.ReadAsStreamAsync();
-                    using var doc = await JsonDocument.ParseAsync(s);
-                    var imported = doc.RootElement.GetProperty("imported").GetInt32();
-                    var skipped = doc.RootElement.GetProperty("skipped").GetInt32();
-                    Status($"✓ Synced: {imported} imported, {skipped} skipped.", 0x00FF00);
-                    await LoadSoundInputAsync();
-                }
-                else Status("✗ Sync failed.", 0xFF4444);
-            }
-            catch (Exception ex) { Status($"✗ {ex.Message}", 0xFF4444); }
-            finally { syncBtn.IsEnabled = true; }
-        };
-        ContentPanel.Children.Add(syncBtn);
-
-        var devices = await FetchListAsync<InputAudioEntry>("/resources/inputaudios");
-        if (devices is not { Count: > 0 })
-        {
-            Lbl("No audio devices found. Click sync to detect system devices.", 0x808080);
-            return;
-        }
-
-        Sub("Select Input Device");
-        var deviceBox = new ComboBox { FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
-            BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 300 };
-        deviceBox.Items.Add(new ComboBoxItem { Content = "(none)", Tag = Guid.Empty });
-        var savedId = LoadLocalSetting(ClientSettings.SelectedInputAudioId);
-        var selIdx = 0;
-        for (var i = 0; i < devices.Count; i++)
-        {
-            var d = devices[i];
-            var label = d.DeviceIdentifier is not null ? $"{d.Name}  [{d.DeviceIdentifier}]" : d.Name;
-            deviceBox.Items.Add(new ComboBoxItem { Content = label, Tag = d.Id });
-            if (savedId is not null && Guid.TryParse(savedId, out var sid) && sid == d.Id)
-                selIdx = i + 1;
-        }
-        deviceBox.SelectedIndex = selIdx;
-        deviceBox.SelectionChanged += (_, _) =>
-        {
-            if (deviceBox.SelectedItem is ComboBoxItem { Tag: Guid id })
-            {
-                SaveLocalSetting(ClientSettings.SelectedInputAudioId, id == Guid.Empty ? null : id.ToString());
-                Status(id == Guid.Empty ? "Input device cleared." : "✓ Input device saved.", id == Guid.Empty ? 0x808080 : 0x00FF00);
-            }
-        };
-        ContentPanel.Children.Add(deviceBox);
-
-        Sub("Detected Devices");
-        var list = new StackPanel { Spacing = 2 };
-        foreach (var d in devices)
-        {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            row.Children.Add(new TextBlock { Text = "›", FontFamily = Mono, FontSize = 12, Foreground = B(0x00FF00) });
-            row.Children.Add(new TextBlock { Text = d.Name, FontFamily = Mono, FontSize = 12, Foreground = B(0xE0E0E0) });
-            if (d.DeviceIdentifier is not null)
-                row.Children.Add(new TextBlock { Text = d.DeviceIdentifier, FontFamily = Mono, FontSize = 10, Foreground = B(0x555555), VerticalAlignment = VerticalAlignment.Center });
-            list.Children.Add(row);
-        }
-        ContentPanel.Children.Add(list);
-    }
 
     private static void SaveLocalSetting(string key, string? value)
         => App.Services?.GetService<ClientSettings>()?.Set(key, value);
@@ -1329,181 +1084,11 @@ public sealed partial class SettingsPage : Page
         ContentPanel.Children.Add(card);
     }
 
+
     // ═══════════════════════════════════════════════════════════════
-    // BOT INTEGRATIONS
+    // ROLES
     // ═══════════════════════════════════════════════════════════════
 
-    private async Task LoadBotIntegrationsAsync()
-    {
-        ContentPanel.Children.Clear();
-
-        var gw = Gateway;
-        if (gw is null)
-        {
-            H("Bot Integrations");
-            Status("GatewayProcessManager is not registered.", 0xFF4444);
-            return;
-        }
-
-        var reachable = await gw.IsGatewayReachableAsync();
-        if (!reachable)
-        {
-            H("Bot Integrations");
-            Status("Gateway is not running. Start the gateway from the Gateway tab to manage bot integrations.", 0xFF8800);
-            return;
-        }
-
-        var (form, listPanel) = TabHeader("Bot Integrations", "Search bots…");
-
-        // ── Create form ──
-        var nameBox = MakeInput("Bot name…");
-        var typeBox = new ComboBox
-        {
-            FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
-            BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 200,
-        };
-        foreach (var t in new[] { "Telegram", "Discord", "WhatsApp", "Slack", "Matrix", "Signal", "Email", "Teams" })
-            typeBox.Items.Add(new ComboBoxItem { Content = t, Tag = t });
-        typeBox.SelectedIndex = 0;
-
-        var tokenBox = new PasswordBox
-        {
-            PlaceholderText = "Bot API token…",
-            FontFamily = Mono, FontSize = 12,
-            Foreground = B(0x00FF00), Background = B(0x1A1A1A),
-            BorderBrush = B(0x333333), BorderThickness = new Thickness(1),
-            MinWidth = 260, Padding = new Thickness(8, 6),
-        };
-
-        // ── Platform-specific config fields (shown dynamically) ──
-        var platformConfigPanel = new StackPanel { Spacing = 4 };
-        var platformInputs = new Dictionary<string, TextBox>();
-
-        void RebuildPlatformFields(string type)
-        {
-            platformConfigPanel.Children.Clear();
-            platformInputs.Clear();
-            var fields = GetPlatformConfigFields(type);
-            if (fields.Length == 0) return;
-            platformConfigPanel.Children.Add(new TextBlock
-            {
-                Text = "platform config:", FontFamily = Mono, FontSize = 11, Foreground = B(0xCCCCCC),
-            });
-            foreach (var (key, placeholder, hint) in fields)
-            {
-                if (hint is not null)
-                    platformConfigPanel.Children.Add(new TextBlock
-                    {
-                        Text = hint, FontFamily = Mono, FontSize = 10, Foreground = B(0x666666),
-                        TextWrapping = TextWrapping.Wrap,
-                    });
-                var input = MakeInput(placeholder);
-                platformInputs[key] = input;
-                platformConfigPanel.Children.Add(input);
-            }
-        }
-
-        typeBox.SelectionChanged += (_, _) =>
-        {
-            var sel = typeBox.SelectedItem is ComboBoxItem { Tag: string t } ? t : "Telegram";
-            tokenBox.PlaceholderText = GetTokenPlaceholder(sel);
-            RebuildPlatformFields(sel);
-        };
-        RebuildPlatformFields("Telegram");
-
-        var enabledToggle = new ToggleSwitch
-        {
-            IsOn = true,
-            OnContent = new TextBlock { Text = "Enabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x00FF00) },
-            OffContent = new TextBlock { Text = "Disabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x666666) },
-        };
-
-        var createBtn = GreenButton("Create");
-        createBtn.Click += async (_, _) =>
-        {
-            var name = nameBox.Text.Trim();
-            var type = typeBox.SelectedItem is ComboBoxItem { Tag: string t } ? t : "Telegram";
-            if (string.IsNullOrEmpty(name)) return;
-            var token = string.IsNullOrEmpty(tokenBox.Password) ? null : tokenBox.Password;
-            var payload = new JsonObject { ["name"] = name, ["botType"] = type, ["enabled"] = enabledToggle.IsOn };
-            if (token is not null) payload["botToken"] = token;
-            var pc = BuildPlatformConfigJson(platformInputs);
-            if (pc is not null) payload["platformConfig"] = pc;
-            try
-            {
-                using var gwHttp = CreateGatewayClient();
-                using var resp = await gwHttp.PostAsync("/api/bots",
-                    new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"));
-                if (!resp.IsSuccessStatusCode)
-                {
-                    var body = await resp.Content.ReadAsStringAsync();
-                    Status($"✗ Create failed: {body}", 0xFF4444);
-                    return;
-                }
-            }
-            catch (Exception ex) { Status($"✗ {ex.Message}", 0xFF4444); return; }
-            await LoadBotIntegrationsAsync();
-        };
-
-        form.Children.Add(nameBox);
-        form.Children.Add(new TextBlock { Text = "type:", FontFamily = Mono, FontSize = 11, Foreground = B(0xCCCCCC) });
-        form.Children.Add(typeBox);
-        form.Children.Add(new TextBlock { Text = "token:", FontFamily = Mono, FontSize = 11, Foreground = B(0xCCCCCC) });
-        form.Children.Add(tokenBox);
-        form.Children.Add(platformConfigPanel);
-        form.Children.Add(enabledToggle);
-        form.Children.Add(createBtn);
-
-        // ── Fetch list ──
-        List<BotIntegrationEntry>? bots;
-        try
-        {
-            using var gwHttp = CreateGatewayClient();
-            using var listResp = await gwHttp.GetAsync("/api/bots/list");
-            if (!listResp.IsSuccessStatusCode)
-            {
-                var code = (int)listResp.StatusCode;
-                var detail = code switch
-                {
-                    502 => "Core API is not reachable — the gateway cannot connect to the internal API.",
-                    401 => "Authentication failed — try restarting both the backend and gateway.",
-                    503 => "The bots endpoint is disabled in the gateway configuration.",
-                    _ => $"Gateway returned HTTP {code}.",
-                };
-                Status($"✗ {detail}", 0xFF4444);
-                return;
-            }
-            var json = await listResp.Content.ReadAsStringAsync();
-            bots = JsonSerializer.Deserialize<List<BotIntegrationEntry>>(json, Json);
-        }
-        catch (Exception ex)
-        {
-            Status($"✗ {ex.Message}", 0xFF4444);
-            return;
-        }
-
-        if (bots is { Count: > 0 })
-            foreach (var bot in bots)
-            {
-                var statusText = bot.Enabled ? "● enabled" : "○ disabled";
-                var statusClr = bot.Enabled ? 0x00FF00 : 0x666666;
-                listPanel.Children.Add(MakeListRow(
-                    bot.Name,
-                    bot.BotType + (bot.HasBotToken ? "  🔑" : ""),
-                    () => ShowBotDetail(bot),
-                    async () =>
-                    {
-                        try
-                        {
-                            using var gwHttp = CreateGatewayClient();
-                            await gwHttp.DeleteAsync($"/api/bots/{bot.Id}");
-                        }
-                        catch { /* best-effort */ }
-                        await LoadBotIntegrationsAsync();
-                    },
-                    statusText, statusClr));
-            }
-    }
 
     private void StartGatewayLogTimer(Action refresh)
     {
@@ -1520,201 +1105,6 @@ public sealed partial class SettingsPage : Page
         _gatewayLogBlock = null;
         _gatewayLogScroll = null;
     }
-
-    private void ShowBotDetail(BotIntegrationEntry bot)
-    {
-        ContentPanel.Children.Clear();
-        BackLink(() => _ = LoadBotIntegrationsAsync());
-        H($"Bot: {bot.Name}");
-        Lbl($"type: {bot.BotType}   status: {(bot.Enabled ? "enabled" : "disabled")}   token: {(bot.HasBotToken ? "✓ set" : "✗ not set")}", 0x999999);
-        Lbl($"id: {bot.Id}", 0x555555);
-
-        // ── Edit name ──
-        Sub("Name");
-        var nameBox = MakeInput("Bot name…");
-        nameBox.Text = bot.Name;
-        ContentPanel.Children.Add(nameBox);
-
-        // ── Toggle enabled ──
-        Sub("Enabled");
-        var toggle = new ToggleSwitch
-        {
-            IsOn = bot.Enabled,
-            OnContent = new TextBlock { Text = "Enabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x00FF00) },
-            OffContent = new TextBlock { Text = "Disabled", FontFamily = Mono, FontSize = 11, Foreground = B(0x666666) },
-        };
-        ContentPanel.Children.Add(toggle);
-
-        // ── Bot token ──
-        Sub("Bot Token");
-        var tokenHint = GetTokenHint(bot.BotType);
-        Lbl(tokenHint, 0x666666);
-        var tokenBox = new PasswordBox
-        {
-            PlaceholderText = bot.HasBotToken ? "(token set — enter new value to replace)" : GetTokenPlaceholder(bot.BotType),
-            FontFamily = Mono, FontSize = 12,
-            Foreground = B(0x00FF00), Background = B(0x1A1A1A),
-            BorderBrush = B(0x333333), BorderThickness = new Thickness(1),
-            MinWidth = 360, Padding = new Thickness(8, 6),
-        };
-        ContentPanel.Children.Add(tokenBox);
-
-        // ── Platform-specific config fields ──
-        var platformInputs = new Dictionary<string, TextBox>();
-        var fields = GetPlatformConfigFields(bot.BotType);
-        Dictionary<string, string>? existingConfig = null;
-        if (bot.PlatformConfig is not null)
-        {
-            try { existingConfig = JsonSerializer.Deserialize<Dictionary<string, string>>(bot.PlatformConfig, Json); }
-            catch { /* ignore malformed */ }
-        }
-
-        if (fields.Length > 0)
-        {
-            Sub("Platform Configuration");
-            foreach (var (key, placeholder, hint) in fields)
-            {
-                if (hint is not null)
-                    Lbl(hint, 0x666666);
-                var input = MakeInput(placeholder);
-                if (existingConfig is not null && existingConfig.TryGetValue(key, out var val))
-                    input.Text = val;
-                platformInputs[key] = input;
-                ContentPanel.Children.Add(input);
-            }
-        }
-
-        // ── Save ──
-        var saveBtn = GreenButton("Save");
-        saveBtn.Click += async (_, _) =>
-        {
-            saveBtn.IsEnabled = false;
-            try
-            {
-                var payload = new JsonObject
-                {
-                    ["name"] = nameBox.Text.Trim(),
-                    ["enabled"] = toggle.IsOn,
-                };
-                var newToken = tokenBox.Password;
-                if (!string.IsNullOrEmpty(newToken))
-                    payload["botToken"] = newToken;
-                var pc = BuildPlatformConfigJson(platformInputs);
-                if (pc is not null)
-                    payload["platformConfig"] = pc;
-
-                using var gwHttp = CreateGatewayClient();
-                using var resp = await gwHttp.PutAsync($"/api/bots/{bot.Id}",
-                    new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"));
-
-                if (resp.IsSuccessStatusCode)
-                {
-                    Status("✓ Saved. Restart the gateway for changes to take effect.", 0x00FF00);
-                }
-                else
-                {
-                    var body = await resp.Content.ReadAsStringAsync();
-                    Status($"✗ Save failed: {body}", 0xFF4444);
-                }
-            }
-            catch (Exception ex) { Status($"✗ {ex.Message}", 0xFF4444); }
-            finally { saveBtn.IsEnabled = true; }
-        };
-        ContentPanel.Children.Add(saveBtn);
-    }
-
-    // ── Bot platform config helpers ─────────────────────────────
-
-    /// <summary>
-    /// Returns the platform-specific config fields needed for each bot type.
-    /// Platforms that only require a bot token return an empty array.
-    /// </summary>
-    private static (string Key, string Placeholder, string? Hint)[] GetPlatformConfigFields(string type) => type switch
-    {
-        "WhatsApp" =>
-        [
-            ("PhoneNumberId", "Phone Number ID…", "WhatsApp Business phone number ID from Meta Cloud API."),
-            ("VerifyToken", "Webhook verify token…", "Arbitrary string used for Meta webhook verification."),
-        ],
-        "Slack" =>
-        [
-            ("SigningSecret", "Slack signing secret…", "App signing secret from the Slack API dashboard, used to verify webhook requests."),
-        ],
-        "Matrix" =>
-        [
-            ("HomeserverUrl", "https://matrix.org", "Matrix homeserver base URL (e.g. https://matrix.org)."),
-        ],
-        "Signal" =>
-        [
-            ("ApiUrl", "http://localhost:8080", "signal-cli REST API base URL."),
-            ("PhoneNumber", "+1234567890", "Registered phone number in E.164 format."),
-        ],
-        "Email" =>
-        [
-            ("ImapHost", "imap.example.com", "IMAP server hostname for receiving email."),
-            ("ImapPort", "993", "IMAP port (default 993 for TLS)."),
-            ("SmtpHost", "smtp.example.com", "SMTP server hostname for sending replies."),
-            ("SmtpPort", "587", "SMTP port (default 587 for STARTTLS)."),
-            ("Username", "bot@example.com", "Email account username / address."),
-            ("PollIntervalSeconds", "30", "IMAP poll interval in seconds."),
-        ],
-        "Teams" =>
-        [
-            ("AppId", "00000000-0000-0000-0000-000000000000", "Microsoft App ID (GUID) from Azure Bot registration."),
-        ],
-        _ => [], // Telegram, Discord — token only
-    };
-
-    private static string GetTokenPlaceholder(string type) => type switch
-    {
-        "Telegram" => "Bot token from @BotFather…",
-        "Discord" => "Bot token from Developer Portal…",
-        "WhatsApp" => "Meta Graph API access token…",
-        "Slack" => "Bot User OAuth Token (xoxb-…)…",
-        "Matrix" => "Matrix access token…",
-        "Signal" => "(unused — signal-cli handles auth)",
-        "Email" => "Email password / app password…",
-        "Teams" => "Azure AD client secret…",
-        _ => "Bot API token…",
-    };
-
-    private static string GetTokenHint(string type) => type switch
-    {
-        "Telegram" => "Bot token from @BotFather on Telegram.",
-        "Discord" => "Bot token from the Discord Developer Portal.",
-        "WhatsApp" => "Meta Graph API access token (permanent system user token recommended).",
-        "Slack" => "Bot User OAuth Token (xoxb-…) from the Slack API dashboard.",
-        "Matrix" => "Matrix access token — obtain via /_matrix/client/v3/login.",
-        "Signal" => "Not used — signal-cli handles authentication via the registered phone number.",
-        "Email" => "Email account password or app-specific password.",
-        "Teams" => "Azure AD client secret from the Azure Bot registration.",
-        _ => "Bot token for this integration.",
-    };
-
-    /// <summary>
-    /// Serialises the platform-specific input fields into a JSON string
-    /// suitable for the <c>platformConfig</c> API field. Returns
-    /// <see langword="null"/> when no fields have values.
-    /// </summary>
-    private static string? BuildPlatformConfigJson(Dictionary<string, TextBox> inputs)
-    {
-        if (inputs.Count == 0) return null;
-        var obj = new JsonObject();
-        var hasValues = false;
-        foreach (var (key, box) in inputs)
-        {
-            var val = box.Text.Trim();
-            if (string.IsNullOrEmpty(val)) continue;
-            obj[key] = val;
-            hasValues = true;
-        }
-        return hasValues ? obj.ToJsonString() : null;
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ROLES
-    // ═══════════════════════════════════════════════════════════════
-
     private async Task LoadRolesListAsync()
     {
         ContentPanel.Children.Clear();
@@ -2189,11 +1579,7 @@ public sealed partial class SettingsPage : Page
     [ImplicitKeys(IsEnabled = false)]
     private sealed record ResolvedFile(string DownloadUrl, string Filename, string? Quantization);
     [ImplicitKeys(IsEnabled = false)]
-    private sealed record InputAudioEntry(Guid Id, string Name, string? DeviceIdentifier, string? Description);
-    [ImplicitKeys(IsEnabled = false)]
     private sealed record UserListEntry(Guid Id, string Username, string? Bio, Guid? RoleId, string? RoleName, bool IsUserAdmin);
-    [ImplicitKeys(IsEnabled = false)]
-    private sealed record BotIntegrationEntry(Guid Id, string Name, string BotType, bool Enabled, bool HasBotToken, Guid? DefaultChannelId = null, string? PlatformConfig = null);
     [ImplicitKeys(IsEnabled = false)]
     private sealed record ModuleStateEntry(
         string ModuleId, string DisplayName, string ToolPrefix,

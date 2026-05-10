@@ -7,9 +7,8 @@ namespace SharpClaw.Services;
 /// Persists Uno-specific frontend-only preferences to the frontend
 /// instance root.
 /// <para>
-/// These settings are a <b>frontend-only convention</b> — they are never
-/// sent to or read by the API backend. Examples include the default
-/// transcription agent, the selected audio input device, and any future
+/// sent to or read by the API backend. Modules may declare setting keys in
+/// frontend contribution metadata when they need client-local preferences.
 /// per-channel UI preferences.
 /// </para>
 /// <para>
@@ -33,15 +32,6 @@ public sealed class ClientSettings
     private Dictionary<string, string> _values;
     private string _settingsPath;
     private Guid? _activeUserId;
-
-    // ── Well-known keys ──────────────────────────────────────────
-    // Centralised here so every page references the same constants.
-
-    /// <summary>Default transcription agent selected in channel settings.</summary>
-    public const string TranscriptionAgentId = "TranscriptionAgentId";
-
-    /// <summary>Selected audio input device (microphone).</summary>
-    public const string SelectedInputAudioId = "SelectedInputAudioId";
 
     public ClientSettings(FrontendInstanceService frontendInstance)
     {

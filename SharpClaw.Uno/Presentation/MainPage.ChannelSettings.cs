@@ -16,7 +16,6 @@ public sealed partial class MainPage
         _settingsMode = true;
         _tasksMode = false;
         _jobsMode = false;
-        _botsMode = false;
         UpdateTabHighlight();
         MessagesScroller.Visibility = Visibility.Collapsed;
         ChatInputArea.Visibility = Visibility.Collapsed;
@@ -24,7 +23,6 @@ public sealed partial class MainPage
         DeallocateJobView();
         TaskViewPanel.Visibility = Visibility.Collapsed;
         DeallocateTaskView();
-        BotViewPanel.Visibility = Visibility.Collapsed;
         AgentSelectorPanel.Visibility = Visibility.Collapsed;
         ThreadSelectorPanel.Visibility = Visibility.Collapsed;
         OneOffWarning.Visibility = Visibility.Collapsed;
@@ -92,7 +90,6 @@ public sealed partial class MainPage
         }
 
         _resourceLookupCache.Clear();
-        HashSet<Guid> transcriptionModelIds = [];
         var permissionMetadata = await TerminalUI.LoadPermissionMetadataAsync(api);
         try
         {
@@ -113,26 +110,13 @@ public sealed partial class MainPage
         }
         catch { /* swallow */ }
 
-        try
-        {
-            using var modelsResp = await api.GetAsync("/models");
-            if (modelsResp.IsSuccessStatusCode)
-            {
-                using var modelsStream = await modelsResp.Content.ReadAsStreamAsync();
-                using var modelsDoc = await JsonDocument.ParseAsync(modelsStream);
-                foreach (var m in modelsDoc.RootElement.EnumerateArray())
-                    if (m.TryGetProperty("capabilities", out var cap) && cap.GetString() is { } capStr && capStr.Contains("Transcription", StringComparison.OrdinalIgnoreCase))
-                        if (m.TryGetProperty("id", out var mid) && mid.ValueKind == JsonValueKind.String) transcriptionModelIds.Add(mid.GetGuid());
-            }
-        }
-        catch { /* swallow */ }
 
-        await BuildSettingsPanelAsync(api, channelId, disableChatHeader, disableToolSchemas, customChatHeader, allowedAgents, channelDefaultAgentId, permRoleId, permJson, transcriptionModelIds, permissionMetadata);
+        await BuildSettingsPanelAsync(api, channelId, disableChatHeader, disableToolSchemas, customChatHeader, allowedAgents, channelDefaultAgentId, permRoleId, permJson, permissionMetadata);
     }
 
     private async Task BuildSettingsPanelAsync(SharpClawApiClient api, Guid channelId, bool disableChatHeader, bool disableToolSchemas, string? customChatHeader,
         List<(Guid Id, string Name, string ProviderModel)> allowedAgents,
-        Guid? channelDefaultAgentId, Guid? permRoleId, JsonElement? permJson, HashSet<Guid> transcriptionModelIds,
+        Guid? channelDefaultAgentId, Guid? permRoleId, JsonElement? permJson,
         List<ModulePermissionMetadata> permissionMetadata)
     {
         SettingsPanel.Children.Clear();
@@ -236,11 +220,6 @@ public sealed partial class MainPage
         agentSearch.QuerySubmitted += async (sender, args) => { var chosen = args.ChosenSuggestion?.ToString(); if (chosen is null || !agentDisplayMap.TryGetValue(chosen, out var aid)) return; sender.Text = string.Empty; var api = App.Services!.GetRequiredService<SharpClawApiClient>(); try { var body = JsonSerializer.Serialize(new { agentId = aid }, Json); await api.PostAsync($"/channels/{channelId}/agents", new StringContent(body, Encoding.UTF8, "application/json")); } catch { /* swallow */ } await ReloadSettingsAndAgentsAsync(channelId); };
         SettingsPanel.Children.Add(agentSearch);
 
-        // ── Transcription Agent ──
-        BuildTranscriptionAgentSection(channelId, channelDefaultAgentId, allowedAgents, transcriptionModelIds);
-
-        // ── Input Audio ──
-        BuildInputAudioSection(FindInputAudioResourceType(permissionMetadata));
 
         // ── Default Document Session ──
         if (FindResourceTypeByDefaultKey(permissionMetadata, "document") is { } documentResourceType)
@@ -272,53 +251,6 @@ public sealed partial class MainPage
         SettingsPanel.Children.Add(saveBtn);
     }
 
-    private void BuildTranscriptionAgentSection(Guid channelId, Guid? channelDefaultAgentId,
-        List<(Guid Id, string Name, string ProviderModel)> allowedAgents, HashSet<Guid> transcriptionModelIds)
-    {
-        AddSettingsSection("Transcription Agent", "Agent used for voice-to-text input via the microphone button (must be the channel default or an allowed agent)");
-        var channelAgentIds = new HashSet<Guid>(allowedAgents.Select(a => a.Id));
-        if (channelDefaultAgentId is { } defId) channelAgentIds.Add(defId);
-        var txAgents = _allAgents.Where(a => channelAgentIds.Contains(a.Id) && (transcriptionModelIds.Count == 0 || transcriptionModelIds.Contains(a.ModelId))).ToList();
-        var txDisplayMap = new Dictionary<string, Guid>(txAgents.Count);
-        foreach (var a in txAgents) txDisplayMap.TryAdd($"{a.Name}  ({a.ProviderName}/{a.ModelName})", a.Id);
-
-        var savedTxAgent = LoadLocalSetting(ClientSettings.TranscriptionAgentId);
-        AgentDto? currentTxAgent = null;
-        if (savedTxAgent is not null && Guid.TryParse(savedTxAgent, out var savedTxId)) currentTxAgent = _allAgents.FirstOrDefault(a => a.Id == savedTxId);
-
-        var txCurrentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        txCurrentRow.Children.Add(new TextBlock { Text = "current:", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(0xCCCCCC), VerticalAlignment = VerticalAlignment.Center });
-        var txCurrentLabel = new TextBlock { Text = currentTxAgent is not null ? $"{currentTxAgent.Name}  ({currentTxAgent.ProviderName}/{currentTxAgent.ModelName})" : "(none)", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(currentTxAgent is not null ? 0xE0E0E0 : 0x777777), FontStyle = currentTxAgent is null ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal, VerticalAlignment = VerticalAlignment.Center };
-        txCurrentRow.Children.Add(txCurrentLabel);
-
-        if (currentTxAgent is not null)
-        {
-            var txClearBtn = new Button { Content = new TextBlock { Text = "\u2715", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0xFF4444) }, Background = _brushTransparent, BorderThickness = new Thickness(0), Padding = new Thickness(4, 2, 4, 2), MinWidth = 0, MinHeight = 0 };
-            txClearBtn.Click += (_, _) => { SaveLocalSetting(ClientSettings.TranscriptionAgentId, null); txCurrentLabel.Text = "(none)"; txCurrentLabel.Foreground = Brush(0x777777); txCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Italic; if (txCurrentRow.Children.Count > 2) txCurrentRow.Children.RemoveAt(2); UpdateMicState(); };
-            txCurrentRow.Children.Add(txClearBtn);
-        }
-        SettingsPanel.Children.Add(txCurrentRow);
-
-        var txSearch = new AutoSuggestBox { PlaceholderText = txAgents.Count > 0 ? "Search transcription agents..." : "No transcription-capable agents available", FontFamily = _monoFont, FontSize = 11, MinWidth = 300, Margin = new Thickness(0, 4, 0, 0), IsEnabled = txAgents.Count > 0 };
-        ToolTipService.SetToolTip(txSearch, "Type to filter agents with transcription-capable models");
-        txSearch.TextChanged += (sender, args) => { if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return; var q = sender.Text.Trim(); sender.ItemsSource = string.IsNullOrEmpty(q) ? txDisplayMap.Keys.ToList() : txDisplayMap.Keys.Where(k => k.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList(); };
-        txSearch.QuerySubmitted += (sender, args) =>
-        {
-            var chosen = args.ChosenSuggestion?.ToString();
-            if (chosen is null || !txDisplayMap.TryGetValue(chosen, out var aid)) return;
-            sender.Text = string.Empty;
-            SaveLocalSetting(ClientSettings.TranscriptionAgentId, aid.ToString());
-            txCurrentLabel.Text = chosen; txCurrentLabel.Foreground = Brush(0xE0E0E0); txCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Normal;
-            if (txCurrentRow.Children.Count <= 2)
-            {
-                var clearBtn = new Button { Content = new TextBlock { Text = "\u2715", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0xFF4444) }, Background = _brushTransparent, BorderThickness = new Thickness(0), Padding = new Thickness(4, 2, 4, 2), MinWidth = 0, MinHeight = 0 };
-                clearBtn.Click += (_, _) => { SaveLocalSetting(ClientSettings.TranscriptionAgentId, null); txCurrentLabel.Text = "(none)"; txCurrentLabel.Foreground = Brush(0x777777); txCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Italic; if (txCurrentRow.Children.Count > 2) txCurrentRow.Children.RemoveAt(2); UpdateMicState(); };
-                txCurrentRow.Children.Add(clearBtn);
-            }
-            UpdateMicState();
-        };
-        SettingsPanel.Children.Add(txSearch);
-    }
 
     private static string? FindResourceTypeByDefaultKey(
         IEnumerable<ModulePermissionMetadata> metadata,
@@ -332,59 +264,6 @@ public sealed partial class MainPage
                 StringComparison.OrdinalIgnoreCase))
             ?.ResourceType;
 
-    private static string? FindInputAudioResourceType(IEnumerable<ModulePermissionMetadata> metadata)
-        => metadata
-            .Where(module => module.Enabled)
-            .SelectMany(module => module.ResourceTypes)
-            .FirstOrDefault(resource =>
-                resource.DefaultResourceKey?.Contains("audio", StringComparison.OrdinalIgnoreCase) == true
-                || resource.DisplayName.Contains("audio", StringComparison.OrdinalIgnoreCase))
-            ?.ResourceType;
-
-    private void BuildInputAudioSection(string? inputAudioResourceType)
-    {
-        AddSettingsSection("Input Audio", "Audio capture device used for voice-to-text transcription (saved locally per device)");
-        var inputAudios = inputAudioResourceType is not null && _resourceLookupCache.TryGetValue(inputAudioResourceType, out var adItems) ? adItems : [];
-        var adDisplayMap = new Dictionary<string, Guid>(inputAudios.Count);
-        foreach (var d in inputAudios) adDisplayMap.TryAdd($"{d.Name}  ({d.Id.ToString()[..8]}…)", d.Id);
-
-        var savedAdId = LoadLocalSetting(ClientSettings.SelectedInputAudioId);
-        ResourceItemDto? currentAd = null;
-        if (savedAdId is not null && Guid.TryParse(savedAdId, out var savedAdGuid)) currentAd = inputAudios.FirstOrDefault(d => d.Id == savedAdGuid);
-
-        var adCurrentRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        adCurrentRow.Children.Add(new TextBlock { Text = "current:", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(0xCCCCCC), VerticalAlignment = VerticalAlignment.Center });
-        var adCurrentLabel = new TextBlock { Text = currentAd is not null ? $"{currentAd.Name}  ({currentAd.Id.ToString()[..8]}…)" : "(none)", FontFamily = _monoFont, FontSize = 11, Foreground = Brush(currentAd is not null ? 0xE0E0E0 : 0x777777), FontStyle = currentAd is null ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal, VerticalAlignment = VerticalAlignment.Center };
-        adCurrentRow.Children.Add(adCurrentLabel);
-
-        if (currentAd is not null)
-        {
-            var adClearBtn = new Button { Content = new TextBlock { Text = "\u2715", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0xFF4444) }, Background = _brushTransparent, BorderThickness = new Thickness(0), Padding = new Thickness(4, 2, 4, 2), MinWidth = 0, MinHeight = 0 };
-            adClearBtn.Click += (_, _) => { SaveLocalSetting(ClientSettings.SelectedInputAudioId, null); adCurrentLabel.Text = "(none)"; adCurrentLabel.Foreground = Brush(0x777777); adCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Italic; if (adCurrentRow.Children.Count > 2) adCurrentRow.Children.RemoveAt(2); UpdateMicState(); };
-            adCurrentRow.Children.Add(adClearBtn);
-        }
-        SettingsPanel.Children.Add(adCurrentRow);
-
-        var adSearch = new AutoSuggestBox { PlaceholderText = inputAudios.Count > 0 ? "Search input audios..." : "No input audios available", FontFamily = _monoFont, FontSize = 11, MinWidth = 300, Margin = new Thickness(0, 4, 0, 0), IsEnabled = inputAudios.Count > 0 };
-        ToolTipService.SetToolTip(adSearch, "Type to filter, then click a suggestion to select the input audio");
-        adSearch.TextChanged += (sender, args) => { if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return; var q = sender.Text.Trim(); sender.ItemsSource = string.IsNullOrEmpty(q) ? adDisplayMap.Keys.ToList() : adDisplayMap.Keys.Where(k => k.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList(); };
-        adSearch.QuerySubmitted += (sender, args) =>
-        {
-            var chosen = args.ChosenSuggestion?.ToString();
-            if (chosen is null || !adDisplayMap.TryGetValue(chosen, out var did)) return;
-            sender.Text = string.Empty;
-            SaveLocalSetting(ClientSettings.SelectedInputAudioId, did.ToString());
-            adCurrentLabel.Text = chosen; adCurrentLabel.Foreground = Brush(0xE0E0E0); adCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Normal;
-            if (adCurrentRow.Children.Count <= 2)
-            {
-                var clearBtn = new Button { Content = new TextBlock { Text = "\u2715", FontFamily = _monoFont, FontSize = 10, Foreground = Brush(0xFF4444) }, Background = _brushTransparent, BorderThickness = new Thickness(0), Padding = new Thickness(4, 2, 4, 2), MinWidth = 0, MinHeight = 0 };
-                clearBtn.Click += (_, _) => { SaveLocalSetting(ClientSettings.SelectedInputAudioId, null); adCurrentLabel.Text = "(none)"; adCurrentLabel.Foreground = Brush(0x777777); adCurrentLabel.FontStyle = Windows.UI.Text.FontStyle.Italic; if (adCurrentRow.Children.Count > 2) adCurrentRow.Children.RemoveAt(2); UpdateMicState(); };
-                adCurrentRow.Children.Add(clearBtn);
-            }
-            UpdateMicState();
-        };
-        SettingsPanel.Children.Add(adSearch);
-    }
 
     private void BuildDefaultResourceSection(
         SharpClawApiClient api, Guid channelId,

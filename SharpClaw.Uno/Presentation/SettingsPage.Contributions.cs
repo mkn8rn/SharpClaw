@@ -41,7 +41,7 @@ public sealed partial class SettingsPage
     private string UniqueContributionLabel(string label)
     {
         var candidate = string.IsNullOrWhiteSpace(label) ? "Module Feature" : label.Trim();
-        if (!TabRequiredModules.ContainsKey(candidate)
+        if (!IsReservedTabLabel(candidate)
             && !_moduleContributionTabs.ContainsKey(candidate)
             && _cachedModuleStates?.Any(m => m.DisplayName == candidate) != true)
             return candidate;
@@ -50,13 +50,17 @@ public sealed partial class SettingsPage
         while (true)
         {
             var next = $"{candidate} {suffix}";
-            if (!TabRequiredModules.ContainsKey(next)
+            if (!IsReservedTabLabel(next)
                 && !_moduleContributionTabs.ContainsKey(next)
                 && _cachedModuleStates?.Any(m => m.DisplayName == next) != true)
                 return next;
             suffix++;
         }
     }
+
+    private static bool IsReservedTabLabel(string label)
+        => label is "Providers" or "Models" or "Agents" or "Roles" or "Gateway"
+            or "Manage Modules" or "Users" or "Danger Zone";
 
     private async Task LoadContributionSettingsAsync(ModuleFrontendContribution contribution)
     {

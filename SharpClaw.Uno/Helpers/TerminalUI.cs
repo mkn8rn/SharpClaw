@@ -55,50 +55,6 @@ internal static class TerminalUI
 
     // ── Permission metadata ─────────────────────────────────────
 
-    public static readonly Dictionary<string, string> GlobalFlagTooltips = new()
-    {
-        ["CanCreateSubAgents"] = "Allow the agent to spawn child agents on its own",
-        ["CanCreateContainers"] = "Allow the agent to create sandboxed execution containers",
-        ["CanRegisterDatabases"] = "Allow the agent to register internal or external databases",
-        ["CanAccessLocalhostInBrowser"] = "Allow the agent to open localhost URLs in a headless browser",
-        ["CanAccessLocalhostCli"] = "Allow the agent to make direct HTTP requests to localhost",
-        ["CanClickDesktop"] = "Allow the agent to simulate mouse clicks on the desktop",
-        ["CanTypeOnDesktop"] = "Allow the agent to simulate keyboard input on the desktop",
-        ["CanReadCrossThreadHistory"] = "Allow the agent to read conversation history from other threads and channels",
-        ["CanEditAgentHeader"] = "Allow editing the custom chat header of specific agents",
-        ["CanEditChannelHeader"] = "Allow editing the custom chat header of specific channels",
-        ["CanCreateDocumentSessions"] = "Allow the agent to register document files (spreadsheets, CSV) as sessions",
-        ["CanEnumerateWindows"] = "Allow the agent to list visible desktop windows (title, process, path)",
-        ["CanFocusWindow"] = "Allow the agent to bring windows to the foreground",
-        ["CanCloseWindow"] = "Allow the agent to send close signals to windows (graceful)",
-        ["CanResizeWindow"] = "Allow the agent to move, resize, minimize, or maximize windows",
-        ["CanSendHotkey"] = "Allow the agent to send keyboard shortcuts (Ctrl+S, Alt+Tab, etc.)",
-        ["CanReadClipboard"] = "Allow the agent to read clipboard contents (text, files, images)",
-        ["CanWriteClipboard"] = "Allow the agent to set clipboard contents (text or file paths)",
-    };
-
-    public static readonly Dictionary<string, string> ResourceAccessTooltips = new()
-    {
-        ["DsShell"] = "Unrestricted shell commands \u2014 use with extreme caution",
-        ["Mk8Shell"] = "Shell commands restricted to the mk8.shell allowlist",
-        ["Container"] = "Access to sandboxed execution containers",
-        ["WaWebsite"] = "Access to registered website resources",
-        ["WaSearch"] = "Access to registered search engine resources",
-        ["DbInternal"] = "Access to SharpClaw-managed internal databases",
-        ["DbExternal"] = "Access to registered external database endpoints",
-        ["TrAudio"] = "Access to audio capture devices for transcription",
-        ["CuDisplay"] = "Access to display devices for screen capture",
-        ["EditorSession"] = "Access to IDE editor sessions via the editor bridge",
-        ["AoAgent"] = "Manage other agents (create, update, delete)",
-        ["AoTask"] = "Manage scheduled tasks and jobs",
-        ["AoSkill"] = "Access registered skills and their definitions",
-        ["AoAgentHeader"] = "Edit the custom chat header of specific agents",
-        ["AoChannelHeader"] = "Edit the custom chat header of specific channels",
-        ["OaDocument"] = "Access to registered document files for spreadsheet operations",
-        ["CuNativeApp"] = "Access to registered desktop applications for launch and process control",
-        ["BiChannel"] = "Access to registered bot platform integrations",
-    };
-
     public static readonly (string Tag, string Label)[] ClearanceOptions =
     [
         ("Independent",                "Can act without approval"),

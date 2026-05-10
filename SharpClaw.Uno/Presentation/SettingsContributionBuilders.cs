@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml.Controls;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Helpers;
 using SharpClaw.Services;
 
 namespace SharpClaw.Presentation;
@@ -81,6 +82,8 @@ internal sealed class ResourceListSettingsContributionBuilder(string key) : ISet
                 return;
             }
 
+            AddLocalSelectionIfDeclared(context, rows);
+
             var panel = new StackPanel { Spacing = 2 };
             foreach (var row in rows)
             {
@@ -99,6 +102,51 @@ internal sealed class ResourceListSettingsContributionBuilder(string key) : ISet
         {
             context.Label(ex.Message, 0xFF4444);
         }
+    }
+
+    private static void AddLocalSelectionIfDeclared(
+        SettingsContributionBuildContext context,
+        IReadOnlyList<JsonElement> rows)
+    {
+        var settingKey = ReadMetadataString(context.Contribution, "localSettingKey");
+        if (string.IsNullOrWhiteSpace(settingKey)) return;
+
+        context.Label(ReadMetadataString(context.Contribution, "selectionLabel") ?? "Current Selection", 0x00CCFF);
+        var settings = App.Services?.GetService<ClientSettings>();
+        var savedId = settings?.Get(settingKey);
+        var selector = new ComboBox
+        {
+            FontFamily = TerminalUI.Mono,
+            FontSize = 11,
+            Background = TerminalUI.Brush(0x1A1A1A),
+            Foreground = TerminalUI.Brush(0xCCCCCC),
+            BorderBrush = TerminalUI.Brush(0x333333),
+            BorderThickness = new Thickness(1),
+            MinWidth = 300,
+        };
+
+        selector.Items.Add(new ComboBoxItem { Content = "(none)", Tag = string.Empty });
+        var selectedIndex = 0;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var id = ReadString(rows[i], "id", "resourceId", "modelId");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+
+            var label = ReadString(rows[i], "name", "displayName", "title", "id") ?? id;
+            selector.Items.Add(new ComboBoxItem { Content = label, Tag = id });
+            if (string.Equals(savedId, id, StringComparison.OrdinalIgnoreCase))
+                selectedIndex = selector.Items.Count - 1;
+        }
+
+        selector.SelectedIndex = selectedIndex;
+        selector.SelectionChanged += (_, _) =>
+        {
+            if (selector.SelectedItem is not ComboBoxItem { Tag: string value }) return;
+            settings?.Set(settingKey, string.IsNullOrWhiteSpace(value) ? null : value);
+            context.Status(string.IsNullOrWhiteSpace(value) ? "Selection cleared." : "Selection saved.",
+                string.IsNullOrWhiteSpace(value) ? 0x808080 : 0x00FF00);
+        };
+        context.Container.Children.Add(selector);
     }
 
     private static void AddSyncButton(SettingsContributionBuildContext context, ModuleFrontendList list)
@@ -204,5 +252,15 @@ internal sealed class ResourceListSettingsContributionBuilder(string key) : ISet
         }
 
         return null;
+    }
+
+    private static string? ReadMetadataString(ModuleFrontendContribution contribution, string key)
+    {
+        if (contribution.Metadata is null
+            || !contribution.Metadata.TryGetValue(key, out var value)
+            || value.ValueKind != JsonValueKind.String)
+            return null;
+
+        return value.GetString();
     }
 }

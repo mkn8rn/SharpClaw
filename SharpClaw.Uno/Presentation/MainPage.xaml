@@ -1,4 +1,4 @@
-﻿<Page x:Class="SharpClaw.Presentation.MainPage"
+<Page x:Class="SharpClaw.Presentation.MainPage"
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:local="using:SharpClaw.Presentation"
@@ -15,7 +15,7 @@
       <ColumnDefinition />
     </Grid.ColumnDefinitions>
 
-    <!-- ═══ Left sidebar ═══ -->
+    <!-- Left sidebar -->
     <Grid Grid.Column="0" Background="#0D0D0D">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto" />
@@ -45,7 +45,7 @@
                    TextWrapping="Wrap"
                    Margin="0,6,0,0"
                    x:Uid="MainPage.Label.ModuleAlphaNote"
-                   Text="Bundled modules beyond the essentials are included to test advanced feature support and will be phased out before 1.0.0. Create and share your own — agents can even build modules from within SharpClaw." />
+                   Text="Bundled modules beyond the essentials are included to test advanced feature support and will be phased out before 1.0.0. Create and share your own � agents can even build modules from within SharpClaw." />
       </StackPanel>
 
       <!-- New channel button -->
@@ -74,7 +74,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 Click="OnSettingsClick">
-          <TextBlock Text="› Settings"
+          <TextBlock Text="� Settings"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -83,7 +83,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 Click="OnLogoutClick">
-          <TextBlock Text="› Logout"
+          <TextBlock Text="� Logout"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -92,7 +92,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 Click="OnLegalNoticesClick">
-          <TextBlock Text="› Legal Notices"
+          <TextBlock Text="� Legal Notices"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -101,7 +101,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 Click="OnUserGuideClick">
-          <TextBlock Text="› User Guide"
+          <TextBlock Text="� User Guide"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -110,7 +110,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 Click="OnReportIssueClick">
-          <TextBlock Text="› Report Issue"
+          <TextBlock Text="� Report Issue"
                      Style="{StaticResource TerminalText}"
                      FontSize="12"
                      Foreground="#808080" />
@@ -149,7 +149,7 @@
     <!-- Divider -->
     <Border Grid.Column="1" Background="#1A1A1A" />
 
-    <!-- ═══ Right chat area ═══ -->
+    <!-- Right chat area -->
     <Grid Grid.Column="2">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto" />
@@ -209,16 +209,6 @@
                        FontSize="11"
                        Foreground="#666666" />
           </Button>
-          <Button x:Name="TabBotsButton"
-                  Background="Transparent"
-                  BorderThickness="0"
-                  Padding="0,2,0,2"
-                  Click="OnTabBotsClick">
-            <TextBlock Text="[bots]"
-                       Style="{StaticResource TerminalText}"
-                       FontSize="11"
-                       Foreground="#666666" />
-          </Button>
         </StackPanel>
         <StackPanel x:Name="AgentSelectorPanel"
                     Orientation="Horizontal"
@@ -272,7 +262,7 @@
           </Button>
         </StackPanel>
         <TextBlock x:Name="OneOffWarning"
-                   Text="⚠ One-off mode: each message is an isolated prompt with no conversation history. Select a thread to enable history."
+                   Text="? One-off mode: each message is an isolated prompt with no conversation history. Select a thread to enable history."
                    Style="{StaticResource TerminalText}"
                    FontSize="10"
                    Foreground="#FF4444"
@@ -330,22 +320,7 @@
                       x:Name="ChatActionsPanel"
                       Orientation="Horizontal"
                       Spacing="4"
-                      Margin="4,0,0,0">
-            <Button x:Name="MicButton"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Padding="6,4"
-                    MinWidth="0"
-                    MinHeight="0"
-                    Click="OnMicClick"
-                    ToolTipService.ToolTip="Set a transcription agent and audio device in channel settings to enable voice input">
-              <TextBlock Text="&#xE720;"
-                         FontFamily="{ThemeResource SymbolThemeFontFamily}"
-                         FontSize="16"
-                         Foreground="#00FF00"
-                         x:Name="MicIcon" />
-            </Button>
-          </StackPanel>
+                      Margin="4,0,0,0" />
           <Button Grid.Column="2"
                   Style="{StaticResource TerminalButton}"
                   Click="OnSendClick"
@@ -413,7 +388,7 @@
                     Click="OnRefreshJobsClick"
                     ToolTipService.ToolTip="Refresh jobs"
                     VerticalAlignment="Center">
-              <TextBlock Text="↻"
+              <TextBlock Text="?"
                          Style="{StaticResource TerminalText}"
                          FontSize="14"
                          FontWeight="Bold"
@@ -450,7 +425,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnJobApproveClick"
                   Visibility="Collapsed">
-            <TextBlock Text="✓ Approve"
+            <TextBlock Text="? Approve"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#00FF00" />
@@ -459,7 +434,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnJobCancelClick"
                   Visibility="Collapsed">
-            <TextBlock Text="✕ Cancel"
+            <TextBlock Text="? Cancel"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FF4444" />
@@ -468,7 +443,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnJobStopClick"
                   Visibility="Collapsed">
-            <TextBlock Text="■ Stop"
+            <TextBlock Text="� Stop"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FFAA00" />
@@ -477,7 +452,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnJobPauseClick"
                   Visibility="Collapsed">
-            <TextBlock Text="⏸ Pause"
+            <TextBlock Text="? Pause"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FFAA00" />
@@ -486,7 +461,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnJobResumeClick"
                   Visibility="Collapsed">
-            <TextBlock Text="▶ Resume"
+            <TextBlock Text="? Resume"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#00FF00" />
@@ -499,7 +474,7 @@
                   Click="OnCopyJobLogsClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy job logs to clipboard">
-            <TextBlock Text="📋 Logs"
+            <TextBlock Text="?? Logs"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -509,7 +484,7 @@
                   Click="OnCopySegmentsClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy transcription segments to clipboard">
-            <TextBlock Text="📋 Segments"
+            <TextBlock Text="?? Segments"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -519,7 +494,7 @@
                   Click="OnCopyResultClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy result data to clipboard">
-            <TextBlock Text="📋 Result"
+            <TextBlock Text="?? Result"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -529,7 +504,7 @@
                   Click="OnCopyAllClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy all job details to clipboard">
-            <TextBlock Text="📋 Copy All"
+            <TextBlock Text="?? Copy All"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -584,7 +559,7 @@
                     Click="OnRefreshTasksClick"
                     ToolTipService.ToolTip="Refresh tasks"
                     VerticalAlignment="Center">
-              <TextBlock Text="↻"
+              <TextBlock Text="?"
                          Style="{StaticResource TerminalText}"
                          FontSize="14"
                          FontWeight="Bold"
@@ -605,7 +580,7 @@
                     Style="{StaticResource TerminalButton}"
                     Click="OnTaskExecuteClick"
                     Visibility="Collapsed">
-              <TextBlock Text="▶ Execute"
+              <TextBlock Text="? Execute"
                          Style="{StaticResource TerminalText}"
                          FontSize="12"
                          Foreground="#00FF00" />
@@ -702,7 +677,7 @@
           <Button x:Name="TaskSubmitButton"
                   Style="{StaticResource TerminalButton}"
                   Click="OnTaskSubmitClick">
-            <TextBlock Text="✓ Submit Template"
+            <TextBlock Text="? Submit Template"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#00FF00" />
@@ -711,7 +686,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnTaskStopClick"
                   Visibility="Collapsed">
-            <TextBlock Text="■ Stop"
+            <TextBlock Text="� Stop"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FFAA00" />
@@ -720,7 +695,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnTaskPauseClick"
                   Visibility="Collapsed">
-            <TextBlock Text="⏸ Pause"
+            <TextBlock Text="? Pause"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FFAA00" />
@@ -729,7 +704,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnTaskResumeClick"
                   Visibility="Collapsed">
-            <TextBlock Text="▶ Resume"
+            <TextBlock Text="? Resume"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#00FF00" />
@@ -738,7 +713,7 @@
                   Style="{StaticResource TerminalButton}"
                   Click="OnTaskCancelClick"
                   Visibility="Collapsed">
-            <TextBlock Text="✕ Cancel"
+            <TextBlock Text="? Cancel"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#FF4444" />
@@ -749,7 +724,7 @@
                   Click="OnCopyTaskLogsClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy task logs to clipboard">
-            <TextBlock Text="📋 Logs"
+            <TextBlock Text="?? Logs"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -759,7 +734,7 @@
                   Click="OnCopyTaskResultClick"
                   Visibility="Collapsed"
                   ToolTipService.ToolTip="Copy task results to clipboard">
-            <TextBlock Text="📋 Results"
+            <TextBlock Text="?? Results"
                        Style="{StaticResource TerminalText}"
                        FontSize="12"
                        Foreground="#808080" />
@@ -767,18 +742,6 @@
         </StackPanel>
       </Grid>
 
-      <!-- ── Bot view panel ──────────────────────────────────── -->
-      <Grid x:Name="BotViewPanel"
-            Grid.Row="1"
-            Grid.RowSpan="2"
-            Visibility="Collapsed">
-        <ScrollViewer VerticalScrollBarVisibility="Auto"
-                      Margin="20,8,20,16">
-          <StackPanel x:Name="BotContentPanel"
-                      Spacing="8"
-                      Padding="0,0,0,16" />
-        </ScrollViewer>
-      </Grid>
 
     </Grid>
   </Grid>

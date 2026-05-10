@@ -517,8 +517,6 @@ internal sealed class PermissionEditorBuilder
                     Text = resType.DisplayName, FontFamily = TerminalUI.Mono, FontSize = 11,
                     Foreground = TerminalUI.Brush(0x00CCFF),
                 };
-                if (TerminalUI.ResourceAccessTooltips.TryGetValue(resType.ResourceType, out var resTip))
-                    ToolTipService.SetToolTip(resHeader, resTip);
                 section.Children.Add(resHeader);
 
                 var gp = new StackPanel { Spacing = _grantClearance ? 6 : 2, Margin = new Thickness(12, 0, 0, 0) };

@@ -29,9 +29,6 @@ public sealed partial class MainPage
                 ReportChatActionError,
                 CancellationToken.None)));
         }
-
-        ChatActionsPanel.Children.Add(MicButton);
-        UpdateMicState();
     }
 
     private void InsertChatActionText(string text)

@@ -27,7 +27,6 @@ public sealed partial class MainPage : Page
     private bool _settingsMode;
     private bool _tasksMode;
     private bool _jobsMode;
-    private bool _botsMode;
     private bool _isSending;
     private bool _isThreadBusy;
     private bool _historyStaleAfterSend;
@@ -111,10 +110,6 @@ public sealed partial class MainPage : Page
     // ── Resource lookup cache (populated per settings load) ──
     private readonly Dictionary<string, List<ResourceItemDto>> _resourceLookupCache = new(13);
 
-    // ── Transcription mic state ──
-    private Guid? _activeTranscriptionJobId;
-    private CancellationTokenSource? _transcriptionPollCts;
-    private readonly StringBuilder _transcriptionAccumulator = new(capacity: 2048);
 
     private static SolidColorBrush Brush(int rgb) => TerminalUI.Brush(rgb);
     private static string Truncate(string s, int max) => TerminalUI.Truncate(s, max);
@@ -648,7 +643,6 @@ public sealed partial class MainPage : Page
         ShowChatView();
         await LoadHistoryAsync(id);
         await LoadCostAsync(id);
-        UpdateMicState();
 
         DispatcherQueue.TryEnqueue(() => MessageInput.Focus(FocusState.Programmatic));
     }
@@ -907,7 +901,6 @@ public sealed partial class MainPage : Page
         JobViewPanel.Visibility = Visibility.Collapsed;
         TaskViewPanel.Visibility = Visibility.Collapsed;
         SettingsScroller.Visibility = Visibility.Collapsed;
-        BotViewPanel.Visibility = Visibility.Collapsed;
         AgentSelectorPanel.Visibility = Visibility.Visible;
         ThreadSelectorPanel.Visibility = _selectedChannelId is not null ? Visibility.Visible : Visibility.Collapsed;
         MessagesScroller.Visibility = Visibility.Visible;
@@ -916,11 +909,9 @@ public sealed partial class MainPage : Page
 
     private void OnTabChatClick(object sender, RoutedEventArgs e)
     {
-        if (!_settingsMode && !_tasksMode && !_jobsMode && !_botsMode) return;
         _settingsMode = false;
         _tasksMode = false;
         _jobsMode = false;
-        _botsMode = false;
         _taskCreateNewMode = false;
         UpdateTabHighlight();
         SettingsScroller.Visibility = Visibility.Collapsed;
@@ -928,7 +919,6 @@ public sealed partial class MainPage : Page
         DeallocateTaskView();
         JobViewPanel.Visibility = Visibility.Collapsed;
         DeallocateJobView();
-        BotViewPanel.Visibility = Visibility.Collapsed;
         AgentSelectorPanel.Visibility = Visibility.Visible;
         if (_selectedChannelId is not null)
         {
@@ -937,17 +927,15 @@ public sealed partial class MainPage : Page
         OneOffWarning.Visibility = _selectedThreadId is null && !_pendingNewThread && _selectedChannelId is not null
             ? Visibility.Visible : Visibility.Collapsed;
         ShowChatView();
-        UpdateMicState();
     }
 
     private void UpdateTabHighlight()
     {
-        var chatActive = !_settingsMode && !_tasksMode && !_jobsMode && !_botsMode;
+        var chatActive = !_settingsMode && !_tasksMode && !_jobsMode;
         if (TabChatButton.Content is TextBlock c) c.Foreground = Brush(chatActive ? 0x00FF00 : 0x666666);
         if (TabTasksButton.Content is TextBlock t) t.Foreground = Brush(_tasksMode ? 0x00FF00 : 0x666666);
         if (TabJobsButton.Content is TextBlock j) j.Foreground = Brush(_jobsMode ? 0x00FF00 : 0x666666);
         if (TabSettingsButton.Content is TextBlock s) s.Foreground = Brush(_settingsMode ? 0x00FF00 : 0x666666);
-        if (TabBotsButton.Content is TextBlock b) b.Foreground = Brush(_botsMode ? 0x00FF00 : 0x666666);
     }
 
     // ── DTOs for JSON deserialization ────────────────────────────
