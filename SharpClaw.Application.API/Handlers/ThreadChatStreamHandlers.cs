@@ -3,9 +3,11 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.API.Handlers;
 
@@ -26,19 +28,16 @@ public static class ThreadChatStreamHandlers
 
     private static readonly ConcurrentDictionary<Guid, TaskCompletionSource<bool>> PendingApprovals = new();
 
-    private const string LogCategory = "SharpClaw.SSE";
-
-    [Conditional("DEBUG")]
-    private static void Log(string message) => Debug.WriteLine(message, LogCategory);
-
     [MapPost("stream")]
     public static async Task StreamChat(
         HttpContext context,
         Guid id,
         Guid threadId,
         ChatRequest request,
-        ChatService chatService)
+        ChatService chatService,
+        ILoggerFactory loggerFactory)
     {
+        var logger = loggerFactory.CreateLogger("SharpClaw.SSE");
         context.Response.ContentType = "text/event-stream";
         context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers.Connection = "keep-alive";
@@ -63,7 +62,14 @@ public static class ThreadChatStreamHandlers
         var streamId = Guid.NewGuid().ToString("N")[..8];
         var eventIndex = 0;
         var sw = Stopwatch.StartNew();
-        Log($"[{streamId}] ── STREAM START ── channel={id} threadId={threadId}");
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug(
+                "SSE chat stream {StreamId} started. ChannelId={ChannelId} ThreadId={ThreadId} ClientType={ClientType} MessageChars={MessageChars}",
+                streamId, id, threadId,
+                PathGuard.SanitizeForLog(request.ClientType),
+                request.Message.Length);
+        }
 
         try
         {
@@ -76,24 +82,37 @@ public static class ThreadChatStreamHandlers
             {
                 var json = JsonSerializer.Serialize(evt, JsonOptions);
                 var eventName = evt.Type.ToString();
-                Log($"[{streamId}] #{eventIndex++} {eventName} ({sw.ElapsedMilliseconds}ms): {json}");
+                if (logger.IsEnabled(LogLevel.Trace))
+                {
+                    logger.LogTrace(
+                        "SSE chat stream {StreamId} writing event {EventIndex} {EventType} after {ElapsedMs}ms.",
+                        streamId, eventIndex, eventName, sw.ElapsedMilliseconds);
+                }
+                eventIndex++;
                 await context.Response.WriteAsync($"event: {eventName}\ndata: {json}\n\n",
                     context.RequestAborted);
                 await context.Response.Body.FlushAsync(context.RequestAborted);
             }
 
             sw.Stop();
-            Log($"[{streamId}] ── STREAM END ── {eventIndex} events in {sw.ElapsedMilliseconds}ms");
+            logger.LogDebug(
+                "SSE chat stream {StreamId} completed with {EventCount} events in {ElapsedMs}ms.",
+                streamId, eventIndex, sw.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
         {
             sw.Stop();
-            Log($"[{streamId}] ── STREAM CANCELLED ── {eventIndex} events in {sw.ElapsedMilliseconds}ms (client disconnected)");
+            logger.LogDebug(
+                "SSE chat stream {StreamId} cancelled after {EventCount} events in {ElapsedMs}ms.",
+                streamId, eventIndex, sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            Log($"[{streamId}] ── STREAM ERROR ── {eventIndex} events in {sw.ElapsedMilliseconds}ms: {ex.Message}");
+            logger.LogWarning(
+                ex,
+                "SSE chat stream {StreamId} failed after {EventCount} events in {ElapsedMs}ms.",
+                streamId, eventIndex, sw.ElapsedMilliseconds);
 
             // Persist the error as a system message so the user sees it
             // when they reload the thread history in a future session.

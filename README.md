@@ -142,6 +142,7 @@ The CLI covers everything the API does: providers, models, agents, channels, thr
 | [Core API Reference](docs/Core-API-documentation.md) | Full HTTP API with request/response shapes |
 | [Core API Skill Reference](docs/Core-API-skill.md) | Compact endpoint listing for agent consumption |
 | [Gateway API Reference](docs/Gateway-documentation.md) | Public gateway endpoints, rate limiting, toggles |
+| [Logging](docs/Logging.md) | Local AppData log files, Serilog settings, timing diagnostics |
 | [Provider Parameters](docs/Provider-Parameters.md) | Per-provider completion parameter support and validation |
 | [Module System Design](docs/Module-System-Design.md) | Module architecture, contracts, permission model, lifecycle |
 | [mk8.shell Reference](mk8.shell/mk8.shell.md) | Verb set, execution model, hardening, sandboxing |

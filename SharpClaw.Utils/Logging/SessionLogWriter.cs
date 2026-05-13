@@ -37,6 +37,7 @@ public sealed class SessionLogWriter : IAsyncDisposable, IDisposable
         LogFilePath = Path.Combine(DirectoryPath, "log.txt");
         DebugFilePath = Path.Combine(DirectoryPath, "debug.txt");
         ExceptionFilePath = Path.Combine(DirectoryPath, "exceptions.txt");
+        SerilogFilePath = Path.Combine(DirectoryPath, "serilog.txt");
 
         ResetSessionFiles();
 
@@ -79,6 +80,13 @@ public sealed class SessionLogWriter : IAsyncDisposable, IDisposable
     /// Gets the exception log file path.
     /// </summary>
     public string ExceptionFilePath { get; }
+
+    /// <summary>
+    /// Gets the raw Serilog file sink path. This is intentionally separate
+    /// from <see cref="LogFilePath"/> so the session writer and Serilog do
+    /// not compete for the same file handle.
+    /// </summary>
+    public string SerilogFilePath { get; }
 
     /// <summary>
     /// Appends a regular log line.

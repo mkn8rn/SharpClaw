@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -15,6 +16,7 @@ using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
 
@@ -50,6 +52,7 @@ public sealed class TaskOrchestrator(
     /// </summary>
     public async Task StartAsync(Guid instanceId, CancellationToken ct = default)
     {
+        var startupTiming = Stopwatch.StartNew();
         using var startupScope = scopeFactory.CreateScope();
         var startupDb = startupScope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
         var startupTaskService = startupScope.ServiceProvider.GetRequiredService<TaskService>();
@@ -88,6 +91,10 @@ public sealed class TaskOrchestrator(
             instance.ErrorMessage = $"Compilation failed: {errors}";
             instance.CompletedAt = DateTimeOffset.UtcNow;
             await startupDb.SaveChangesAsync(ct);
+            logger.LogDebug(
+                "Task instance {InstanceId} compilation failed after {ElapsedMs}ms with {DiagnosticCount} diagnostic(s).",
+                instanceId, startupTiming.ElapsedMilliseconds,
+                compilationResult.Diagnostics.Count);
             return;
         }
 
@@ -102,6 +109,12 @@ public sealed class TaskOrchestrator(
 
         await startupTaskService.AppendLogAsync(instanceId, "Task started.", ct: ct);
         await runtime.WriteEventAsync(TaskOutputEventType.StatusChange, "Running");
+        startupTiming.Stop();
+        logger.LogDebug(
+            "Task instance {InstanceId} compiled and entered Running in {ElapsedMs}ms. TaskName={TaskName} StepCount={StepCount}",
+            instanceId, startupTiming.ElapsedMilliseconds,
+            PathGuard.SanitizeForLog(compilationResult.Plan.TaskName),
+            compilationResult.Plan.ExecutionSteps.Count);
 
         // Execute in background so the caller returns immediately
         _ = Task.Run(() => ExecutePlanAsync(instanceId, compilationResult.Plan, runtime, runtime.CancellationToken), CancellationToken.None);
@@ -215,6 +228,7 @@ public sealed class TaskOrchestrator(
             });
         }
 
+        var executionTiming = Stopwatch.StartNew();
         try
         {
             // Resolve channel — may be null when the task was started with a
@@ -239,14 +253,27 @@ public sealed class TaskOrchestrator(
             }
 
             await CompleteInstanceAsync(instanceId, TaskInstanceStatus.Completed, db, taskService, runtime);
+            executionTiming.Stop();
+            logger.LogDebug(
+                "Task instance {InstanceId} completed in {ElapsedMs}ms.",
+                instanceId, executionTiming.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
         {
             await CompleteInstanceAsync(instanceId, TaskInstanceStatus.Cancelled, db, taskService, runtime);
+            executionTiming.Stop();
+            logger.LogDebug(
+                "Task instance {InstanceId} cancelled after {ElapsedMs}ms.",
+                instanceId, executionTiming.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             await FailInstanceAsync(instanceId, ex.Message, db, taskService, runtime);
+            executionTiming.Stop();
+            logger.LogWarning(
+                ex,
+                "Task instance {InstanceId} failed after {ElapsedMs}ms.",
+                instanceId, executionTiming.ElapsedMilliseconds);
         }
         finally
         {
@@ -269,11 +296,17 @@ public sealed class TaskOrchestrator(
             return TaskStepExecutionResult.Continue;
 
         var moduleCtx = new TaskStepContextAdapter(context, this, taskService);
+        var stepTiming = Stopwatch.StartNew();
 
         // Invocation-aware path: raw step access for control-flow primitives.
         if (executor is ITaskStepInvocationExecutor invocationExecutor)
         {
             var result = await invocationExecutor.ExecuteInvocationAsync(step, moduleCtx);
+            stepTiming.Stop();
+            logger.LogDebug(
+                "Task instance {InstanceId} step {StepKey} completed in {ElapsedMs}ms. Result={Result}",
+                context.InstanceId, PathGuard.SanitizeForLog(stepKey),
+                stepTiming.ElapsedMilliseconds, result);
             return result == TaskStepResult.Return
                 ? TaskStepExecutionResult.Return
                 : TaskStepExecutionResult.Continue;
@@ -288,6 +321,11 @@ public sealed class TaskOrchestrator(
         }
         var resolvedExpr = step.Expression is not null ? ResolveExpression(step.Expression, context) : null;
         var keepGoing = await executor.ExecuteAsync(stepKey, moduleCtx, resolvedArgs, resolvedExpr, step.ResultVariable);
+        stepTiming.Stop();
+        logger.LogDebug(
+            "Task instance {InstanceId} step {StepKey} completed in {ElapsedMs}ms. Continue={Continue}",
+            context.InstanceId, PathGuard.SanitizeForLog(stepKey),
+            stepTiming.ElapsedMilliseconds, keepGoing);
         return keepGoing ? TaskStepExecutionResult.Continue : TaskStepExecutionResult.Return;
     }
 

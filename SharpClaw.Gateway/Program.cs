@@ -84,7 +84,6 @@ TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 builder.Logging.ClearProviders();
 builder.Host.UseSerilog();
 builder.Services.AddSingleton(sessionLogs);
-builder.Services.AddSingleton<ILoggerProvider>(_ => new SessionLogLoggerProvider(sessionLogs));
 builder.Logging.AddProvider(new SessionLogLoggerProvider(sessionLogs));
 
 // ── Gateway .env (same pattern as Core / Interface) ──────────────
@@ -115,7 +114,7 @@ if (serilogOptions.Enabled)
 
     if (serilogOptions.FileEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.File(
-            sessionLogs.LogFilePath,
+            sessionLogs.SerilogFilePath,
             rollingInterval: RollingInterval.Infinite);
 
     Log.Logger = loggerConfiguration.CreateLogger();

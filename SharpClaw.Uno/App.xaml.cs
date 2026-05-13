@@ -57,7 +57,7 @@ public partial class App : Application
 
             if (serilogOptions.FileEnabled)
                 loggerConfiguration = loggerConfiguration.WriteTo.File(
-                    _sessionLogs.LogFilePath,
+                    _sessionLogs.SerilogFilePath,
                     rollingInterval: RollingInterval.Infinite);
 
             Log.Logger = loggerConfiguration.CreateLogger();
@@ -81,6 +81,7 @@ public partial class App : Application
                 {
                     // Configure log levels for different categories of logging
                     logBuilder
+                        .AddProvider(new SessionLogLoggerProvider(_sessionLogs))
                         .SetMinimumLevel(
                             context.HostingEnvironment.IsDevelopment() ?
                                 LogLevel.Information :

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Serilog;
 using SharpClaw.Application.API;
 using SharpClaw.Application.API.Api;
@@ -160,7 +161,7 @@ if (serilogOptions.Enabled)
 
     if (serilogOptions.FileEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.File(
-            sessionLogs.LogFilePath,
+            sessionLogs.SerilogFilePath,
             rollingInterval: RollingInterval.Infinite);
 
     Log.Logger = loggerConfiguration.CreateLogger();
@@ -189,6 +190,7 @@ try
     builder.Configuration.AddLocalEnvironment(builder.Environment.IsDevelopment());
 
     builder.Host.UseSerilog();
+    builder.Logging.AddProvider(new SessionLogLoggerProvider(sessionLogs));
 
     builder.Services.AddSingleton(sessionLogs);
     builder.Services.AddSingleton(backendInstancePaths);

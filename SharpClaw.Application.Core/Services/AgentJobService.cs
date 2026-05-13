@@ -22,6 +22,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
 
@@ -601,6 +602,12 @@ public sealed class AgentJobService(
 
                 sw.Stop();
                 metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
+                _logger.LogDebug(
+                    "Module tool {ModuleId}.{ToolName} completed in {ElapsedMs}ms for job {JobId}. CompletionBehavior={CompletionBehavior}",
+                    PathGuard.SanitizeForLog(envelope.Module),
+                    PathGuard.SanitizeForLog(envelope.Tool),
+                    sw.ElapsedMilliseconds,
+                    job.Id, completionBehavior);
                 return new AgentJobExecutionOutcome(result, completionBehavior);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
