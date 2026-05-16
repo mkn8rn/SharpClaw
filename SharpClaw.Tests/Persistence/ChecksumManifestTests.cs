@@ -125,7 +125,7 @@ public class ChecksumManifestTests
     // ── HMAC tampering detection ─────────────────────────────────
 
     [Test]
-    public async Task WhenHmacSignatureTamperedThenVerifyFileReturnsFalse()
+    public async Task WhenHmacSignatureTamperedThenVerifyFileRebuildsManifest()
     {
         await WriteFileAsync("e.json", """{"id":"5"}""");
         await UpdateChecksumForFileAsync("e.json");
@@ -136,9 +136,13 @@ public class ChecksumManifestTests
 
         var bytes = await File.ReadAllBytesAsync(Path.Combine(_entityDir, "e.json"));
         var valid = await ChecksumManifest.VerifyFileAsync(
-            _fs, _entityDir, "e.json", bytes, _key, _logger, CancellationToken.None);
+            _fs, _entityDir, "e.json", bytes, _key, _logger, CancellationToken.None, fsyncOnRebuild: false);
 
-        valid.Should().BeFalse();
+        valid.Should().BeTrue();
+
+        var secondPass = await ChecksumManifest.VerifyFileAsync(
+            _fs, _entityDir, "e.json", bytes, _key, _logger, CancellationToken.None, fsyncOnRebuild: false);
+        secondPass.Should().BeTrue();
     }
 
     // ── Full-scan verification ───────────────────────────────────
@@ -155,14 +159,14 @@ public class ChecksumManifestTests
         await File.WriteAllTextAsync(Path.Combine(_entityDir, "bad.json"), "CORRUPTED");
 
         var mismatched = await ChecksumManifest.VerifyAllAsync(
-            _fs, _entityDir, _key, _logger, CancellationToken.None);
+            _fs, _entityDir, _key, _logger, CancellationToken.None, fsyncOnRebuild: false);
 
         mismatched.Should().HaveCount(1);
         mismatched[0].Should().Contain("bad.json");
     }
 
     [Test]
-    public async Task WhenHmacTamperedThenFullScanReturnsAllFiles()
+    public async Task WhenHmacTamperedThenFullScanRebuildsManifestWithoutFlaggingFiles()
     {
         await WriteFileAsync("f1.json", """{"f":1}""");
         await WriteFileAsync("f2.json", """{"f":2}""");
@@ -173,10 +177,13 @@ public class ChecksumManifestTests
         await File.WriteAllTextAsync(sigPath, "bad_sig");
 
         var mismatched = await ChecksumManifest.VerifyAllAsync(
-            _fs, _entityDir, _key, _logger, CancellationToken.None);
+            _fs, _entityDir, _key, _logger, CancellationToken.None, fsyncOnRebuild: false);
 
-        // HMAC invalid → all entity .json files are flagged.
-        mismatched.Should().HaveCount(2);
+        mismatched.Should().BeEmpty();
+
+        var secondPass = await ChecksumManifest.VerifyAllAsync(
+            _fs, _entityDir, _key, _logger, CancellationToken.None, fsyncOnRebuild: false);
+        secondPass.Should().BeEmpty();
     }
 
     // ── Manifest rebuild ─────────────────────────────────────────
@@ -186,9 +193,17 @@ public class ChecksumManifestTests
     {
         await WriteFileAsync("x.json", """{"x":1}""");
         await WriteFileAsync("y.json", """{"y":2}""");
+        await WriteFileAsync("_rows.json", "[]");
+        await WriteFileAsync("_index_ChannelId.json", "{}");
 
         await ChecksumManifest.RebuildManifestAsync(
             _fs, _entityDir, _key, fsync: false, _logger, CancellationToken.None);
+
+        var manifestJson = await File.ReadAllTextAsync(
+            Path.Combine(_entityDir, ChecksumManifest.ManifestFileName));
+        var manifest = JsonSerializer.Deserialize<Dictionary<string, string>>(manifestJson);
+        manifest.Should().ContainKeys("x.json", "y.json", "_rows.json");
+        manifest.Should().NotContainKey("_index_ChannelId.json");
 
         // Verify all files pass after rebuild.
         var mismatched = await ChecksumManifest.VerifyAllAsync(

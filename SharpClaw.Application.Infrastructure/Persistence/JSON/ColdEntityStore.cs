@@ -109,7 +109,8 @@ public sealed class ColdEntityStore(
         {
             var fileName = fs.GetFileName(path);
             var valid = await ChecksumManifest.VerifyFileAsync(
-                fs, dir, fileName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct);
+                fs, dir, fileName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct,
+                options.FsyncOnWrite);
             if (!valid)
             {
                 readResult.Dispose();
@@ -239,7 +240,8 @@ public sealed class ColdEntityStore(
             {
                 var fName = fs.GetFileName(file);
                 var valid = await ChecksumManifest.VerifyFileAsync(
-                    fs, dir, fName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct);
+                    fs, dir, fName, readResult.Data!.Memory, encryptionOptions.Key, logger, ct,
+                    options.FsyncOnWrite);
                 if (!valid)
                 {
                     readResult.Dispose();

@@ -143,6 +143,12 @@ internal static class QuarantineService
         try
         {
             var quarantineDir = fs.CombinePath(entityDir, QuarantineDir);
+            if (IsInsideQuarantine(filePath, quarantineDir))
+            {
+                logger.LogDebug("Skipping quarantine for already quarantined file {Path}", filePath);
+                return;
+            }
+
             fs.CreateDirectory(quarantineDir);
 
             var fileName = fs.GetFileName(filePath);
@@ -161,6 +167,20 @@ internal static class QuarantineService
             try { fs.DeleteFile(filePath); }
             catch { /* best effort */ }
         }
+    }
+
+    private static bool IsInsideQuarantine(string filePath, string quarantineDir)
+    {
+        static string Normalize(string path) =>
+            Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        var normalizedFilePath = Normalize(filePath);
+        var normalizedQuarantineDir = Normalize(quarantineDir);
+
+        return normalizedFilePath.StartsWith(
+            normalizedQuarantineDir + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

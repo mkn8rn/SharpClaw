@@ -99,7 +99,9 @@ internal static class ChecksumManifest
     /// <summary>
     /// Verifies a single file's checksum against the manifest.
     /// Returns <c>true</c> if the checksum matches or if checksums are not available.
-    /// Returns <c>false</c> if there is a mismatch (silent corruption detected).
+    /// Returns <c>false</c> if there is a file checksum mismatch. If the manifest
+    /// signature is invalid, the manifest is rebuilt from disk and the file is
+    /// treated as valid for this check.
     /// </summary>
     internal static async Task<bool> VerifyFileAsync(
         IPersistenceFileSystem fs,
@@ -108,7 +110,8 @@ internal static class ChecksumManifest
         ReadOnlyMemory<byte> fileBytes,
         byte[] hmacKey,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool fsyncOnRebuild = true)
     {
         var manifestPath = fs.CombinePath(entityDir, ManifestFileName);
         if (!fs.FileExists(manifestPath))
@@ -116,8 +119,11 @@ internal static class ChecksumManifest
 
         if (!await VerifySignatureAsync(fs, entityDir, hmacKey, logger, ct))
         {
-            logger.LogWarning("HMAC signature mismatch for manifest in {Dir} — manifest may be tampered", entityDir);
-            return false;
+            logger.LogWarning(
+                "HMAC signature mismatch for manifest in {Dir}; rebuilding checksum manifest without quarantining files",
+                entityDir);
+            await RebuildManifestAsync(fs, entityDir, hmacKey, fsyncOnRebuild, logger, ct);
+            return true;
         }
 
         var entries = await LoadManifestAsync(fs, entityDir, ct);
@@ -136,14 +142,17 @@ internal static class ChecksumManifest
 
     /// <summary>
     /// Full-scan verification of all entity files in a directory against the manifest.
-    /// Returns the list of files that have checksum mismatches.
+    /// Returns the list of files that have checksum mismatches. If the manifest
+    /// signature is invalid, the manifest is rebuilt from disk and no entity file
+    /// is reported as corrupt solely because the manifest could not be trusted.
     /// </summary>
     internal static async Task<List<string>> VerifyAllAsync(
         IPersistenceFileSystem fs,
         string entityDir,
         byte[] hmacKey,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool fsyncOnRebuild = true)
     {
         var mismatched = new List<string>();
 
@@ -154,13 +163,11 @@ internal static class ChecksumManifest
         if (!await VerifySignatureAsync(fs, entityDir, hmacKey, logger, ct))
         {
             logger.LogWarning(
-                "HMAC signature invalid for {Dir} — triggering full rebuild of manifest", entityDir);
-            // Can't trust any entries — report all entity files as mismatched
-            // so caller can rebuild.
-            var allFiles = fs.GetFiles(entityDir, "*.json")
-                .Where(f => !IsManifestFile(fs.GetFileName(f)))
-                .ToList();
-            mismatched.AddRange(allFiles);
+                "HMAC signature invalid for {Dir}; rebuilding checksum manifest without quarantining files", entityDir);
+            // The manifest is untrusted, but that does not mean the entity
+            // files are corrupt. Rebuild from the bytes on disk and let the
+            // normal read/deserialization path quarantine only truly bad files.
+            await RebuildManifestAsync(fs, entityDir, hmacKey, fsyncOnRebuild, logger, ct);
             return mismatched;
         }
 
@@ -169,6 +176,8 @@ internal static class ChecksumManifest
         foreach (var (fileName, expectedHash) in entries)
         {
             ct.ThrowIfCancellationRequested();
+            if (!IsTrackedDataFile(fileName))
+                continue;
 
             var filePath = fs.CombinePath(entityDir, fileName);
             if (!fs.FileExists(filePath))
@@ -214,7 +223,7 @@ internal static class ChecksumManifest
     {
         var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var files = fs.GetFiles(entityDir, "*.json")
-            .Where(f => !IsManifestFile(fs.GetFileName(f)))
+            .Where(f => IsTrackedDataFile(fs.GetFileName(f)))
             .ToArray();
 
         foreach (var filePath in files)
@@ -332,4 +341,8 @@ internal static class ChecksumManifest
     internal static bool IsManifestFile(string fileName) =>
         string.Equals(fileName, ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(fileName, SignatureFileName, StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsTrackedDataFile(string fileName) =>
+        string.Equals(fileName, "_rows.json", StringComparison.OrdinalIgnoreCase) ||
+        (!fileName.StartsWith('_') && !IsManifestFile(fileName));
 }

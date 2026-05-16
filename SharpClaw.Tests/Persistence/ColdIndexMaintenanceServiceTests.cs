@@ -75,6 +75,63 @@ public class ColdIndexMaintenanceServiceTests
         result.Should().Contain(msg.Id);
     }
 
+    [Test]
+    public async Task RebuildAsync_RebuildsInvalidChecksumManifestWithoutQuarantiningFiles()
+    {
+        _options.EnableChecksums = true;
+
+        var entityDir = _fs.CombinePath(_options.DataDirectory, "ChatMessageDB");
+        _fs.CreateDirectory(entityDir);
+
+        var msg = new SharpClaw.Contracts.Entities.Core.Messages.ChatMessageDB
+        {
+            Id = Guid.NewGuid(),
+            ChannelId = Guid.NewGuid(),
+            Role = "user",
+            Content = "test",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(msg, ColdEntityStore.JsonOptions);
+        var filePath = _fs.CombinePath(entityDir, $"{msg.Id}.json");
+        await JsonFileEncryption.WriteJsonAsync(_fs, filePath, json, _encryptionOptions.Key,
+            encrypt: true, fsync: false, CancellationToken.None);
+
+        using (var bytes = await _fs.ReadAllBytesAsync(filePath))
+        {
+            await ChecksumManifest.UpdateChecksumAsync(
+                _fs,
+                entityDir,
+                _fs.GetFileName(filePath),
+                bytes.Memory,
+                deleted: false,
+                _encryptionOptions.Key,
+                fsync: false,
+                NullLogger.Instance,
+                CancellationToken.None);
+        }
+
+        await _fs.WriteAllTextAsync(
+            _fs.CombinePath(entityDir, ChecksumManifest.SignatureFileName),
+            "bad_sig");
+
+        using var service = CreateService();
+        await service.RebuildAsync(CancellationToken.None);
+
+        _fs.FileExists(filePath).Should().BeTrue();
+        _fs.DirectoryExists(_fs.CombinePath(entityDir, QuarantineService.QuarantineDir)).Should().BeFalse();
+
+        var result = await ColdEntityIndex.LookupAsync(
+            _fs,
+            entityDir,
+            "ChannelId",
+            msg.ChannelId,
+            NullLogger.Instance,
+            CancellationToken.None);
+        result.Should().Contain(msg.Id);
+    }
+
     // ── Start with interval 0 = no-op ─────────────────────────────
 
     [Test]

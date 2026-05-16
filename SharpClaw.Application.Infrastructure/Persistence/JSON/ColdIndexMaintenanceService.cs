@@ -123,7 +123,7 @@ internal sealed class ColdIndexMaintenanceService : IDisposable
         if (_options.EnableChecksums)
         {
             var mismatched = await ChecksumManifest.VerifyAllAsync(
-                _fs, entityDir, _encryptionOptions.Key, _logger, ct);
+                _fs, entityDir, _encryptionOptions.Key, _logger, ct, _options.FsyncOnWrite);
 
             foreach (var filePath in mismatched)
             {

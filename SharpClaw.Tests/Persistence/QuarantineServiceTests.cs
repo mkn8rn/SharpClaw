@@ -178,6 +178,24 @@ public class QuarantineServiceTests
         File.Exists(file).Should().BeTrue();
     }
 
+    [Test]
+    public void MoveToQuarantine_AlreadyQuarantinedFile_DoesNotNestOrDelete()
+    {
+        var dir = EntityDir;
+        var quarantineDir = Path.Combine(dir, QuarantineService.QuarantineDir);
+        Directory.CreateDirectory(quarantineDir);
+
+        var file = Path.Combine(
+            quarantineDir,
+            $"{Guid.NewGuid()}_{DateTimeOffset.UtcNow:yyyyMMdd_HHmmss_fff}.json");
+        File.WriteAllText(file, "corrupt");
+
+        QuarantineService.MoveToQuarantine(_fs, file, dir, NullLogger.Instance);
+
+        File.Exists(file).Should().BeTrue();
+        Directory.Exists(Path.Combine(quarantineDir, QuarantineService.QuarantineDir)).Should().BeFalse();
+    }
+
     // ── App continues after quarantine ────────────────────────────
 
     [Test]

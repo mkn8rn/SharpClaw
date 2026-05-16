@@ -183,7 +183,7 @@ public sealed class JsonPersistenceHealthCheck
             {
                 ct.ThrowIfCancellationRequested();
                 var mismatched = await ChecksumManifest.VerifyAllAsync(
-                    _fs, entityDir, hmacKey, _logger, ct);
+                    _fs, entityDir, hmacKey, _logger, ct, _options.FsyncOnWrite);
                 totalMismatched += mismatched.Count;
             }
 

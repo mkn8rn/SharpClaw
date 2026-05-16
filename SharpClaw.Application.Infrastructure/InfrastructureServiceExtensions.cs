@@ -220,7 +220,7 @@ public static class InfrastructureServiceExtensions
                     foreach (var entityDir in entityDirs)
                     {
                         var mismatched = await ChecksumManifest.VerifyAllAsync(
-                            fsys, entityDir, hmacKey, checksumLogger, CancellationToken.None);
+                            fsys, entityDir, hmacKey, checksumLogger, CancellationToken.None, jsonOpts.FsyncOnWrite);
                         foreach (var file in mismatched)
                         {
                             QuarantineService.MoveToQuarantine(fsys, file, entityDir, checksumLogger);
