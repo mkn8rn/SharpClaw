@@ -45,7 +45,7 @@ public sealed record AgentJobLogResponse(
 /// <summary>
 /// Lightweight summary returned by the list-summaries endpoint.
 /// Contains only the fields needed to populate a dropdown or list view —
-/// no <c>ResultData</c>, <c>ErrorLog</c>, <c>Logs</c>, or <c>Segments</c>.
+/// no <c>ResultData</c>, <c>ErrorLog</c>, or <c>Logs</c>.
 /// </summary>
 public sealed record AgentJobSummaryResponse(
     Guid Id,

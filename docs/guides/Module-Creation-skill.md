@@ -69,8 +69,8 @@ Job cost tracking:
   Modules that spend tokens outside the core chat pipeline should resolve
   SharpClaw.Contracts.Modules.IAgentJobCostTracker from the scopedServices
   argument passed to ExecuteToolAsync and call RecordTokensAsync(job.JobId,
-  promptTokens, completionTokens, ct). Calls are additive, so transcription,
-  OCR, or private model pipelines can report usage after every chunk and the
+  promptTokens, completionTokens, ct). Calls are additive, so OCR, media, or
+  private model pipelines can report usage after every chunk and the
   host will expose the accumulated total through AgentJobResponse.jobCost.
   External modules receive this contract through the host bridge, so they do
   not need to reference Core or update AgentJobDB directly.

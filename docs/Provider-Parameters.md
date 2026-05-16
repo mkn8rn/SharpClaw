@@ -55,47 +55,47 @@ and an issue is welcome.
 Each provider has a dedicated page with full parameter tables, wire
 format examples, and provider-specific notes:
 
-| Provider | `ProviderType` | Protocol | Doc |
+| Provider | `ProviderKey` | Protocol | Doc |
 |---|---|---|---|
-| OpenAI | `OpenAI` (`0`) | Chat Completions + Responses API | [providers/OpenAI.md](providers/OpenAI.md) |
+| OpenAI | `openai` | Chat Completions + Responses API | [providers/OpenAI.md](providers/OpenAI.md) |
 | DeepSeek | `deepseek` | OpenAI-compatible | [providers/DeepSeek.md](providers/DeepSeek.md) |
-| Anthropic | `Anthropic` (`1`) | Anthropic Messages API | [providers/Anthropic.md](providers/Anthropic.md) |
-| OpenRouter | `OpenRouter` (`2`) | OpenAI-compatible | [providers/OpenRouter.md](providers/OpenRouter.md) |
-| Google Vertex AI (native) | `GoogleVertexAI` (`3`) | Native `generateContent` | [providers/Google-Vertex-AI.md](providers/Google-Vertex-AI.md) |
-| Google Gemini (native) | `GoogleGemini` (`4`) | Native `generateContent` | [providers/Google-Gemini.md](providers/Google-Gemini.md) |
-| ZAI (Zhipu AI) | `ZAI` (`5`) | OpenAI-compatible | [providers/ZAI.md](providers/ZAI.md) |
-| Vercel AI Gateway | `VercelAIGateway` (`6`) | OpenAI-compatible | [providers/Vercel-AI.md](providers/Vercel-AI.md) |
-| xAI (Grok) | `XAI` (`7`) | OpenAI-compatible | [providers/xAI.md](providers/xAI.md) |
-| Groq | `Groq` (`8`) | OpenAI-compatible | [providers/Groq.md](providers/Groq.md) |
-| Cerebras | `Cerebras` (`9`) | OpenAI-compatible | [providers/Cerebras.md](providers/Cerebras.md) |
-| Mistral | `Mistral` (`10`) | OpenAI-compatible | [providers/Mistral.md](providers/Mistral.md) |
-| GitHub Copilot | `GitHubCopilot` (`11`) | OpenAI-compatible | [providers/GitHub-Copilot.md](providers/GitHub-Copilot.md) |
-| Custom | `Custom` (`12`) | OpenAI-compatible (user endpoint) | [providers/Custom.md](providers/Custom.md) |
-| LlamaSharp | `LlamaSharp` (`13`) | In-process (GBNF grammar-constrained) | [providers/LlamaSharp.md](providers/LlamaSharp.md) |
-| Minimax | `Minimax` (`14`) | OpenAI-compatible | [providers/Minimax.md](providers/Minimax.md) |
-| Google Gemini (OpenAI) | `GoogleGeminiOpenAi` (`15`) | OpenAI-compatible | [providers/Google-Gemini-OpenAI.md](providers/Google-Gemini-OpenAI.md) |
-| Google Vertex AI (OpenAI) | `GoogleVertexAIOpenAi` (`16`) | OpenAI-compatible | [providers/Google-Vertex-AI-OpenAI.md](providers/Google-Vertex-AI-OpenAI.md) |
-| Whisper | `Whisper` (`17`) | In-process (Whisper.net transcription) | — |
-| Ollama | `Ollama` (`18`) | OpenAI-compatible (user-managed server) | [providers/Ollama.md](providers/Ollama.md) |
+| Anthropic | `anthropic` | Anthropic Messages API | [providers/Anthropic.md](providers/Anthropic.md) |
+| OpenRouter | `openrouter` | OpenAI-compatible | [providers/OpenRouter.md](providers/OpenRouter.md) |
+| Eden AI | `eden-ai` | OpenAI-compatible gateway | [providers/Eden-AI.md](providers/Eden-AI.md) |
+| Google Vertex AI (native) | `google-vertex-ai` | Native `generateContent` | [providers/Google-Vertex-AI.md](providers/Google-Vertex-AI.md) |
+| Google Gemini (native) | `google-gemini` | Native `generateContent` | [providers/Google-Gemini.md](providers/Google-Gemini.md) |
+| ZAI (Zhipu AI) | `zai` | OpenAI-compatible | [providers/ZAI.md](providers/ZAI.md) |
+| Vercel AI Gateway | `vercel-ai-gateway` | OpenAI-compatible | [providers/Vercel-AI.md](providers/Vercel-AI.md) |
+| xAI (Grok) | `xai` | OpenAI-compatible | [providers/xAI.md](providers/xAI.md) |
+| Groq | `groq` | OpenAI-compatible | [providers/Groq.md](providers/Groq.md) |
+| Cerebras | `cerebras` | OpenAI-compatible | [providers/Cerebras.md](providers/Cerebras.md) |
+| Mistral | `mistral` | OpenAI-compatible | [providers/Mistral.md](providers/Mistral.md) |
+| GitHub Copilot | `github-copilot` | OpenAI-compatible | [providers/GitHub-Copilot.md](providers/GitHub-Copilot.md) |
+| Custom | `custom` | OpenAI-compatible (user endpoint) | [providers/Custom.md](providers/Custom.md) |
+| LlamaSharp | `llamasharp` | In-process (GBNF grammar-constrained) | [providers/LlamaSharp.md](providers/LlamaSharp.md) |
+| Minimax | `minimax` | OpenAI-compatible | [providers/Minimax.md](providers/Minimax.md) |
+| Google Gemini (OpenAI) | `google-gemini-openai` | OpenAI-compatible | [providers/Google-Gemini-OpenAI.md](providers/Google-Gemini-OpenAI.md) |
+| Google Vertex AI (OpenAI) | `google-vertex-ai-openai` | OpenAI-compatible | [providers/Google-Vertex-AI-OpenAI.md](providers/Google-Vertex-AI-OpenAI.md) |
+| Ollama | `ollama` | OpenAI-compatible (user-managed server) | [providers/Ollama.md](providers/Ollama.md) |
 
 ---
 
 ## Parameter support matrix
 
-| Parameter | OpenAI | DeepSeek | Anthropic | OpenRouter | Vertex AI | Vertex AI OAI | Gemini | Gemini OAI | xAI | Groq | Cerebras | Mistral | Copilot | ZAI | Vercel | Minimax | LlamaSharp | Whisper | Custom | Ollama |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `temperature` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| `topP` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| `topK` | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
-| `frequencyPenalty` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| `presencePenalty` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| `stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| `seed` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ |
-| `responseFormat` | ✅ | ✅ | ❌ | ✅ | ✅² | ⚠️¹ | ✅² | ⚠️¹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅³ | ❌ | ✅ | ✅ |
-| `reasoningEffort` | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ⚠️⁴ | ❌ | ✅ | ❌ |
+| Parameter | OpenAI | DeepSeek | Anthropic | OpenRouter | Eden AI | Vertex AI | Vertex AI OAI | Gemini | Gemini OAI | xAI | Groq | Cerebras | Mistral | Copilot | ZAI | Vercel | Minimax | LlamaSharp | Custom | Ollama |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `temperature` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `topP` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `topK` | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| `frequencyPenalty` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| `presencePenalty` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| `stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `seed` | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| `responseFormat` | ✅ | ✅ | ❌ | ✅ | ✅ | ✅² | ⚠️¹ | ✅² | ⚠️¹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅³ | ✅ | ✅ |
+| `reasoningEffort` | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ⚠️⁴ | ✅ | ❌ |
 
-> ¹ Google's OpenAI-compatible endpoints (`GoogleGeminiOpenAi`,
-> `GoogleVertexAIOpenAi`) only accept the full `json_schema` variant.
+> ¹ Google's OpenAI-compatible endpoints (`google-gemini-openai`,
+> `google-vertex-ai-openai`) only accept the full `json_schema` variant.
 > The simplified `{"type": "json_object"}` form is **rejected** at
 > validation time.
 >
@@ -136,14 +136,14 @@ format examples, and provider-specific notes:
 | Temperature max **1.5** | Cerebras |
 | `topK` model-dependent | Google Gemini (native), Google Vertex AI (native) |
 | `topK` max **128** | LlamaSharp |
-| `topK` **not supported** (OAI schema has no `top_k`) | GoogleGeminiOpenAi, GoogleVertexAIOpenAi, Ollama |
+| `topK` **not supported** (OAI schema has no `top_k`) | google-gemini-openai, google-vertex-ai-openai, ollama |
 | Stop sequences max **5** | Google (all four types) |
 | Stop sequences max **8 192** | Anthropic |
-| `json_object` rejected | GoogleGeminiOpenAi, GoogleVertexAIOpenAi |
+| `json_object` rejected | google-gemini-openai, google-vertex-ai-openai |
 | No `frequencyPenalty` / `presencePenalty` | DeepSeek, Anthropic, Cerebras, Mistral, Minimax |
 | `"xhigh"` reasoning | OpenAI, DeepSeek, GitHub Copilot |
+| Eden AI gateway routing | Model IDs use `provider/model`, with `@edenai` for smart routing |
 | Hidden thinking-state replay | DeepSeek (preserves provider-specific `reasoning_content` across tool-call turns) |
-| No typed parameters at all | Whisper |
 | `responseFormat` grammar-constrained subset | LlamaSharp (strict-mode schema subset via GBNF; exotic keywords degrade to generic JSON with a logged warning; tool calling takes precedence) |
 | `reasoningEffort` informational only | LlamaSharp (no mechanical reasoning-budget knob in llama.cpp; surfaced via chat header) |
 | Tool calling: model-dependent reliability | LlamaSharp, Ollama, Custom |
@@ -202,7 +202,7 @@ format is returned.
 
 ### Custom / unknown providers
 
-The `Custom` provider type uses a permissive passthrough — all
+The `custom` provider key uses a permissive passthrough — all
 parameters are accepted with wide ranges. This avoids blocking users
 whose custom endpoint supports parameters that SharpClaw cannot
 pre-verify.

@@ -17,7 +17,7 @@ public sealed class AnthropicApiClient : IProviderApiClient
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    public string ProviderKey => WellKnownProviderKeys.Anthropic;
+    public string ProviderKey => "anthropic";
     public bool SupportsNativeToolCalling => true;
 
     public async Task<IReadOnlyList<string>> ListModelIdsAsync(

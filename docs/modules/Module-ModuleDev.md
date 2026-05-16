@@ -6,7 +6,7 @@
 > **Tool Prefix:** `mdk`
 > **Platforms:** All (process inspection features are Windows-enhanced)
 > **Exports:** none
-> **Requires:** `window_management` (optional — improves PID resolution)
+> **Requires:** `window_management` (optional)
 
 ---
 
@@ -16,7 +16,7 @@
 |---------|-------|
 | **.env key** | `Modules:sharpclaw_module_dev` |
 | **Default** | ❌ **Disabled** (not listed in default `.env`) |
-| **Prerequisites** | [Computer Use](Module-ComputerUse.md) *(optional)* |
+| **Prerequisites** | none for core MDK tools |
 | **Platform** | All |
 
 This module is **disabled by default**. To enable, add to your core
@@ -26,18 +26,12 @@ This module is **disabled by default**. To enable, add to your core
 "sharpclaw_module_dev": "true"
 ```
 
-For enhanced process inspection (window-title → PID resolution),
-also enable Computer Use:
-
-```jsonc
-"sharpclaw_computer_use": "true",
-"sharpclaw_module_dev": "true"
-```
-
-Without Computer Use, process inspection falls back to
-`Process.GetProcessesByName` (less precise).
-
 To disable, set to `"false"` or remove the key (missing = disabled).
+
+The MDK can consume an optional `window_management` contract for richer
+process inspection, but no bundled module currently exports that contract.
+When it is unavailable, process inspection uses its built-in process lookup
+fallbacks.
 
 **Runtime toggle** (no restart required):
 

@@ -239,18 +239,18 @@ public async Task<string> ExecuteToolAsync(
 ### Reporting token usage from module tools
 
 Core automatically records the normal chat provider usage that it performs
-itself, but modules often run their own model calls. A transcription module
-might call an STT endpoint for every audio window, an OCR module might call a
-vision model for every page, and a workflow module might call a private model
-behind its own client. Those calls still belong to the `AgentJobDB` row that
-started the module work, so the module should report them through
-`IAgentJobCostTracker` instead of trying to update core tables directly.
+itself, but modules often run their own model calls. An OCR module might call a
+vision model for every page, a media module might call a model for every chunk,
+and a workflow module might call a private model behind its own client. Those
+calls still belong to the `AgentJobDB` row that started the module work, so the
+module should report them through `IAgentJobCostTracker` instead of trying to
+update core tables directly.
 
 Resolve `IAgentJobCostTracker` from the `scopedServices` argument passed to
 `ExecuteToolAsync` and call `RecordTokensAsync` with the current
-`AgentJobContext.JobId`. The method is additive, so a long transcription loop can
-report usage after each chunk and the final `AgentJobResponse.jobCost` will show
-the accumulated prompt, completion, and total tokens. External modules get the
+`AgentJobContext.JobId`. The method is additive, so a long media-processing
+loop can report usage after each chunk and the final `AgentJobResponse.jobCost`
+will show the accumulated prompt, completion, and total tokens. External modules get the
 same contract forwarded into their isolated module container, and bundled modules
 can resolve it from the same restricted service scope as other host bridges.
 
@@ -277,13 +277,12 @@ public async Task<string> ExecuteToolAsync(
 ```
 
 If a provider returns only a single token total, keep the convention consistent
-inside your module and document it near the call site. For example, a
-transcription client that receives only a billed token total can report zero
-prompt tokens and the billed total as completion tokens, while a client that
-knows the prompt-conditioning text and generated transcript tokens should record
-those two values separately. The core contract only accepts non-negative token
-counts; it does not try to infer transcription, image, or private-provider usage
-from module-owned HTTP requests.
+inside your module and document it near the call site. For example, a client
+that receives only a billed token total can report zero prompt tokens and the
+billed total as completion tokens, while a client that knows both input and
+output token counts should record those two values separately. The core
+contract only accepts non-negative token counts; it does not try to infer image,
+media, or private-provider usage from module-owned HTTP requests.
 
 ### Inline tools
 
@@ -473,13 +472,13 @@ you manually delete the `.seeded` marker.
 ```csharp
 public async Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
 {
-    var db = services.GetRequiredService<AppDbContext>();
+    var db = services.GetRequiredService<MyModuleDbContext>();
 
-    if (!await db.InputAudioDevices.AnyAsync(ct))
+    if (!await db.KnownTargets.AnyAsync(ct))
     {
-        db.InputAudioDevices.Add(new InputAudioDevice
+        db.KnownTargets.Add(new KnownTarget
         {
-            Name      = "Default Microphone",
+            Name      = "Default Target",
             IsDefault = true
         });
         await db.SaveChangesAsync(ct);
@@ -544,7 +543,7 @@ step keys are unique across all modules — duplicates fail at startup.
 Use this when your module wants to:
 
 - Map a method name to a step key with extra parser hints.
-- Map an event-handler name (e.g. `OnTimer`, `OnTranscriptionSegment`) to a
+- Map an event-handler name (e.g. `OnTimer`, `OnMetricThreshold`) to a
   module-owned trigger key.
 - Contribute the wire-format step keys for the parser's statement primitives
   (variables, assignments, control flow, return, delay, evaluate, log,

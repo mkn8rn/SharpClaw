@@ -26,7 +26,7 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    public string ProviderKey => WellKnownProviderKeys.GoogleGemini;
+    public string ProviderKey => "google-gemini";
     public bool SupportsNativeToolCalling => true;
 
     // ── Model listing ─────────────────────────────────────────────

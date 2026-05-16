@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Mistral` (`10`) |
+| **`ProviderKey`** | `mistral` |
 | **Client class** | `MistralApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.mistral.ai/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

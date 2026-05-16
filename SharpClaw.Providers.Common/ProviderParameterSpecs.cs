@@ -4,10 +4,8 @@ namespace SharpClaw.Providers.Common;
 
 /// <summary>
 /// Catalogue of provider-shape <see cref="CompletionParameterSpec"/>
-/// instances, one per <see cref="WellKnownProviderKeys"/> entry. These
-/// are passed to <see cref="SimpleProviderPlugin"/> at module-registration
-/// time so the plugin owns its own parameter-validation surface — no
-/// provider-identity branching remains inside <c>SharpClaw.Application.Core</c>.
+/// instances. Provider modules pass these to <see cref="SimpleProviderPlugin"/>
+/// at registration time so each plugin owns its parameter-validation surface.
 /// </summary>
 public static class ProviderParameterSpecs
 {
@@ -113,6 +111,32 @@ public static class ProviderParameterSpecs
         SupportsSeed = true,
         SupportsResponseFormat = true,
         SupportsReasoningEffort = false,
+    };
+
+    // Eden AI (multi-provider gateway, OpenAI-compatible)
+    public static readonly CompletionParameterSpec EdenAI = new()
+    {
+        ProviderName = "Eden AI",
+        SupportsTemperature = true,
+        TemperatureMin = 0.0f,
+        TemperatureMax = 2.0f,
+        SupportsTopP = true,
+        TopPMin = 0.0f,
+        TopPMax = 1.0f,
+        SupportsTopK = false,
+        SupportsFrequencyPenalty = true,
+        FrequencyPenaltyMin = -2.0f,
+        FrequencyPenaltyMax = 2.0f,
+        SupportsPresencePenalty = true,
+        PresencePenaltyMin = -2.0f,
+        PresencePenaltyMax = 2.0f,
+        SupportsStop = true,
+        MaxStopSequences = 4,
+        SupportsSeed = true,
+        SupportsResponseFormat = true,
+        SupportsReasoningEffort = true,
+        ValidReasoningEffortValues = ["none", "disable", "minimal", "low", "medium", "high", "xhigh", "max"],
+        SupportsToolChoice = true,
     };
 
     // ─────────────────────────────────────────────────────────
@@ -509,25 +533,26 @@ public static class ProviderParameterSpecs
 
     private static readonly Dictionary<string, CompletionParameterSpec> ByKey = new()
     {
-        [WellKnownProviderKeys.OpenAI]               = OpenAI,
-        [WellKnownProviderKeys.DeepSeek]             = DeepSeek,
-        [WellKnownProviderKeys.Anthropic]            = Anthropic,
-        [WellKnownProviderKeys.OpenRouter]           = OpenRouter,
-        [WellKnownProviderKeys.GoogleVertexAI]       = GoogleVertexAI,
-        [WellKnownProviderKeys.GoogleVertexAIOpenAi] = GoogleVertexAIOpenAi,
-        [WellKnownProviderKeys.GoogleGemini]         = GoogleGemini,
-        [WellKnownProviderKeys.GoogleGeminiOpenAi]   = GoogleGeminiOpenAi,
-        [WellKnownProviderKeys.XAI]                  = XAI,
-        [WellKnownProviderKeys.Groq]                 = Groq,
-        [WellKnownProviderKeys.Cerebras]             = Cerebras,
-        [WellKnownProviderKeys.Mistral]              = Mistral,
-        [WellKnownProviderKeys.GitHubCopilot]        = GitHubCopilot,
-        [WellKnownProviderKeys.ZAI]                  = ZAI,
-        [WellKnownProviderKeys.VercelAIGateway]      = VercelAIGateway,
-        [WellKnownProviderKeys.Minimax]              = Minimax,
-        [WellKnownProviderKeys.LlamaSharp]           = LlamaSharp,
-        [WellKnownProviderKeys.Ollama]               = Ollama,
-        [WellKnownProviderKeys.Custom]               = Custom,
+        ["openai"]               = OpenAI,
+        ["deepseek"]             = DeepSeek,
+        ["anthropic"]            = Anthropic,
+        ["openrouter"]           = OpenRouter,
+        ["eden-ai"]              = EdenAI,
+        ["google-vertex-ai"]     = GoogleVertexAI,
+        ["google-vertex-ai-openai"] = GoogleVertexAIOpenAi,
+        ["google-gemini"]        = GoogleGemini,
+        ["google-gemini-openai"] = GoogleGeminiOpenAi,
+        ["xai"]                  = XAI,
+        ["groq"]                 = Groq,
+        ["cerebras"]             = Cerebras,
+        ["mistral"]              = Mistral,
+        ["github-copilot"]        = GitHubCopilot,
+        ["zai"]                  = ZAI,
+        ["vercel-ai-gateway"]      = VercelAIGateway,
+        ["minimax"]              = Minimax,
+        ["llamasharp"]           = LlamaSharp,
+        ["ollama"]               = Ollama,
+        ["custom"]               = Custom,
     };
 
     /// <summary>

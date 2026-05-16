@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `OpenRouter` (`2`) |
+| **`ProviderKey`** | `openrouter` |
 | **Client class** | `OpenRouterApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://openrouter.ai/api/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

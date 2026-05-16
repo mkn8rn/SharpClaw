@@ -5,7 +5,7 @@ using SharpClaw.Services;
 
 namespace SharpClaw.Presentation;
 
-// Channel settings tab: general config, allowed agents, transcription, audio device, permissions.
+// Channel settings tab: general config, allowed agents, defaults, and permissions.
 public sealed partial class MainPage
 {
     private PermissionEditorBuilder? _permEditor;

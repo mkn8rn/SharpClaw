@@ -16,7 +16,7 @@ public sealed class GitHubCopilotApiClient : OpenAiCompatibleApiClient, IDeviceC
     private const string UserAgent = "SharpClaw/1.0";
 
     protected override string ApiEndpoint => "https://api.githubcopilot.com";
-    public override string ProviderKey => WellKnownProviderKeys.GitHubCopilot;
+    public override string ProviderKey => "github-copilot";
 
     // Cached Copilot API token and its expiry
     private string? _cachedToken;

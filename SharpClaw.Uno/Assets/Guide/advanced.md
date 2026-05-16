@@ -1,6 +1,6 @@
 <![CDATA[# Advanced Topics
 
-Explore advanced SharpClaw features for power users: tool awareness, custom chat headers, environment configuration, editor bridges, local models, and transcription.
+Explore advanced SharpClaw features for power users: tool awareness, custom chat headers, environment configuration, editor bridges, and local models.
 
 ## Tool Awareness Sets
 
@@ -82,7 +82,7 @@ Custom headers support **{{tag}}** placeholders that are expanded at send-time:
 - `{{reasoning-effort}}`: The configured `reasoningEffort` value, rendered only for providers that accept the hint informationally (e.g. LlamaSharp, which has no mechanical reasoning-effort control). Empty string on providers that consume the value on the wire, or when no effort is configured.
 
 **Resource tags** (list all entities of a type):
-- `{{Agents}}`, `{{Models}}`, `{{Providers}}`, `{{Channels}}`, `{{Threads}}`, `{{Roles}}`, `{{Users}}`, `{{Containers}}`, `{{Websites}}`, `{{SearchEngines}}`, `{{AudioDevices}}`, `{{DisplayDevices}}`, `{{EditorSessions}}`, `{{Skills}}`, `{{SystemUsers}}`, `{{LocalInfoStores}}`, `{{ExternalInfoStores}}`, `{{ScheduledTasks}}`, `{{Tasks}}`
+- `{{Agents}}`, `{{Models}}`, `{{Providers}}`, `{{Channels}}`, `{{Threads}}`, `{{Roles}}`, `{{Users}}`, `{{Containers}}`, `{{Websites}}`, `{{SearchEngines}}`, `{{DisplayDevices}}`, `{{EditorSessions}}`, `{{Skills}}`, `{{SystemUsers}}`, `{{LocalInfoStores}}`, `{{ExternalInfoStores}}`, `{{ScheduledTasks}}`, `{{Tasks}}`
 
 **Per-item template:**
 
@@ -255,44 +255,6 @@ Set local model parameters in Core `.env`:
 - `Local:ContextSize`: Token context window (default 2048)
 - `Local:KeepLoaded`: Keep model in memory after completion
 - `Local:IdleCooldownMinutes`: Minutes before unloading idle models
-
-## Transcription
-
-SharpClaw can transcribe live audio from system input devices using Whisper or Groq.
-
-### Starting Transcription
-
-1. Ensure you have:
-   - A provider with transcription capability (OpenAI, Groq)
-   - A transcription model (e.g., `whisper-1`)
-   - An audio device (Windows: default uses WASAPI)
-
-2. Submit a transcription job:
-   - **Via agent**: Agent calls `start_transcription` tool
-   - **Via CLI**: `sharpclaw transcribe start --model <id>`
-
-3. The job captures audio in real-time and sends it to the transcription API
-4. Transcription segments stream back and are logged
-
-### Language Enforcement
-
-When a **language flag** is set, SharpClaw uses prompt engineering to enforce the target language:
-
-1. **Level 1**: Single seed phrase from `transcription-language-seeds.json`
-2. **Level 2**: Triple seed phrase
-3. **Level 3**: Instruction preamble + seed
-4. **Level 4**: Max saturation block
-
-If the response language mismatches, SharpClaw retries with escalating reinforcement (up to 4 attempts). If all retries fail, the result is accepted anyway (no silent audio drops).
-
-### Supported Languages
-
-All 99 Whisper-supported languages are covered in the embedded JSON resource. New languages can be added by editing the JSON alone (no code changes).
-
-### Stopping Transcription
-
-- **Via agent**: Agent calls `stop_transcription` tool
-- **Via CLI**: `sharpclaw transcribe stop <jobId>`
 
 ## Next Steps
 

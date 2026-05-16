@@ -179,7 +179,7 @@ public sealed class LocalInferenceApiClient : IProviderApiClient
     private static readonly TimeSpan ProbeTtl = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<Guid, DateTime> _lastProbeSuccess = new();
 
-    public string ProviderKey => WellKnownProviderKeys.LlamaSharp;
+    public string ProviderKey => "llamasharp";
 
     /// <summary>
     /// Always <see langword="true"/>: grammar-constrained inference is the only

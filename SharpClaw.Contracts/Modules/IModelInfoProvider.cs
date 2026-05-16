@@ -2,9 +2,9 @@ namespace SharpClaw.Contracts.Modules;
 
 /// <summary>
 /// Provides read-only model and provider information needed to start
-/// transcription or other inference jobs.
+/// module-owned inference jobs.
 /// Implemented host-side; injected into modules that must resolve a
-/// model's API key and provider type without touching Core directly.
+/// model's API key and provider key without touching Core directly.
 /// </summary>
 public interface IModelInfoProvider
 {
@@ -22,7 +22,7 @@ public interface IModelInfoProvider
 
     /// <summary>
     /// Returns a ready local model file path for providers that need an on-disk
-    /// transcription model. Hosts that do not support local transcription return
+    /// model file. Hosts without a local file for the model return
     /// <see langword="null"/>.
     /// </summary>
     Task<string?> GetLocalModelFilePathAsync(

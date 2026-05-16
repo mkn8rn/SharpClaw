@@ -119,7 +119,7 @@ Solutions to common SharpClaw issues.
 - Invalid API key
 - API endpoint unreachable
 - Rate limit exceeded
-- Provider type mismatch (e.g., OpenAI key with Anthropic provider type)
+- Provider key mismatch (e.g., OpenAI key with Anthropic provider key)
 
 **Solutions:**
 
@@ -128,8 +128,8 @@ Solutions to common SharpClaw issues.
    - Re-enter the API key and click **[ Set Key ]**
    - Test by syncing models again
 
-2. **Check provider type:**
-   - Ensure the provider type matches the key (OpenAI keys won't work with Anthropic provider)
+2. **Check provider key:**
+   - Ensure the provider key matches the API key (OpenAI keys won't work with Anthropic providers)
 
 3. **Test API endpoint externally:**
    ```bash
@@ -372,7 +372,7 @@ Solutions to common SharpClaw issues.
 
 **Solutions:**
 
-1. **Check provider type:**
+1. **Check provider key:**
    - Most major providers (OpenAI, Anthropic, etc.) report usage
    - Custom providers may not implement usage tracking
 

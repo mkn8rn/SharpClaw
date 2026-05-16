@@ -28,7 +28,7 @@ public interface ITaskStepExecutionContext
 
     /// <summary>
     /// Task-script variables. Modules may read and write entries to propagate
-    /// results (e.g. a transcription job ID stored via <c>ResultVariable</c>).
+    /// results (e.g. a module job ID stored via <c>ResultVariable</c>).
     /// </summary>
     IDictionary<string, object?> Variables { get; }
 

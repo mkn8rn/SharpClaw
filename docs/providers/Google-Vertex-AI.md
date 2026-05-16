@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `GoogleVertexAI` (`3`) |
+| **`ProviderKey`** | `google-vertex-ai` |
 | **Client class** | `GoogleVertexAIApiClient` (dedicated native client) |
 | **Endpoint** | `https://aiplatform.googleapis.com/v1/{MODEL_RESOURCE}:generateContent` |
 | **Auth** | `Authorization: Bearer {accessToken}` |
@@ -14,7 +14,7 @@
 
 ## Overview
 
-This provider type calls Vertex AI's native Gemini `generateContent`
+This provider key calls Vertex AI's native Gemini `generateContent`
 API directly. It is not the OpenAI-compatible Vertex endpoint.
 
 For raw model IDs such as `gemini-2.5-flash`, configure the provider

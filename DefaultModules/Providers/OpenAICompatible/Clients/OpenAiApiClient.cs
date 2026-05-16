@@ -8,7 +8,7 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class OpenAiApiClient : OpenAiCompatibleApiClient, IProviderCostFeed
 {
     protected override string ApiEndpoint => "https://api.openai.com/v1";
-    public override string ProviderKey => WellKnownProviderKeys.OpenAI;
+    public override string ProviderKey => "openai";
 
     /// <summary>
     /// Prefer the Responses API for all models except legacy GPT-3.5/GPT-4

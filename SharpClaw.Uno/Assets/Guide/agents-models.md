@@ -22,8 +22,6 @@ SharpClaw infers model capabilities automatically:
 
 - **Chat**: Standard conversational models
 - **Vision**: Can process images (e.g., GPT-4o, Claude 3/4, Gemini)
-- **Transcription**: Audio-to-text models (Whisper, Groq Whisper)
-- **Text-to-Speech**: Generate spoken audio from text
 - **Image Generation**: Create images from prompts
 - **Embedding**: Vector representations for semantic search
 

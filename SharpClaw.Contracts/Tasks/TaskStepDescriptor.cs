@@ -10,7 +10,7 @@ public sealed record TaskStepDescriptor
 {
     /// <summary>
     /// The script method name as it appears in a task script body
-    /// (e.g. <c>Chat</c>, <c>StartTranscription</c>).
+    /// (e.g. <c>Chat</c>, <c>EditTask</c>).
     /// For statement constructs that are not method calls (declarations,
     /// assignments, control flow) this is <see langword="null"/>.
     /// </summary>

@@ -89,8 +89,8 @@ public sealed class ExternalModuleHost : IAsyncDisposable
 
         // Forward host-side module-integration services so external modules
         // can resolve them through their isolated DI container. These are
-        // required by transcription-style modules that interact with the
-        // host's job system, model registry, and module-owned EF persistence.
+        // required by modules that interact with the host's job system,
+        // model registry, and module-owned EF persistence.
         ForwardSingleton<IModuleDbContextFactory>(hostServices, services);
         ForwardSingleton<IModelInfoProvider>(hostServices, services);
         ForwardSingleton<IAgentJobCostTracker>(hostServices, services);

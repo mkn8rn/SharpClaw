@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Minimax` (`14`) |
+| **`ProviderKey`** | `minimax` |
 | **Client class** | `MinimaxApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.minimaxi.com/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

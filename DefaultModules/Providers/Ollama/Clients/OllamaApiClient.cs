@@ -21,7 +21,7 @@ public sealed class OllamaApiClient(string? apiEndpoint = null) : OpenAiCompatib
             ? DefaultEndpoint
             : apiEndpoint.TrimEnd('/');
 
-    public override string ProviderKey => WellKnownProviderKeys.Ollama;
+    public override string ProviderKey => "ollama";
 
     public override async Task<IReadOnlyList<string>> ListModelIdsAsync(
         HttpClient httpClient,

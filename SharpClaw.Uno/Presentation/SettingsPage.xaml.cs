@@ -25,6 +25,7 @@ public sealed partial class SettingsPage : Page
 
     // Cached lists for cross-tab use
     private List<ProviderEntry>? _cachedProviders;
+    private List<ProviderTypeEntry>? _cachedProviderTypes;
     private List<RoleEntry>? _cachedRoles;
     private List<ModelEntry>? _cachedModels;
 
@@ -173,25 +174,35 @@ public sealed partial class SettingsPage : Page
         ContentPanel.Children.Clear();
         var (form, listPanel) = TabHeader("Providers", "Search providers…");
         _cachedProviders = await FetchListAsync<ProviderEntry>("/providers");
+        _cachedProviderTypes = await FetchListAsync<ProviderTypeEntry>("/providers/types") ?? [];
 
         var nameBox = MakeInput("Provider name…");
         var typeBox = new ComboBox { FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
             BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 200 };
-        foreach (var t in TerminalUI.ProviderTypeNames)
-            typeBox.Items.Add(new ComboBoxItem { Content = t, Tag = t });
-        typeBox.SelectedIndex = 0;
-        var epBox = MakeInput("https://... (Custom only)");
+        foreach (var t in _cachedProviderTypes)
+            typeBox.Items.Add(new ComboBoxItem { Content = $"{t.DisplayName} ({t.ProviderKey})", Tag = t });
+        if (typeBox.Items.Count > 0) typeBox.SelectedIndex = 0;
+        var epBox = MakeInput("https://... (optional endpoint)");
         epBox.Visibility = Visibility.Collapsed;
         typeBox.SelectionChanged += (_, _) =>
-            epBox.Visibility = typeBox.SelectedItem is ComboBoxItem { Tag: "Custom" } ? Visibility.Visible : Visibility.Collapsed;
+        {
+            var selected = typeBox.SelectedItem is ComboBoxItem { Tag: ProviderTypeEntry t } ? t : null;
+            epBox.Visibility = selected is { RequiresEndpoint: true } or { SupportsAutomaticEndpointDiscovery: true }
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        };
         var createBtn = GreenButton("Create");
         createBtn.Click += async (_, _) =>
         {
             var name = nameBox.Text.Trim();
-            var type = typeBox.SelectedItem is ComboBoxItem { Tag: string t } ? t : "OpenAI";
+            var type = typeBox.SelectedItem is ComboBoxItem { Tag: ProviderTypeEntry t } ? t : null;
+            if (type is null) return;
             if (string.IsNullOrEmpty(name)) return;
-            var ep = type == "Custom" ? epBox.Text.Trim() : null;
-            var body = JsonSerializer.Serialize(new { name, providerKey = type, apiEndpoint = ep }, Json);
+            var ep = (type.RequiresEndpoint || type.SupportsAutomaticEndpointDiscovery)
+                ? epBox.Text.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(ep)) ep = null;
+            var body = JsonSerializer.Serialize(new { name, providerKey = type.ProviderKey, apiEndpoint = ep }, Json);
             await Api.PostAsync("/providers", new StringContent(body, Encoding.UTF8, "application/json"));
             await LoadProvidersAsync();
         };
@@ -202,7 +213,7 @@ public sealed partial class SettingsPage : Page
 
         if (_cachedProviders is { Count: > 0 })
             foreach (var p in _cachedProviders)
-                listPanel.Children.Add(MakeListRow(p.Name, p.ProviderType,
+                listPanel.Children.Add(MakeListRow(p.Name, p.ProviderKey,
                     () => ShowProviderDetail(p),
                     async () => { await Api.DeleteAsync($"/providers/{p.Id}"); await LoadProvidersAsync(); },
                     p.HasApiKey ? "✓ key" : "✗ no key", p.HasApiKey ? 0x00FF00 : 0xFF4444));
@@ -213,10 +224,12 @@ public sealed partial class SettingsPage : Page
         ContentPanel.Children.Clear();
         BackLink(() => _ = LoadProvidersAsync());
         H($"Provider: {p.Name}");
-        Lbl($"type: {p.ProviderType}   key: {(p.HasApiKey ? "✓ set" : "✗ not set")}", 0x999999);
+        Lbl($"type: {p.ProviderKey}   key: {(p.HasApiKey ? "✓ set" : "✗ not set")}", 0x999999);
         Lbl($"id: {p.Id}", 0x555555);
 
-        var isDeviceCode = TerminalUI.DeviceCodeProviderTypes.Contains(p.ProviderType);
+        var isDeviceCode = _cachedProviderTypes?.Any(t =>
+            t.ProviderKey.Equals(p.ProviderKey, StringComparison.OrdinalIgnoreCase)
+            && t.SupportsDeviceCodeAuth) == true;
 
         if (isDeviceCode)
         {
@@ -333,7 +346,7 @@ public sealed partial class SettingsPage : Page
             var provBox = new ComboBox { FontFamily = Mono, FontSize = 11, Background = B(0x1A1A1A), Foreground = B(0xCCCCCC),
                 BorderBrush = B(0x333333), BorderThickness = new Thickness(1), MinWidth = 240 };
             foreach (var prov in keyedProviders)
-                provBox.Items.Add(new ComboBoxItem { Content = $"{prov.Name} ({prov.ProviderType})", Tag = prov.Id });
+                provBox.Items.Add(new ComboBoxItem { Content = $"{prov.Name} ({prov.ProviderKey})", Tag = prov.Id });
             if (provBox.Items.Count > 0) provBox.SelectedIndex = 0;
             var syncBtn = GreenButton("↻ Sync");
             syncBtn.Click += async (_, _) =>
@@ -1569,7 +1582,15 @@ public sealed partial class SettingsPage : Page
     // ── DTOs ────────────────────────────────────────────────────
 
     [ImplicitKeys(IsEnabled = false)]
-    private sealed record ProviderEntry(Guid Id, string Name, string ProviderType, bool HasApiKey, string? ApiEndpoint = null);
+    private sealed record ProviderEntry(Guid Id, string Name, string ProviderKey, string? ApiEndpoint, bool HasApiKey);
+    [ImplicitKeys(IsEnabled = false)]
+    private sealed record ProviderTypeEntry(
+        string ProviderKey,
+        string DisplayName,
+        bool RequiresEndpoint,
+        bool SupportsAutomaticEndpointDiscovery,
+        bool RequiresApiKey,
+        bool SupportsDeviceCodeAuth);
     [ImplicitKeys(IsEnabled = false)]
     private sealed record ModelEntry(Guid Id, string Name, Guid ProviderId, string ProviderName, string Capabilities);
     [ImplicitKeys(IsEnabled = false)]

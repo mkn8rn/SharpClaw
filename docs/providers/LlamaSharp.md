@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `LlamaSharp` (`13`) |
+| **`ProviderKey`** | `llamasharp` |
 | **Client class** | `LocalInferenceApiClient` (dedicated) |
 | **Endpoint** | In-process (no HTTP) |
 | **Auth** | None |
@@ -134,9 +134,9 @@ optional.
 - The GGUF-embedded chat template is applied automatically, so any
   family (ChatML, Llama, Mistral, Phi, Gemma, etc.) formats correctly
   without manual template configuration.
-- The `ProviderType` wire name changed from `"Local"` to `"LlamaSharp"`
-  in the alpha release. Stored records and API clients using `"Local"`
-  must be updated.
+- The provider key changed from `"Local"` to `"llamasharp"` in the
+  alpha release. Stored records and API clients using `"Local"` must be
+  updated.
 - `reasoningEffort` has no mechanical effect on llama.cpp; the value is
   surfaced to the model via the default chat header and the
   `{{reasoning-effort}}` custom-template tag so the model can react to

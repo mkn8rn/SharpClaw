@@ -20,10 +20,10 @@ public sealed class ProviderService(
 {
     public async Task<ProviderResponse> CreateAsync(CreateProviderRequest request, CancellationToken ct = default)
     {
-        var plugin = clientFactory.GetPlugin(request.ProviderKey);
+        var plugin = clientFactory.GetPlugin(request.ProviderKey)
+            ?? throw new ProviderUnavailableException(request.ProviderKey);
 
-        if (plugin is not null
-            && plugin.RequiresEndpoint
+        if (plugin.RequiresEndpoint
             && !plugin.SupportsAutomaticEndpointDiscovery
             && string.IsNullOrWhiteSpace(request.ApiEndpoint))
         {
@@ -38,8 +38,7 @@ public sealed class ProviderService(
         // mandatory, or the plugin supports automatic discovery and the user
         // chose to override the default). For plugins that have no endpoint
         // concept at all, drop the value to avoid leaking unused state.
-        var storeEndpoint = plugin is not null
-            && (plugin.RequiresEndpoint || plugin.SupportsAutomaticEndpointDiscovery)
+        var storeEndpoint = plugin.RequiresEndpoint || plugin.SupportsAutomaticEndpointDiscovery
                 ? request.ApiEndpoint
                 : null;
 
@@ -60,6 +59,18 @@ public sealed class ProviderService(
 
         return new ProviderResponse(provider.Id, provider.Name, provider.ProviderKey, provider.ApiEndpoint, provider.EncryptedApiKey is not null);
     }
+
+    public IReadOnlyList<ProviderTypeResponse> ListAvailableTypes()
+        => clientFactory.Plugins
+            .OrderBy(p => p.DisplayName)
+            .Select(p => new ProviderTypeResponse(
+                p.ProviderKey,
+                p.DisplayName,
+                p.RequiresEndpoint,
+                p.SupportsAutomaticEndpointDiscovery,
+                p.RequiresApiKey,
+                p.DeviceCodeFlow is not null))
+            .ToList();
 
     public async Task<IReadOnlyList<ProviderResponse>> ListAsync(CancellationToken ct = default)
     {
@@ -126,7 +137,7 @@ public sealed class ProviderService(
 
         var deviceCodeFlow = clientFactory.GetPlugin(provider.ProviderKey)?.DeviceCodeFlow
             ?? throw new InvalidOperationException(
-                $"Provider type '{provider.ProviderKey}' does not support device code authentication.");
+                $"Provider key '{provider.ProviderKey}' does not support device code authentication.");
 
         using var httpClient = httpClientFactory.CreateClient();
         return await deviceCodeFlow.StartAsync(httpClient, ct);
@@ -160,7 +171,7 @@ public sealed class ProviderService(
 
         var deviceCodeFlow = clientFactory.GetPlugin(provider.ProviderKey)?.DeviceCodeFlow
             ?? throw new InvalidOperationException(
-                $"Provider type '{provider.ProviderKey}' does not support device code authentication.");
+                $"Provider key '{provider.ProviderKey}' does not support device code authentication.");
 
         using var httpClient = httpClientFactory.CreateClient();
         var accessToken = await deviceCodeFlow.PollAsync(httpClient, session, ct)
@@ -174,7 +185,7 @@ public sealed class ProviderService(
     }
 
     /// <summary>
-    /// Returns true if the given provider type supports device code authentication.
+    /// Returns true if the given provider key supports device code authentication.
     /// </summary>
     public bool SupportsDeviceCodeAuth(string providerKey, string? apiEndpoint = null)
         => clientFactory.GetPlugin(providerKey)?.DeviceCodeFlow is not null;

@@ -1,4 +1,4 @@
-SharpClaw Core CLI — Agent Skill Reference
+﻿SharpClaw Core CLI — Agent Skill Reference
 
 Interactive REPL embedded in the backend process. Dispatches directly to
 the same handlers as the REST API — no HTTP round-trip.
@@ -55,11 +55,9 @@ me                                  Show current user + role
 PROVIDER
 ────────────────────────────────────────
 provider add <name> <type> [endpoint]
-  Types: OpenAI, DeepSeek, Anthropic, OpenRouter, GoogleVertexAI, GoogleVertexAIOpenAi,
-         GoogleGemini, GoogleGeminiOpenAi, ZAI, VercelAIGateway, XAI, Groq,
-         Cerebras, Mistral, GitHubCopilot, Minimax, Custom
-  endpoint required for Custom only.
-provider get <id> | list | update <id> <name> [endpoint] | delete <id>
+  Types are provider keys discovered from enabled modules; run provider types.
+  endpoint required only when the selected provider key requires it.
+provider get <id> | list | types | update <id> <name> [endpoint] | delete <id>
 provider set-key <id> <apiKey>
 provider login <id>                         OAuth device-code flow (interactive)
 provider sync-models <id>                   Import model list + refresh caps
@@ -72,22 +70,21 @@ MODEL
 ────────────────────────────────────────
 model add <name> <providerId> [--cap <capabilities>]
   <name> = exact provider model ID (gpt-4o, claude-sonnet-4-20250514, …)
-  Capabilities (comma-separated): Chat, Transcription, ImageGeneration,
-    Embedding, TextToSpeech. Default: Chat.
+  Capabilities (comma-separated tags): chat, vision, image-generation,
+    embedding. Default: chat.
   Prefer: provider sync-models <id>
 model get <id> | list [--provider <id>] | update <id> <name> [--cap …] | delete <id>
 
 Local models:
-model download <url> [--name <alias>] [--quant <Q4_K_M>]
-               [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]
-  Omit --provider → register with both LlamaSharp and Whisper.
-  --gpu-layers has no effect for Whisper.
-model download list <url>              List available GGUF files at URL
-model load <id> [--gpu-layers <n>] [--ctx <size>] [--mmproj <path>]
+localmodel download <url> [--name <alias>] [--quant <Q4_K_M>]
+                    [--gpu-layers <n>]
+  Registers with provider key llamasharp.
+localmodel download list <url>         List available GGUF files at URL
+localmodel load <id> [--gpu-layers <n>] [--ctx <size>] [--mmproj <path>]
   Pins model in memory (stays loaded between requests).
-model unload <id>                      Unpin; stops if no active requests.
-model mmproj <id> <path|none>          Set/clear CLIP mmproj for vision model.
-model local list
+localmodel unload <id>                 Unpin; stops if no active requests.
+localmodel mmproj <id> <path|none>     Set/clear CLIP mmproj for vision model.
+localmodel list
 
 ────────────────────────────────────────
 AGENT
@@ -131,9 +128,8 @@ context defaults <id> clear <key>
 
 Default-resource keys (same for channel):
   safeshell, dangshell/dangerousshell, container, website,
-  search/searchengine, internaldb, externaldb, inputaudio/audio,
-  displaydevice/display, agent, task, skill,
-  transcriptionmodel/model, editorsession/editor
+  search/searchengine, internaldb, externaldb, displaydevice/display,
+  agent, task, skill, editorsession/editor
 
 ────────────────────────────────────────
 CHANNEL  (alias: chan)
@@ -201,8 +197,7 @@ job submit <channelId> <actionKey> [resourceId]
            [--window <seconds>] [--step <seconds>]
   actionKey = module tool name. Valid keys are dynamic (module list).
   resourceId omitted → resolved from DefaultResourceSet cascade.
-  --mode/--window/--step: transcription jobs only.
-  --model: transcription model override.
+  --params: module-specific JSON payload.
 job list [channelId]                   Uses active channel if omitted.
 job status <id>
 job approve <id>
@@ -210,7 +205,7 @@ job stop <id>                          Graceful stop (also accepts Paused).
 job cancel <id>                        Abort immediately.
 job pause <id>
 job resume <id>
-job listen <id>                        Stream live transcription segments.
+job listen <id>                        Module-owned live output notice.
                                        Ctrl+C stops listening (not the job).
 
 AgentJobStatus: Queued, Executing, AwaitingApproval, Completed, Failed,
@@ -226,9 +221,8 @@ task update <id> <sourceFilePath>      Validates before upload.
 task activate <id> | deactivate <id>
 task delete <id>
 task preflight <taskId> [--param key=value ...]
-  Use preflight to diagnose module-backed triggers:
-    Computer Use module → [OnHotkey], [OnProcessStarted], [OsShortcut], desktop/session/device triggers
-    Database Access module → [OnQueryReturnsRows]
+  Use preflight to diagnose module-backed triggers registered by the current
+  bundled or external module set.
 
 Instances:
 task start <taskId> [channelId] [--param key=value ...]   Uses active channel.
@@ -337,7 +331,7 @@ module scan                            Discover + load external modules.
 module reload <id>                     Unload + re-load single external module.
 module unload <id>
 
-Module IDs are strings (e.g. sharpclaw_transcription). Not short-ID eligible.
+Module IDs are strings (e.g. sharpclaw_metrics). Not short-ID eligible.
 Guides: docs/guides/Module-User-Guide.md and docs/guides/Module-Agent-Skill.md
 
 ────────────────────────────────────────
@@ -387,4 +381,3 @@ Handler signature: (string[] args, IServiceProvider sp, CancellationToken ct)
 ID access: ICliIdResolver.Resolve / GetOrAssign / PrintJson
 
 See docs/modules/ for per-module CLI details.
-Key example: resource inputaudio (alias ia) — Transcription module.

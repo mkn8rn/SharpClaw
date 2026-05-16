@@ -308,7 +308,7 @@ public sealed class ChannelCliCommandTests
         {
             Id = Guid.NewGuid(),
             Name = "Provider",
-            ProviderKey = WellKnownProviderKeys.OpenAI,
+            ProviderKey = "openai",
         };
         var model = new ModelDB
         {

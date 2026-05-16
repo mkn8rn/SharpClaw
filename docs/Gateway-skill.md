@@ -1,4 +1,4 @@
-SharpClaw Gateway API — Agent Skill Reference
+﻿SharpClaw Gateway API — Agent Skill Reference
 
 Base: https://your-domain.example.com (user-configured)
 Auth: same JWT flow as internal API. POST /api/auth/login → Bearer token.
@@ -155,7 +155,7 @@ POST /api/channels/{channelId}/jobs/{jobId}/cancel     (force cancel; also accep
 PUT  /api/channels/{channelId}/jobs/{jobId}/pause      (stops capture/inference while paused)
 PUT  /api/channels/{channelId}/jobs/{jobId}/resume     (restarts paused job)
 
-SubmitAgentJobRequest: actionType (required), resourceId?, agentId?, safeShellType?, scriptJson?, transcriptionModelId?, language?, transcriptionMode?, windowSeconds?, stepSeconds?
+SubmitAgentJobRequest: actionType (required), resourceId?, agentId?, safeShellType?, scriptJson?
 
 AgentJobStatus: Queued, Executing, AwaitingApproval, Completed, Failed, Denied, Cancelled, Paused.
 
@@ -171,8 +171,9 @@ DELETE /api/models/{id}
 ────────────────────────────────────────
 PROVIDERS
 ────────────────────────────────────────
-POST /api/providers                  { name, providerType, apiEndpoint?, apiKey? }
+POST /api/providers                  { name, providerKey, apiEndpoint?, apiKey? }
 GET /api/providers                  → ProviderResponse[]
+GET /api/providers/types            → ProviderTypeResponse[]
 GET /api/providers/{id}             → ProviderResponse
 PUT /api/providers/{id}             { name?, apiEndpoint? }
 DELETE /api/providers/{id}
@@ -210,14 +211,9 @@ GET /api/users                      → UserEntry[] (admin-only)
 PUT /api/users/{id}/role            { roleId }
 
 ────────────────────────────────────────
-MODULE-OWNED OR REMOVED SURFACES
+MODULE-OWNED SURFACES
 ────────────────────────────────────────
-The current gateway project does not ship standalone audio-device,
-transcription, transcription-streaming, bot, WhatsApp, Slack, or Teams
-controllers. Older builds documented those as built-in gateway routes. In the
-current project, such surfaces must be supplied by module-owned gateway
-extensions under /api/modules/* or exposed directly by the core API surface
-that owns the feature.
+The current gateway project exposes the routes listed in this skill. Extra gateway routes must be supplied by module-owned gateway extensions under /api/modules/* and enabled through Gateway:Modules.
 
 ────────────────────────────────────────
 CONFIGURATION (.env)

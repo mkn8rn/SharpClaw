@@ -44,15 +44,6 @@ internal static class TerminalUI
     // ── Wildcard resource ID ────────────────────────────────────
     public static readonly Guid AllResourcesId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
-    // ── Provider type names (enum order) ────────────────────────
-    public static readonly string[] ProviderTypeNames =
-        ["OpenAI", "DeepSeek", "Anthropic", "OpenRouter", "GoogleGemini", "GoogleVertexAI",
-         "ZAI", "VercelAIGateway", "XAI", "Groq", "Cerebras", "Mistral",
-         "GitHubCopilot", "Custom", "LlamaSharp", "Minimax",
-         "GoogleGeminiOpenAi", "GoogleVertexAIOpenAi", "Whisper", "Ollama"];
-
-    public static readonly HashSet<string> DeviceCodeProviderTypes = ["GitHubCopilot"];
-
     // ── Permission metadata ─────────────────────────────────────
 
     public static readonly (string Tag, string Label)[] ClearanceOptions =

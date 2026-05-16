@@ -1,4 +1,4 @@
-# SharpClaw Core API Reference
+﻿# SharpClaw Core API Reference
 
 > **Base URL:** `http://127.0.0.1:48923`
 >
@@ -99,23 +99,18 @@ Authentication check — requires a valid `X-Api-Key` header.
 
 ## Enums
 
-### ProviderType
+### Provider Keys
 
 ```
-OpenAI, DeepSeek, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,
-ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot,
-Minimax, Custom, LlamaSharp, Whisper, Ollama
+openai, deepseek, anthropic, openrouter, eden-ai, google-vertex-ai,
+google-gemini, zai, vercel-ai-gateway, xai, groq, cerebras, mistral,
+github-copilot, minimax, custom, llamasharp, ollama
 ```
 
-| Value | Int | Description |
-|-------|-----|-------------|
-| `LlamaSharp` | 13 | In-process LLM inference via LlamaSharp. No API key required. |
-| `Whisper` | 17 | In-process transcription via Whisper.net. Not assignable to chat models. |
-| `Ollama` | 18 | Ollama HTTP server. No API key required. Default endpoint `http://localhost:11434`. |
-| `Minimax` | — | Minimax AI cloud provider. |
-| `Custom` | — | Any OpenAI-compatible endpoint. |
-
-All other values correspond to their named cloud providers.
+Provider keys are discovered from enabled provider modules at runtime.
+Use `GET /providers/types` or the CLI command `provider types` for the
+authoritative list in the current process. Disabled provider modules do
+not contribute provider keys.
 
 ### ActionKey
 
@@ -151,16 +146,12 @@ Permission checks, job submission (`POST /channels/{id}/jobs`), and the CLI
 | `Cancelled` | 6 | Cancelled by a user or agent |
 | `Paused` | 7 | Temporarily paused; can be resumed |
 
-### ModelCapability (flags)
+### Model Capability Tags
 
-```
-None = 0, Chat = 1, Transcription = 2, ImageGeneration = 4,
-Embedding = 8, TextToSpeech = 16, Vision = 32
-```
-
-Values can be combined (comma-separated). Default is `Chat`.
-`Vision` enables image/screenshot input for models that support it
-(e.g. gpt-4o, claude-3+, gemini-1.5+).
+Capability tags are strings stored on each model. Common tags are `chat`,
+`vision`, `image-generation`, and `embedding`. Core only requires `chat`
+for chat assignment; provider modules and UI surfaces may use the other tags
+as conventions.
 
 ### ChatClientType
 
@@ -701,13 +692,14 @@ Create a new provider.
 ```json
 {
   "name": "string",
-  "providerType": "OpenAI",
+  "providerKey": "openai",
   "apiEndpoint": "string | null",
   "apiKey": "string | null"
 }
 ```
 
-`apiEndpoint` is required for `Custom` providers, ignored otherwise.
+`apiEndpoint` is required when the selected provider key requires an
+endpoint. It is ignored for provider keys that have no endpoint concept.
 
 **Response `200`:** `ProviderResponse`
 
@@ -718,6 +710,28 @@ Create a new provider.
 List all providers.
 
 **Response `200`:** `ProviderResponse[]`
+
+---
+
+### GET /providers/types
+
+List provider keys contributed by enabled provider modules. This is the
+authoritative source for provider picker UIs and CLI validation.
+
+**Response `200`:** `ProviderTypeResponse[]`
+
+```json
+[
+  {
+    "providerKey": "eden-ai",
+    "displayName": "Eden AI",
+    "requiresEndpoint": false,
+    "supportsAutomaticEndpointDiscovery": false,
+    "requiresApiKey": true,
+    "supportsDeviceCodeAuth": false
+  }
+]
+```
 
 ---
 
@@ -807,7 +821,7 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 {
   "id": "guid",
   "name": "string",
-  "providerType": "OpenAI",
+  "providerKey": "openai",
   "apiEndpoint": "string | null",
   "hasApiKey": true
 }
@@ -840,8 +854,7 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 > an incorrect name will cause a **404** error when chatting.
 > Run `provider sync-models <id>` to see valid identifiers.
 
-`capabilities` is a flags enum (comma-separated): `Chat`, `Transcription`,
-`ImageGeneration`, `Embedding`, `TextToSpeech`. Defaults to `Chat`.
+`capabilityTags` is a string set. Common tags are `chat`, `vision`, `image-generation`, and `embedding`. Defaults to `chat`.
 
 **Response `200`:** `ModelResponse`
 
@@ -871,7 +884,7 @@ Start an OAuth device code flow for providers that require it (e.g. GitHub Copil
 ```json
 {
   "name": "string | null",
-  "capabilities": "Chat,Transcription | null"
+  "capabilityTags": ["chat", "vision"]
 }
 ```
 
@@ -1224,8 +1237,8 @@ Clear a single default resource by key.
 **Response `400`:** Invalid key.
 
 Valid keys: `dangshell`, `safeshell`, `container`, `website`, `search`,
-`localinfo`, `externalinfo`, `audiodevice`, `displaydevice`, `agent`,
-`task`, `skill`, `transcriptionmodel`, `editor`, `document`, `nativeapp`.
+`localinfo`, `externalinfo`, `displaydevice`, `agent`, `task`, `skill`,
+`editor`, `document`, `nativeapp`.
 
 ### ContextResponse
 
@@ -1286,15 +1299,15 @@ Request (example):
 overriding the agent's setting. See [Tool awareness sets](#tool-awareness-sets).
 
 `customChatHeader` is an optional template string that overrides the
-agent's header
-[Custom chat header](#custom-chat-header) for the full tag reference.
+agent's header [Custom chat header](#custom-chat-header) for the full tag
+reference.
 
 `toolAwarenessSetId` links a [tool awareness set](#tool-awareness-sets).
 Overrides the agent's set when present.
 
-`allowedAgentIds` specifies additional agents (beyond the default
-`agentId`) allowed to operate on this channel.
-completions is always the resolved agent's model.
+`allowedAgentIds` specifies additional agents beyond the default `agentId`
+allowed to operate on this channel. Completions always use the resolved
+agent's model.
 
 Response `200`: `ChannelResponse`
 
@@ -1326,8 +1339,8 @@ Request (example):
 }
 ```
 
-`customChatHeader`: pass a template string to set, `""` (empty string)
-to clear, or `null` / omit to leave unchanged.
+`customChatHeader`: pass a template string to set, `""` to clear, or
+`null` / omit to leave unchanged.
 
 `toolAwarenessSetId`: pass a GUID to assign, `Guid.Empty`
 (`00000000-...`) to clear, or `null` to leave unchanged.
@@ -1335,9 +1348,9 @@ to clear, or `null` / omit to leave unchanged.
 `disableToolSchemas`: pass `true`/`false` to set, or `null` to leave
 unchanged.
 
-When `allowedAgentIds` is provided
-`permissionSetId` set to `Guid.Empty` removes the override; `null` leaves
-it unchanged.
+When `allowedAgentIds` is provided, it replaces the channel's allowed-agent
+set. `permissionSetId` set to `Guid.Empty` removes the override; `null`
+leaves it unchanged.
 
 Response `200`: `ChannelResponse` or `404` when not found.
 
@@ -1364,8 +1377,8 @@ Set the default agent for a channel.
 
 #### GET /channels/{id}/agents
 
-List the channel's allowed agents (effective: channel's own, falling
-back to context's).
+List the channel's allowed agents, using the channel's own set and falling
+back to the context's set when the channel does not override it.
 
 **Response `200`:** `ChannelAllowedAgentsResponse`
 
@@ -1411,8 +1424,8 @@ Clear a single default resource by key.
 **Response `400`:** Invalid key.
 
 Valid keys: `dangshell`, `safeshell`, `container`, `website`, `search`,
-`localinfo`, `externalinfo`, `audiodevice`, `displaydevice`, `agent`,
-`task`, `skill`, `transcriptionmodel`, `editor`, `document`, `nativeapp`.
+`localinfo`, `externalinfo`, `displaydevice`, `agent`, `task`, `skill`,
+`editor`, `document`, `nativeapp`.
 
 ### ChannelResponse
 
@@ -1449,7 +1462,6 @@ Valid keys: `dangshell`, `safeshell`, `container`, `website`, `search`,
 ```
 
 ---
-
 ## Threads
 
 Threads are lightweight conversation threads within a channel. Messages
@@ -1761,7 +1773,7 @@ sets. Global action types ignore it.
 
 > **Module-specific fields:** The DTO may include additional fields
 > consumed by the module that owns the action key (e.g. shell
-> type/script parameters, transcription parameters). These fields are
+> type/script parameters). These fields are
 > ignored by the core and passed through to the module. See individual
 > module documentation for details.
 
@@ -1781,7 +1793,7 @@ List all jobs for a channel.
 
 List lightweight summaries for all jobs in a channel. Returns only the
 fields needed for list views / dropdowns — no `resultData`, `errorLog`,
-`logs`, or `segments`. Use this endpoint when you only need to enumerate
+or `logs`. Use this endpoint when you only need to enumerate
 jobs without their heavy payloads.
 
 **Response `200`:** `AgentJobSummaryResponse[]`
@@ -1874,35 +1886,6 @@ Only jobs with status `Paused` can be resumed.
 
 ---
 
-### POST /channels/{channelId}/jobs/{jobId}/segments
-
-Push a data segment into an executing job. Used by modules for
-incremental output (e.g. transcription segments).
-
-**Request:**
-
-```json
-{
-  "text": "string",
-  "startTime": 0.0,
-  "endTime": 1.5,
-  "confidence": 0.95
-}
-```
-
-**Response `200`:** `TranscriptionSegmentResponse`
-**Response `404`:** Job not found or not executing.
-
----
-
-### GET /channels/{channelId}/jobs/{jobId}/segments?since={datetime}
-
-Retrieve segments added after the given timestamp.
-
-**Response `200`:** `TranscriptionSegmentResponse[]`
-
----
-
 ### AgentJobResponse
 
 ```json
@@ -1926,17 +1909,6 @@ Retrieve segments added after the given timestamp.
   "createdAt": "datetime",
   "startedAt": "datetime | null",
   "completedAt": "datetime | null",
-  "segments": [
-    {
-      "id": "guid",
-      "text": "string",
-      "startTime": 0.0,
-      "endTime": 1.5,
-      "confidence": 0.95,
-      "timestamp": "datetime",
-      "isProvisional": false
-    }
-  ],
   "channelCost": {
     "channelId": "guid",
     "totalPromptTokens": 0,
@@ -1953,16 +1925,12 @@ Retrieve segments added after the given timestamp.
 ```
 
 The response also includes module-specific fields from the original
-request (e.g. shell type, transcription parameters) when applicable.
-
-`segments` is populated for action types that produce incremental
-output (e.g. transcription); `null` otherwise.
+request when applicable.
 
 `jobCost` contains the prompt and completion tokens attributed to this
 specific job. Core records chat-provider usage for jobs that execute chat
 work, and modules can add their own usage through `IAgentJobCostTracker`
-when they call transcription, OCR, private LLM, or other model APIs from
-inside a job. `jobCost` is `null` only when no usage has been recorded for
+when they call private LLM, OCR, or other model APIs from inside a job. `jobCost` is `null` only when no usage has been recorded for
 that job.
 
 `channelCost` is piggybacked on all detail / mutation responses
@@ -2013,7 +1981,6 @@ matches the JSON property names used in the permissions API.
 | `searchEngineAccesses` | SearchEngines |
 | `localInfoStoreAccesses` | LocalInformationStores |
 | `externalInfoStoreAccesses` | ExternalInformationStores |
-| `audioDeviceAccesses` | AudioDevices |
 | `displayDeviceAccesses` | DisplayDevices |
 | `editorSessionAccesses` | EditorSessions |
 | `agentAccesses` | Agents |
@@ -2103,7 +2070,6 @@ don't have.
   "searchEngineAccesses": null,
   "localInfoStoreAccesses": null,
   "externalInfoStoreAccesses": null,
-  "audioDeviceAccesses": null,
   "agentAccesses": null,
   "taskAccesses": null,
   "skillAccesses": null,
@@ -2176,7 +2142,6 @@ wildcard grant that covers all resources of that type.
   "searchEngineAccesses": [],
   "localInfoStoreAccesses": [],
   "externalInfoStoreAccesses": [],
-  "audioDeviceAccesses": [],
   "agentAccesses": [],
   "taskAccesses": [],
   "skillAccesses": [],
@@ -2226,12 +2191,10 @@ channel and context level. Resolution order: channel → context.
   "searchEngineResourceId": "guid | null",
   "localInfoStoreResourceId": "guid | null",
   "externalInfoStoreResourceId": "guid | null",
-  "audioDeviceResourceId": "guid | null",
   "displayDeviceResourceId": "guid | null",
   "agentResourceId": "guid | null",
   "taskResourceId": "guid | null",
   "skillResourceId": "guid | null",
-  "transcriptionModelId": "guid | null",
   "editorSessionResourceId": "guid | null",
   "documentSessionResourceId": "guid | null",
   "nativeApplicationResourceId": "guid | null"
@@ -2247,8 +2210,8 @@ Same fields as the request, plus an `id` field for the
 
 ## Local models
 
-In-process inference via LLamaSharp (LLM) and Whisper.net (STT).
-Endpoints live under `/models/local`.
+In-process local model management for LLamaSharp. Endpoints live under
+`/models/local`.
 
 ### POST /models/local/download
 
@@ -2262,7 +2225,8 @@ it as a local model.
   "url": "string",
   "name": "string | null",
   "quantization": "string | null",
-  "gpuLayers": "int | null"
+  "gpuLayers": "int | null",
+  "providerKey": "llamasharp"
 }
 ```
 
@@ -2521,7 +2485,7 @@ Pass `simple=true` to receive a simplified summary with just the total.
 {
   "providerId": "guid",
   "providerName": "string",
-  "providerType": "OpenAI",
+  "providerKey": "openai",
   "isLocal": false,
   "costApiSupported": true,
   "totalCost": 12.34,
@@ -2866,7 +2830,6 @@ that type are resolved from the database and listed individually.
 | `{{Containers}}` | All containers |
 | `{{Websites}}` | All websites |
 | `{{SearchEngines}}` | All search engines |
-| `{{AudioDevices}}` | All audio devices |
 | `{{DisplayDevices}}` | All display devices |
 | `{{EditorSessions}}` | All editor sessions |
 | `{{Skills}}` | All skills |

@@ -10,7 +10,7 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class DeepSeekApiClient : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint => "https://api.deepseek.com";
-    public override string ProviderKey => WellKnownProviderKeys.DeepSeek;
+    public override string ProviderKey => "deepseek";
     protected override bool SupportsReasoningContentReplay => true;
 
     protected override Dictionary<string, JsonElement>? PrepareProviderParameters(

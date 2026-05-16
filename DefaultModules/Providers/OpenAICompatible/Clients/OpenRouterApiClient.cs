@@ -6,5 +6,5 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class OpenRouterApiClient : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint => "https://openrouter.ai/api/v1";
-    public override string ProviderKey => WellKnownProviderKeys.OpenRouter;
+    public override string ProviderKey => "openrouter";
 }

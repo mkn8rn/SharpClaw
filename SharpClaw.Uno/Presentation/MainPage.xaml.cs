@@ -966,17 +966,11 @@ public sealed partial class MainPage : Page
     private sealed partial record ResourceItemDto(Guid Id, string Name);
 
     [ImplicitKeys(IsEnabled = false)]
-    private sealed record TranscriptionSegmentDto(
-        Guid Id, string Text, double StartTime, double EndTime,
-        double? Confidence, DateTimeOffset Timestamp, bool IsProvisional = false);
-
-    [ImplicitKeys(IsEnabled = false)]
     private sealed partial record JobDetailDto(
         Guid Id, Guid ChannelId, Guid AgentId, string ActionKey, Guid? ResourceId,
         string Status, string? ResultData, string? ErrorLog,
         IReadOnlyList<JobLogDto>? Logs,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
-        IReadOnlyList<TranscriptionSegmentDto>? Segments = null,
         TokenUsageDto? JobCost = null,
         ChannelCostDto? ChannelCost = null);
 

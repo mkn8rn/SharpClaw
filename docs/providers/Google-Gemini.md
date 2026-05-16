@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `GoogleGemini` (`4`) |
+| **`ProviderKey`** | `google-gemini` |
 | **Client class** | `GoogleGeminiApiClient` (dedicated native client) |
 | **Endpoint** | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` |
 | **Auth** | `x-goog-api-key: {apiKey}` |
@@ -14,7 +14,7 @@
 
 ## Overview
 
-This provider type calls Google's native Gemini API directly — **not**
+This provider key calls Google's native Gemini API directly — **not**
 the OpenAI-compatible wrapper. Provider parameters follow the Gemini
 schema. Known generation-config fields are routed into
 `generationConfig`.

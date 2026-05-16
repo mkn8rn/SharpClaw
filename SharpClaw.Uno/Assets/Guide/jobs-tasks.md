@@ -62,7 +62,7 @@ When a job is submitted, the channel's defaults are used if the agent doesn't sp
 
 ## Tasks
 
-A **task** is a C# script that compiles and runs inside SharpClaw to automate complex workflows. Tasks can create agents, channels, and threads, send chat messages, make HTTP requests, start transcriptions, and orchestrate multi-agent pipelines — all from a single script definition.
+A **task** is a C# script that compiles and runs inside SharpClaw to automate complex workflows. Tasks can create agents, channels, and threads, send chat messages, make HTTP requests, and orchestrate multi-agent pipelines — all from a single script definition.
 
 Tasks are fundamentally different from mk8.shell (which is a sandboxed command DSL used only by the ExecuteAsSafeShell agent action). Tasks are full automation scripts that operate at the SharpClaw application level.
 
@@ -124,11 +124,6 @@ The task engine supports the following operations. Each maps to a method call in
 - **FindProvider**: Look up a provider by name or custom ID
 - **FindAgent**: Look up an agent by name or custom ID
 
-**Transcription**
-- **StartTranscription**: Begin live audio transcription on a device
-- **StopTranscription**: End a running transcription job
-- **GetDefaultAudioDevice**: Resolve the system's default audio input
-
 **HTTP**
 - **HttpRequest**: Make GET or POST requests to external APIs
 
@@ -143,7 +138,7 @@ The task engine supports the following operations. Each maps to a method call in
 - **Delay**: Pause execution for a specified duration (milliseconds)
 - **WaitUntilStopped**: Block until the task is cancelled externally (useful for long-running listeners)
 - **Return**: Exit the task early
-- **EventHandler**: Register a callback for event triggers (e.g., transcription segments)
+- **EventHandler**: Register a callback for event triggers
 
 **Variables**
 - **DeclareVariable**: Create a local variable with an optional initializer
@@ -246,27 +241,21 @@ Agents can execute the following actions (each creates a job):
 14. **AccessExternalInfoStore**: Query an external API
 15. **RegisterInfoStore**: Create a new information store
 
-### Transcription Actions
-
-16. **StartLiveTranscription**: Begin real-time audio transcription
-17. **StopLiveTranscription**: End transcription
-18. **TranscribeAudioFile**: Convert an audio file to text
-
 ### Editor Actions
 
-19–28. **Editor bridge actions** (Read/Write/Refactor/Execute/etc. via IDE extensions)
+16–25. **Editor bridge actions** (Read/Write/Refactor/Execute/etc. via IDE extensions)
 
 ### Task Actions
 
-29. **EditTask**: Modify a task definition
+26. **EditTask**: Modify a task definition
 
 ### Skill Actions
 
-30. **AccessSkill**: Invoke a skill
+27. **AccessSkill**: Invoke a skill
 
 ### Display Actions
 
-31. **CaptureDisplay**: Take a screenshot from a specific display
+28. **CaptureDisplay**: Take a screenshot from a specific display
 
 ## Job Logs
 

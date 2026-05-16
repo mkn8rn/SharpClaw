@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Groq` (`8`) |
+| **`ProviderKey`** | `groq` |
 | **Client class** | `GroqApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.groq.com/openai/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

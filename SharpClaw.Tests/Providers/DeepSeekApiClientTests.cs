@@ -265,7 +265,7 @@ public sealed class DeepSeekApiClientTests
 
         using var serviceProvider = services.BuildServiceProvider();
         var plugin = serviceProvider.GetServices<IProviderPlugin>()
-            .Single(p => p.ProviderKey == WellKnownProviderKeys.DeepSeek);
+            .Single(p => p.ProviderKey == "deepseek");
 
         plugin.DisplayName.Should().Be("DeepSeek");
         plugin.OwnerModuleId.Should().Be("sharpclaw_providers_openai_compat");
@@ -278,7 +278,7 @@ public sealed class DeepSeekApiClientTests
     [Test]
     public void ParameterSpecMatchesDeepSeekSurface()
     {
-        var spec = ProviderParameterSpecs.For(WellKnownProviderKeys.DeepSeek);
+        var spec = ProviderParameterSpecs.For("deepseek");
 
         spec.ProviderName.Should().Be("DeepSeek");
         spec.SupportsResponseFormat.Should().BeTrue();

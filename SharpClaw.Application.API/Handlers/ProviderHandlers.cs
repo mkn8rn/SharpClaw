@@ -16,6 +16,10 @@ public static class ProviderHandlers
     public static async Task<IResult> List(ProviderService svc)
         => Results.Ok(await svc.ListAsync());
 
+    [MapGet("/types")]
+    public static IResult ListTypes(ProviderService svc)
+        => Results.Ok(svc.ListAvailableTypes());
+
     [MapGet("/{id:guid}")]
     public static async Task<IResult> GetById(Guid id, ProviderService svc)
     {

@@ -93,7 +93,7 @@
                      Style="{StaticResource TerminalInput}"
                      FontSize="12"
                      PlaceholderText="e.g. My OpenAI" />
-            <TextBlock Text="provider type:"
+            <TextBlock Text="provider key:"
                        Style="{StaticResource TerminalText}"
                        FontSize="12" Foreground="#CCCCCC" />
             <ComboBox x:Name="ProviderTypeSelector"

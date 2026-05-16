@@ -11,7 +11,7 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class GoogleGeminiOpenAiApiClient : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint => "https://generativelanguage.googleapis.com/v1beta/openai";
-    public override string ProviderKey => WellKnownProviderKeys.GoogleGeminiOpenAi;
+    public override string ProviderKey => "google-gemini-openai";
 
     /// <inheritdoc />
     protected override Dictionary<string, JsonElement>? TranslateProviderParameters(

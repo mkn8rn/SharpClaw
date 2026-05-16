@@ -21,7 +21,7 @@ Providers are the API services that power your AI models.
 1. Go to **Settings** → **Providers**
 2. Click the **+** button to expand the creation form
 3. Enter a name (e.g., "OpenAI Production")
-4. Select the provider type
+4. Select the provider key
 5. Click **Create**
 
 ### Setting API Keys

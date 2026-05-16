@@ -1,4 +1,4 @@
-SharpClaw Core API — Agent Skill Reference
+﻿SharpClaw Core API — Agent Skill Reference
 
 Base: http://127.0.0.1:48923
 Auth: X-Api-Key header for the current runtime instance, plus Bearer JWT on
@@ -23,8 +23,9 @@ POST /auth/invalidate-refresh-tokens  { userIds: [guid] }  → 204
 ────────────────────────────────────────
 PROVIDERS
 ────────────────────────────────────────
-POST   /providers                  { name, providerType, apiEndpoint?, apiKey? }
+POST   /providers                  { name, providerKey, apiEndpoint?, apiKey? }
 GET    /providers
+GET    /providers/types            -> provider module type metadata
 GET    /providers/{id}
 PUT    /providers/{id}             { name?, apiEndpoint? }
 DELETE /providers/{id}
@@ -32,9 +33,11 @@ POST   /providers/{id}/set-key     { apiKey }  → 204
 POST   /providers/{id}/sync-models → synced model list
 POST   /providers/{id}/auth/device-code  → { userCode, verificationUri, expiresInSeconds }
 
-ProviderType values: OpenAI, DeepSeek, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini, ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Minimax, Custom, LlamaSharp, Ollama.
-
-apiEndpoint required for Custom only. sync-models is the preferred way to add models.
+Provider keys are discovered from enabled provider modules. Use
+GET /providers/types or CLI `provider types` for the authoritative list
+in the current process. apiEndpoint is required only when the selected
+provider key says requiresEndpoint=true. sync-models is the preferred
+way to add models.
 
 ────────────────────────────────────────
 MODELS
@@ -45,8 +48,8 @@ GET    /models/{id}
 PUT    /models/{id}                { name?, capabilities? }
 DELETE /models/{id}
 
-name must be the exact provider identifier (e.g. gpt-4o, whisper-1).
-capabilities: flags — None=0, Chat=1, Transcription=2, ImageGeneration=4, Embedding=8, TextToSpeech=16, Vision=32. Default Chat.
+name must be the exact provider identifier (e.g. gpt-4o).
+capabilityTags: string tags such as chat, vision, image-generation, and embedding. Default chat.
 
 ────────────────────────────────────────
 LOCAL MODELS
@@ -92,7 +95,7 @@ SetRolePermissionsRequest fields:
   Global flags:
   (PermissionClearance enum, default Unset = denied, no approval path)
   Per-resource arrays (each entry is { resourceId, clearance }):
-    dangerousShellAccesses, safeShellAccesses, containerAccesses, websiteAccesses, searchEngineAccesses, localInfoStoreAccesses, externalInfoStoreAccesses, audioDeviceAccesses, agentAccesses, taskAccesses, skillAccesses, agentHeaderAccesses, channelHeaderAccesses, documentSessionAccesses, nativeApplicationAccesses
+    dangerousShellAccesses, safeShellAccesses, containerAccesses, websiteAccesses, searchEngineAccesses, localInfoStoreAccesses, externalInfoStoreAccesses, agentAccesses, taskAccesses, skillAccesses, agentHeaderAccesses, channelHeaderAccesses, documentSessionAccesses, nativeApplicationAccesses
 
 Wildcard resourceId: ffffffff-ffff-ffff-ffff-ffffffffffff (all resources of that type).
 
@@ -150,7 +153,7 @@ Default resources (per-key):
   PUT    /channels/{id}/defaults/{key}          { resourceId }
   DELETE /channels/{id}/defaults/{key}
 
-Valid default resource keys: dangshell, safeshell, container, website, search, localinfo, externalinfo, audiodevice, displaydevice, agent, task, skill, transcriptionmodel, editor, document, nativeapp.
+Valid default resource keys: dangshell, safeshell, container, website, search, localinfo, externalinfo, displaydevice, agent, task, skill, editor, document, nativeapp.
 
 Either agentId or contextId (with agent) required on create.
 allowedAgentIds on PUT replaces the set. permissionSetId=00000000-... removes the override; null leaves unchanged.
@@ -166,7 +169,7 @@ All responses embed full AgentSummary objects (id, name, modelId, modelName, pro
 DEFAULT RESOURCES
 ────────────────────────────────────────
 SetDefaultResourcesRequest fields (all Guid?):
-  dangerousShellResourceId, safeShellResourceId, containerResourceId, websiteResourceId, searchEngineResourceId, localInfoStoreResourceId, externalInfoStoreResourceId, audioDeviceResourceId, displayDeviceResourceId, agentResourceId, taskResourceId, skillResourceId, transcriptionModelId, editorSessionResourceId, documentSessionResourceId, nativeApplicationResourceId
+  dangerousShellResourceId, safeShellResourceId, containerResourceId, websiteResourceId, searchEngineResourceId, localInfoStoreResourceId, externalInfoStoreResourceId, displayDeviceResourceId, agentResourceId, taskResourceId, skillResourceId, editorSessionResourceId, documentSessionResourceId, nativeApplicationResourceId
 
 Resolution order for jobs: channel DefaultResourceSet → context DefaultResourceSet → channel/context/role PermissionSet defaults.
 
@@ -216,7 +219,7 @@ AGENT JOBS
 ────────────────────────────────────────
 POST   /channels/{channelId}/jobs              (SubmitAgentJobRequest)
 GET    /channels/{channelId}/jobs
-GET    /channels/{channelId}/jobs/summaries    (lightweight: id, channelId, agentId, actionKey, resourceId, status, createdAt, startedAt, completedAt — no resultData/errorLog/logs/segments)
+GET    /channels/{channelId}/jobs/summaries    (lightweight: id, channelId, agentId, actionKey, resourceId, status, createdAt, startedAt, completedAt — no resultData/errorLog/logs)
 GET    /channels/{channelId}/jobs/{jobId}
 POST   /channels/{channelId}/jobs/{jobId}/approve   { approverAgentId? }
 POST   /channels/{channelId}/jobs/{jobId}/stop      (graceful stop; also accepts Paused jobs)
@@ -230,14 +233,9 @@ SubmitAgentJobRequest:
   resourceId?: target resource for per-resource actions.
   agentId?: override the channel's default agent (must be in allowed set).
   callerAgentId?: the agent that triggered the job (for sub-agent chains).
-
-  Module-specific fields may also be present on the DTO (e.g. shell type/script,
-  transcription parameters). These are consumed by the module that owns the action
-  key. See individual module documentation for details.
-
-Segments (generic data push/pull for long-running jobs):
-  POST   /channels/{channelId}/jobs/{jobId}/segments  { text, startTime, endTime, confidence }
-  GET    /channels/{channelId}/jobs/{jobId}/segments?since={datetime}
+  Module-specific fields may also be present on the DTO. These are consumed by
+  the module that owns the action key. See individual module documentation for
+  details.
 
 AgentJobStatus: Queued=0, Executing=1, AwaitingApproval=2, Completed=3, Failed=4, Denied=5, Cancelled=6, Paused=7.
 
@@ -245,8 +243,9 @@ When resourceId is omitted for a per-resource action, default resources are reso
 automatically from the channel's DefaultResourceSet → context's DefaultResourceSet →
 permission set defaults.
 
-Job streaming endpoints (WebSocket, SSE) are module-provided. See individual module
-documentation for available transports (e.g. Module-Transcription for live segments).
+Job streaming endpoints (WebSocket, SSE) are module-provided. See individual
+module documentation for available transports in the current bundled module
+set.
 
 ────────────────────────────────────────
 TASKS
@@ -562,9 +561,9 @@ Resource tags (enumerate entities):
   {{Agents}}             → comma-separated GUIDs (no template)
   {{Agents:{Name} ({Id})}}  → per-item formatted: CodeReview Agent (3fa8...), DevOps Agent (7c9e...)
 
-Supported resource tag names: Agents, Models, Providers, Channels, Threads, Roles, Users, Containers, Websites, SearchEngines, AudioDevices, DisplayDevices, EditorSessions, Skills, SystemUsers, LocalInfoStores, ExternalInfoStores, ScheduledTasks, Tasks.
+Supported resource tag names: Agents, Models, Providers, Channels, Threads, Roles, Users, Containers, Websites, SearchEngines, DisplayDevices, EditorSessions, Skills, SystemUsers, LocalInfoStores, ExternalInfoStores, ScheduledTasks, Tasks.
 
-Note: Some entity types (Containers, Websites, SearchEngines, AudioDevices, DisplayDevices, EditorSessions, SystemUsers, LocalInfoStores, ExternalInfoStores) are module-registered resources. They return results only when their owning module is enabled.
+Note: Some entity types (Containers, Websites, SearchEngines, DisplayDevices, EditorSessions, SystemUsers, LocalInfoStores, ExternalInfoStores) are module-registered resources. They return results only when their owning module is enabled.
 
 Fields with [HeaderSensitive] (PasswordHash, PasswordSalt, EncryptedApiKey) → [redacted]. Unknown fields → [FieldName?].
 

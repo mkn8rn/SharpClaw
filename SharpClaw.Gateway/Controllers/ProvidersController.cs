@@ -43,6 +43,20 @@ public class ProvidersController(InternalApiClient api) : ControllerBase
         }
     }
 
+    [HttpGet("types")]
+    public async Task<IActionResult> ListTypes(CancellationToken ct)
+    {
+        try
+        {
+            var result = await api.GetAsync<IReadOnlyList<ProviderTypeResponse>>("/providers/types", ct);
+            return Ok(result);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Internal service unavailable." });
+        }
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
     {

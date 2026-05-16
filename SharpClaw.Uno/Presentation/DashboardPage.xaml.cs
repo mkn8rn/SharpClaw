@@ -16,7 +16,6 @@ public sealed partial class DashboardPage : Page
         ["Contexts"]      = "sharpclaw ctx list",
         ["Resources"]     = "sharpclaw resource list",
         ["Editor"]        = "sharpclaw resource editor list",
-        ["Transcription"] = "sharpclaw transcribe start",
         ["Auth"]          = "sharpclaw help",
     };
 

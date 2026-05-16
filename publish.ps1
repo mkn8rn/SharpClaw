@@ -491,7 +491,7 @@ function Publish-MSIX {
         '    <DisplayName>SharpClaw</DisplayName>'
         ('    <PublisherDisplayName>' + $PublisherDisplayName + '</PublisherDisplayName>')
         '    <Logo>Assets\icon.png</Logo>'
-        '    <Description>SharpClaw - AI agent orchestrator with local model inference, chat, transcription, and developer tool integration.</Description>'
+        '    <Description>SharpClaw - AI agent orchestrator with local model inference, chat, and developer tool integration.</Description>'
         '  </Properties>'
         ''
         '  <Dependencies>'

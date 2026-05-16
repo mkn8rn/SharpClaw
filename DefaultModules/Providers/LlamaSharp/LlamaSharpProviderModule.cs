@@ -89,7 +89,7 @@ public sealed class LlamaSharpProviderModule : ISharpClawModule
             var caps = new HeuristicCapabilityResolver(ProviderCapabilityHeuristics.ForGeneric);
             var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
             return new SimpleProviderPlugin(
-                WellKnownProviderKeys.LlamaSharp,
+                "llamasharp",
                 "LlamaSharp (local)",
                 requiresEndpoint: false,
                 _ => new LocalInferenceApiClient(pm),

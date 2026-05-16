@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `GoogleGeminiOpenAi` (`15`) |
+| **`ProviderKey`** | `google-gemini-openai` |
 | **Client class** | `GoogleGeminiOpenAiApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | **Auth** | `Authorization: Bearer {apiKey}` |
@@ -14,7 +14,7 @@
 
 ## Overview
 
-This provider type uses Google's OpenAI-compatible wrapper for Gemini
+This provider key uses Google's OpenAI-compatible wrapper for Gemini
 models. Parameters follow the standard OpenAI schema.
 
 If you need native Gemini parameters like `responseMimeType`,

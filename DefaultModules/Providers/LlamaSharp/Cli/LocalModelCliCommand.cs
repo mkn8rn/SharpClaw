@@ -111,7 +111,7 @@ internal static class LocalModelCliCommand
         Console.WriteLine();
 
         var result = await svc.DownloadAndRegisterAsync(
-            new DownloadModelRequest(url, name, quant, gpuLayers, WellKnownProviderKeys.LlamaSharp),
+            new DownloadModelRequest(url, name, quant, gpuLayers, "llamasharp"),
             progress, ct);
         Console.WriteLine();
         ids.PrintJson(result);

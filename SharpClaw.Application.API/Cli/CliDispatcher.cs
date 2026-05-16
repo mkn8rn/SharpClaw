@@ -28,7 +28,6 @@ using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.Tasks;
@@ -402,6 +401,7 @@ public static class CliDispatcher
                 "provider add <name> <type> [endpoint]",
                 "provider get <providerId>",
                 "provider list",
+                "provider types",
                 "provider update <providerId> [name] [endpoint]",
                 "provider delete <providerId>",
                 "provider set-key <providerId> <apiKey>",
@@ -414,29 +414,32 @@ public static class CliDispatcher
 
         var sub = args[1].ToLowerInvariant();
         var svc = sp.GetRequiredService<ProviderService>();
+        var providerTypes = svc.ListAvailableTypes();
+        var providerTypeKeys = providerTypes.Select(t => t.ProviderKey).ToList();
+        var requestedType = args.Length >= 4
+            ? providerTypes.FirstOrDefault(t => t.ProviderKey.Equals(args[3], StringComparison.OrdinalIgnoreCase))
+            : null;
 
         return sub switch
         {
-            "add" when args.Length >= 4 && WellKnownProviderKeys.All.Any(k => k.Equals(args[3], StringComparison.OrdinalIgnoreCase))
+            "add" when args.Length >= 4 && requestedType is not null
                 => await ProviderHandlers.Create(
                     new CreateProviderRequest(
-                        args[2], args[3],
-                        args[3].Equals(WellKnownProviderKeys.Custom, StringComparison.OrdinalIgnoreCase) && args.Length >= 5 ? args[4] : null),
+                        args[2], requestedType.ProviderKey,
+                        args.Length >= 5 ? args[4] : null),
                     svc),
             "add" when args.Length < 4
-                => UsageResult("provider add <name> <type>",
-                    "Types: openai, deepseek, anthropic, openrouter, google-vertex-ai,",
-                    "       google-vertex-ai-openai, google-gemini, google-gemini-openai,",
-                    "       zai, vercel-ai-gateway, xai, groq, cerebras,",
-                    "       mistral, github-copilot, minimax, custom"),
+                => UsageResult("provider add <name> <type> [endpoint]",
+                    "Types: " + string.Join(", ", providerTypeKeys)),
             "add" => UsageResult("Unknown provider key. Valid keys: " +
-                     string.Join(", ", WellKnownProviderKeys.All)),
+                     string.Join(", ", providerTypeKeys)),
 
             "get" when args.Length >= 3
                 => await ProviderHandlers.GetById(CliIdMap.Resolve(args[2]), svc),
             "get" => UsageResult("provider get <id>"),
 
             "list" => await ProviderHandlers.List(svc),
+            "types" => ProviderHandlers.ListTypes(svc),
 
             "update" when args.Length >= 4
                 => await ProviderHandlers.Update(
@@ -487,8 +490,8 @@ public static class CliDispatcher
                 "  <name> must be the exact model ID from the provider API",
                 "    (e.g. gpt-4o, claude-sonnet-4-20250514, gemini-2.5-flash).",
                 "  Tip: use 'provider sync-models <id>' to auto-import models.",
-                "  Capabilities (comma-separated): Chat,",
-                "    ImageGeneration, Embedding, TextToSpeech",
+                "  Capabilities (comma-separated tags): chat,",
+                "    vision, image-generation, embedding",
                 "model get <id>",
                 "model list [--provider <id>]           List models (optionally by provider)",
                 "model update <id> <name> [--cap <capabilities>]",
@@ -2177,7 +2180,7 @@ public static class CliDispatcher
         if (args.Length < 2)
         {
             PrintUsage(
-                "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]",
+                "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--params <json>]",
                 "  --agent overrides the channel's default agent.",
                 "job list [channelId]                       List jobs (current channel if omitted)",
                 "job status <jobId>",
@@ -2204,7 +2207,7 @@ public static class CliDispatcher
 
             "submit" when args.Length < 4
                 => UsageResult(
-                    "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--model <id>] [--lang <code>]"),
+                    "job submit <channelId> <actionKey> [resourceId] [--agent <id>] [--params <json>]"),
 
             "list" when args.Length >= 3
                 => await AgentJobHandlers.List(CliIdMap.Resolve(args[2]), svc),
@@ -3536,8 +3539,7 @@ public static class CliDispatcher
 
             Provider:  provider <sub> [args]
               provider add <name> <type> [endpoint]
-                Types: OpenAI, Anthropic, OpenRouter, GoogleVertexAI, GoogleGemini,
-                       DeepSeek, ZAI, VercelAIGateway, XAI, Groq, Cerebras, Mistral, GitHubCopilot, Custom
+                Types are discovered from enabled provider modules; run 'provider types'.
               provider get|list|update|delete|set-key|login|sync-models|refresh-caps <id> [args]
               provider cost <id> [--days <n>]   provider cost-total [--days <n>] [--simple] [--all]
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `DeepSeek` (`deepseek`) |
+| **`ProviderKey`** | `deepseek` |
 | **Client class** | `DeepSeekApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.deepseek.com` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

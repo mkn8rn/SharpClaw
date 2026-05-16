@@ -169,6 +169,25 @@ public static class ProviderCapabilityHeuristics
                   || IsMinimaxVision(n);
         return BuildChatTags(vision);
     }
+
+    /// <summary>
+    /// Eden AI exposes LLM models as <c>provider/model</c> IDs. Reuse the
+    /// generic family heuristics against the suffix so synced models get
+    /// useful chat and vision tags without forcing operators to edit every
+    /// imported model manually.
+    /// </summary>
+    public static HashSet<string> ForEdenAI(string name)
+    {
+        if (name.Equals("@edenai", StringComparison.OrdinalIgnoreCase))
+            return [WellKnownCapabilityKeys.Chat];
+
+        var slash = name.LastIndexOf('/');
+        var modelName = slash >= 0 && slash < name.Length - 1
+            ? name[(slash + 1)..]
+            : name;
+
+        return ForGeneric(modelName);
+    }
 }
 
 /// <summary>

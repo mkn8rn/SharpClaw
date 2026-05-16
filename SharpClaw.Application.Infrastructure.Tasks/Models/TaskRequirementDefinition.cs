@@ -22,7 +22,7 @@ public sealed record TaskRequirementDefinition
     /// <summary>
     /// Kind-specific string payload:
     /// <list type="bullet">
-    ///   <item><see cref="TaskRequirementKind.RequiresProvider"/> — the ProviderType name (e.g. <c>"Anthropic"</c>).</item>
+    ///   <item><see cref="TaskRequirementKind.RequiresProvider"/> — the provider key (e.g. <c>"anthropic"</c>).</item>
     ///   <item><see cref="TaskRequirementKind.RequiresModule"/> / <see cref="TaskRequirementKind.RecommendsModule"/> — the module ID.</item>
     ///   <item><see cref="TaskRequirementKind.RequiresPlatform"/> — the <see cref="TaskPlatform"/> flag name (e.g. <c>"Windows"</c>).</item>
     ///   <item><see cref="TaskRequirementKind.RequiresModel"/> — the model name or custom ID.</item>

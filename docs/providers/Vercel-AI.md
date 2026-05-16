@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `VercelAIGateway` (`6`) |
+| **`ProviderKey`** | `vercel-ai-gateway` |
 | **Client class** | `VercelAIGatewayApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://gateway.ai.vercel.app/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

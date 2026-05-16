@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Anthropic` (`1`) |
+| **`ProviderKey`** | `anthropic` |
 | **Client class** | `AnthropicApiClient` (dedicated, not OpenAI-compatible) |
 | **Endpoint** | `https://api.anthropic.com/v1` |
 | **Auth** | `x-api-key: {apiKey}` + `anthropic-version: 2023-06-01` |

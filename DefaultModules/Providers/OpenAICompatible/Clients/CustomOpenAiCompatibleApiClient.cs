@@ -10,5 +10,5 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class CustomOpenAiCompatibleApiClient(string apiEndpoint) : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint { get; } = apiEndpoint.TrimEnd('/');
-    public override string ProviderKey => WellKnownProviderKeys.Custom;
+    public override string ProviderKey => "custom";
 }

@@ -49,19 +49,6 @@ public class GgufHeaderReaderTests
     }
 
     [Test]
-    public async Task ReadArchitectureAsync_WhisperGguf_ReturnsWhisper()
-    {
-        var path = WriteGgufFile("whisper");
-        try
-        {
-            var result = await GgufHeaderReader.ReadArchitectureAsync(path);
-
-            result.Should().Be("whisper");
-        }
-        finally { File.Delete(path); }
-    }
-
-    [Test]
     public async Task ReadArchitectureAsync_NotGgufFile_ReturnsNull()
     {
         var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

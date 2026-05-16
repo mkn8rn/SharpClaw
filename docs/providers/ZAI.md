@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `ZAI` (`5`) |
+| **`ProviderKey`** | `zai` |
 | **Client class** | `ZAIApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://open.bigmodel.cn/api/paas/v4` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

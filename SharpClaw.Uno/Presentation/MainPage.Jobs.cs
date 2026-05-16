@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using SharpClaw.Helpers;
@@ -152,25 +152,12 @@ public sealed partial class MainPage
                 foreach (var log in job.Logs)
                     AppendJobLog(log.Level, TruncateForDisplay(log.Message), log.Timestamp);
             }
-
-            if (job.Segments is { Count: > 0 })
-            {
-                AppendJobLog("info", $"── transcription segments ({job.Segments.Count}) ──", null);
-                foreach (var seg in job.Segments)
-                {
-                    var timeRange = $"[{FormatSegmentTime(seg.StartTime)} → {FormatSegmentTime(seg.EndTime)}]";
-                    var conf = seg.Confidence.HasValue ? $"  ({seg.Confidence.Value:P0})" : "";
-                    var prov = seg.IsProvisional ? "  [provisional]" : "";
-                    AppendJobLog("result", $"{timeRange}{conf}{prov}  {seg.Text}", seg.Timestamp);
-                }
-            }
-
             if (!string.IsNullOrWhiteSpace(job.ResultData))
                 await AppendJobResultAsync(job.ResultData);
             if (!string.IsNullOrWhiteSpace(job.ErrorLog))
                 AppendJobLog("error", TruncateForDisplay(job.ErrorLog), null);
 
-            if (job.Logs is { Count: 0 } && job.Segments is null or { Count: 0 }
+            if (job.Logs is { Count: 0 }
                 && string.IsNullOrWhiteSpace(job.ResultData) && string.IsNullOrWhiteSpace(job.ErrorLog))
                 AppendJobLog("info", "(no log entries yet)", null);
 
@@ -196,7 +183,6 @@ public sealed partial class MainPage
 
             _currentJobDetail = job;
             CopyLogsButton.Visibility = job.Logs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-            CopySegmentsButton.Visibility = job.Segments is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
             CopyResultButton.Visibility = !string.IsNullOrWhiteSpace(job.ResultData) || !string.IsNullOrWhiteSpace(job.ErrorLog)
                 ? Visibility.Visible : Visibility.Collapsed;
             CopyAllButton.Visibility = Visibility.Visible;
@@ -234,7 +220,6 @@ public sealed partial class MainPage
         JobPauseButton.Visibility = Visibility.Collapsed;
         JobResumeButton.Visibility = Visibility.Collapsed;
         CopyLogsButton.Visibility = Visibility.Collapsed;
-        CopySegmentsButton.Visibility = Visibility.Collapsed;
         CopyResultButton.Visibility = Visibility.Collapsed;
         CopyAllButton.Visibility = Visibility.Collapsed;
         _currentJobDetail = null;
@@ -422,15 +407,6 @@ public sealed partial class MainPage
 
         JobLogsPanel.Children.Add(row.Root);
     }
-
-    private static string FormatSegmentTime(double seconds)
-    {
-        var ts = TimeSpan.FromSeconds(seconds);
-        return ts.TotalHours >= 1
-            ? ts.ToString(@"h\:mm\:ss\.f")
-            : ts.ToString(@"m\:ss\.f");
-    }
-
     private static string TruncateForDisplay(string text, int maxLength = 2000)
     {
         if (text.Length <= maxLength) return text;
@@ -564,21 +540,6 @@ public sealed partial class MainPage
             sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
         TerminalUI.CopyToClipboard(sb.ToString());
     }
-
-    private void OnCopySegmentsClick(object sender, RoutedEventArgs e)
-    {
-        if (_currentJobDetail?.Segments is not { Count: > 0 } segments) return;
-        var sb = new StringBuilder();
-        foreach (var seg in segments)
-        {
-            var timeRange = $"[{FormatSegmentTime(seg.StartTime)} → {FormatSegmentTime(seg.EndTime)}]";
-            var conf = seg.Confidence.HasValue ? $"  ({seg.Confidence.Value:P0})" : "";
-            var prov = seg.IsProvisional ? "  [provisional]" : "";
-            sb.AppendLine($"{timeRange}{conf}{prov}  {seg.Text}");
-        }
-        TerminalUI.CopyToClipboard(sb.ToString());
-    }
-
     private void OnCopyResultClick(object sender, RoutedEventArgs e)
     {
         if (_currentJobDetail is not { } job) return;
@@ -615,20 +576,6 @@ public sealed partial class MainPage
             foreach (var log in logs)
                 sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
         }
-
-        if (job.Segments is { Count: > 0 } segments)
-        {
-            sb.AppendLine();
-            sb.AppendLine($"── Transcription Segments ({segments.Count}) ──");
-            foreach (var seg in segments)
-            {
-                var timeRange = $"[{FormatSegmentTime(seg.StartTime)} → {FormatSegmentTime(seg.EndTime)}]";
-                var conf = seg.Confidence.HasValue ? $"  ({seg.Confidence.Value:P0})" : "";
-                var prov = seg.IsProvisional ? "  [provisional]" : "";
-                sb.AppendLine($"{timeRange}{conf}{prov}  {seg.Text}");
-            }
-        }
-
         if (!string.IsNullOrWhiteSpace(job.ResultData))
         {
             sb.AppendLine();

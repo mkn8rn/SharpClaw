@@ -479,16 +479,6 @@
                        FontSize="12"
                        Foreground="#808080" />
           </Button>
-          <Button x:Name="CopySegmentsButton"
-                  Style="{StaticResource TerminalButton}"
-                  Click="OnCopySegmentsClick"
-                  Visibility="Collapsed"
-                  ToolTipService.ToolTip="Copy transcription segments to clipboard">
-            <TextBlock Text="?? Segments"
-                       Style="{StaticResource TerminalText}"
-                       FontSize="12"
-                       Foreground="#808080" />
-          </Button>
           <Button x:Name="CopyResultButton"
                   Style="{StaticResource TerminalButton}"
                   Click="OnCopyResultClick"

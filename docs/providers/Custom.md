@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Custom` (`12`) |
+| **`ProviderKey`** | `custom` |
 | **Client class** | `CustomOpenAiCompatibleApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | User-configured per provider instance |
 | **Auth** | `Authorization: Bearer {apiKey}` |

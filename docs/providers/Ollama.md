@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Ollama` (`18`) |
+| **`ProviderKey`** | `ollama` |
 | **Client class** | `OllamaApiClient` (dedicated) |
 | **Endpoint** | `http://localhost:11434` (configurable) |
 | **Auth** | None |

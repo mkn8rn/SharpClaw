@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `GoogleVertexAIOpenAi` (`16`) |
+| **`ProviderKey`** | `google-vertex-ai-openai` |
 | **Client class** | `GoogleVertexAIOpenAiApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://us-central1-aiplatform.googleapis.com/v1beta1/openai` |
 | **Auth** | `Authorization: Bearer {apiKey}` |
@@ -14,7 +14,7 @@
 
 ## Overview
 
-This provider type uses Google Vertex AI's OpenAI-compatible wrapper.
+This provider key uses Google Vertex AI's OpenAI-compatible wrapper.
 Parameters follow the standard OpenAI schema.
 
 If you need native Vertex AI or Gemini parameters like

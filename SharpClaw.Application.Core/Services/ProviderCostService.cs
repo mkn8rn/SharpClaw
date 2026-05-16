@@ -84,7 +84,7 @@ public sealed class ProviderCostService(
             TotalCost: 0, Currency: DefaultFallbackCurrency,
             PeriodStart: periodStart, PeriodEnd: periodEnd,
             DailyBreakdown: null,
-            Note: $"Provider type '{provider.ProviderKey}' does not expose a cost API. "
+            Note: $"Provider key '{provider.ProviderKey}' does not expose a cost API. "
                 + "Check the provider's dashboard for billing information.");
     }
 

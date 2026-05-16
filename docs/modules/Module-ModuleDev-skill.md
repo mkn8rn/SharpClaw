@@ -13,18 +13,16 @@ ENABLING
 ────────────────────────────────────────
 .env key: Modules:sharpclaw_module_dev
 Default: DISABLED (not listed in default .env)
-Prerequisites: Computer Use (sharpclaw_computer_use) — OPTIONAL.
-  Provides window_management contract for window-title → PID resolution.
-  Without it, falls back to Process.GetProcessesByName.
+Prerequisites: none for core MDK tools.
 Platform: All
 
 To enable, add to your core .env Modules section:
   "sharpclaw_module_dev": "true"
 
-For enhanced process inspection, also enable Computer Use:
-  "sharpclaw_computer_use": "true"
-
 To disable, set to "false" or remove the key (missing = disabled).
+
+Optional window_management contract may improve process inspection when an
+external module supplies it. No current bundled module exports that contract.
 
 Runtime toggle (no restart required):
   module disable sharpclaw_module_dev

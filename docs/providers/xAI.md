@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `XAI` (`7`) |
+| **`ProviderKey`** | `xai` |
 | **Client class** | `XAIApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.x.ai/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

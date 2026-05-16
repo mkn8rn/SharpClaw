@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `OpenAI` (`0`) |
+| **`ProviderKey`** | `openai` |
 | **Client class** | `OpenAiApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.openai.com/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

@@ -9,5 +9,5 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class ZAIApiClient : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint => "https://open.bigmodel.cn/api/paas/v4";
-    public override string ProviderKey => WellKnownProviderKeys.ZAI;
+    public override string ProviderKey => "zai";
 }

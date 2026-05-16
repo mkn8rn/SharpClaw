@@ -13,7 +13,7 @@ namespace SharpClaw.Modules.Providers.OpenAICompatible.Clients;
 public sealed class GoogleVertexAIOpenAiApiClient : OpenAiCompatibleApiClient
 {
     protected override string ApiEndpoint => "https://us-central1-aiplatform.googleapis.com/v1beta1/openai";
-    public override string ProviderKey => WellKnownProviderKeys.GoogleVertexAIOpenAi;
+    public override string ProviderKey => "google-vertex-ai-openai";
 
     /// <inheritdoc />
     protected override Dictionary<string, JsonElement>? TranslateProviderParameters(

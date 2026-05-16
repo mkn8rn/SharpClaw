@@ -8,7 +8,6 @@ using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Providers.Common;
 using SharpClaw.Contracts.Entities.Core;
 
 namespace SharpClaw.Infrastructure.Persistence.JSON;
@@ -873,27 +872,27 @@ public sealed class JsonFilePersistenceService(
     /// was introduced to be loaded without error.
     /// </summary>
 
-    // Maps the old ProviderType integer values to WellKnownProviderKeys string constants.
+    // Maps the old ProviderType integer values to provider-key strings.
     private static readonly Dictionary<int, string> ProviderTypeIntToKey = new()
     {
-        [0]  = WellKnownProviderKeys.OpenAI,
-        [1]  = WellKnownProviderKeys.Anthropic,
-        [2]  = WellKnownProviderKeys.OpenRouter,
-        [3]  = WellKnownProviderKeys.GoogleVertexAI,
-        [4]  = WellKnownProviderKeys.GoogleGemini,
-        [5]  = WellKnownProviderKeys.ZAI,
-        [6]  = WellKnownProviderKeys.VercelAIGateway,
-        [7]  = WellKnownProviderKeys.XAI,
-        [8]  = WellKnownProviderKeys.Groq,
-        [9]  = WellKnownProviderKeys.Cerebras,
-        [10] = WellKnownProviderKeys.Mistral,
-        [11] = WellKnownProviderKeys.GitHubCopilot,
-        [12] = WellKnownProviderKeys.Custom,
-        [13] = WellKnownProviderKeys.LlamaSharp,
-        [14] = WellKnownProviderKeys.Minimax,
-        [15] = WellKnownProviderKeys.GoogleGeminiOpenAi,
-        [16] = WellKnownProviderKeys.GoogleVertexAIOpenAi,
-        [18] = WellKnownProviderKeys.Ollama,
+        [0]  = "openai",
+        [1]  = "anthropic",
+        [2]  = "openrouter",
+        [3]  = "google-vertex-ai",
+        [4]  = "google-gemini",
+        [5]  = "zai",
+        [6]  = "vercel-ai-gateway",
+        [7]  = "xai",
+        [8]  = "groq",
+        [9]  = "cerebras",
+        [10] = "mistral",
+        [11] = "github-copilot",
+        [12] = "custom",
+        [13] = "llamasharp",
+        [14] = "minimax",
+        [15] = "google-gemini-openai",
+        [16] = "google-vertex-ai-openai",
+        [18] = "ollama",
     };
 
     /// <summary>
@@ -939,8 +938,8 @@ public sealed class JsonFilePersistenceService(
                         // Legacy name aliases ("Local" → "llamasharp", "Whisper" → "custom").
                         resolvedKey = str.ToLowerInvariant() switch
                         {
-                            "local"     => WellKnownProviderKeys.LlamaSharp,
-                            "whisper"   => WellKnownProviderKeys.Custom,
+                            "local"     => "llamasharp",
+                            "whisper"   => "custom",
                             // Enum member names match key names case-insensitively.
                             var s       => ProviderTypeIntToKey.Values
                                                .FirstOrDefault(k => string.Equals(k.Replace("-", ""), s.Replace("-", ""), StringComparison.OrdinalIgnoreCase))

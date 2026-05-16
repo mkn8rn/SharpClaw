@@ -59,8 +59,6 @@
         <local:TerminalSectionHeader Title="Resources" Margin="0,16,0,6" />
         <local:TerminalMenuButton TagKey="Resources"     Label="Resources"      Description="shells, containers, devices"  MenuClick="OnMenuItemClick" MenuPointerEntered="OnMenuItemHover" MenuPointerExited="OnMenuItemLeave" />
         <local:TerminalMenuButton TagKey="Editor"        Label="Editor Sessions" Description="IDE bridge connections"      MenuClick="OnMenuItemClick" MenuPointerEntered="OnMenuItemHover" MenuPointerExited="OnMenuItemLeave" />
-        <local:TerminalMenuButton TagKey="Transcription" Label="Transcription"  Description="speech-to-text sessions"     MenuClick="OnMenuItemClick" MenuPointerEntered="OnMenuItemHover" MenuPointerExited="OnMenuItemLeave" />
-
         <local:TerminalSectionHeader Title="System" Margin="0,16,0,6" />
         <local:TerminalMenuButton TagKey="Auth"          Label="Auth &amp; Users"   Description="sessions &amp; tokens"             MenuClick="OnMenuItemClick" MenuPointerEntered="OnMenuItemHover" MenuPointerExited="OnMenuItemLeave" />
 

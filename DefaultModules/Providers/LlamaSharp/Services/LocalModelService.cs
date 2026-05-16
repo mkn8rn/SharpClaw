@@ -21,7 +21,7 @@ public sealed class LocalModelService(
 {
     /// <summary>
     /// Downloads a model and registers it under an explicit provider.
-    /// <paramref name="request"/>.<c>ProviderType</c> must be non-null.
+    /// <paramref name="request"/>.<c>ProviderKey</c> must be non-null.
     /// </summary>
     public async Task<ModelResponse> DownloadAndRegisterAsync(
         DownloadModelRequest request,
@@ -31,9 +31,9 @@ public sealed class LocalModelService(
         ArgumentNullException.ThrowIfNull(request.ProviderKey,
             $"{nameof(request)}.{nameof(request.ProviderKey)}");
 
-        if (request.ProviderKey != WellKnownProviderKeys.LlamaSharp)
+        if (request.ProviderKey != "llamasharp")
             throw new ArgumentException(
-                $"Provider type '{request.ProviderKey}' does not support local file download. " +
+                $"Provider key '{request.ProviderKey}' does not support local file download. " +
                 "Only LlamaSharp is supported by this module.",
                 nameof(request));
 
@@ -311,5 +311,5 @@ public sealed class LocalModelService(
 
     private async Task<Guid> EnsureLocalProviderAsync(CancellationToken ct) =>
         await registrar.EnsureProviderAsync(
-            WellKnownProviderKeys.LlamaSharp, "LlamaSharp (Local)", ct);
+            "llamasharp", "LlamaSharp (Local)", ct);
 }

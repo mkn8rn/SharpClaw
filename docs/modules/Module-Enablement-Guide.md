@@ -40,11 +40,9 @@ local work.
 ## Current Bundled Modules
 
 The current `DefaultModules` tree contains agent orchestration, editor common,
-metrics, module development, five provider modules, and two editor modules. It
-does not currently contain the older bot integration, computer use, dangerous
-shell, database access, HTTP, Office Apps, system audio, transcription, web
-access, context tools, or Whisper provider modules that older documentation
-described.
+metrics, module development, five provider modules, and two editor modules.
+Older module surfaces that are not present in this tree are not part of the
+bundled product unless an external module supplies them.
 
 `sharpclaw_agent_orchestration` is the Agent Orchestration module. It owns
 agent lifecycle and orchestration tools such as sub-agent creation, agent
@@ -74,9 +72,10 @@ lifecycle, `/models/local` endpoints, and the `localmodel` CLI verb.
 `sharpclaw_providers_ollama` registers Ollama provider support.
 `sharpclaw_providers_openai_compat` registers OpenAI-protocol providers,
 including OpenAI, DeepSeek, OpenRouter, ZAI, Vercel AI Gateway, xAI, Groq,
-Cerebras, Mistral, GitHub Copilot, Minimax, Custom, Google Gemini through the
-OpenAI shim, and Google Vertex AI through the OpenAI shim. These provider
-modules are enabled in both the base template and the development template.
+Cerebras, Mistral, GitHub Copilot, Minimax, Eden AI, Custom, Google Gemini
+through the OpenAI shim, and Google Vertex AI through the OpenAI shim. These
+provider modules are enabled in both the base template and the development
+template.
 
 `sharpclaw_vs2026_editor` adds the Visual Studio 2026 editor integration via
 the editor bridge. It is a Windows-focused editor module and is disabled in the
@@ -161,6 +160,4 @@ working bridge.
 
 If task triggers fail to fire, match the trigger type to the owning module.
 Metric threshold triggers require `sharpclaw_metrics`. Triggers or tools from
-older modules such as HTTP, computer use, system audio, or transcription are
-not available from the current bundled module set unless they are supplied by
-an external module.
+non-bundled modules are available only when an external module supplies them.

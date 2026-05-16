@@ -187,7 +187,7 @@ public sealed class GoogleVertexAIApiClientTests
 
         using var serviceProvider = services.BuildServiceProvider();
         var plugin = serviceProvider.GetServices<IProviderPlugin>()
-            .Single(p => p.ProviderKey == WellKnownProviderKeys.GoogleVertexAI);
+            .Single(p => p.ProviderKey == "google-vertex-ai");
 
         plugin.SupportsAutomaticEndpointDiscovery.Should().BeTrue();
         plugin.ParameterSpec.Should().BeSameAs(ProviderParameterSpecs.GoogleVertexAI);

@@ -24,14 +24,14 @@ public sealed class GoogleProvidersModule : ISharpClawModule
         var caps = new HeuristicCapabilityResolver(ProviderCapabilityHeuristics.ForGoogle);
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
-            WellKnownProviderKeys.GoogleVertexAI, "Google Vertex AI", false,
+            "google-vertex-ai", "Google Vertex AI", false,
             endpoint => new GoogleVertexAIApiClient(endpoint), caps,
             parameterSpec: ProviderParameterSpecs.GoogleVertexAI,
             supportsAutomaticEndpointDiscovery: true,
             ownerModuleId: "sharpclaw_providers_google"));
 
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
-            WellKnownProviderKeys.GoogleGemini, "Google Gemini", false,
+            "google-gemini", "Google Gemini", false,
             _ => new GoogleGeminiApiClient(), caps,
             parameterSpec: ProviderParameterSpecs.GoogleGemini,
             ownerModuleId: "sharpclaw_providers_google"));

@@ -95,7 +95,7 @@
     the freshly built host DLLs.
 
     Module DLLs:       SharpClaw.Modules.*.dll
-    Transitive deps:   *.dll that do NOT start with SharpClaw. (e.g. Cronos, Whisper.net, NAudio)
+    Transitive deps:   *.dll that do NOT start with SharpClaw. (e.g. Cronos, NAudio)
 
     SkipUnchangedFiles avoids unnecessary copies on incremental builds. Both top-level
     (DefaultModules\Foo\) and nested (DefaultModules\Providers\Foo\) module layouts are matched.

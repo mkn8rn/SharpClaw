@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `Cerebras` (`9`) |
+| **`ProviderKey`** | `cerebras` |
 | **Client class** | `CerebrasApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | `https://api.cerebras.ai/v1` |
 | **Auth** | `Authorization: Bearer {apiKey}` |

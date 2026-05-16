@@ -1,4 +1,4 @@
-# SharpClaw Core CLI Reference
+﻿# SharpClaw Core CLI Reference
 
 The SharpClaw CLI is an interactive REPL that runs alongside the API server
 inside the same process. You interact with it on the terminal where you
@@ -147,17 +147,18 @@ require a logged-in session.
 ```
 provider add <name> <type> [endpoint]
 ```
-Creates a provider. `type` is case-insensitive. `endpoint` is required for
-`Custom` only.
+Creates a provider. `type` is a provider key discovered from enabled
+provider modules, and matching is case-insensitive. `endpoint` is required
+only for provider keys that declare a required endpoint.
 
-Valid types: `OpenAI`, `Anthropic`, `OpenRouter`, `GoogleVertexAI`,
-`GoogleVertexAIOpenAi`, `GoogleGemini`, `GoogleGeminiOpenAi`, `ZAI`,
-`VercelAIGateway`, `XAI`, `Groq`, `Cerebras`, `Mistral`, `GitHubCopilot`,
-`Minimax`, `Custom`.
+Run `provider types` to list the keys available in the current runtime.
+Built-in examples include `openai`, `eden-ai`, `anthropic`,
+`google-gemini-openai`, `custom`, `llamasharp`, and `ollama`.
 
 ```
 provider get <id>
 provider list
+provider types
 provider update <id> <name> [endpoint]
 provider delete <id>
 ```
@@ -208,8 +209,8 @@ Registers a model. `<name>` must be the **exact provider model ID** (e.g.
 `provider sync-models` to auto-import instead of adding manually.
 
 Capability flags (comma-separated, case-insensitive):
-`Chat`, `Transcription`, `ImageGeneration`, `Embedding`, `TextToSpeech`.
-Default: `Chat`.
+`chat`, `vision`, `image-generation`, and `embedding`.
+Default: `chat`.
 
 ```
 model get <id>
@@ -221,37 +222,37 @@ model delete <id>
 ### Local models
 
 ```
-model download <url> [--name <alias>] [--quant <Q4_K_M>]
-               [--gpu-layers <n>] [--provider <LlamaSharp|Whisper>]
+localmodel download <url> [--name <alias>] [--quant <Q4_K_M>]
+                    [--gpu-layers <n>]
 ```
-Downloads a GGUF model file and registers it. Omitting `--provider` registers
-with **both** LlamaSharp and Whisper. `--gpu-layers` has no effect for Whisper.
+Downloads a GGUF model file and registers it with the built-in
+`llamasharp` provider key.
 
 ```
-model download list <url>
+localmodel download list <url>
 ```
 Lists available GGUF files at the given URL without downloading.
 
 ```
-model load <id> [--gpu-layers <n>] [--ctx <size>] [--mmproj <path>]
+localmodel load <id> [--gpu-layers <n>] [--ctx <size>] [--mmproj <path>]
 ```
 Pins a model in memory so it stays loaded between requests. Models
 auto-load on first use and auto-unload when idle; use `load` to keep a
 frequently-used model resident.
 
 ```
-model unload <id>
+localmodel unload <id>
 ```
 Unpins the model. Stops immediately if there are no active requests.
 
 ```
-model mmproj <id> <path|none>
+localmodel mmproj <id> <path|none>
 ```
 Sets or clears the CLIP / mmproj file path for a LlamaSharp vision model.
 Pass `none` to clear.
 
 ```
-model local list
+localmodel list
 ```
 Lists all downloaded local model files with their status.
 
@@ -340,8 +341,8 @@ wildcard grant. Valid keys:
 
 `safeshell`, `dangshell` / `dangerousshell`, `container`, `website`,
 `search` / `searchengine`, `internaldb`, `externaldb`,
-`inputaudio` / `audio`, `displaydevice` / `display`, `agent`, `task`,
-`skill`, `transcriptionmodel` / `model`, `editorsession` / `editor`.
+`displaydevice` / `display`, `agent`, `task`, `skill`,
+`editorsession` / `editor`.
 
 ---
 
@@ -510,9 +511,7 @@ Jobs are single tool-call executions submitted to a channel's agent.
 
 ```
 job submit <channelId> <actionKey> [resourceId]
-           [--agent <id>] [--model <id>] [--lang <code>]
-           [--mode <sliding|step|window>]
-           [--window <seconds>] [--step <seconds>]
+           [--agent <id>] [--params <json>]
 ```
 `actionKey` is a module-contributed tool name. Valid action keys are dynamic —
 see `module list`, `GET /modules`, or the owning module's documentation.
@@ -520,8 +519,7 @@ see `module list`, `GET /modules`, or the owning module's documentation.
 When `resourceId` is omitted, default resources are resolved from the
 channel's `DefaultResourceSet` → context's → permission-set defaults.
 
-The `--mode`, `--window`, and `--step` flags are specific to transcription
-jobs. `--model` overrides the transcription model for transcription actions.
+`--params` passes module-specific JSON to the action owner.
 
 ```
 job list [channelId]
@@ -542,8 +540,8 @@ job stop <jobId>
 ```
 job listen <jobId>
 ```
-Streams live transcription segments to the terminal. Press Ctrl+C to stop
-listening without cancelling the job.
+Live job listening is module-owned. Use the owning module's streaming endpoint
+or CLI command when one exists.
 
 ---
 
@@ -572,10 +570,8 @@ task preflight <taskId> [--param key=value ...]
 ```
 
 `preflight` evaluates declared requirements without creating an instance.
-This is also the fastest way to diagnose module-backed triggers. For example,
-`[OnHotkey]`, `[OnProcessStarted]`, and `[OsShortcut]` warn when
-`sharpclaw_computer_use` is disabled, while `[OnQueryReturnsRows]` warns when
-`sharpclaw_database_access` is disabled.
+This is also the fastest way to diagnose module-backed triggers registered by
+the current bundled or external module set.
 
 ### Instances
 
@@ -767,8 +763,8 @@ full list at runtime.
 Commands supported by all types: `add`, `get`, `list`, `update`, `delete`,
 `sync` (where supported).
 
-The `sync` sub-command imports from the system or an external registry (for
-example, `resource inputaudio sync` imports WASAPI devices from Windows).
+The `sync` sub-command imports resources from the system or an external
+registry when the resource type supports discovery.
 
 ---
 
@@ -784,7 +780,7 @@ module reload <id>
 module unload <id>
 ```
 
-Module IDs are string identifiers (e.g. `sharpclaw_transcription`), not
+Module IDs are string identifiers (e.g. `sharpclaw_metrics`), not
 GUIDs. Short IDs do not apply here.
 
 `scan` discovers and loads external module assemblies from the modules
@@ -886,8 +882,7 @@ Modules may register CLI commands in two scopes:
 
 The `help` command lists all currently registered module commands at the
 bottom of its output, with their scope prefix, description, aliases, and
-originating module ID. The Transcription module, for example, registers
-`resource inputaudio` (alias `ia`).
+originating module ID.
 
 See the individual module documentation in `docs/modules/` for the CLI
 commands each module provides.

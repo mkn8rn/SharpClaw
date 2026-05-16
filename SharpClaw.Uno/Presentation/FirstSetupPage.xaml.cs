@@ -25,9 +25,7 @@ public sealed partial class FirstSetupPage : Page
     private bool _localOnly;
     private bool _switchToCloud;
     private List<ProviderDto>? _providers;
-    // When non-null, OnDownloadModelClick includes providerKey in the POST body.
-    // Null = LlamaSharp (default). Set to "Whisper" for the opt-in transcription step.
-    private string? _localDownloadProviderType;
+    private List<ProviderTypeDto> _providerTypes = [];
 
     private PermissionEditorBuilder? _permEditor;
 
@@ -189,6 +187,7 @@ public sealed partial class FirstSetupPage : Page
         // ── Step 1: Providers ──
         AppendStep("Checking providers...");
         _providers = await FetchListAsync<ProviderDto>("/providers");
+        _providerTypes = await FetchListAsync<ProviderTypeDto>("/providers/types") ?? [];
         if (_providers is { Count: > 0 })
         {
             ReplaceLastStep($"Found {_providers.Count} provider(s).", done: true);
@@ -196,7 +195,7 @@ public sealed partial class FirstSetupPage : Page
         else
         {
             ReplaceLastStep("No providers found. Please create one (you can add more later).");
-            PopulateProviderTypeSelector();
+            await PopulateProviderTypeSelectorAsync();
             ProviderInputPanel.Visibility = Visibility.Visible;
             _providerTcs = new TaskCompletionSource<bool>();
             var created = await _providerTcs.Task;
@@ -499,38 +498,6 @@ public sealed partial class FirstSetupPage : Page
             }
         }
 
-        // ── Step 7 (opt-in): Whisper transcription model ──
-        var hasWhisper = models?.Any(m =>
-            string.Equals(m.ProviderName, "Whisper (Local)", StringComparison.OrdinalIgnoreCase)) == true;
-
-        if (!hasWhisper)
-        {
-            AppendStep("Optional: download a Whisper model for local transcription.");
-            AppendStep("Paste a HuggingFace URL (e.g. https://huggingface.co/ggerganov/whisper.cpp) " +
-                       "and select a file, or skip to use cloud transcription only.");
-
-            _localDownloadProviderType = "Whisper";
-            if (SwitchToCloudBtn is { } btn)
-                btn.Content = "Skip (use cloud transcription only)";
-
-            LocalModelDownloadPanel.Visibility = Visibility.Visible;
-            _localModelTcs = new TaskCompletionSource<bool>();
-            var whisperDownloaded = await _localModelTcs.Task;
-            LocalModelDownloadPanel.Visibility = Visibility.Collapsed;
-
-            _localDownloadProviderType = null;
-            if (SwitchToCloudBtn is { } btn2)
-                btn2.Content = "Switch to cloud provider";
-
-            ReplaceLastStep(whisperDownloaded
-                ? "Whisper model downloaded."
-                : "Whisper step skipped — cloud transcription will be used.", done: true);
-        }
-        else
-        {
-            AppendStep("Whisper model already registered.", done: true);
-        }
-
         // ── Done ──
         AppendStep("Completed first-time setup!");
         await Task.Delay(1000);
@@ -543,15 +510,12 @@ public sealed partial class FirstSetupPage : Page
 
     // ── Input callbacks ─────────────────────────────────────────
 
-    // Known provider types that use device code auth instead of API keys
-    private static readonly HashSet<string> DeviceCodeProviderTypes =
-        ["GitHubCopilot"];
-
     private bool IsDeviceCodeProvider(ProviderDto? provider)
     {
         if (provider is null) return false;
-        var typeStr = provider.ProviderType.ToString();
-        return DeviceCodeProviderTypes.Contains(typeStr);
+        return _providerTypes.Any(t =>
+            t.ProviderKey.Equals(provider.ProviderKey, StringComparison.OrdinalIgnoreCase)
+            && t.SupportsDeviceCodeAuth);
     }
 
     private ProviderDto? GetSelectedApiKeyProvider()
@@ -577,24 +541,26 @@ public sealed partial class FirstSetupPage : Page
             return;
         }
 
-        if (ProviderTypeSelector.SelectedItem is not ComboBoxItem { Tag: string typeStr }) return;
+        if (ProviderTypeSelector.SelectedItem is not ComboBoxItem { Tag: ProviderTypeDto type }) return;
 
         string? endpoint = null;
-        if (typeStr is "Custom" or "Ollama")
+        if (type.RequiresEndpoint || type.SupportsAutomaticEndpointDiscovery)
         {
             endpoint = EndpointBox.Text?.Trim();
             if (string.IsNullOrEmpty(endpoint))
             {
-                endpoint = typeStr == "Ollama" ? "http://localhost:11434" : null;
+                endpoint = type.ProviderKey.Equals("ollama", StringComparison.OrdinalIgnoreCase)
+                    ? "http://localhost:11434"
+                    : null;
             }
-            if (string.IsNullOrEmpty(endpoint))
+            if (string.IsNullOrEmpty(endpoint) && type.RequiresEndpoint)
             {
-                AppendStep("API endpoint is required for Custom providers.", error: true);
+                AppendStep($"API endpoint is required for {type.DisplayName}.", error: true);
                 return;
             }
         }
 
-        if (typeStr == "Ollama")
+        if (type.ProviderKey.Equals("ollama", StringComparison.OrdinalIgnoreCase))
         {
             AppendStep("Checking Ollama connection…");
             try
@@ -617,7 +583,8 @@ public sealed partial class FirstSetupPage : Page
 
         try
         {
-            var body = JsonSerializer.Serialize(new { name, providerKey = typeStr, apiEndpoint = endpoint }, Json);
+            if (string.IsNullOrWhiteSpace(endpoint)) endpoint = null;
+            var body = JsonSerializer.Serialize(new { name, providerKey = type.ProviderKey, apiEndpoint = endpoint }, Json);
             var resp = await Api.PostAsync("/providers", new StringContent(body, Encoding.UTF8, "application/json"));
             _providerTcs?.TrySetResult(resp.IsSuccessStatusCode);
             if (!resp.IsSuccessStatusCode)
@@ -733,9 +700,7 @@ public sealed partial class FirstSetupPage : Page
 
         try
         {
-            var body = _localDownloadProviderType is null
-                ? JsonSerializer.Serialize(new { url = downloadUrl }, Json)
-                : JsonSerializer.Serialize(new { url = downloadUrl, providerKey = _localDownloadProviderType }, Json);
+            var body = JsonSerializer.Serialize(new { url = downloadUrl, providerKey = "llamasharp" }, Json);
             var resp = await Api.PostAsync("/models/local/download",
                 new StringContent(body, Encoding.UTF8, "application/json"));
 
@@ -1320,25 +1285,27 @@ public sealed partial class FirstSetupPage : Page
 
     // ── Populate helpers ────────────────────────────────────────
 
-    private void PopulateProviderTypeSelector()
+    private async Task PopulateProviderTypeSelectorAsync()
     {
-        string[] types = ["OpenAI", "DeepSeek", "Anthropic", "OpenRouter", "GoogleGemini", "GoogleVertexAI",
-            "ZAI", "VercelAIGateway", "XAI", "Groq", "Cerebras", "Mistral", "GitHubCopilot",
-            "Minimax", "Custom", "LlamaSharp", "Ollama"];
-        foreach (var t in types)
+        _providerTypes = await FetchListAsync<ProviderTypeDto>("/providers/types") ?? [];
+        ProviderTypeSelector.Items.Clear();
+        foreach (var t in _providerTypes)
         {
-            var item = new ComboBoxItem { Content = t, Tag = t };
+            var item = new ComboBoxItem { Content = $"{t.DisplayName} ({t.ProviderKey})", Tag = t };
             ProviderTypeSelector.Items.Add(item);
         }
-        ProviderTypeSelector.SelectedIndex = 0;
+        if (ProviderTypeSelector.Items.Count > 0)
+            ProviderTypeSelector.SelectedIndex = 0;
         ProviderTypeSelector.SelectionChanged += (_, _) =>
         {
-            var tag = (ProviderTypeSelector.SelectedItem as ComboBoxItem)?.Tag as string;
-            var isCustom = tag == "Custom";
-            var isOllama = tag == "Ollama";
-            EndpointPanel.Visibility = (isCustom || isOllama) ? Visibility.Visible : Visibility.Collapsed;
-            if (isOllama && string.IsNullOrEmpty(EndpointBox.Text))
+            var type = (ProviderTypeSelector.SelectedItem as ComboBoxItem)?.Tag as ProviderTypeDto;
+            var needsEndpoint = type is { RequiresEndpoint: true } or { SupportsAutomaticEndpointDiscovery: true };
+            EndpointPanel.Visibility = needsEndpoint ? Visibility.Visible : Visibility.Collapsed;
+            if (type?.ProviderKey.Equals("ollama", StringComparison.OrdinalIgnoreCase) == true
+                && string.IsNullOrEmpty(EndpointBox.Text))
+            {
                 EndpointBox.Text = "http://localhost:11434";
+            }
         };
     }
 
@@ -1400,15 +1367,19 @@ public sealed partial class FirstSetupPage : Page
         => _upgradePromptTcs?.TrySetResult(false);
 
     // ── DTOs ────────────────────────────────────────────────────
-    // ProviderType may arrive as a string ("OpenAI") or an integer (0)
-    // depending on whether the API has the JsonStringEnumConverter.
-    // Using JsonElement makes deserialization resilient to either form.
-
     [ImplicitKeys(IsEnabled = false)]
-    private sealed partial record ProviderDto(Guid Id, string Name, JsonElement ProviderType, string? ApiEndpoint, bool HasApiKey)
+    private sealed partial record ProviderDto(Guid Id, string Name, string ProviderKey, string? ApiEndpoint, bool HasApiKey)
     {
-        public bool IsLocal => ProviderType.ToString() is "LlamaSharp";
+        public bool IsLocal => ProviderKey.Equals("llamasharp", StringComparison.OrdinalIgnoreCase);
     }
+    [ImplicitKeys(IsEnabled = false)]
+    private sealed partial record ProviderTypeDto(
+        string ProviderKey,
+        string DisplayName,
+        bool RequiresEndpoint,
+        bool SupportsAutomaticEndpointDiscovery,
+        bool RequiresApiKey,
+        bool SupportsDeviceCodeAuth);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record ModelDto(Guid Id, string Name, JsonElement Capabilities, Guid ProviderId, string ProviderName);
     [ImplicitKeys(IsEnabled = false)]

@@ -5,9 +5,8 @@ namespace SharpClaw.Modules.Providers.LlamaSharp.Services;
 
 /// <summary>
 /// Module-internal lookup over the LlamaSharp-owned
-/// <see cref="LlamaSharpDbContext"/>. Exposes the read surface other
-/// default modules (Transcription) need via
-/// <see cref="ILocalModelFileLookup"/>, and supplies the source URL
+/// <see cref="LlamaSharpDbContext"/>. Exposes the read surface that other
+/// modules can use via <see cref="ILocalModelFileLookup"/>, and supplies the source URL
 /// used by the LlamaSharp plugin's agent-suffix synthesis.
 /// </summary>
 public sealed class LocalModelLookup(LlamaSharpDbContext db) : ILocalModelFileLookup

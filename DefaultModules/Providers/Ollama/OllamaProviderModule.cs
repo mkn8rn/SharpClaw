@@ -23,7 +23,7 @@ public sealed class OllamaProviderModule : ISharpClawModule
     {
         var caps = new HeuristicCapabilityResolver(ProviderCapabilityHeuristics.ForGeneric);
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
-            WellKnownProviderKeys.Ollama, "Ollama (local)", false,
+            "ollama", "Ollama (local)", false,
             endpoint => new OllamaApiClient(endpoint), caps,
             parameterSpec: ProviderParameterSpecs.Ollama,
             supportsAutomaticEndpointDiscovery: true,

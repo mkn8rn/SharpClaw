@@ -1,4 +1,4 @@
-# SharpClaw Gateway API Reference
+﻿# SharpClaw Gateway API Reference
 
 > **Default URL:** `https://your-domain.example.com` (user-configured)
 >
@@ -27,10 +27,7 @@ when forwarding requests.
 The gateway is intentionally thin. Controllers forward requests through
 `InternalApiClient`, mutations can be serialized through the request queue,
 and the security middleware adds endpoint gates, rate limits, IP bans,
-body-size checks, and content-type checks. Gateway-side module endpoint
-groups are supported through `Gateway:Modules`, but the current gateway
-project does not include the legacy bot, audio-device, or transcription
-controllers that older docs described.
+body-size checks, and content-type checks. Gateway-side module endpoint groups are supported through `Gateway:Modules`.
 
 The current gateway implementation is instance-scoped. A gateway process
 resolves its own instance root, keeps its own manifest, logs, and discovery
@@ -55,7 +52,7 @@ and [Endpoint toggles](#endpoint-toggles). It then documents
 [Chat streaming](#chat-streaming-sse), [Agent jobs](#agent-jobs),
 [Models](#models), [Providers](#providers), [Cost tracking](#cost-tracking),
 [Roles](#roles), [Users](#users),
-[Module-owned or removed surfaces](#module-owned-or-removed-surfaces),
+[Module-owned surfaces](#module-owned-surfaces),
 [Error handling](#error-handling), [Response headers](#response-headers),
 [Rate limiting details](#rate-limiting-details),
 [Project structure](#project-structure), and [Scope](#scope--non-goals).
@@ -708,13 +705,8 @@ Submit a new agent job.
   "actionType": "ExecuteAsSafeShell",
   "resourceId?": "guid",
   "agentId?": "guid",
-  "safeShellType?": "Mk8Shell",
-  "scriptJson?": "string",
-  "transcriptionModelId?": "guid",
-  "language?": "en",
-  "transcriptionMode?": "SlidingWindow",
-  "windowSeconds?": 10,
-  "stepSeconds?": 2
+  "safeShellType?": "string",
+  "scriptJson?": "string"
 }
 ```
 
@@ -731,7 +723,7 @@ Submit a new agent job.
 
 ### GET /api/channels/{channelId}/jobs/summaries
 
-Lightweight list (no `resultData`/`errorLog`/`logs`/`segments`).
+Lightweight list (no `resultData`/`errorLog`/`logs`).
 
 **200** → `AgentJobSummaryResponse[]`
 
@@ -757,7 +749,7 @@ Lightweight list (no `resultData`/`errorLog`/`logs`/`segments`).
 
 ### POST /api/channels/{channelId}/jobs/{jobId}/stop
 
-Graceful stop (transcription: flush and complete; also accepts Paused jobs).
+Graceful stop for a long-running job; also accepts Paused jobs.
 
 **200** → `AgentJobResponse`
 **404** → `{ error: "Job not found." }`
@@ -853,6 +845,16 @@ Forwards `CreateProviderRequest` to the core API.
 ### GET /api/providers
 
 **200** → `ProviderResponse[]`
+
+---
+
+### GET /api/providers/types
+
+Forwards the core API provider-type metadata. This is the endpoint
+gateway clients should use to populate provider pickers because the list
+comes from enabled provider modules, including third-party modules.
+
+**200** → `ProviderTypeResponse[]`
 
 ---
 
@@ -1051,15 +1053,11 @@ Assigns a role to a user through `SetUserRoleRequest`.
 
 ---
 
-## Module-Owned Or Removed Surfaces
+## Module-Owned Surfaces
 
-The current `SharpClaw.Gateway` project does not contain standalone
-audio-device, transcription, bot integration, WhatsApp, Slack, or Teams
-controllers. Older documentation described those as built-in gateway
-surfaces, but the current gateway either does not expose them or expects
-module-contributed endpoints to be controlled through `Gateway:Modules`.
-If a deployment adds a gateway module, enable both the module-level flag
-and the specific `{moduleId}/{groupId}` flag before expecting routes from
+The current `SharpClaw.Gateway` project exposes the controllers listed in this
+document. If a deployment adds a gateway module, enable both the module-level
+flag and the specific `{moduleId}/{groupId}` flag before expecting routes from
 that module to map.
 
 ## Error handling
@@ -1154,14 +1152,7 @@ the gateway endpoint, request queue, and env loader options, while
 `Infrastructure` contains the internal API client, queued request dispatcher,
 queue metrics, request queue service, and shared error-envelope helpers.
 
-`Security` contains the middleware for endpoint gates, IP bans, body and
-content-type checks, and rate-limit policies. `Modules` contains the gateway
-module loader and endpoint-group catalog, plus the hosting and routing helpers
-used when an external gateway module contributes routes. There is no built-in
-`Bots` directory and no built-in audio-device or transcription controller in
-the current gateway project; deployments that need those routes must provide
-them through module-owned gateway extensions or route directly to the core API
-surface that owns them.
+`Security` contains the middleware for endpoint gates, IP bans, body and content-type checks, and rate-limit policies. `Modules` contains the gateway module loader and endpoint-group catalog, plus the hosting and routing helpers used when an external gateway module contributes routes.
 
 ### OpenAPI / Swagger
 

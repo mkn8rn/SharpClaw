@@ -31,7 +31,7 @@ public sealed class GoogleVertexAIApiClient : IProviderApiClient
         _apiEndpoint = NormalizeApiEndpoint(apiEndpoint);
     }
 
-    public string ProviderKey => WellKnownProviderKeys.GoogleVertexAI;
+    public string ProviderKey => "google-vertex-ai";
     public bool SupportsNativeToolCalling => true;
 
     public async Task<IReadOnlyList<string>> ListModelIdsAsync(

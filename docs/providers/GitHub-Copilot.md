@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **`ProviderType`** | `GitHubCopilot` (`11`) |
+| **`ProviderKey`** | `github-copilot` |
 | **Client class** | `GitHubCopilotApiClient` → `OpenAiCompatibleApiClient` |
 | **Endpoint** | GitHub Models API (dynamic) |
 | **Auth** | Device code OAuth flow |
