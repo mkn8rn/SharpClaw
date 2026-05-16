@@ -58,8 +58,9 @@ internal sealed class ContextToolsService(ContextDataReader dataReader)
         if (threadId == Guid.Empty)
             return "Error: threadId is required.";
 
-        if (!await dataReader.ThreadExistsAsync(threadId, channelId, ct))
-            return "Error: thread not found or does not belong to this channel.";
+        var thread = await dataReader.GetAccessibleThreadAsync(agentId, channelId, threadId, ct);
+        if (thread is null)
+            return "Error: thread not found or not accessible to this agent.";
 
         var messages = await dataReader.GetThreadMessagesAsync(threadId, maxMessages, ct);
 

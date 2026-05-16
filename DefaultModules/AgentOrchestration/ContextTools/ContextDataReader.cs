@@ -26,8 +26,12 @@ internal sealed record ChatMessageSummary(
 /// </summary>
 internal sealed class ContextDataReader(ISharpClawDataContext data)
 {
-    public Task<bool> ThreadExistsAsync(Guid threadId, Guid channelId, CancellationToken ct = default) =>
-        data.ChatThreads.AnyAsync(t => t.Id == threadId && t.ChannelId == channelId, ct);
+    public async Task<ThreadSummary?> GetAccessibleThreadAsync(
+        Guid agentId, Guid currentChannelId, Guid threadId, CancellationToken ct = default)
+    {
+        var accessibleThreads = await GetAccessibleThreadsAsync(agentId, currentChannelId, ct);
+        return accessibleThreads.FirstOrDefault(t => t.ThreadId == threadId);
+    }
 
     public async Task<IReadOnlyList<ChatMessageSummary>> GetThreadMessagesAsync(
         Guid threadId, int maxMessages, CancellationToken ct = default)
@@ -70,8 +74,15 @@ internal sealed class ContextDataReader(ISharpClawDataContext data)
             .Include(c => c.AgentContext)
                 .ThenInclude(ctx => ctx!.PermissionSet)
                     .ThenInclude(ps => ps!.GlobalFlags)
+            .Include(c => c.AgentContext)
+                .ThenInclude(ctx => ctx!.AllowedAgents)
             .Where(c => c.Id != currentChannelId)
-            .Where(c => c.AgentId == agentId || c.AllowedAgents.Any(a => a.Id == agentId))
+            .Where(c =>
+                c.AgentId == agentId ||
+                c.AllowedAgents.Any(a => a.Id == agentId) ||
+                (c.AgentId == null && c.AgentContext != null && c.AgentContext.AgentId == agentId) ||
+                (!c.AllowedAgents.Any() && c.AgentContext != null &&
+                    c.AgentContext.AllowedAgents.Any(a => a.Id == agentId)))
             .ToListAsync(ct);
 
         if (!isIndependent)
@@ -91,10 +102,14 @@ internal sealed class ContextDataReader(ISharpClawDataContext data)
         var channelIds = channels.Select(c => c.Id).ToList();
         var channelTitles = channels.ToDictionary(c => c.Id, c => c.Title);
 
-        return await data.ChatThreads
+        var threads = await data.ChatThreads
             .Where(t => channelIds.Contains(t.ChannelId))
             .OrderByDescending(t => t.UpdatedAt)
-            .Select(t => new ThreadSummary(t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
+            .Select(t => new { t.Id, t.Name, t.ChannelId })
             .ToListAsync(ct);
+
+        return threads
+            .Select(t => new ThreadSummary(t.Id, t.Name, t.ChannelId, channelTitles[t.ChannelId]))
+            .ToList();
     }
 }
