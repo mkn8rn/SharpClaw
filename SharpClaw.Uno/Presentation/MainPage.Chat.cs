@@ -11,6 +11,7 @@ namespace SharpClaw.Presentation;
 public sealed partial class MainPage
 {
     private const string ChatLogCategory = "SharpClaw.Chat";
+    private const int StreamUiUpdateIntervalMs = 33;
 
     [Conditional("DEBUG")]
     private static void ChatLog(string message) => Debug.WriteLine(message, ChatLogCategory);
@@ -709,6 +710,9 @@ public sealed partial class MainPage
         // UI consumer: read parsed events from the channel and update the UI.
         var eventCount = 0;
         var doneReceived = false;
+        var lastRenderedLength = -1;
+        var uiUpdateClock = Stopwatch.StartNew();
+        long lastUiUpdateMs = -StreamUiUpdateIntervalMs;
 
         await foreach (var (eventType, dataJson) in events.Reader.ReadAllAsync(ct))
         {
@@ -721,9 +725,15 @@ public sealed partial class MainPage
                 break;
             }
 
-            if (!doneReceived)
+            var elapsedMs = uiUpdateClock.ElapsedMilliseconds;
+            if (_pooledStreamBuilder.Length != lastRenderedLength &&
+                elapsedMs - lastUiUpdateMs >= StreamUiUpdateIntervalMs)
+            {
                 bubble.Content.Text = _pooledStreamBuilder.ToString() + "▍";
-            ScrollToBottom(forceLayout: false);
+                lastRenderedLength = _pooledStreamBuilder.Length;
+                lastUiUpdateMs = elapsedMs;
+                ScrollToBottom(forceLayout: false);
+            }
         }
 
         // Wait for the background reader to finish cleanly.
