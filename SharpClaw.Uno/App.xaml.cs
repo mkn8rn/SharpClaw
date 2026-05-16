@@ -12,6 +12,7 @@ namespace SharpClaw;
 public partial class App : Application
 {
     private SessionLogWriter? _sessionLogs;
+    private SessionLogCapture? _sessionLogCapture;
 
     /// <summary>
     /// Initializes the singleton application object. This is the first line of authored code
@@ -31,6 +32,7 @@ public partial class App : Application
     {
         var frontendInstance = new FrontendInstanceService();
         _sessionLogs = new SessionLogWriter("uno", frontendInstance.Paths.LogsDirectory);
+        _sessionLogCapture = SessionLogCapture.Install(_sessionLogs);
         RegisterGlobalExceptionLogging(_sessionLogs);
 
         var serilogOptions = SerilogEnvironmentOptions.FromConfiguration(
@@ -50,7 +52,8 @@ public partial class App : Application
                 .MinimumLevel.Override("Uno", SerilogEnvironmentOptions.ParseEnum(
                     serilogOptions.UnoMinimumLevel,
                     LogEventLevel.Warning))
-                .Enrich.FromLogContext();
+                .Enrich.FromLogContext()
+                .WriteTo.Sink(new SessionLogSerilogSink(_sessionLogs));
 
             if (serilogOptions.ConsoleEnabled)
                 loggerConfiguration = loggerConfiguration.WriteTo.Console();
@@ -235,6 +238,7 @@ public partial class App : Application
 
                 gw?.Dispose();
                 be?.Dispose();
+                _sessionLogCapture?.Dispose();
                 _sessionLogs?.Dispose();
                 Log.CloseAndFlush();
             };

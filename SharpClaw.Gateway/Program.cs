@@ -58,6 +58,7 @@ if (gatewayManifestChanged)
     gatewayPaths.SaveManifest(gatewayManifest);
 
 await using var sessionLogs = new SessionLogWriter("gateway", gatewayPaths.LogsDirectory);
+using var sessionLogCapture = SessionLogCapture.Install(sessionLogs);
 
 var publishedGatewayUrl = !string.IsNullOrWhiteSpace(configuredGatewayUrl)
     ? configuredGatewayUrl
@@ -107,7 +108,8 @@ if (serilogOptions.Enabled)
         .MinimumLevel.Override("Microsoft.EntityFrameworkCore", SerilogEnvironmentOptions.ParseEnum(
             serilogOptions.EntityFrameworkCoreMinimumLevel,
             LogEventLevel.Warning))
-        .Enrich.FromLogContext();
+        .Enrich.FromLogContext()
+        .WriteTo.Sink(new SessionLogSerilogSink(sessionLogs));
 
     if (serilogOptions.ConsoleEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.Console();

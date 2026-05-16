@@ -110,6 +110,7 @@ backendInstancePaths.CleanupStaleDiscoveryEntries(TimeSpan.FromMinutes(2));
 using var backendInstanceLock = new SharpClawInstanceLock(backendInstancePaths);
 
 await using var sessionLogs = new SessionLogWriter("core", backendInstancePaths.LogsDirectory);
+using var sessionLogCapture = SessionLogCapture.Install(sessionLogs);
 
 // Early configuration is read once, *before* the WebApplication builder
 // exists, so that Serilog can be configured against .env values during
@@ -154,7 +155,8 @@ if (serilogOptions.Enabled)
         .MinimumLevel.Override("Microsoft.EntityFrameworkCore", SerilogEnvironmentOptions.ParseEnum(
             serilogOptions.EntityFrameworkCoreMinimumLevel,
             LogEventLevel.Warning))
-        .Enrich.FromLogContext();
+        .Enrich.FromLogContext()
+        .WriteTo.Sink(new SessionLogSerilogSink(sessionLogs));
 
     if (serilogOptions.ConsoleEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.Console(levelSwitch: consoleLevelSwitch);

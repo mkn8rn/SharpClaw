@@ -9,13 +9,17 @@ named after the process, such as `uno`, `core`, or `gateway`.
 
 The session log files are intentionally split by audience. `log.txt`
 contains the normal `ILogger` stream for informational, warning, error, and
-critical entries. `debug.txt` contains debug and trace entries, which is
-where chat timing, streaming timing, task step timing, and other diagnostic
-breadcrumbs appear when the configured minimum level allows them.
-`exceptions.txt` contains exception details and is flushed immediately when
-an exception is captured. `serilog.txt` contains the raw Serilog file sink.
-It is separate from `log.txt` so Serilog and the session writer do not
-compete for the same file handle.
+critical entries, the mirrored Serilog event stream, and anything written to
+standard output through `Console.WriteLine`. `debug.txt` contains debug and
+trace entries, including `System.Diagnostics.Debug.WriteLine` and
+`Trace.WriteLine` output that also appears in Visual Studio's debug output
+pane. This is where chat timing, streaming timing, task step timing, and
+other diagnostic breadcrumbs appear when the configured minimum level allows
+them. `exceptions.txt` contains exception details, standard error output,
+and exceptions attached to Serilog events, and is flushed immediately when an
+exception is captured. `serilog.txt` contains the raw Serilog file sink. It
+is separate from `log.txt` so Serilog and the session writer do not compete
+for the same file handle.
 
 The logging settings live in each process environment file under
 `Logging:Serilog`. The same shape is used by Core, Gateway, and Interface.
@@ -25,7 +29,9 @@ module tool execution, and task steps. `FileEnabled` controls whether
 Serilog writes `serilog.txt`; the session logger still writes `log.txt`,
 `debug.txt`, and `exceptions.txt` whenever it is registered by the process.
 `RequestLoggingEnabled` controls ASP.NET Core request logging in Core and
-Gateway and is not used by the Uno interface.
+Gateway and is not used by the Uno interface. No extra environment variables
+are required for console, diagnostics, or exception capture; those bridges
+are installed by the process when the session logger is created.
 
 For day-to-day troubleshooting, start with `exceptions.txt` if something
 failed visibly, then read `log.txt` for the surrounding service events. If a
@@ -42,5 +48,6 @@ you are exercising. The desktop interface can launch a bundled backend and
 gateway, each with its own instance log directory, while a manually run API
 or gateway process may use a different instance root. Also check the
 minimum level. `debug.txt` is expected to stay quiet at `Information` unless
-code writes directly to the debug stream, while `log.txt` should receive
-normal `ILogger` output from Core, Gateway, and Interface after startup.
+code writes directly to the debug or trace stream, while `log.txt` should
+receive normal `ILogger`, Serilog, and stdout output from Core, Gateway, and
+Interface after startup.
