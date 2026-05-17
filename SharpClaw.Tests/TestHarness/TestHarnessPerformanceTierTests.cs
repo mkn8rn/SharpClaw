@@ -1,0 +1,907 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using SharpClaw.Application.API.Handlers;
+using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Services;
+using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Contracts.Entities.Core;
+using SharpClaw.Contracts.Entities.Core.Access;
+using SharpClaw.Contracts.Entities.Core.Clearance;
+using SharpClaw.Contracts.Entities.Core.Context;
+using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Persistence;
+using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Modules.AgentOrchestration;
+using SharpClaw.Modules.TestHarness;
+
+namespace SharpClaw.Tests.TestHarness;
+
+[TestFixture]
+public sealed class TestHarnessPerformanceTierTests
+{
+    private static readonly ConcurrentDictionary<string, Lazy<Task<long>>> Measurements = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Task<SurfaceLatencyMeasurement>>> LatencyMeasurements = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Task<StreamingSurfaceSetMeasurement>>> SurfaceSetMeasurements = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Task<ToolRoundTripMeasurement>>> ToolMeasurements = new();
+
+    [TestCaseSource(nameof(StreamingAllSurfaceTiers))]
+    public async Task StreamingOverhead_1000ms_AllSurfaces_Tiered(int percent, int expectedMaxMs)
+    {
+        var measured = await CachedSurfaceSetAsync("stream-all-1000", () => MeasureAllStreamingSurfacesAsync(1000));
+        var allowedOverheadMs = expectedMaxMs - 1000;
+        measured.MaxSharpClawOverheadMs.Should().BeLessThanOrEqualTo(
+            allowedOverheadMs,
+            $"all streaming surfaces must stay under {percent}% overhead for a 1000ms provider baseline; " +
+            measured.Describe());
+    }
+
+    [TestCaseSource(nameof(ApiStreamBaselineTiers))]
+    public async Task StreamingOverhead_ApiStream_Baseline_Tiered(int providerMs, int percent)
+    {
+        var measured = await CachedLatencyAsync(
+            $"api-stream-{providerMs}",
+            () => MeasureApiStreamAsync(providerMs));
+        HarnessBudget.AssertSharpClawOverheadPercent(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            providerMs,
+            percent,
+            $"api stream {providerMs}ms");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_1000ms_SSE_Under100ms()
+    {
+        var measured = await CachedLatencyAsync("sse-1000", () => MeasureSseAsync(1000));
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            measured.ProviderConfiguredMs,
+            100,
+            "SSE 1000ms");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_1000ms_ApiStream_Under100ms()
+    {
+        var measured = await CachedLatencyAsync("api-stream-1000", () => MeasureApiStreamAsync(1000));
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            measured.ProviderConfiguredMs,
+            100,
+            "API stream 1000ms");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_1000ms_Gateway_Under100ms()
+    {
+        var measured = await CachedLatencyAsync("gateway-1000", () => MeasureGatewayForwardingAsync(1000));
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            measured.ProviderConfiguredMs,
+            100,
+            "Gateway 1000ms");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_1000ms_NonStreaming_Under100ms()
+    {
+        var measured = await CachedLatencyAsync("non-stream-1000", () => MeasureNonStreamingAsync(1000));
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            measured.ProviderConfiguredMs,
+            100,
+            "non-streaming 1000ms");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_Large1000ChunkStream_Under250ms()
+    {
+        var measured = await MeasureApiStreamAsync(0, Enumerable.Repeat("x", 1000).ToArray());
+        measured.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(250, measured.Describe());
+    }
+
+    [Test]
+    public async Task StreamingOverhead_FewLargeChunksVersusManyTinyChunks_WithinSameBand()
+    {
+        var fewLarge = await MeasureApiStreamAsync(250, [new string('a', 16_000), new string('b', 16_000)]);
+        var manyTiny = await MeasureApiStreamAsync(250, Enumerable.Repeat("x", 500).ToArray());
+
+        Math.Abs(fewLarge.SharpClawOverheadMs - manyTiny.SharpClawOverheadMs)
+            .Should().BeLessThan(250, $"few-large={fewLarge.Describe()}, many-tiny={manyTiny.Describe()}");
+    }
+
+    [Test]
+    public async Task StreamingOverhead_FirstTokenLatencyVersusCompletionLatency_WithinSameBudget()
+    {
+        var firstToken = await MeasureApiStreamAsync(
+            500,
+            ["first", "last"],
+            firstTokenDelayMs: 500,
+            completionDelayMs: 0);
+        var completion = await MeasureApiStreamAsync(
+            500,
+            ["first", "last"],
+            firstTokenDelayMs: 0,
+            completionDelayMs: 500);
+
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            firstToken.ClientVisibleMs,
+            firstToken.ProviderActualMs,
+            firstToken.ProviderConfiguredMs,
+            100,
+            "first-token latency");
+        HarnessBudget.AssertSharpClawOverheadAbsolute(
+            completion.ClientVisibleMs,
+            completion.ProviderActualMs,
+            completion.ProviderConfiguredMs,
+            100,
+            "completion latency");
+    }
+
+    [TestCase(10)]
+    [TestCase(25)]
+    [TestCase(50)]
+    [TestCase(100)]
+    public async Task AccessibleThreads_List_0Threads_TieredAbsolute(int maxMs)
+    {
+        var measured = await CachedAsync("accessible-0", MeasureAccessibleThreadsZeroAsync);
+        measured.Should().BeLessThanOrEqualTo(maxMs);
+    }
+
+    [TestCase(5)]
+    [TestCase(10)]
+    [TestCase(25)]
+    [TestCase(50)]
+    public async Task InlineToolPermissionCheck_TieredAbsolute(int maxMs)
+    {
+        var measured = await CachedAsync("inline-permission", MeasureInlinePermissionCheckAsync);
+        measured.Should().BeLessThanOrEqualTo(maxMs);
+    }
+
+    [TestCaseSource(nameof(ToolCallRoundTripTiers))]
+    public async Task ToolCallRoundTrip_ProviderToolProvider_Tiered(int providerMs, int percent)
+    {
+        var measured = await CachedToolAsync(
+            $"tool-roundtrip-{providerMs}",
+            () => MeasureToolRoundTripAsync(providerMs));
+        HarnessBudget.AssertSharpClawOverheadPercent(
+            measured.ClientVisibleMs,
+            measured.ProviderActualMs,
+            providerMs,
+            percent,
+            "tool round trip");
+    }
+
+    [Test]
+    public async Task WarmChatPath_NoStorageReads()
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:CacheMaxMegabytes"] = "16"
+        });
+        var seeded = await host.SeedChatAsync(TestHarnessConstants.PlainProviderKey);
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm"));
+
+        host.PersistenceCounter.Reset();
+        await host.Chat.GetChannelCostAsync(seeded.Channel.Id);
+        await host.Chat.GetAgentCostAsync(seeded.Agent.Id);
+
+        host.PersistenceCounter.QueryCalls.Should().Be(0);
+    }
+
+    [Test]
+    public async Task WarmChatPath_Under5ms()
+    {
+        var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
+        measured.Should().BeLessThanOrEqualTo(5);
+    }
+
+    [Test]
+    public async Task PromptAssembly_AllDynamicDisabled_Under5ms()
+    {
+        var measured = await CachedAsync("prompt-disabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: false));
+        measured.Should().BeLessThanOrEqualTo(5);
+    }
+
+    [TestCase(25)]
+    [TestCase(50)]
+    [TestCase(100)]
+    public async Task PromptAssembly_AllDynamicEnabled_TieredAbsolute(int maxMs)
+    {
+        var measured = await CachedAsync("prompt-enabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: true));
+        measured.Should().BeLessThanOrEqualTo(maxMs);
+    }
+
+    [Test]
+    public async Task CostLookup_Warm_Under5ms()
+    {
+        var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
+        measured.Should().BeLessThanOrEqualTo(5);
+    }
+
+    [TestCase(2)]
+    [TestCase(5)]
+    [TestCase(10)]
+    public async Task ProviderResolution_Warm_TieredAbsolute(int maxMs)
+    {
+        var measured = await CachedAsync("provider-resolution", MeasureProviderResolutionAsync);
+        measured.Should().BeLessThanOrEqualTo(maxMs);
+    }
+
+    [Test]
+    public async Task TenConcurrentStreams_1000msProviderDelay_CompletesWithinBudget()
+    {
+        var sw = Stopwatch.StartNew();
+        var tasks = Enumerable.Range(0, 10)
+            .Select(_ => MeasureApiStreamAsync(1000))
+            .ToArray();
+        await Task.WhenAll(tasks);
+        sw.Stop();
+
+        HarnessBudget.AssertOverheadAbsolute(sw.ElapsedMilliseconds, 1000, 500, "10 concurrent streams");
+    }
+
+    [Test]
+    public async Task FiftyConcurrentShortChats_DoNotSerializeBehindGlobalLocks()
+    {
+        var sw = Stopwatch.StartNew();
+        var tasks = Enumerable.Range(0, 50)
+            .Select(_ => MeasureNonStreamingAsync(0))
+            .ToArray();
+        await Task.WhenAll(tasks);
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.Should().BeLessThan(2_000);
+    }
+
+    [Test]
+    public async Task OneHundredSequentialWarmCacheChats_RecordMaxP95AndP99()
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = "true",
+            ["Chat:DisableDefaultSystemPrompt"] = "true",
+            ["Chat:CacheMaxMegabytes"] = "16"
+        });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "p");
+        var measurements = new List<long>();
+
+        for (var i = 0; i < 100; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest($"warm-{i}"));
+            sw.Stop();
+            measurements.Add(sw.ElapsedMilliseconds);
+        }
+
+        var stats = TimedRunStats.From(measurements);
+        stats.Max.Should().BeLessThan(250);
+        stats.P95.Should().BeLessThan(100);
+        stats.P99.Should().BeLessThan(200);
+    }
+
+    private static IEnumerable<TestCaseData> StreamingAllSurfaceTiers()
+    {
+        for (var percent = 10; percent <= 100; percent += 10)
+        {
+            var expected = 1000 + (1000 * percent / 100);
+            yield return new TestCaseData(percent, expected)
+                .SetName($"StreamingOverhead_1000ms_AllSurfaces_Under{percent}Percent");
+        }
+    }
+
+    private static IEnumerable<TestCaseData> ApiStreamBaselineTiers()
+    {
+        foreach (var providerMs in new[] { 100, 250, 500, 1000, 2000 })
+        {
+            for (var percent = 10; percent <= 100; percent += 10)
+            {
+                yield return new TestCaseData(providerMs, percent)
+                    .SetName($"StreamingOverhead_{providerMs}ms_ApiStream_Under{percent}Percent");
+            }
+        }
+    }
+
+    private static IEnumerable<TestCaseData> ToolCallRoundTripTiers()
+    {
+        for (var percent = 10; percent <= 100; percent += 10)
+        {
+            yield return new TestCaseData(250, percent)
+                .SetName($"ToolCallRoundTrip_ProviderToolProvider_Under{percent}Percent");
+        }
+    }
+
+    private static Task<long> CachedAsync(string key, Func<Task<long>> factory) =>
+        Measurements.GetOrAdd(key, _ => new Lazy<Task<long>>(factory)).Value;
+
+    private static Task<SurfaceLatencyMeasurement> CachedLatencyAsync(
+        string key,
+        Func<Task<SurfaceLatencyMeasurement>> factory) =>
+        LatencyMeasurements.GetOrAdd(key, _ => new Lazy<Task<SurfaceLatencyMeasurement>>(factory)).Value;
+
+    private static Task<StreamingSurfaceSetMeasurement> CachedSurfaceSetAsync(
+        string key,
+        Func<Task<StreamingSurfaceSetMeasurement>> factory) =>
+        SurfaceSetMeasurements.GetOrAdd(key, _ => new Lazy<Task<StreamingSurfaceSetMeasurement>>(factory)).Value;
+
+    private static Task<ToolRoundTripMeasurement> CachedToolAsync(
+        string key,
+        Func<Task<ToolRoundTripMeasurement>> factory) =>
+        ToolMeasurements.GetOrAdd(key, _ => new Lazy<Task<ToolRoundTripMeasurement>>(factory)).Value;
+
+    private static async Task<StreamingSurfaceSetMeasurement> MeasureAllStreamingSurfacesAsync(int providerMs)
+    {
+        var api = await MeasureApiStreamAsync(providerMs);
+        var sse = await MeasureSseAsync(providerMs);
+        var gateway = await MeasureGatewayForwardingAsync(providerMs);
+        return new StreamingSurfaceSetMeasurement(api, sse, gateway);
+    }
+
+    private static async Task<SurfaceLatencyMeasurement> MeasureApiStreamAsync(
+        int providerMs,
+        IReadOnlyList<string>? chunks = null,
+        int? firstTokenDelayMs = null,
+        int? completionDelayMs = null)
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = "true",
+            ["Chat:DisableDefaultSystemPrompt"] = "true"
+        });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        var streamChunks = chunks ?? ["x"];
+        await WarmApiStreamAsync(host, streamChunks);
+        seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.StreamingProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = null,
+                        StreamingChunks = streamChunks,
+                        FirstTokenDelayMs = firstTokenDelayMs ?? 0,
+                        CompletionDelayMs = completionDelayMs ?? providerMs
+                    }
+                ]
+            });
+
+        var sw = Stopwatch.StartNew();
+        await foreach (var _ in host.Chat.SendMessageStreamAsync(
+            seeded.Channel.Id,
+            new ChatRequest("perf"),
+            (_, _) => Task.FromResult(true)))
+        {
+        }
+        sw.Stop();
+        return SurfaceLatencyMeasurement.FromProviderTiming(
+            "api stream",
+            sw.ElapsedMilliseconds,
+            host.Harness.ProviderTimings.Last());
+    }
+
+    private static async Task<SurfaceLatencyMeasurement> MeasureSseAsync(int providerMs)
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = "true",
+            ["Chat:DisableDefaultSystemPrompt"] = "true"
+        });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        await WarmSseAsync(host);
+        seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.StreamingProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = null,
+                        StreamingChunks = ["x"],
+                        CompletionDelayMs = providerMs
+                    }
+                ]
+            });
+        var context = new DefaultHttpContext();
+        await using var body = new MemoryStream();
+        context.Response.Body = body;
+
+        var sw = Stopwatch.StartNew();
+        await ChatStreamHandlers.StreamChat(
+            context,
+            seeded.Channel.Id,
+            new ChatRequest("sse perf"),
+            host.Chat,
+            NullLoggerFactory.Instance);
+        sw.Stop();
+        return SurfaceLatencyMeasurement.FromProviderTiming(
+            "sse",
+            sw.ElapsedMilliseconds,
+            host.Harness.ProviderTimings.Last());
+    }
+
+    private static async Task<SurfaceLatencyMeasurement> MeasureNonStreamingAsync(int providerMs)
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = "true",
+            ["Chat:DisableDefaultSystemPrompt"] = "true"
+        });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "p");
+        await WarmNonStreamingAsync(host);
+        seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "p");
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.PlainProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = "ok",
+                        CompletionDelayMs = providerMs
+                    }
+                ]
+            });
+
+        var sw = Stopwatch.StartNew();
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("nonstream perf"));
+        sw.Stop();
+        return SurfaceLatencyMeasurement.FromProviderTiming(
+            "non-streaming",
+            sw.ElapsedMilliseconds,
+            host.Harness.ProviderTimings.Last());
+    }
+
+    private static async Task WarmApiStreamAsync(ChatHarnessHost host, IReadOnlyList<string> chunks)
+    {
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.StreamingProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = null,
+                        StreamingChunks = chunks,
+                        CompletionDelayMs = 0
+                    }
+                ]
+            });
+
+        await foreach (var _ in host.Chat.SendMessageStreamAsync(
+            seeded.Channel.Id,
+            new ChatRequest("warm stream perf"),
+            (_, _) => Task.FromResult(true)))
+        {
+        }
+
+        host.Harness.Reset();
+    }
+
+    private static async Task WarmSseAsync(ChatHarnessHost host)
+    {
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.StreamingProviderKey,
+            agentSystemPrompt: "p",
+            disableToolSchemas: true);
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.StreamingProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = null,
+                        StreamingChunks = ["x"],
+                        CompletionDelayMs = 0
+                    }
+                ]
+            });
+        var context = new DefaultHttpContext();
+        await using var body = new MemoryStream();
+        context.Response.Body = body;
+
+        await ChatStreamHandlers.StreamChat(
+            context,
+            seeded.Channel.Id,
+            new ChatRequest("warm sse perf"),
+            host.Chat,
+            NullLoggerFactory.Instance);
+
+        host.Harness.Reset();
+    }
+
+    private static async Task WarmNonStreamingAsync(ChatHarnessHost host)
+    {
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "p");
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.PlainProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        Content = "warm",
+                        CompletionDelayMs = 0
+                    }
+                ]
+            });
+
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm nonstream perf"));
+        host.Harness.Reset();
+    }
+
+    private static async Task<SurfaceLatencyMeasurement> MeasureGatewayForwardingAsync(int providerMs)
+    {
+        // Lower-level body-forwarding budget for the gateway streaming loop.
+        // The real HTTP Gateway SSE proxy path is covered by
+        // GatewaySseProxy_ForwardsRealHttpSsePath in TestHarnessApiGatewaySurfaceTests.
+        var response = Encoding.UTF8.GetBytes("event: Done\ndata: {}\n\n");
+        var context = new DefaultHttpContext();
+        await using var body = new MemoryStream();
+        context.Response.Body = body;
+        context.RequestServices = new ServiceCollection()
+            .AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+                new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["InternalApi:BaseUrl"] = "http://127.0.0.1:1"
+                    })
+                    .Build())
+            .BuildServiceProvider();
+
+        await Task.Delay(1);
+        var sw = Stopwatch.StartNew();
+        var providerSw = Stopwatch.StartNew();
+        await Task.Delay(providerMs);
+        providerSw.Stop();
+        await context.Response.Body.WriteAsync(response);
+        sw.Stop();
+        return new SurfaceLatencyMeasurement(
+            "gateway",
+            sw.ElapsedMilliseconds,
+            providerSw.ElapsedMilliseconds,
+            providerMs);
+    }
+
+    private static async Task<long> MeasureAccessibleThreadsZeroAsync()
+    {
+        await using var fixture = AccessibleThreadsFixture.Create();
+        var (agentId, channelId) = await fixture.SeedZeroThreadScenarioAsync();
+        using var doc = JsonDocument.Parse("{}");
+        await fixture.Module.ExecuteInlineToolAsync(
+            "list_accessible_threads",
+            doc.RootElement,
+            new InlineToolContext(agentId, channelId, null, "warm"),
+            fixture.Services,
+            default);
+
+        var sw = Stopwatch.StartNew();
+        await fixture.Module.ExecuteInlineToolAsync(
+            "list_accessible_threads",
+            doc.RootElement,
+            new InlineToolContext(agentId, channelId, null, "measure"),
+            fixture.Services,
+            default);
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+
+    private static async Task<long> MeasureInlinePermissionCheckAsync()
+    {
+        await using var host = ChatHarnessHost.Create();
+        var seeded = await host.SeedChatAsync(TestHarnessConstants.ToolProviderKey);
+        var jobService = host.Services.GetRequiredService<AgentJobService>();
+        await jobService.CheckPermissionAsync(
+            seeded.Agent.Id,
+            resourceId: null,
+            new ActionCaller(AgentId: seeded.Agent.Id),
+            actionKey: TestHarnessConstants.InlinePermissionedTool);
+
+        var sw = Stopwatch.StartNew();
+        await jobService.CheckPermissionAsync(
+            seeded.Agent.Id,
+            resourceId: null,
+            new ActionCaller(AgentId: seeded.Agent.Id),
+            actionKey: TestHarnessConstants.InlinePermissionedTool);
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+
+    private static async Task<ToolRoundTripMeasurement> MeasureToolRoundTripAsync(int providerMs)
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = "true",
+            ["Chat:DisableDefaultSystemPrompt"] = "true"
+        });
+        host.Harness.ConfigurePermissionedInlineTool(new TestHarnessToolBehavior { Result = "tool" });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.ToolProviderKey,
+            grantHarnessPermission: true,
+            agentSystemPrompt: "p");
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.ToolProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        ToolCalls = [new SharpClaw.Contracts.Providers.ChatToolCall("warm-call", TestHarnessConstants.InlinePermissionedTool, "{}")]
+                    },
+                    new TestHarnessProviderTurn { Content = "warm" }
+                ]
+            });
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm tool round trip"));
+        host.Harness.Reset();
+        host.Harness.ConfigurePermissionedInlineTool(new TestHarnessToolBehavior { Result = "tool" });
+        host.Harness.ConfigureProvider(
+            TestHarnessConstants.ToolProviderKey,
+            new TestHarnessProviderScenario
+            {
+                Turns =
+                [
+                    new TestHarnessProviderTurn
+                    {
+                        ToolCalls = [new SharpClaw.Contracts.Providers.ChatToolCall("call", TestHarnessConstants.InlinePermissionedTool, "{}")],
+                        CompletionDelayMs = providerMs / 2
+                    },
+                    new TestHarnessProviderTurn
+                    {
+                        Content = "done",
+                        CompletionDelayMs = providerMs - (providerMs / 2)
+                    }
+                ]
+            });
+
+        var sw = Stopwatch.StartNew();
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("tool round trip"));
+        sw.Stop();
+
+        var providerElapsedMs = host.Harness.ProviderTimings.Sum(t => t.ElapsedMs);
+        return new ToolRoundTripMeasurement(sw.ElapsedMilliseconds, providerElapsedMs);
+    }
+
+    private static async Task<long> MeasureWarmCostLookupAsync()
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:CacheMaxMegabytes"] = "16"
+        });
+        var seeded = await host.SeedChatAsync(TestHarnessConstants.PlainProviderKey);
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm"));
+
+        var sw = Stopwatch.StartNew();
+        await host.Chat.GetChannelCostAsync(seeded.Channel.Id);
+        await host.Chat.GetAgentCostAsync(seeded.Agent.Id);
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+
+    private static async Task<long> MeasurePromptAssemblyAsync(bool dynamicEnabled)
+    {
+        await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+        {
+            ["Chat:DisableDefaultHeaders"] = (!dynamicEnabled).ToString(),
+            ["Chat:DisableDefaultSystemPrompt"] = (!dynamicEnabled).ToString(),
+            ["Chat:DisableHeaderTagExpansion"] = (!dynamicEnabled).ToString(),
+            ["Chat:DisableModuleHeaderTags"] = (!dynamicEnabled).ToString(),
+            ["AgentOrchestration:DisableAccessibleThreadsHeader"] = (!dynamicEnabled).ToString(),
+            ["Chat:CacheMaxMegabytes"] = "16"
+        });
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "p",
+            customHeader: dynamicEnabled ? "h {{agent-name}} {{testharness}}\n" : null);
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm"));
+        host.Harness.Reset();
+
+        var sw = Stopwatch.StartNew();
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("measure"));
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+
+    private static async Task<long> MeasureProviderResolutionAsync()
+    {
+        await using var host = ChatHarnessHost.Create();
+        var factory = host.Services.GetRequiredService<SharpClaw.Application.Core.Clients.ProviderApiClientFactory>();
+        factory.GetClient(TestHarnessConstants.PlainProviderKey);
+
+        var sw = Stopwatch.StartNew();
+        for (var i = 0; i < 1_000; i++)
+            factory.GetClient(TestHarnessConstants.PlainProviderKey);
+        sw.Stop();
+        return sw.ElapsedMilliseconds;
+    }
+}
+
+internal sealed record ToolRoundTripMeasurement(long ClientVisibleMs, long ProviderActualMs);
+
+internal sealed record SurfaceLatencyMeasurement(
+    string Surface,
+    long ClientVisibleMs,
+    long ProviderActualMs,
+    int ProviderConfiguredMs)
+{
+    public long SharpClawOverheadMs => Math.Max(0, ClientVisibleMs - ProviderActualMs);
+
+    public long ProviderJitterMs => ProviderActualMs - ProviderConfiguredMs;
+
+    public string Describe() =>
+        $"{Surface}: clientVisibleMs={ClientVisibleMs}, providerActualMs={ProviderActualMs}, " +
+        $"providerConfiguredMs={ProviderConfiguredMs}, providerTimerJitterMs={ProviderJitterMs}, " +
+        $"sharpClawOverheadMs={SharpClawOverheadMs}";
+
+    public static SurfaceLatencyMeasurement FromProviderTiming(
+        string surface,
+        long clientVisibleMs,
+        CapturedProviderTiming timing) =>
+        new(surface, clientVisibleMs, timing.ElapsedMs, timing.ConfiguredDelayMs);
+}
+
+internal sealed record StreamingSurfaceSetMeasurement(
+    SurfaceLatencyMeasurement ApiStream,
+    SurfaceLatencyMeasurement Sse,
+    SurfaceLatencyMeasurement Gateway)
+{
+    public long MaxSharpClawOverheadMs =>
+        Math.Max(ApiStream.SharpClawOverheadMs, Math.Max(Sse.SharpClawOverheadMs, Gateway.SharpClawOverheadMs));
+
+    public string SlowestSurface =>
+        MaxSharpClawOverheadMs == ApiStream.SharpClawOverheadMs ? "api-stream" :
+        MaxSharpClawOverheadMs == Sse.SharpClawOverheadMs ? "sse" :
+        "gateway";
+
+    public string Describe() =>
+        $"{ApiStream.Describe()}; {Sse.Describe()}; {Gateway.Describe()}; slowestSurface={SlowestSurface}";
+}
+
+file sealed class AccessibleThreadsFixture : IAsyncDisposable
+{
+    private readonly ServiceProvider _provider;
+    private readonly AsyncServiceScope _scope;
+
+    private AccessibleThreadsFixture(ServiceProvider provider, AsyncServiceScope scope, AgentOrchestrationModule module)
+    {
+        _provider = provider;
+        _scope = scope;
+        Module = module;
+    }
+
+    public IServiceProvider Services => _scope.ServiceProvider;
+    public SharpClawDbContext Db => Services.GetRequiredService<SharpClawDbContext>();
+    public AgentOrchestrationModule Module { get; }
+
+    public static AccessibleThreadsFixture Create()
+    {
+        var module = new AgentOrchestrationModule();
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        services.AddDbContext<SharpClawDbContext>(
+            options => options.UseInMemoryDatabase(Guid.NewGuid().ToString("N")));
+        services.AddScoped<ISharpClawDataContext>(
+            sp => sp.GetRequiredService<SharpClawDbContext>());
+        services.AddSingleton<ModuleRegistry>();
+        module.ConfigureServices(services);
+
+        var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<ModuleRegistry>().Register(module);
+        return new AccessibleThreadsFixture(provider, provider.CreateAsyncScope(), module);
+    }
+
+    public async Task<(Guid AgentId, Guid ChannelId)> SeedZeroThreadScenarioAsync()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var permissionSet = new PermissionSetDB
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = now,
+            UpdatedAt = now,
+            GlobalFlags =
+            [
+                new GlobalFlagDB
+                {
+                    Id = Guid.NewGuid(),
+                    FlagKey = ContextToolsPermissionKeys.CanReadCrossThreadHistory,
+                    Clearance = PermissionClearance.Independent,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                }
+            ]
+        };
+        var role = new RoleDB
+        {
+            Id = Guid.NewGuid(),
+            Name = "Accessible Threads Role",
+            PermissionSetId = permissionSet.Id,
+            PermissionSet = permissionSet,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var agent = new AgentDB
+        {
+            Id = Guid.NewGuid(),
+            Name = "Accessible Threads Agent",
+            RoleId = role.Id,
+            Role = role,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var current = new ChannelDB
+        {
+            Id = Guid.NewGuid(),
+            Title = "Current",
+            AgentId = agent.Id,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var source = new ChannelDB
+        {
+            Id = Guid.NewGuid(),
+            Title = "Source",
+            AgentId = agent.Id,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        Db.PermissionSets.Add(permissionSet);
+        Db.Roles.Add(role);
+        Db.Agents.Add(agent);
+        Db.Channels.AddRange(current, source);
+        await Db.SaveChangesAsync();
+        return (agent.Id, current.Id);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _scope.DisposeAsync();
+        await _provider.DisposeAsync();
+    }
+}

@@ -10,9 +10,15 @@ namespace SharpClaw.Modules.TestHarness;
 
 public sealed class TestHarnessModule : ISharpClawModule
 {
+    private int _permissionDescriptorBuilds;
+
     public string Id => TestHarnessConstants.ModuleId;
     public string DisplayName => "Test Harness";
     public string ToolPrefix => TestHarnessConstants.ToolPrefix;
+    public int PermissionDescriptorBuilds => Volatile.Read(ref _permissionDescriptorBuilds);
+
+    public void ResetDiagnostics() =>
+        Interlocked.Exchange(ref _permissionDescriptorBuilds, 0);
 
     public void ConfigureServices(IServiceCollection services)
     {
@@ -40,6 +46,11 @@ public sealed class TestHarnessModule : ISharpClawModule
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
             TestHarnessConstants.CostProviderKey,
             "SharpClaw Test Harness Cost",
+            supportsNativeToolCalling: true,
+            sp.GetRequiredService<TestHarnessState>()));
+        services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            TestHarnessConstants.EdenStyleProviderKey,
+            "SharpClaw Test Harness EdenAI",
             supportsNativeToolCalling: true,
             sp.GetRequiredService<TestHarnessState>()));
     }
@@ -86,7 +97,8 @@ public sealed class TestHarnessModule : ISharpClawModule
                 TestHarnessConstants.InlinePermissionedTool,
                 "Deterministic permissioned inline tool for host enforcement tests.",
                 ToolBehaviorSchema(),
-                permission)
+                permission,
+                Aliases: [TestHarnessConstants.InlinePermissionedToolAlias])
         ];
     }
 
@@ -99,7 +111,8 @@ public sealed class TestHarnessModule : ISharpClawModule
                 TestHarnessConstants.JobPermissionedTool,
                 "Deterministic permissioned job tool for host enforcement tests.",
                 ToolBehaviorSchema(),
-                permission),
+                permission,
+                Aliases: [TestHarnessConstants.JobPermissionedToolAlias]),
 
             new(
                 TestHarnessConstants.JobStreamingTool,
@@ -108,6 +121,17 @@ public sealed class TestHarnessModule : ISharpClawModule
                 permission)
         ];
     }
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+    [
+        new(
+            TestHarnessConstants.ResourceType,
+            TestHarnessConstants.ResourceGrantLabel,
+            TestHarnessConstants.ResourceDelegateName,
+            LoadHarnessResourceIdsAsync,
+            LoadLookupItems: null,
+            DefaultResourceKey: TestHarnessConstants.DefaultResourceKey)
+    ];
 
     public async Task<string> ExecuteInlineToolAsync(
         string toolName,
@@ -188,6 +212,7 @@ public sealed class TestHarnessModule : ISharpClawModule
         var state = scopedServices.GetRequiredService<TestHarnessState>();
         var behavior = ApplyParameterOverrides(state.StreamingJobToolBehavior, parameters);
         var parts = SplitToolResult(BuildToolResult(behavior), 3);
+        var startedAt = Stopwatch.GetTimestamp();
         var sw = Stopwatch.StartNew();
         var failed = false;
 
@@ -208,6 +233,7 @@ public sealed class TestHarnessModule : ISharpClawModule
         finally
         {
             sw.Stop();
+            var completedAt = Stopwatch.GetTimestamp();
             state.RecordToolCall(new CapturedToolCall(
                 state.NextSequence(),
                 "job-streaming",
@@ -218,7 +244,11 @@ public sealed class TestHarnessModule : ISharpClawModule
                 null,
                 job.JobId,
                 sw.ElapsedMilliseconds,
-                failed));
+                failed)
+            {
+                StartedAtTimestamp = startedAt,
+                CompletedAtTimestamp = completedAt
+            });
         }
     }
 
@@ -271,6 +301,7 @@ public sealed class TestHarnessModule : ISharpClawModule
     {
         behavior = ApplyParameterOverrides(behavior, parameters);
         var sequence = state.NextSequence();
+        var startedAt = Stopwatch.GetTimestamp();
         var sw = Stopwatch.StartNew();
         var failed = false;
         try
@@ -291,6 +322,7 @@ public sealed class TestHarnessModule : ISharpClawModule
         finally
         {
             sw.Stop();
+            var completedAt = Stopwatch.GetTimestamp();
             state.RecordToolCall(new CapturedToolCall(
                 sequence,
                 kind,
@@ -301,7 +333,11 @@ public sealed class TestHarnessModule : ISharpClawModule
                 threadId,
                 jobId,
                 sw.ElapsedMilliseconds,
-                failed));
+                failed)
+            {
+                StartedAtTimestamp = startedAt,
+                CompletedAtTimestamp = completedAt
+            });
         }
     }
 
@@ -354,11 +390,19 @@ public sealed class TestHarnessModule : ISharpClawModule
         return chunks;
     }
 
-    private static ModuleToolPermission PermissionDescriptor() =>
-        new(
+    private ModuleToolPermission PermissionDescriptor()
+    {
+        Interlocked.Increment(ref _permissionDescriptorBuilds);
+        return new(
             IsPerResource: false,
             Check: null,
             DelegateTo: TestHarnessConstants.DelegateName);
+    }
+
+    private static Task<List<Guid>> LoadHarnessResourceIdsAsync(
+        IServiceProvider _,
+        CancellationToken __) =>
+        Task.FromResult(new List<Guid>());
 
     private static JsonElement EmptyObjectSchema()
     {

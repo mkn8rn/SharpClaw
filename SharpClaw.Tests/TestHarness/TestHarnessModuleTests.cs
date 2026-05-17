@@ -19,14 +19,18 @@ public sealed class TestHarnessModuleTests
         factory.IsAvailable(TestHarnessConstants.StreamingProviderKey).Should().BeTrue();
         factory.IsAvailable(TestHarnessConstants.ToolProviderKey).Should().BeTrue();
         factory.IsAvailable(TestHarnessConstants.CostProviderKey).Should().BeTrue();
+        factory.IsAvailable(TestHarnessConstants.EdenStyleProviderKey).Should().BeTrue();
 
         var registry = host.Services.GetRequiredService<SharpClaw.Application.Core.Modules.ModuleRegistry>();
         registry.GetHeaderTag(TestHarnessConstants.HeaderTagName).Should().NotBeNull();
         registry.IsInlineTool(TestHarnessConstants.InlinePermissionedTool).Should().BeTrue();
+        registry.IsInlineTool(TestHarnessConstants.InlinePermissionedToolAlias).Should().BeTrue();
         registry.TryResolve(TestHarnessConstants.JobPermissionedTool, out var moduleId, out var toolName)
             .Should().BeTrue();
         moduleId.Should().Be(TestHarnessConstants.ModuleId);
         toolName.Should().Be(TestHarnessConstants.JobPermissionedTool);
+        registry.GetDescriptorByDefaultResourceKey(TestHarnessConstants.DefaultResourceKey)
+            .Should().NotBeNull();
         await Task.CompletedTask;
     }
 

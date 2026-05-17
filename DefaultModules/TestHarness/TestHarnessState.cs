@@ -70,6 +70,14 @@ public sealed partial class TestHarnessState
             Turns = [new TestHarnessProviderTurn { ThrowBeforeResponse = true }]
         });
         ConfigureProvider(TestHarnessConstants.CostProviderKey, new TestHarnessProviderScenario());
+        ConfigureProvider(TestHarnessConstants.EdenStyleProviderKey, new TestHarnessProviderScenario
+        {
+            ModelIds =
+            [
+                TestHarnessConstants.ModelId,
+                "edenai/harness-chat"
+            ]
+        });
 
         OpenInlineToolBehavior = new TestHarnessToolBehavior();
         PermissionedInlineToolBehavior = new TestHarnessToolBehavior();

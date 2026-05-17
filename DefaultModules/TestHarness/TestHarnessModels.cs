@@ -15,15 +15,22 @@ public static class TestHarnessConstants
     public const string ToolProviderKey = "sharpclaw-test-tools";
     public const string FailingProviderKey = "sharpclaw-test-failing";
     public const string CostProviderKey = "sharpclaw-test-cost";
+    public const string EdenStyleProviderKey = "sharpclaw-test-edenai";
 
     public const string ModelId = "test-harness-model";
     public const string GlobalFlagKey = "CanUseTestHarnessTools";
     public const string DelegateName = "UseTestHarnessToolAsync";
+    public const string ResourceType = "SharpClaw.TestHarness.Resource";
+    public const string ResourceGrantLabel = "TestHarnessResource";
+    public const string ResourceDelegateName = "UseTestHarnessResourceAsync";
+    public const string DefaultResourceKey = "test_harness_resource";
 
     public const string HeaderTagName = "testharness";
     public const string InlineOpenTool = "test_harness_inline_open";
     public const string InlinePermissionedTool = "test_harness_inline_permissioned";
+    public const string InlinePermissionedToolAlias = "test_harness_inline_permissioned_alias";
     public const string JobPermissionedTool = "test_harness_job_permissioned";
+    public const string JobPermissionedToolAlias = "test_harness_job_permissioned_alias";
     public const string JobStreamingTool = "test_harness_job_streaming";
 }
 
@@ -134,7 +141,11 @@ public sealed record CapturedToolCall(
     Guid? ThreadId,
     Guid? JobId,
     long ElapsedMs,
-    bool Failed);
+    bool Failed)
+{
+    public long StartedAtTimestamp { get; init; }
+    public long CompletedAtTimestamp { get; init; }
+}
 
 public sealed record CapturedHeaderTagCall(
     int Sequence,

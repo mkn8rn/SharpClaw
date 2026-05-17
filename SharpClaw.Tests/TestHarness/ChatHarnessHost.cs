@@ -35,6 +35,9 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
     public SharpClawDbContext Db => Services.GetRequiredService<SharpClawDbContext>();
     public ChatService Chat => Services.GetRequiredService<ChatService>();
     public TestHarnessState Harness => _root.GetRequiredService<TestHarnessState>();
+    public TestHarnessModule Module => (TestHarnessModule)Services
+        .GetRequiredService<ModuleRegistry>()
+        .GetModule(TestHarnessConstants.ModuleId)!;
     public CountingPersistenceEntityResolver PersistenceCounter =>
         _root.GetRequiredService<CountingPersistenceEntityResolver>();
 
@@ -70,9 +73,18 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddScoped<SessionService>();
         services.AddScoped<AgentActionService>();
         services.AddScoped<AgentJobService>();
+        services.AddScoped<AgentService>();
+        services.AddScoped<ChannelService>();
+        services.AddScoped<ContextService>();
+        services.AddScoped<DefaultResourceSetService>();
+        services.AddScoped<ProviderCostService>();
+        services.AddScoped<ProviderService>();
+        services.AddScoped<RoleService>();
         services.AddScoped<HeaderTagProcessor>();
         services.AddScoped<ChatService>();
         services.AddScoped<ModuleExecutionContext>();
+        services.AddScoped<ISharpClawDataContext>(
+            sp => sp.GetRequiredService<SharpClawDbContext>());
         services.AddSingleton<ModuleEventDispatcher>(sp => new ModuleEventDispatcher(
             sp,
             sp.GetRequiredService<IConfiguration>(),
@@ -273,5 +285,107 @@ internal static class HarnessBudget
         measuredMs.Should().BeLessThanOrEqualTo(
             budget,
             $"{surface} has a hard budget of provider time ({configuredProviderMs}ms) plus overhead ({allowedOverheadMs}ms)");
+    }
+
+    public static void AssertOverheadPercent(
+        long measuredMs,
+        int configuredProviderMs,
+        int allowedPercent,
+        string surface)
+    {
+        var budget = configuredProviderMs + (configuredProviderMs * allowedPercent / 100);
+        measuredMs.Should().BeLessThanOrEqualTo(
+            budget,
+            $"{surface} has a hard budget of provider time ({configuredProviderMs}ms) plus {allowedPercent}% overhead");
+    }
+
+    public static void AssertOverheadAbsolute(
+        long measuredMs,
+        int configuredProviderMs,
+        int allowedOverheadMs,
+        string surface)
+    {
+        measuredMs.Should().BeLessThanOrEqualTo(
+            configuredProviderMs + allowedOverheadMs,
+            $"{surface} has a hard budget of provider time ({configuredProviderMs}ms) plus {allowedOverheadMs}ms overhead");
+    }
+
+    public static void AssertSharpClawOverheadPercent(
+        long clientVisibleMs,
+        long providerActualMs,
+        int configuredProviderMs,
+        int allowedPercent,
+        string surface)
+    {
+        var overheadMs = Math.Max(0, clientVisibleMs - providerActualMs);
+        var providerJitterMs = providerActualMs - configuredProviderMs;
+        var budgetMs = configuredProviderMs * allowedPercent / 100;
+        overheadMs.Should().BeLessThanOrEqualTo(
+            budgetMs,
+            $"{surface} SharpClaw overhead must be within {allowedPercent}% of the configured provider baseline; " +
+            $"clientVisibleMs={clientVisibleMs}, providerActualMs={providerActualMs}, " +
+            $"providerConfiguredMs={configuredProviderMs}, providerTimerJitterMs={providerJitterMs}, " +
+            $"sharpClawOverheadMs={overheadMs}, allowedOverheadMs={budgetMs}");
+    }
+
+    public static void AssertSharpClawOverheadAbsolute(
+        long clientVisibleMs,
+        long providerActualMs,
+        int configuredProviderMs,
+        int allowedOverheadMs,
+        string surface)
+    {
+        var overheadMs = Math.Max(0, clientVisibleMs - providerActualMs);
+        var providerJitterMs = providerActualMs - configuredProviderMs;
+        overheadMs.Should().BeLessThanOrEqualTo(
+            allowedOverheadMs,
+            $"{surface} SharpClaw overhead must stay within {allowedOverheadMs}ms; " +
+            $"clientVisibleMs={clientVisibleMs}, providerActualMs={providerActualMs}, " +
+            $"providerConfiguredMs={configuredProviderMs}, providerTimerJitterMs={providerJitterMs}, " +
+            $"sharpClawOverheadMs={overheadMs}, allowedOverheadMs={allowedOverheadMs}");
+    }
+
+    public static void AssertPerCallOverhead(
+        double perCallOverheadMs,
+        long clientVisibleMs,
+        long providerActualMs,
+        int calls,
+        int maxPerCallMs,
+        string surface)
+    {
+        var overheadMs = Math.Max(0, clientVisibleMs - providerActualMs);
+        perCallOverheadMs.Should().BeLessThanOrEqualTo(
+            maxPerCallMs,
+            $"{surface} per-call SharpClaw overhead must stay under {maxPerCallMs}ms; " +
+            $"clientVisibleMs={clientVisibleMs}, providerActualMs={providerActualMs}, " +
+            $"sharpClawOverheadMs={overheadMs}, calls={calls}, perCallOverheadMs={perCallOverheadMs:F3}");
+    }
+}
+
+internal sealed record TimedRunStats(
+    IReadOnlyList<long> Measurements,
+    long Max,
+    double P95,
+    double P99)
+{
+    public static TimedRunStats From(IReadOnlyList<long> measurements)
+    {
+        measurements.Should().NotBeEmpty();
+        var ordered = measurements.Order().ToList();
+        return new TimedRunStats(
+            measurements,
+            ordered[^1],
+            Percentile(ordered, 0.95),
+            Percentile(ordered, 0.99));
+    }
+
+    private static double Percentile(IReadOnlyList<long> ordered, double percentile)
+    {
+        if (ordered.Count == 1)
+            return ordered[0];
+
+        var index = (int)Math.Ceiling(percentile * ordered.Count) - 1;
+        index = Math.Clamp(index, 0, ordered.Count - 1);
+        return ordered[index];
     }
 }
