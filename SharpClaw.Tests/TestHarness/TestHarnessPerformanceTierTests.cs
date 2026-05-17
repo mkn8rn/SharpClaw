@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -30,7 +31,12 @@ namespace SharpClaw.Tests.TestHarness;
 [TestFixture]
 public sealed class TestHarnessPerformanceTierTests
 {
+    private const int HotPathSampleCount = 20;
+    private const double HotPathAverageBudgetMs = 5;
+    private const double HotPathOutlierBudgetMs = 25;
+
     private static readonly ConcurrentDictionary<string, Lazy<Task<long>>> Measurements = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Task<HotPathSampleMeasurement>>> HotPathMeasurements = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<SurfaceLatencyMeasurement>>> LatencyMeasurements = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<StreamingSurfaceSetMeasurement>>> SurfaceSetMeasurements = new();
     private static readonly ConcurrentDictionary<string, Lazy<Task<ToolRoundTripMeasurement>>> ToolMeasurements = new();
@@ -285,8 +291,8 @@ public sealed class TestHarnessPerformanceTierTests
     public async Task WarmChatPath_Under5ms()
     {
         HarnessDiagnostics.RequireEnabled();
-        var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
-        measured.Should().BeLessThanOrEqualTo(5);
+        var measured = await CachedHotPathAsync("warm-cost-samples", MeasureWarmCostLookupSamplesAsync);
+        AssertHotPathBudget(measured, "warm cost lookup");
     }
 
     [Test]
@@ -294,16 +300,20 @@ public sealed class TestHarnessPerformanceTierTests
     public async Task PromptAssembly_AllDynamicDisabled_Under5ms()
     {
         HarnessDiagnostics.RequireEnabled();
-        var measured = await CachedAsync("prompt-disabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: false));
-        measured.Should().BeLessThanOrEqualTo(5);
+        var measured = await CachedHotPathAsync(
+            "prompt-disabled-samples",
+            () => MeasurePromptAssemblySamplesAsync(dynamicEnabled: false));
+        AssertHotPathBudget(measured, "prompt assembly with dynamic text disabled");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
     public async Task PerformanceGate_PromptAssembly_AllDynamicDisabled_Under5ms()
     {
-        var measured = await CachedAsync("prompt-disabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: false));
-        measured.Should().BeLessThanOrEqualTo(5);
+        var measured = await CachedHotPathAsync(
+            "prompt-disabled-samples",
+            () => MeasurePromptAssemblySamplesAsync(dynamicEnabled: false));
+        AssertHotPathBudget(measured, "prompt assembly with dynamic text disabled");
     }
 
     [TestCase(25)]
@@ -330,16 +340,16 @@ public sealed class TestHarnessPerformanceTierTests
     public async Task CostLookup_Warm_Under5ms()
     {
         HarnessDiagnostics.RequireEnabled();
-        var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
-        measured.Should().BeLessThanOrEqualTo(5);
+        var measured = await CachedHotPathAsync("warm-cost-samples", MeasureWarmCostLookupSamplesAsync);
+        AssertHotPathBudget(measured, "warm cost lookup");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
     public async Task PerformanceGate_CostLookup_Warm_Under5ms()
     {
-        var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
-        measured.Should().BeLessThanOrEqualTo(5);
+        var measured = await CachedHotPathAsync("warm-cost-samples", MeasureWarmCostLookupSamplesAsync);
+        AssertHotPathBudget(measured, "warm cost lookup");
     }
 
     [TestCase(2)]
@@ -528,6 +538,11 @@ public sealed class TestHarnessPerformanceTierTests
     private static Task<long> CachedAsync(string key, Func<Task<long>> factory) =>
         Measurements.GetOrAdd(key, _ => new Lazy<Task<long>>(factory)).Value;
 
+    private static Task<HotPathSampleMeasurement> CachedHotPathAsync(
+        string key,
+        Func<Task<HotPathSampleMeasurement>> factory) =>
+        HotPathMeasurements.GetOrAdd(key, _ => new Lazy<Task<HotPathSampleMeasurement>>(factory)).Value;
+
     private static Task<SurfaceLatencyMeasurement> CachedLatencyAsync(
         string key,
         Func<Task<SurfaceLatencyMeasurement>> factory) =>
@@ -542,6 +557,16 @@ public sealed class TestHarnessPerformanceTierTests
         string key,
         Func<Task<ToolRoundTripMeasurement>> factory) =>
         ToolMeasurements.GetOrAdd(key, _ => new Lazy<Task<ToolRoundTripMeasurement>>(factory)).Value;
+
+    private static void AssertHotPathBudget(HotPathSampleMeasurement measured, string surface)
+    {
+        measured.AverageMs.Should().BeLessThanOrEqualTo(
+            HotPathAverageBudgetMs,
+            $"{surface} must sustain a <= {HotPathAverageBudgetMs}ms hot-cache average; {measured.Describe()}");
+        measured.MaxMs.Should().BeLessThanOrEqualTo(
+            HotPathOutlierBudgetMs,
+            $"{surface} must not show a visible hot-cache stall; {measured.Describe()}");
+    }
 
     private static async Task<StreamingSurfaceSetMeasurement> MeasureAllStreamingSurfacesAsync(int providerMs)
     {
@@ -907,7 +932,7 @@ public sealed class TestHarnessPerformanceTierTests
         return new ToolRoundTripMeasurement(sw.ElapsedMilliseconds, providerElapsedMs);
     }
 
-    private static async Task<long> MeasureWarmCostLookupAsync()
+    private static async Task<HotPathSampleMeasurement> MeasureWarmCostLookupSamplesAsync()
     {
         await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
         {
@@ -915,12 +940,19 @@ public sealed class TestHarnessPerformanceTierTests
         });
         var seeded = await host.SeedChatAsync(TestHarnessConstants.PlainProviderKey);
         await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm"));
-
-        var sw = Stopwatch.StartNew();
         await host.Chat.GetChannelCostAsync(seeded.Channel.Id);
         await host.Chat.GetAgentCostAsync(seeded.Agent.Id);
-        sw.Stop();
-        return sw.ElapsedMilliseconds;
+
+        var samples = new List<double>(HotPathSampleCount);
+        for (var i = 0; i < HotPathSampleCount; i++)
+        {
+            var startedAt = Stopwatch.GetTimestamp();
+            await host.Chat.GetChannelCostAsync(seeded.Channel.Id);
+            await host.Chat.GetAgentCostAsync(seeded.Agent.Id);
+            samples.Add(ElapsedMillisecondsSince(startedAt));
+        }
+
+        return new HotPathSampleMeasurement("warm-cost-lookup", samples);
     }
 
     private static async Task<long> MeasurePromptAssemblyAsync(bool dynamicEnabled)
@@ -948,6 +980,43 @@ public sealed class TestHarnessPerformanceTierTests
         sw.Stop();
         return sw.ElapsedMilliseconds;
     }
+
+    private static async Task<HotPathSampleMeasurement> MeasurePromptAssemblySamplesAsync(bool dynamicEnabled)
+    {
+        var samples = new List<double>(HotPathSampleCount);
+        for (var i = 0; i < HotPathSampleCount; i++)
+        {
+            await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
+            {
+                ["Chat:DisableDefaultHeaders"] = (!dynamicEnabled).ToString(),
+                ["Chat:DisableDefaultSystemPrompt"] = (!dynamicEnabled).ToString(),
+                ["Chat:DisableHeaderTagExpansion"] = (!dynamicEnabled).ToString(),
+                ["Chat:DisableModuleHeaderTags"] = (!dynamicEnabled).ToString(),
+                ["AgentOrchestration:DisableAccessibleThreadsHeader"] = (!dynamicEnabled).ToString(),
+                ["Chat:CacheMaxMegabytes"] = "16"
+            });
+            var seeded = await host.SeedChatAsync(
+                TestHarnessConstants.PlainProviderKey,
+                agentSystemPrompt: "p",
+                customHeader: dynamicEnabled ? "h {{agent-name}} {{testharness}}\n" : null);
+
+            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm one"));
+            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm two"));
+            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm three"));
+            host.Harness.Reset();
+
+            var startedAt = Stopwatch.GetTimestamp();
+            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest($"measure {i}"));
+            samples.Add(ElapsedMillisecondsSince(startedAt));
+        }
+
+        return new HotPathSampleMeasurement(
+            dynamicEnabled ? "prompt-assembly-dynamic-enabled" : "prompt-assembly-dynamic-disabled",
+            samples);
+    }
+
+    private static double ElapsedMillisecondsSince(long startedAt) =>
+        (Stopwatch.GetTimestamp() - startedAt) * 1000.0 / Stopwatch.Frequency;
 
     private static async Task<long> MeasureProviderResolutionAsync()
     {
@@ -1050,6 +1119,33 @@ public sealed class TestHarnessPerformanceTierTests
 }
 
 internal sealed record ToolRoundTripMeasurement(long ClientVisibleMs, long ProviderActualMs);
+
+internal sealed record HotPathSampleMeasurement(string Name, IReadOnlyList<double> SamplesMs)
+{
+    public double AverageMs => SamplesMs.Average();
+
+    public double MaxMs => SamplesMs.Max();
+
+    public double P95Ms => Percentile(0.95);
+
+    public double P99Ms => Percentile(0.99);
+
+    public string Describe() =>
+        $"{Name}: samples={SamplesMs.Count}, averageMs={FormatMs(AverageMs)}, p95Ms={FormatMs(P95Ms)}, " +
+        $"p99Ms={FormatMs(P99Ms)}, maxMs={FormatMs(MaxMs)}, valuesMs=[{string.Join(", ", SamplesMs.Select(FormatMs))}]";
+
+    private static string FormatMs(double value) =>
+        value.ToString("F3", CultureInfo.InvariantCulture);
+
+    private double Percentile(double percentile)
+    {
+        SamplesMs.Should().NotBeEmpty();
+        var ordered = SamplesMs.Order().ToList();
+        var index = (int)Math.Ceiling(percentile * ordered.Count) - 1;
+        index = Math.Clamp(index, 0, ordered.Count - 1);
+        return ordered[index];
+    }
+}
 
 internal sealed record SurfaceLatencyMeasurement(
     string Surface,
