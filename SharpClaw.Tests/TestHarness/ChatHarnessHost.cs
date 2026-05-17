@@ -40,6 +40,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         .GetModule(TestHarnessConstants.ModuleId)!;
     public CountingPersistenceEntityResolver PersistenceCounter =>
         _root.GetRequiredService<CountingPersistenceEntityResolver>();
+    public AsyncServiceScope CreateScope() => _root.CreateAsyncScope();
 
     public static ChatHarnessHost Create(
         IReadOnlyDictionary<string, string?>? settings = null)
@@ -50,6 +51,8 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
             .Build();
 
         var services = new ServiceCollection();
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseName = "SharpClawHarness_" + Guid.NewGuid().ToString("N");
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
         services.AddHttpClient();
@@ -60,8 +63,8 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         });
         services.AddDbContext<SharpClawDbContext>(
             options => options.UseInMemoryDatabase(
-                "SharpClawHarness_" + Guid.NewGuid().ToString("N"),
-                new InMemoryDatabaseRoot()));
+                databaseName,
+                databaseRoot));
         services.AddSingleton<ModuleRegistry>();
         services.AddSingleton<ModuleMetricsCollector>();
         services.AddSingleton<ThreadActivitySignal>();

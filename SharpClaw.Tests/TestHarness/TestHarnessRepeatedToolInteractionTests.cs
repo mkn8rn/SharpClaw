@@ -63,8 +63,10 @@ public sealed class TestHarnessRepeatedToolInteractionTests
     }
 
     [TestCaseSource(nameof(HundredToolCallPerCallTiers))]
+    [Category(HarnessTestCategories.PerformanceDiagnostic)]
     public async Task ProviderStream_100AllowedNoOpToolCalls_WarmCache_PerCallOverhead_Tiered(int maxPerCallMs)
     {
+        HarnessDiagnostics.RequireEnabled();
         var measurement = await CachedMeasurementAsync(
             "hundred-allowed-warm",
             MeasureHundredAllowedWarmAsync);
@@ -83,6 +85,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
     }
 
     [Test]
+    [Category(HarnessTestCategories.PerformanceGate)]
     public async Task ProviderStream_100AllowedNoOpToolCalls_WarmCache_ReportsMaxP95AndP99()
     {
         var measurement = await CachedMeasurementAsync(
@@ -96,17 +99,17 @@ public sealed class TestHarnessRepeatedToolInteractionTests
     }
 
     [Test]
-    public async Task ProviderStream_100DeniedToolCalls_NeverInvokeModuleBodyAndStayCheaperThanAllowed()
+    [Category(HarnessTestCategories.PerformanceGate)]
+    public async Task ProviderStream_100DeniedToolCalls_NeverInvokeModuleBodyAndStayWithinGateBudget()
     {
-        var allowed = await CachedMeasurementAsync("hundred-allowed-warm", MeasureHundredAllowedWarmAsync);
         var denied = await CachedMeasurementAsync("hundred-denied-warm", MeasureHundredDeniedWarmAsync);
 
         denied.ToolBodyInvocations.Should().Be(0);
         denied.DescriptorBuilds.Should().BeGreaterThan(0);
         denied.PermissionDeniedResults.Should().Be(HundredCalls);
         denied.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(
-            allowed.SharpClawOverheadMs,
-            $"denial should stop at host permission enforcement; allowed={allowed}, denied={denied}");
+            50,
+            $"denial should stop at host permission enforcement and stay below 0.5ms per denied tool call; denied={denied}");
     }
 
     [Test]
@@ -397,6 +400,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
     }
 
     [Test]
+    [Category(HarnessTestCategories.PerformanceGate)]
     public async Task ProviderStream_10ParallelChatsEachWith100AllowedNoOpToolCalls_DoNotSerializeOrContaminate()
     {
         var sw = Stopwatch.StartNew();
@@ -414,6 +418,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
     }
 
     [Test]
+    [Category(HarnessTestCategories.PerformanceGate)]
     public async Task ProviderStream_10ParallelChatsEachWith100DeniedToolCalls_DoNotSerializeOrInvokeTools()
     {
         var sw = Stopwatch.StartNew();

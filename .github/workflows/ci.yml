@@ -11,55 +11,103 @@ on:
     branches:
       - main
       - release/**
+
+  workflow_dispatch:
+    inputs:
+      run_diagnostics:
+        description: Run non-blocking performance diagnostic tiers
+        required: false
+        default: "false"
+
 env:
-  STEP_TIMEOUT_MINUTES: 60
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "true"
+  DOTNET_VERSION: 10.0.x
+  TEST_PROJECT: ".\\SharpClaw.Tests\\SharpClaw.Tests.csproj"
+
+permissions:
+  contents: read
 
 jobs:
-  placeholder:
-    name: CI Placeholder
-    runs-on: ubuntu-latest
+  correctness_tests:
+    name: Correctness Tests
+    runs-on: windows-latest
+    timeout-minutes: 60
     steps:
-      - run: echo "Uno platform jobs are temporarily disabled."
-#  smoke_test:
-#    name: Smoke Test (Debug Build of SharpClaw)
-#    runs-on: windows-latest
-#    steps:
-#      - uses: actions/checkout@v3
-#        with:
-#          fetch-depth: 0
-#
-#      - name: Install Dependencies
-#        timeout-minutes: ${{ fromJSON(env.STEP_TIMEOUT_MINUTES) }}
-#        uses: "./.github/steps/install_dependencies"
-#
-#      # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
-#      - name: Setup MSBuild
-#        uses: microsoft/setup-msbuild@v1.3.1
-#
-#      - name: Build SharpClaw (Debug)
-#        shell: pwsh
-#        run: msbuild ./SharpClaw/SharpClaw.csproj /r
-#
-#  unit_test:
-#    name: Unit Tests
-#    runs-on: windows-latest
-#    steps:
-#      - uses: actions/checkout@v3
-#        with:
-#          fetch-depth: 0
-#
-#      - name: Install Dependencies
-#        timeout-minutes: ${{ fromJSON(env.STEP_TIMEOUT_MINUTES) }}
-#        uses: "./.github/steps/install_dependencies"
-#
-#      # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
-#      - name: Setup MSBuild
-#        uses: microsoft/setup-msbuild@v1.3.1
-#
-#      - name: Build SharpClaw.Tests (Release)
-#        shell: pwsh
-#        run: msbuild ./SharpClaw.Tests/SharpClaw.Tests.csproj /p:Configuration=Release /p:OverrideTargetFramework=net10.0 /r
-#
-#      - name: Run Unit Tests
-#        shell: pwsh
-#        run: dotnet test ./SharpClaw.Tests/SharpClaw.Tests.csproj --no-build -c Release --logger GitHubActions --blame-crash --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore $env:TEST_PROJECT
+
+      - name: Run correctness suite
+        shell: pwsh
+        run: >
+          dotnet test $env:TEST_PROJECT
+          --configuration Release
+          --no-restore
+          --logger GitHubActions
+          --filter "TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate"
+
+  performance_gates:
+    name: Performance Gates
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore $env:TEST_PROJECT
+
+      # Require this check in GitHub branch protection. It is the blocking
+      # performance signal; diagnostic tiers below are for manual analysis.
+      - name: Run performance gates
+        shell: pwsh
+        run: >
+          dotnet test $env:TEST_PROJECT
+          --configuration Release
+          --no-restore
+          --logger GitHubActions
+          --filter "TestCategory=PerformanceGate"
+
+  performance_diagnostics:
+    name: Performance Diagnostics
+    if: github.event_name == 'workflow_dispatch' && inputs.run_diagnostics == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore $env:TEST_PROJECT
+
+      - name: Run diagnostic tiers
+        shell: pwsh
+        env:
+          SHARPCLAW_RUN_PERF_DIAGNOSTICS: "1"
+        run: >
+          dotnet test $env:TEST_PROJECT
+          --configuration Release
+          --no-restore
+          --logger GitHubActions
+          --filter "TestCategory=PerformanceDiagnostic"

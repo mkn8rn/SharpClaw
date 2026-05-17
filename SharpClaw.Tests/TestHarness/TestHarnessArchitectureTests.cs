@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Entities.Core.Context;
@@ -73,6 +74,63 @@ public sealed class TestHarnessArchitectureTests
             .ToList();
 
         offenders.Should().BeEmpty();
+    }
+
+    [Test]
+    public void HostProjectsConsumeContractsAsPackageReferences()
+    {
+        var root = FindSolutionRoot();
+        var projectRelativePaths = new[]
+        {
+            "SharpClaw.Application.API/SharpClaw.Application.API.csproj",
+            "SharpClaw.Application.Core/SharpClaw.Application.Core.csproj",
+            "SharpClaw.Application.Infrastructure/SharpClaw.Application.Infrastructure.csproj",
+            "SharpClaw.Gateway/SharpClaw.Gateway.csproj",
+            "SharpClaw.Uno/SharpClaw.Uno.csproj"
+        };
+
+        foreach (var relativePath in projectRelativePaths)
+        {
+            var project = XDocument.Load(Path.Combine(root, relativePath));
+            project.Descendants("ProjectReference")
+                .Select(e => e.Attribute("Include")?.Value ?? "")
+                .Should()
+                .NotContain(path => path.Contains("SharpClaw.Contracts", StringComparison.OrdinalIgnoreCase));
+            project.Descendants("PackageReference")
+                .Select(e => e.Attribute("Include")?.Value)
+                .Should()
+                .Contain("SharpClaw.Contracts");
+        }
+    }
+
+    [Test]
+    public void BundledTestHarnessIsPackagedButNotAProductionCompileReference()
+    {
+        var root = FindSolutionRoot();
+        var apiProject = XDocument.Load(Path.Combine(
+            root,
+            "SharpClaw.Application.API",
+            "SharpClaw.Application.API.csproj"));
+
+        var harnessReference = apiProject.Descendants("ProjectReference")
+            .Single(e => (e.Attribute("Include")?.Value ?? "")
+                .Contains("DefaultModules\\TestHarness", StringComparison.OrdinalIgnoreCase));
+
+        harnessReference.Element("ReferenceOutputAssembly")!.Value.Should().Be("false");
+    }
+
+    [Test]
+    public void CiWorkflowRunsCorrectnessGatesAndPerformanceGatesSeparately()
+    {
+        var root = FindSolutionRoot();
+        var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
+
+        workflow.Should().Contain("name: Correctness Tests");
+        workflow.Should().Contain("name: Performance Gates");
+        workflow.Should().Contain("--filter \"TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate\"");
+        workflow.Should().Contain("--filter \"TestCategory=PerformanceGate\"");
+        workflow.Should().Contain("SHARPCLAW_RUN_PERF_DIAGNOSTICS: \"1\"");
+        workflow.Should().Contain("--filter \"TestCategory=PerformanceDiagnostic\"");
     }
 
     private static IConfigurationRoot LoadTemplate(string path) =>
