@@ -149,7 +149,7 @@ public sealed class AgentService(
         ValidateCompletionParameters(agent, agent.Model.Provider.ProviderKey);
 
         await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState();
+        InvalidateAgentRuntimeState(id);
         return ToResponse(agent, agent.Model);
     }
 
@@ -207,7 +207,7 @@ public sealed class AgentService(
         }
 
         await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState();
+        InvalidateAgentRuntimeState(agentId);
         return ToResponse(agent, agent.Model);
     }
 
@@ -371,7 +371,7 @@ public sealed class AgentService(
 
         db.Agents.Remove(agent);
         await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState();
+        InvalidateAgentRuntimeState(id);
         return true;
     }
 
@@ -483,10 +483,11 @@ public sealed class AgentService(
         return value is null || !bool.TryParse(value, out var enforced) || enforced;
     }
 
-    private void InvalidateAgentRuntimeState()
+    private void InvalidateAgentRuntimeState(Guid agentId)
     {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        chatCache.RemoveHeaderAgentSuffixesForAgent(agentId);
+        chatCache.RemoveEffectiveToolsForAgent(agentId);
+        chatCache.RemoveDefaultResourceResolutionForAgent(agentId);
     }
 
     private async Task EnsureAgentNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)

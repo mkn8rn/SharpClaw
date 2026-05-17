@@ -40,6 +40,7 @@ public sealed class AgentJobService(
     ModuleEventDispatcher eventDispatcher,
     IServiceScopeFactory serviceScopeFactory,
     IConfiguration configuration,
+    ChatCache chatCache,
     ILogger<AgentJobService> logger)
 {
     private readonly ModuleEventDispatcher _eventDispatcher = eventDispatcher;
@@ -797,6 +798,20 @@ public sealed class AgentJobService(
         string? actionKey, Guid channelId, Guid agentId,
         CancellationToken ct)
     {
+        var resolved = await chatCache.GetOrCreateAsync(
+            ChatCache.KeyDefaultResourceResolution(channelId, agentId, actionKey),
+            async innerCt => new ResolvedDefaultResourceId(
+                await ResolveDefaultResourceIdColdAsync(actionKey, channelId, agentId, innerCt)),
+            static _ => 32,
+            ct);
+
+        return resolved?.ResourceId;
+    }
+
+    private async Task<Guid?> ResolveDefaultResourceIdColdAsync(
+        string? actionKey, Guid channelId, Guid agentId,
+        CancellationToken ct)
+    {
         var delegateTo = ResolveDelegateTo(actionKey);
 
         var ch = await db.Channels
@@ -1020,6 +1035,8 @@ public sealed class AgentJobService(
         var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
         return descriptor?.DelegateTo;
     }
+
+    private sealed record ResolvedDefaultResourceId(Guid? ResourceId);
 
     private async Task<AgentJobDB?> LoadJobAsync(Guid jobId, CancellationToken ct)
     {

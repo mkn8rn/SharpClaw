@@ -137,6 +137,7 @@ public sealed class AgentJobTokenAccountingTests
             eventDispatcher,
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             configuration,
+            new ChatCache(configuration),
             NullLogger<AgentJobService>.Instance);
     }
 
@@ -154,6 +155,7 @@ public sealed class AgentJobTokenAccountingTests
         services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
         services.AddSingleton<ModuleRegistry>();
         services.AddSingleton<ModuleMetricsCollector>();
+        services.AddSingleton<ChatCache>();
         services.AddSingleton<ModuleEventDispatcher>(sp =>
             new ModuleEventDispatcher(
                 sp,

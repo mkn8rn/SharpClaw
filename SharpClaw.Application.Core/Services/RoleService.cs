@@ -315,7 +315,7 @@ public sealed class RoleService(
     {
         chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
         chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        chatCache.RemoveByPrefix(ChatCache.PrefixDefaultResourceResolution);
     }
 
     private async Task EnsureRoleNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)

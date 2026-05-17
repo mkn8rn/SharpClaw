@@ -938,7 +938,9 @@ public sealed class TestHarnessPerformanceTierTests
             TestHarnessConstants.PlainProviderKey,
             agentSystemPrompt: "p",
             customHeader: dynamicEnabled ? "h {{agent-name}} {{testharness}}\n" : null);
-        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm"));
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm one"));
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm two"));
+        await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("warm three"));
         host.Harness.Reset();
 
         var sw = Stopwatch.StartNew();

@@ -190,7 +190,7 @@ public sealed class ChannelService(
             channel.DisableToolSchemas = request.DisableToolSchemas.Value;
 
         await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState();
+        InvalidateChannelRuntimeState(id);
         return ToResponse(channel, channel.Agent, channel.AgentContext);
     }
 
@@ -240,7 +240,7 @@ public sealed class ChannelService(
 
         db.Channels.Remove(channel);
         await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState();
+        InvalidateChannelRuntimeState(id);
         return true;
     }
 
@@ -266,7 +266,7 @@ public sealed class ChannelService(
         channel.AgentId = agent.Id;
         channel.Agent = agent;
         await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState();
+        InvalidateChannelRuntimeState(channelId);
         return ToResponse(channel, channel.Agent, channel.AgentContext);
     }
 
@@ -310,7 +310,7 @@ public sealed class ChannelService(
 
         channel.AllowedAgents.Add(agent);
         await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState();
+        InvalidateChannelRuntimeState(channelId);
         return await ListAllowedAgentsAsync(channelId, ct);
     }
 
@@ -328,7 +328,7 @@ public sealed class ChannelService(
         {
             channel.AllowedAgents.Remove(agent);
             await db.SaveChangesAsync(ct);
-            InvalidateChannelRuntimeState();
+            InvalidateChannelRuntimeState(channelId);
         }
 
         return await ListAllowedAgentsAsync(channelId, ct);
@@ -348,10 +348,10 @@ public sealed class ChannelService(
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    private void InvalidateChannelRuntimeState()
+    private void InvalidateChannelRuntimeState(Guid channelId)
     {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        chatCache.RemoveHeaderAgentSuffixesForChannel(channelId);
+        chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
     }
 
     private static ChannelResponse ToResponse(

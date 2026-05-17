@@ -13,6 +13,7 @@ public sealed class ChatCache(IConfiguration configuration)
     public const string PrefixHeaderAgentSuffix = "chat:header:agent-suffix:";
     public const string PrefixThreadHistoryLimits = "chat:thread-history-limits:";
     public const string PrefixEffectiveTools = "chat:effective-tools:";
+    public const string PrefixDefaultResourceResolution = "chat:default-resource:";
 
     private readonly object _gate = new();
     private readonly Dictionary<string, CacheEntry> _entries = new(StringComparer.Ordinal);
@@ -169,6 +170,25 @@ public sealed class ChatCache(IConfiguration configuration)
         }
     }
 
+    public void RemoveHeaderAgentSuffixesForAgent(Guid agentId) =>
+        RemoveByPrefix($"{PrefixHeaderAgentSuffix}{agentId:D}:");
+
+    public void RemoveHeaderAgentSuffixesForChannel(Guid channelId) =>
+        RemoveWhere(key =>
+            key.StartsWith(PrefixHeaderAgentSuffix, StringComparison.Ordinal)
+            && KeyHasGuidSegment(key, PrefixHeaderAgentSuffix.Length + 37, channelId));
+
+    public void RemoveEffectiveToolsForAgent(Guid agentId) =>
+        RemoveByPrefix($"{PrefixEffectiveTools}{agentId:D}:");
+
+    public void RemoveDefaultResourceResolutionForChannel(Guid channelId) =>
+        RemoveByPrefix($"{PrefixDefaultResourceResolution}{channelId:D}:");
+
+    public void RemoveDefaultResourceResolutionForAgent(Guid agentId) =>
+        RemoveWhere(key =>
+            key.StartsWith(PrefixDefaultResourceResolution, StringComparison.Ordinal)
+            && KeyHasGuidSegment(key, PrefixDefaultResourceResolution.Length + 37, agentId));
+
     public async Task<ChannelCostResponse> GetChannelCostAsync(
         Guid channelId,
         Func<CancellationToken, Task<ChannelCostResponse>> factory,
@@ -249,6 +269,14 @@ public sealed class ChatCache(IConfiguration configuration)
     public static string KeyEffectiveTools(Guid agentId, string awarenessFingerprint)
         => $"{PrefixEffectiveTools}{agentId:D}:{awarenessFingerprint}";
 
+    public static string KeyDefaultResourceResolution(
+        Guid channelId,
+        Guid agentId,
+        string? actionKey)
+        => PrefixDefaultResourceResolution
+           + $"{channelId:D}:{agentId:D}:"
+           + (actionKey ?? "").Trim().ToLowerInvariant();
+
     public static long EstimateString(string? value)
         => value is null ? 0 : Encoding.UTF8.GetByteCount(value);
 
@@ -287,6 +315,27 @@ public sealed class ChatCache(IConfiguration configuration)
         _fifo.Clear();
         foreach (var key in retained)
             _fifo.Enqueue(key);
+    }
+
+    private void RemoveWhere(Func<string, bool> predicate)
+    {
+        lock (_gate)
+        {
+            foreach (var key in _entries.Keys.Where(predicate).ToList())
+                RemoveEntry(key);
+
+            CompactFifoIfNeeded();
+        }
+    }
+
+    private static bool KeyHasGuidSegment(string key, int segmentStart, Guid expected)
+    {
+        const int guidLength = 36;
+        if (key.Length < segmentStart + guidLength)
+            return false;
+
+        return key.AsSpan(segmentStart, guidLength)
+            .Equals(expected.ToString("D").AsSpan(), StringComparison.OrdinalIgnoreCase);
     }
 
     private long GetMaxBytes()

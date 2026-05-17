@@ -11,7 +11,10 @@ namespace SharpClaw.Application.Services;
 /// channels and contexts.  Valid resource keys come from core defaults
 /// and registered module resource descriptors.
 /// </summary>
-public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegistry moduleRegistry)
+public sealed class DefaultResourceSetService(
+    SharpClawDbContext db,
+    ModuleRegistry moduleRegistry,
+    ChatCache chatCache)
 {
     // -- Reads ------------------------------------------------------
 
@@ -70,6 +73,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         Apply(ch.DefaultResourceSet, request);
         await db.SaveChangesAsync(ct);
+        chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
         return ToResponse(ch.DefaultResourceSet);
     }
 
@@ -92,6 +96,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         Apply(ctx.DefaultResourceSet, request);
         await db.SaveChangesAsync(ct);
+        await InvalidateContextDefaultResourcesAsync(contextId, ct);
         return ToResponse(ctx.DefaultResourceSet);
     }
 
@@ -121,6 +126,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         ApplyKey(ch.DefaultResourceSet, key, resourceId);
         await db.SaveChangesAsync(ct);
+        chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
         return ToResponse(ch.DefaultResourceSet);
     }
 
@@ -138,6 +144,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         ApplyKey(ch.DefaultResourceSet, key, null);
         await db.SaveChangesAsync(ct);
+        chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
         return ToResponse(ch.DefaultResourceSet);
     }
 
@@ -158,6 +165,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         ApplyKey(ctx.DefaultResourceSet, key, resourceId);
         await db.SaveChangesAsync(ct);
+        await InvalidateContextDefaultResourcesAsync(contextId, ct);
         return ToResponse(ctx.DefaultResourceSet);
     }
 
@@ -175,6 +183,7 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
         ApplyKey(ctx.DefaultResourceSet, key, null);
         await db.SaveChangesAsync(ct);
+        await InvalidateContextDefaultResourcesAsync(contextId, ct);
         return ToResponse(ctx.DefaultResourceSet);
     }
 
@@ -239,6 +248,18 @@ public sealed class DefaultResourceSetService(SharpClawDbContext db, ModuleRegis
 
     private static DefaultResourcesResponse EmptyResponse(Guid id) =>
         new(id, new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase));
+
+    private async Task InvalidateContextDefaultResourcesAsync(
+        Guid contextId, CancellationToken ct)
+    {
+        var channelIds = await db.Channels
+            .Where(c => c.AgentContextId == contextId)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+
+        foreach (var channelId in channelIds)
+            chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
+    }
 
     /// <summary>
     /// Merges channel and context default resource sets.

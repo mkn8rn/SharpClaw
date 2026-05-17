@@ -56,6 +56,8 @@ jobs:
             filter: 'FullyQualifiedName~TestHarnessToolCorrectnessExpandedTests|FullyQualifiedName~TestHarnessRepeatedToolInteractionTests'
           - domain: Costs
             filter: 'FullyQualifiedName~JobCostIsNonNull|FullyQualifiedName~FailedJobCostBehavior|FullyQualifiedName~StreamingCostReportedOnlyAtEnd|FullyQualifiedName~MultipleAgentsInOneChannelDoNotCrossContaminateCosts|FullyQualifiedName~CustomModuleCostHookAddsUsage'
+          - domain: Cache
+            filter: 'FullyQualifiedName~TestHarnessCacheBehaviorTests'
           - domain: Agent Orchestration
             filter: 'FullyQualifiedName~TestHarnessAgentOrchestrationExpandedTests'
           - domain: Defaults
@@ -103,7 +105,7 @@ jobs:
           - domain: Tools
             filter: 'FullyQualifiedName~PerformanceGate_InlineToolPermissionCheck|FullyQualifiedName~PerformanceGate_ProviderStream'
           - domain: Cache and Resolution
-            filter: 'FullyQualifiedName~PerformanceGate_AccessibleThreads|FullyQualifiedName~PerformanceGate_PromptAssembly|FullyQualifiedName~PerformanceGate_CostLookup|FullyQualifiedName~PerformanceGate_ProviderResolution'
+            filter: 'FullyQualifiedName~PerformanceGate_AccessibleThreads|FullyQualifiedName~PerformanceGate_PromptAssembly|FullyQualifiedName~PerformanceGate_CostLookup|FullyQualifiedName~PerformanceGate_ProviderResolution|FullyQualifiedName~PerformanceGate_ColdChatAfterCacheClear'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

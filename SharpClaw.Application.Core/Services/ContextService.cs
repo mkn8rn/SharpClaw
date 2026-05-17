@@ -113,7 +113,7 @@ public sealed class ContextService(
         }
 
         await db.SaveChangesAsync(ct);
-        InvalidateContextRuntimeState();
+        await InvalidateContextRuntimeStateAsync(id, ct);
         return ToResponse(context, context.Agent);
     }
 
@@ -122,9 +122,14 @@ public sealed class ContextService(
         var context = await db.AgentContexts.FindAsync([id], ct);
         if (context is null) return false;
 
+        var channelIds = await db.Channels
+            .Where(c => c.AgentContextId == id)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+
         db.AgentContexts.Remove(context);
         await db.SaveChangesAsync(ct);
-        InvalidateContextRuntimeState();
+        InvalidateContextChannelRuntimeState(channelIds);
         return true;
     }
 
@@ -183,7 +188,7 @@ public sealed class ContextService(
 
         context.AllowedAgents.Add(agent);
         await db.SaveChangesAsync(ct);
-        InvalidateContextRuntimeState();
+        await InvalidateContextRuntimeStateAsync(contextId, ct);
         return await ListAllowedAgentsAsync(contextId, ct);
     }
 
@@ -201,7 +206,7 @@ public sealed class ContextService(
         {
             context.AllowedAgents.Remove(agent);
             await db.SaveChangesAsync(ct);
-            InvalidateContextRuntimeState();
+            await InvalidateContextRuntimeStateAsync(contextId, ct);
         }
 
         return await ListAllowedAgentsAsync(contextId, ct);
@@ -215,10 +220,23 @@ public sealed class ContextService(
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    private void InvalidateContextRuntimeState()
+    private async Task InvalidateContextRuntimeStateAsync(Guid contextId, CancellationToken ct)
     {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        var channelIds = await db.Channels
+            .Where(c => c.AgentContextId == contextId)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+
+        InvalidateContextChannelRuntimeState(channelIds);
+    }
+
+    private void InvalidateContextChannelRuntimeState(IEnumerable<Guid> channelIds)
+    {
+        foreach (var channelId in channelIds)
+        {
+            chatCache.RemoveHeaderAgentSuffixesForChannel(channelId);
+            chatCache.RemoveDefaultResourceResolutionForChannel(channelId);
+        }
     }
 
     private static ContextResponse ToResponse(ChannelContextDB context, AgentDB agent) =>
