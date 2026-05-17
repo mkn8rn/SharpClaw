@@ -37,6 +37,7 @@
     <Project Path="DefaultModules/Providers/LlamaSharp/SharpClaw.Modules.Providers.LlamaSharp.csproj" />
     <Project Path="DefaultModules/Providers/Ollama/SharpClaw.Modules.Providers.Ollama.csproj" />
     <Project Path="DefaultModules/Providers/OpenAICompatible/SharpClaw.Modules.Providers.OpenAICompatible.csproj" />
+    <Project Path="DefaultModules/TestHarness/SharpClaw.Modules.TestHarness.csproj" />
     <Project Path="DefaultModules/VS2026Editor/SharpClaw.Modules.VS2026Editor.csproj" />
     <Project Path="DefaultModules/VSCodeEditor/SharpClaw.Modules.VSCodeEditor.csproj" />
   </Folder>
@@ -68,6 +69,7 @@
     <File Path="docs/modules/Module-Enablement-Guide.md" />
     <File Path="docs/modules/Module-ModuleDev-skill.md" />
     <File Path="docs/modules/Module-ModuleDev.md" />
+    <File Path="docs/modules/Module-TestHarness.md" />
     <File Path="docs/modules/Module-VS2026Editor-skill.md" />
     <File Path="docs/modules/Module-VS2026Editor.md" />
     <File Path="docs/modules/Module-VSCodeEditor-skill.md" />

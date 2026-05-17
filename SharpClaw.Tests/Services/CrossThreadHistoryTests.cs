@@ -91,6 +91,93 @@ public sealed class CrossThreadHistoryTests
         result.Should().Contain("Context Source Channel");
     }
 
+    [Test]
+    public async Task NonIndependentCrossThreadDiscoveryRequiresSourceChannelOptIn()
+    {
+        await using var provider = CreateContextToolProvider(out var module);
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+        var agent = SeedAgentWithCrossThreadRole(db, PermissionClearance.ApprovedBySameLevelUser);
+        var currentChannel = MakeChannel("Current Channel", agent.Id);
+        var hiddenChannel = MakeChannel("Hidden Source Channel", agent.Id);
+        var visibleChannel = MakeChannel("Opted In Source Channel", agent.Id);
+        var visiblePermissionSet = MakeCrossThreadPermissionSet(
+            PermissionClearance.ApprovedBySameLevelUser);
+        visibleChannel.PermissionSetId = visiblePermissionSet.Id;
+        visibleChannel.PermissionSet = visiblePermissionSet;
+
+        var hiddenThread = MakeThread("Hidden Thread", hiddenChannel.Id);
+        var visibleThread = MakeThread("Visible Thread", visibleChannel.Id);
+
+        db.PermissionSets.Add(visiblePermissionSet);
+        db.Channels.AddRange(currentChannel, hiddenChannel, visibleChannel);
+        db.ChatThreads.AddRange(hiddenThread, visibleThread);
+        await db.SaveChangesAsync();
+
+        using var empty = JsonDocument.Parse("{}");
+        var result = await module.ExecuteInlineToolAsync(
+            "list_accessible_threads",
+            empty.RootElement,
+            new InlineToolContext(agent.Id, currentChannel.Id, null, "call-list"),
+            scope.ServiceProvider,
+            default);
+
+        result.Should().Contain(visibleThread.Id.ToString("D"));
+        result.Should().NotContain(hiddenThread.Id.ToString("D"));
+    }
+
+    [Test]
+    public async Task AllowedAgentCanListAndReadCrossThreadHistoryWhenPermissionAllows()
+    {
+        await using var provider = CreateContextToolProvider(out var module);
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+        var agent = SeedAgentWithCrossThreadRole(db, PermissionClearance.Independent);
+        var otherAgent = new AgentDB
+        {
+            Id = Guid.NewGuid(),
+            Name = "Other Agent",
+            ModelId = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        var currentChannel = MakeChannel("Current Channel", agent.Id);
+        var sourceChannel = MakeChannel("Allowed Source Channel", otherAgent.Id);
+        sourceChannel.AllowedAgents.Add(agent);
+        var sourceThread = MakeThread("Allowed Source Thread", sourceChannel.Id);
+        var sourceMessage = MakeMessage(sourceChannel.Id, sourceThread.Id, "allowed-agent history");
+
+        db.Agents.Add(otherAgent);
+        db.Channels.AddRange(currentChannel, sourceChannel);
+        db.ChatThreads.Add(sourceThread);
+        db.ChatMessages.Add(sourceMessage);
+        await db.SaveChangesAsync();
+
+        using var empty = JsonDocument.Parse("{}");
+        var inlineContext = new InlineToolContext(agent.Id, currentChannel.Id, null, "call-list");
+        var listResult = await module.ExecuteInlineToolAsync(
+            "list_accessible_threads",
+            empty.RootElement,
+            inlineContext,
+            scope.ServiceProvider,
+            default);
+
+        listResult.Should().Contain(sourceThread.Id.ToString("D"));
+
+        using var readArgs = JsonDocument.Parse(
+            $$"""{"threadId":"{{sourceThread.Id:D}}","maxMessages":10}""");
+        var readResult = await module.ExecuteInlineToolAsync(
+            "read_thread_history",
+            readArgs.RootElement,
+            inlineContext,
+            scope.ServiceProvider,
+            default);
+
+        readResult.Should().Contain("allowed-agent history");
+    }
+
     private static ServiceProvider CreateContextToolProvider(out AgentOrchestrationModule module)
     {
         module = new AgentOrchestrationModule();
@@ -106,23 +193,7 @@ public sealed class CrossThreadHistoryTests
     private static AgentDB SeedAgentWithCrossThreadRole(
         SharpClawDbContext db, PermissionClearance clearance)
     {
-        var permissionSet = new PermissionSetDB
-        {
-            Id = Guid.NewGuid(),
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow,
-            GlobalFlags =
-            [
-                new GlobalFlagDB
-                {
-                    Id = Guid.NewGuid(),
-                    FlagKey = ContextToolsPermissionKeys.CanReadCrossThreadHistory,
-                    Clearance = clearance,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                }
-            ]
-        };
+        var permissionSet = MakeCrossThreadPermissionSet(clearance);
         var role = new RoleDB
         {
             Id = Guid.NewGuid(),
@@ -146,6 +217,24 @@ public sealed class CrossThreadHistoryTests
         db.Agents.Add(agent);
         return agent;
     }
+
+    private static PermissionSetDB MakeCrossThreadPermissionSet(PermissionClearance clearance) => new()
+    {
+        Id = Guid.NewGuid(),
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow,
+        GlobalFlags =
+        [
+            new GlobalFlagDB
+            {
+                Id = Guid.NewGuid(),
+                FlagKey = ContextToolsPermissionKeys.CanReadCrossThreadHistory,
+                Clearance = clearance,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }
+        ]
+    };
 
     private static ChannelDB MakeChannel(string title, Guid? agentId) => new()
     {

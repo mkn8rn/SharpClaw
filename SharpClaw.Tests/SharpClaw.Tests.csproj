@@ -33,5 +33,6 @@
     <ProjectReference Include="..\DefaultModules\Providers\LlamaSharp\SharpClaw.Modules.Providers.LlamaSharp.csproj" />
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
     <ProjectReference Include="..\DefaultModules\Metrics\SharpClaw.Modules.Metrics.csproj" />
+    <ProjectReference Include="..\DefaultModules\TestHarness\SharpClaw.Modules.TestHarness.csproj" />
   </ItemGroup>
 </Project>

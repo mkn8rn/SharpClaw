@@ -80,6 +80,9 @@
     <ProjectReference Include="..\DefaultModules\Providers\OpenAICompatible\SharpClaw.Modules.Providers.OpenAICompatible.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+    <ProjectReference Include="..\DefaultModules\TestHarness\SharpClaw.Modules.TestHarness.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
     <ProjectReference Include="..\DefaultModules\VS2026Editor\SharpClaw.Modules.VS2026Editor.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
