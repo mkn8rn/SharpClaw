@@ -134,8 +134,9 @@ Core `.env` can disable generated default headers with
 still run. `Chat:DisableAccessibleThreadsHeader=true` removes cross-thread
 summaries from generated headers and from `{{accessible-threads}}`.
 `Chat:DisableModuleHeaderTags=true` prevents module-owned header tags from
-executing. `Chat:RuntimeStateCacheSeconds` controls the short-lived cache for
-chat contributor and header state.
+executing. `Chat:CacheMaxMegabytes` controls the unified chat cache memory
+budget for contributor output, accessible-thread summaries, header state, and
+recently-used channel/thread/agent token totals attached to chat responses.
 
 **Available tags**:
 

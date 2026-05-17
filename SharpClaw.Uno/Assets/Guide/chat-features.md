@@ -83,8 +83,9 @@ See **Agents & Models** for available tags.
 `Chat:DisableAccessibleThreadsHeader=true` suppresses cross-thread summaries
 in generated headers and in `{{accessible-threads}}`.
 `Chat:DisableModuleHeaderTags=true` stops module-owned header tag resolvers
-from running. `Chat:RuntimeStateCacheSeconds` controls the short-lived cache
-for chat contributor and header state.
+from running. `Chat:CacheMaxMegabytes` controls the unified chat cache memory
+budget for contributor output, accessible-thread summaries, header state, and
+recently-used channel/thread/agent token totals attached to chat responses.
 
 ## Tool Call Notation
 

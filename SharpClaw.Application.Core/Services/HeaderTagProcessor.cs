@@ -83,7 +83,10 @@ public sealed partial class HeaderTagProcessor(
         if (matches.Count == 0)
             return template;
 
-        var context = await BuildContextAsync(channel, agent, clientType, userId, ct,
+        var tagNames = matches
+            .Select(static match => match.Groups["name"].Value)
+            .ToArray();
+        var context = await BuildContextAsync(channel, agent, clientType, userId, tagNames, ct,
             completionParameters, providerKey);
 
         var sb = new StringBuilder(template.Length * 2);
@@ -111,44 +114,67 @@ public sealed partial class HeaderTagProcessor(
 
     private async Task<HeaderContext> BuildContextAsync(
         ChannelDB channel, AgentDB agent, string clientType,
-        Guid? userId, CancellationToken ct,
+        Guid? userId, IReadOnlyCollection<string> tagNames, CancellationToken ct,
         CompletionParameters? completionParameters = null,
         string providerKey = "")
     {
+        var requiredTags = tagNames
+            .Select(static tag => tag.ToLowerInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+        var needsUser = userId is not null
+            && (requiredTags.Contains("user")
+                || requiredTags.Contains("role")
+                || requiredTags.Contains("bio")
+                || requiredTags.Contains("grants"));
+        var needsUserPermissionSet = requiredTags.Contains("role")
+            || requiredTags.Contains("grants");
+        var needsAgentPermissionSet = requiredTags.Contains("agent-role")
+            || requiredTags.Contains("agent-grants");
+
         UserDB? user = null;
         PermissionSetDB? userPs = null;
-        if (userId is not null)
+        if (needsUser)
         {
             user = await db.Users
+                .AsNoTracking()
                 .Include(u => u.Role).ThenInclude(r => r!.PermissionSet)
                 .FirstOrDefaultAsync(u => u.Id == userId, ct);
 
-            if (user?.Role?.PermissionSetId is { } psId)
+            if (needsUserPermissionSet && user?.Role?.PermissionSetId is { } psId)
             {
                 userPs = await db.PermissionSets
+                        .AsNoTracking()
+                        .Include(p => p.GlobalFlags)
                         .Include(p => p.ResourceAccesses)
                         .AsSplitQuery()
                         .FirstOrDefaultAsync(p => p.Id == psId, ct);
             }
         }
 
-        var agentWithRole = await db.Agents
-            .Include(a => a.Role).ThenInclude(r => r!.PermissionSet)
-            .FirstOrDefaultAsync(a => a.Id == agent.Id, ct);
-
+        RoleDB? agentRole = null;
         PermissionSetDB? agentPs = null;
-        if (agentWithRole?.Role?.PermissionSetId is { } agentPsId)
+        if (needsAgentPermissionSet)
         {
-            agentPs = await db.PermissionSets
-                .Include(p => p.ResourceAccesses)
-                .Include(p => p.GlobalFlags)
-                .AsSplitQuery()
-                .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+            var agentWithRole = await db.Agents
+                .AsNoTracking()
+                .Include(a => a.Role).ThenInclude(r => r!.PermissionSet)
+                .FirstOrDefaultAsync(a => a.Id == agent.Id, ct);
+
+            agentRole = agentWithRole?.Role;
+            if (agentRole?.PermissionSetId is { } agentPsId)
+            {
+                agentPs = await db.PermissionSets
+                    .AsNoTracking()
+                    .Include(p => p.ResourceAccesses)
+                    .Include(p => p.GlobalFlags)
+                    .AsSplitQuery()
+                    .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+            }
         }
 
         return new HeaderContext(
             channel, agent, clientType,
-            user, userPs, agentWithRole?.Role, agentPs,
+            user, userPs, agentRole, agentPs,
             completionParameters, providerKey);
     }
 
@@ -407,14 +433,14 @@ public sealed partial class HeaderTagProcessor(
         // Normalise to lowercase for matching
         return tagName.ToLowerInvariant() switch
         {
-            "agents" => Cast(await db.Agents.ToListAsync(ct)),
-            "models" => Cast(await db.Models.Include(m => m.Provider).ToListAsync(ct)),
-            "providers" => Cast(await db.Providers.ToListAsync(ct)),
-            "channels" => Cast(await db.Channels.ToListAsync(ct)),
-            "threads" => Cast(await db.ChatThreads.ToListAsync(ct)),
-            "roles" => Cast(await db.Roles.ToListAsync(ct)),
-            "users" => Cast(await db.Users.ToListAsync(ct)),
-            "tasks" or "taskdefinitions" => Cast(await db.TaskDefinitions.ToListAsync(ct)),
+            "agents" => Cast(await db.Agents.AsNoTracking().ToListAsync(ct)),
+            "models" => Cast(await db.Models.AsNoTracking().Include(m => m.Provider).ToListAsync(ct)),
+            "providers" => Cast(await db.Providers.AsNoTracking().ToListAsync(ct)),
+            "channels" => Cast(await db.Channels.AsNoTracking().ToListAsync(ct)),
+            "threads" => Cast(await db.ChatThreads.AsNoTracking().ToListAsync(ct)),
+            "roles" => Cast(await db.Roles.AsNoTracking().ToListAsync(ct)),
+            "users" => Cast(await db.Users.AsNoTracking().ToListAsync(ct)),
+            "tasks" or "taskdefinitions" => Cast(await db.TaskDefinitions.AsNoTracking().ToListAsync(ct)),
             _ => null
         };
 

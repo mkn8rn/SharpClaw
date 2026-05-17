@@ -531,9 +531,11 @@ DisableSystemPrompt removes the core-generated native-tool instruction suffix
 but preserves the agent's configured prompt. DisableAccessibleThreadsHeader
 keeps cross-thread summaries out of generated headers and out of
 {{accessible-threads}}. DisableModuleHeaderTags prevents module-owned header
-tag resolvers from running in custom headers. RuntimeStateCacheSeconds caches
-chat contributor output and header state for the configured number of seconds;
-0 disables that cache.
+tag resolvers from running in custom headers. CacheMaxMegabytes sets the
+unified chat cache memory budget. It keeps contributor output, accessible
+thread summaries, header user or agent state, and recently-used channel,
+thread, and agent token totals hot until the budget is full; oldest objects
+are evicted first. 0 disables chat caching.
 
 Interface .env keys include Api:Url, Backend:Enabled, Gateway:Enabled,
 Gateway:Url, process-startup flags, and logging settings. Gateway .env keys

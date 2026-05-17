@@ -271,7 +271,7 @@ Example `.env` snippet:
     "DisableSystemPrompt": false,
     "DisableAccessibleThreadsHeader": false,
     "DisableModuleHeaderTags": false,
-    "RuntimeStateCacheSeconds": 10
+    "CacheMaxMegabytes": 2048
   }
 }
 ```
@@ -287,10 +287,12 @@ suffix, but it does not erase an agent's own configured system prompt.
 `DisableAccessibleThreadsHeader` keeps cross-thread summaries out of
 default headers and out of `{{accessible-threads}}` custom-header tags.
 `DisableModuleHeaderTags` stops module-owned header tag resolvers from
-executing inside custom headers. `RuntimeStateCacheSeconds` caches
-chat-contributor output, accessible-thread summaries, and header user or
-agent state for a short window; set it to `0` when debugging permission or
-module registration changes and every chat must force a fresh lookup.
+executing inside custom headers. `CacheMaxMegabytes` sets the memory budget
+for the unified chat cache. The cache keeps contributor output,
+accessible-thread summaries, header user or agent state, and recently used
+channel/thread/agent token totals hot until the budget is exceeded, then
+evicts the oldest cached objects first. Set it to `0` when validating raw
+persistence reads or debugging cache-sensitive permission changes.
 
 When `DisableAccessTokenCheck` is `true`, the `JwtSessionMiddleware`
 skips enforcement — no 401 is returned for missing/expired tokens on
@@ -2750,8 +2752,10 @@ is the hardening switch for free-form provider parameters.
 The `Chat` section controls chat-path prompt shaping and cache behavior.
 Default headers, the core-generated system prompt suffix, accessible-thread
 header content, and module-owned header tag execution can each be disabled
-independently. `RuntimeStateCacheSeconds` is the short-lived cache window
-for chat contributor output and header state.
+independently. `CacheMaxMegabytes` controls the unified chat cache memory
+budget for contributor output, header state, accessible-thread summaries, and
+recently used channel/thread/agent token totals. The cache evicts oldest
+objects first when it reaches that budget.
 
 Database configuration lives in the `Database` section. `Database:Provider`
 accepts `JsonFile`, `Postgres`, `SqlServer`, or `SQLite`, and relational

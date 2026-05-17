@@ -348,8 +348,9 @@ Chat:DisableAccessibleThreadsHeader=true suppresses cross-thread summaries in
   generated headers and {{accessible-threads}}.
 Chat:DisableModuleHeaderTags=true prevents module-owned custom-header tags from
   executing.
-Chat:RuntimeStateCacheSeconds=<n> caches chat contributor/header state; 0
-  disables that cache for debugging.
+Chat:CacheMaxMegabytes=<n> sets the unified chat cache RAM budget. The cache
+  keeps contributor output, accessible threads, header state, and active
+  channel/thread/agent cost snapshots until the budget fills; 0 disables it.
 
 env get                                Print raw JSON content.
 env set                                Write from stdin (blank line = end).

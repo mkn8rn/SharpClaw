@@ -98,7 +98,7 @@ Agents: Alice (guid1), Bob (guid2), Charlie (guid3)
 
 Fields marked with `[HeaderSensitive]` render as `[redacted]`.
 
-Header expansion is on the chat hot path. `Chat:DisableAccessibleThreadsHeader=true` suppresses cross-thread summaries in the generated header and makes `{{accessible-threads}}` expand to an empty string. `Chat:DisableModuleHeaderTags=true` prevents module-owned header tag resolvers from executing inside custom headers. `Chat:RuntimeStateCacheSeconds` controls the short-lived cache used for chat contributor and header state; use `0` only when debugging and every message must force fresh state.
+Header expansion is on the chat hot path. `Chat:DisableAccessibleThreadsHeader=true` suppresses cross-thread summaries in the generated header and makes `{{accessible-threads}}` expand to an empty string. `Chat:DisableModuleHeaderTags=true` prevents module-owned header tag resolvers from executing inside custom headers. `Chat:CacheMaxMegabytes` controls the unified chat cache memory budget for contributor output, accessible-thread summaries, header state, and recently-used channel/thread/agent token totals. Set it to `0` only when every message must force fresh persistence and permission reads.
 
 ### Setting Custom Headers
 
@@ -150,7 +150,7 @@ SharpClaw uses two `.env` files (JSON-with-comments format):
 - `Admin:Username` / `Admin:Password`: First-time admin credentials
 - `Browser:Executable` / `Browser:Arguments`: Chromium path for localhost browser action
 - `Local:GpuLayerCount` / `Local:ContextSize` / `Local:KeepLoaded` / `Local:IdleCooldownMinutes`: Local model settings
-- `Chat:DisableDefaultHeaders` / `Chat:DisableSystemPrompt` / `Chat:DisableAccessibleThreadsHeader` / `Chat:DisableModuleHeaderTags` / `Chat:RuntimeStateCacheSeconds`: Chat prompt-shaping and hot-path cache settings
+- `Chat:DisableDefaultHeaders` / `Chat:DisableSystemPrompt` / `Chat:DisableAccessibleThreadsHeader` / `Chat:DisableModuleHeaderTags` / `Chat:CacheMaxMegabytes`: Chat prompt-shaping and hot-path cache settings
 - `EnvEditor:AllowNonAdmin`: Allow non-admin users to edit the Core .env
 - `Backend:Enabled`: Enable/disable backend auto-start
 

@@ -807,9 +807,11 @@ system prompt. Set `Chat:DisableAccessibleThreadsHeader` to `true` to keep
 cross-thread summaries out of generated headers and the
 `{{accessible-threads}}` tag. Set `Chat:DisableModuleHeaderTags` to `true`
 to prevent module-owned custom-header tags from executing. Set
-`Chat:RuntimeStateCacheSeconds` to a short positive value to cache chat
-contributor and header state, or to `0` when debugging and every chat turn
-must force fresh state.
+`Chat:CacheMaxMegabytes` to set the unified chat cache memory budget. That
+cache keeps contributor output, accessible-thread summaries, header user or
+agent state, and recently-used channel/thread/agent token totals hot until the
+budget is full, then evicts the oldest cached objects first. Set it to `0`
+when every chat turn must force fresh persistence and permission reads.
 
 ```
 env get

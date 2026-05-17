@@ -40,7 +40,7 @@ public sealed class ChatService(
     ThreadActivitySignal threadActivity,
     ModuleRegistry moduleRegistry,
     ModuleMetricsCollector metricsCollector,
-    ChatRuntimeStateCache runtimeState,
+    ChatCache chatCache,
     ILogger<ChatService> logger,
     IServiceScopeFactory serviceScopeFactory,
     IServiceProvider serviceProvider,
@@ -94,6 +94,7 @@ public sealed class ChatService(
         }
 
         var channel = await db.Channels
+            .AsNoTracking()
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
             .Include(c => c.Agent!).ThenInclude(a => a.Role)
@@ -281,6 +282,13 @@ public sealed class ChatService(
 
         await jobService.RecordTokensForCurrentExecutionAsync(
             loopResult.TotalPromptTokens, loopResult.TotalCompletionTokens, ct);
+        chatCache.RecordAssistantTokens(
+            channelId,
+            threadId,
+            agent.Id,
+            agent.Name,
+            loopResult.TotalPromptTokens,
+            loopResult.TotalCompletionTokens);
 
         if (logTiming)
         {
@@ -298,7 +306,7 @@ public sealed class ChatService(
         // a separate round-trip to the /cost endpoints.
         var costTiming = Stopwatch.StartNew();
         var (channelCost, threadCost, agentCost) =
-            await GetResponseCostsAsync(channelId, threadId, agent.Id, ct);
+            await GetResponseCostsAsync(channelId, threadId, agent.Id, agent.Name, ct);
         costTiming.Stop();
 
         if (logTiming)
@@ -390,6 +398,13 @@ public sealed class ChatService(
 
     public async Task<ChannelCostResponse> GetChannelCostAsync(
         Guid channelId, CancellationToken ct = default)
+        => await chatCache.GetChannelCostAsync(
+            channelId,
+            innerCt => LoadChannelCostAsync(channelId, innerCt),
+            ct);
+
+    private async Task<ChannelCostResponse> LoadChannelCostAsync(
+        Guid channelId, CancellationToken ct)
     {
         var messages = await entities.QueryAsync<ChatMessageDB>(
             db,
@@ -402,6 +417,14 @@ public sealed class ChatService(
 
     public async Task<ThreadCostResponse?> GetThreadCostAsync(
         Guid channelId, Guid threadId, CancellationToken ct = default)
+        => await chatCache.GetThreadCostAsync(
+            channelId,
+            threadId,
+            innerCt => LoadThreadCostAsync(channelId, threadId, innerCt),
+            ct);
+
+    private async Task<ThreadCostResponse?> LoadThreadCostAsync(
+        Guid channelId, Guid threadId, CancellationToken ct)
     {
         var threadExists = await db.ChatThreads
             .AnyAsync(t => t.Id == threadId && t.ChannelId == channelId, ct);
@@ -426,47 +449,36 @@ public sealed class ChatService(
         var agent = await db.Agents.FindAsync([agentId], ct);
         if (agent is null) return null;
 
+        return await GetAgentCostForKnownAgentAsync(agentId, agent.Name, ct);
+    }
+
+    private async Task<AgentCostResponse?> GetAgentCostForKnownAgentAsync(
+        Guid agentId, string agentName, CancellationToken ct)
+        => await chatCache.GetAgentCostAsync(
+            agentId,
+            innerCt => LoadAgentCostAsync(agentId, agentName, innerCt),
+            ct);
+
+    private async Task<AgentCostResponse?> LoadAgentCostAsync(
+        Guid agentId, string agentName, CancellationToken ct)
+    {
         var messages = await entities.QueryAsync<ChatMessageDB>(
             db,
             m => m.SenderAgentId == agentId && m.PromptTokens != null,
             hint: new PersistenceQueryHint("SenderAgentId", agentId),
             ct: ct);
 
-        return BuildAgentCost(agentId, agent.Name, messages);
+        return BuildAgentCost(agentId, agentName, messages);
     }
 
     private async Task<(ChannelCostResponse ChannelCost, ThreadCostResponse? ThreadCost, AgentCostResponse? AgentCost)> GetResponseCostsAsync(
-        Guid channelId, Guid? threadId, Guid agentId, CancellationToken ct)
+        Guid channelId, Guid? threadId, Guid agentId, string agentName, CancellationToken ct)
     {
-        var channelMessages = await entities.QueryAsync<ChatMessageDB>(
-            db,
-            m => m.ChannelId == channelId && m.PromptTokens != null,
-            hint: new PersistenceQueryHint("ChannelId", channelId),
-            ct: ct);
-
-        var channelCost = BuildChannelCost(channelId, channelMessages);
-
-        ThreadCostResponse? threadCost = null;
-        if (threadId is { } tid)
-        {
-            var threadExists = channelMessages.Any(m => m.ThreadId == tid)
-                || await db.ChatThreads.AnyAsync(t => t.Id == tid && t.ChannelId == channelId, ct);
-
-            if (threadExists)
-                threadCost = BuildThreadCost(channelId, tid, channelMessages.Where(m => m.ThreadId == tid));
-        }
-
-        var agent = await db.Agents.FindAsync([agentId], ct);
-        if (agent is null)
-            return (channelCost, threadCost, null);
-
-        var agentMessages = await entities.QueryAsync<ChatMessageDB>(
-            db,
-            m => m.SenderAgentId == agentId && m.PromptTokens != null,
-            hint: new PersistenceQueryHint("SenderAgentId", agentId),
-            ct: ct);
-
-        var agentCost = BuildAgentCost(agentId, agent.Name, agentMessages);
+        var channelCost = await GetChannelCostAsync(channelId, ct);
+        var threadCost = threadId is { } tid
+            ? await GetThreadCostAsync(channelId, tid, ct)
+            : null;
+        var agentCost = await GetAgentCostForKnownAgentAsync(agentId, agentName, ct);
         return (channelCost, threadCost, agentCost);
     }
 
@@ -727,9 +739,10 @@ public sealed class ChatService(
         if (userId is null)
             return null;
 
-        var userState = await runtimeState.GetOrCreateAsync(
-            $"chat:header:user:{userId.Value:D}",
+        var userState = await chatCache.GetOrCreateAsync(
+            ChatCache.KeyHeaderUser(userId.Value),
             innerCt => LoadUserHeaderStateAsync(userId.Value, innerCt),
+            EstimateUserHeaderState,
             ct);
 
         if (userState is null)
@@ -761,6 +774,7 @@ public sealed class ChatService(
         Guid userId, CancellationToken ct)
     {
         var user = await db.Users
+            .AsNoTracking()
             .Include(u => u.Role)
             .ThenInclude(r => r!.PermissionSet)
             .AsSplitQuery()
@@ -773,6 +787,7 @@ public sealed class ChatService(
         if (user.Role?.PermissionSetId is { } psId)
         {
             var ps = await db.PermissionSets
+                .AsNoTracking()
                 .Include(p => p.GlobalFlags)
                 .Include(p => p.ResourceAccesses)
                 .AsSplitQuery()
@@ -789,19 +804,29 @@ public sealed class ChatService(
             user.Bio);
     }
 
+    private static long EstimateUserHeaderState(UserHeaderState state)
+        => 128
+           + ChatCache.EstimateString(state.Username)
+           + ChatCache.EstimateString(state.RoleName)
+           + ChatCache.EstimateString(state.Bio)
+           + ChatCache.EstimateStringCollection(state.Grants);
+
     private async Task AppendAgentSuffixAsync(
         StringBuilder sb, Guid agentId, Guid channelId,
         CancellationToken ct,
         CompletionParameters? completionParameters = null,
         string providerKey = "")
     {
-        var suffix = await runtimeState.GetOrCreateAsync(
-            "chat:header:agent-suffix:"
-            + $"{agentId:D}:{channelId:D}:"
-            + $"{providerKey}:{completionParameters?.ReasoningEffort}:"
-            + $"{_disableAccessibleThreadsHeader}",
+        var suffix = await chatCache.GetOrCreateAsync(
+            ChatCache.KeyHeaderAgentSuffix(
+                agentId,
+                channelId,
+                providerKey,
+                completionParameters?.ReasoningEffort,
+                _disableAccessibleThreadsHeader),
             async innerCt => await BuildAgentSuffixTextAsync(
                 agentId, channelId, innerCt, completionParameters, providerKey),
+            ChatCache.EstimateString,
             ct);
 
         sb.Append(suffix ?? "]");
@@ -820,6 +845,7 @@ public sealed class ChatService(
     {
         var sb = new StringBuilder();
         var agentWithRole = await db.Agents
+            .AsNoTracking()
             .Include(a => a.Role)
             .ThenInclude(r => r!.PermissionSet)
             .FirstOrDefaultAsync(a => a.Id == agentId, ct);
@@ -830,6 +856,7 @@ public sealed class ChatService(
             if (agentRole.PermissionSetId is { } agentPsId)
             {
                 agentPs = await db.PermissionSets
+                        .AsNoTracking()
                         .Include(p => p.GlobalFlags)
                         .Include(p => p.ResourceAccesses)
                         .AsSplitQuery()
@@ -990,6 +1017,7 @@ public sealed class ChatService(
         }
 
         var channel = await db.Channels
+            .AsNoTracking()
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
             .Include(c => c.Agent!).ThenInclude(a => a.Role)
@@ -1351,6 +1379,13 @@ public sealed class ChatService(
 
         await jobService.RecordTokensForCurrentExecutionAsync(
             totalPromptTokens, totalCompletionTokens, ct);
+        chatCache.RecordAssistantTokens(
+            channelId,
+            threadId,
+            agent.Id,
+            agent.Name,
+            totalPromptTokens,
+            totalCompletionTokens);
 
         if (logTiming)
         {
@@ -1368,7 +1403,7 @@ public sealed class ChatService(
 
         var costTiming = Stopwatch.StartNew();
         var (channelCost, threadCost, agentCost) =
-            await GetResponseCostsAsync(channelId, threadId, agent.Id, ct);
+            await GetResponseCostsAsync(channelId, threadId, agent.Id, agent.Name, ct);
         costTiming.Stop();
 
         streamCompleted = true;

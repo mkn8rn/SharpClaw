@@ -346,7 +346,7 @@ try
     builder.Services.AddSingleton<IAgentJobCostTracker, HostAgentJobCostTracker>();
     builder.Services.AddSingleton<IModelInfoProvider, HostModelInfoProvider>();
     builder.Services.AddScoped<IModelRegistrar, HostModelRegistrar>();
-    builder.Services.AddSingleton<ChatRuntimeStateCache>();
+    builder.Services.AddSingleton<ChatCache>();
     builder.Services.AddScoped<IChatProcessingBridge, ChatProcessingBridge>();
     builder.Services.AddScoped<IContainerProvisioner, HostContainerProvisioner>();
     builder.Services.AddScoped<IThreadResolver, HostThreadResolver>();
@@ -711,7 +711,6 @@ try
 
     // ──────── PHASE 20 ─── HTTP pipeline (middleware order is load-bearing)
     //
-    //   DiagnosticMiddleware (DEBUG only)        — request tracing for dev.
     //   DatabaseInitializationGateMiddleware     — 503s until PHASE 14 done.
     //   ExceptionHandlingMiddleware              — must wrap everything below.
     //   SerilogRequestLogging (optional)         — only when enabled in .env.
@@ -720,9 +719,6 @@ try
     //   JwtSessionMiddleware                     — populates SessionService.
     //   MigrationGateMiddleware (relational)     — pauses traffic mid-migration.
     //   UseWebSockets                            — required for SSE/WS handlers.
-#if DEBUG
-    app.UseMiddleware<DiagnosticMiddleware>();
-#endif
     app.UseMiddleware<DatabaseInitializationGateMiddleware>();
     app.UseMiddleware<ExceptionHandlingMiddleware>();
     if (serilogOptions.Enabled && serilogOptions.RequestLoggingEnabled)
