@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -618,9 +619,9 @@ public sealed class ChatService(
     private async Task<(List<ChatCompletionMessage> Messages, int MaxMessages, int MaxCharacters)> LoadThreadHistoryAsync(
         Guid threadId, CancellationToken ct)
     {
-        var thread = await db.ChatThreads.FindAsync([threadId], ct);
-        var maxMessages = thread?.MaxMessages ?? MaxHistoryMessages;
-        var maxChars = thread?.MaxCharacters ?? MaxHistoryCharacters;
+        var limits = await LoadThreadHistoryLimitsAsync(threadId, ct);
+        var maxMessages = limits.MaxMessages;
+        var maxChars = limits.MaxCharacters;
 
         var cold = await entities.QueryAsync<ChatMessageDB>(
             db,
@@ -649,6 +650,30 @@ public sealed class ChatService(
         }
 
         return (messages, maxMessages, maxChars);
+    }
+
+    private async Task<ThreadHistoryLimits> LoadThreadHistoryLimitsAsync(
+        Guid threadId, CancellationToken ct)
+    {
+        return await chatCache.GetOrCreateAsync(
+            ChatCache.KeyThreadHistoryLimits(threadId),
+            async innerCt =>
+            {
+                var limits = await db.ChatThreads
+                    .AsNoTracking()
+                    .Where(t => t.Id == threadId)
+                    .Select(t => new ThreadHistoryLimits(
+                        t.MaxMessages ?? MaxHistoryMessages,
+                        t.MaxCharacters ?? MaxHistoryCharacters))
+                    .FirstOrDefaultAsync(innerCt);
+
+                return limits ?? new ThreadHistoryLimits(
+                    MaxHistoryMessages,
+                    MaxHistoryCharacters);
+            },
+            static _ => 16,
+            ct)
+            ?? new ThreadHistoryLimits(MaxHistoryMessages, MaxHistoryCharacters);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1658,6 +1683,25 @@ public sealed class ChatService(
         Guid? agentId = null,
         CancellationToken ct = default)
     {
+        if (taskContext is null && agentId.HasValue)
+        {
+            return await chatCache.GetOrCreateAsync(
+                ChatCache.KeyEffectiveTools(agentId.Value, BuildToolAwarenessFingerprint(toolAwareness)),
+                async innerCt => await BuildEffectiveToolsAsync(null, toolAwareness, agentId.Value, innerCt),
+                EstimateToolDefinitions,
+                ct)
+                ?? [];
+        }
+
+        return await BuildEffectiveToolsAsync(taskContext, toolAwareness, agentId, ct);
+    }
+
+    private async Task<IReadOnlyList<ChatToolDefinition>> BuildEffectiveToolsAsync(
+        TaskChatContext? taskContext,
+        Dictionary<string, bool>? toolAwareness,
+        Guid? agentId,
+        CancellationToken ct)
+    {
         var baseTools = new List<ChatToolDefinition>(moduleRegistry.GetAllToolDefinitions());
 
         // In-flight task-context tools (shared data, output, custom hooks)
@@ -1687,6 +1731,27 @@ public sealed class ChatService(
             .Where(t => !toolAwareness.TryGetValue(t.Name, out var enabled) || enabled)
             .ToList();
     }
+
+    private static string BuildToolAwarenessFingerprint(Dictionary<string, bool>? toolAwareness)
+    {
+        if (toolAwareness is null or { Count: 0 })
+            return "all";
+
+        var sb = new StringBuilder();
+        foreach (var (key, enabled) in toolAwareness.OrderBy(static kvp => kvp.Key, StringComparer.Ordinal))
+        {
+            sb.Append(key).Append('=').Append(enabled ? '1' : '0').Append(';');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+    }
+
+    private static long EstimateToolDefinitions(IReadOnlyList<ChatToolDefinition> tools)
+        => 64 + tools.Sum(static tool =>
+            64
+            + ChatCache.EstimateString(tool.Name)
+            + ChatCache.EstimateString(tool.Description)
+            + ChatCache.EstimateString(tool.ParametersSchema.GetRawText()));
 
     /// <summary>
     /// Try to handle a native tool call as a task-specific tool.
@@ -2445,6 +2510,10 @@ public sealed class ChatService(
         string? RoleName,
         IReadOnlyList<string> Grants,
         string? Bio);
+
+    private sealed record ThreadHistoryLimits(
+        int MaxMessages,
+        int MaxCharacters);
 
     // ═══════════════════════════════════════════════════════════════
     // Tool call notation (persisted in assistant message content)

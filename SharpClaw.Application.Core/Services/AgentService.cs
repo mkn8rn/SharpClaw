@@ -16,7 +16,13 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class AgentService(SharpClawDbContext db, SessionService session, ModuleRegistry moduleRegistry, IConfiguration configuration, ProviderApiClientFactory clientFactory)
+public sealed class AgentService(
+    SharpClawDbContext db,
+    SessionService session,
+    ModuleRegistry moduleRegistry,
+    IConfiguration configuration,
+    ProviderApiClientFactory clientFactory,
+    ChatCache chatCache)
 {
     public async Task<AgentResponse> CreateAsync(CreateAgentRequest request, CancellationToken ct = default)
     {
@@ -143,6 +149,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
         ValidateCompletionParameters(agent, agent.Model.Provider.ProviderKey);
 
         await db.SaveChangesAsync(ct);
+        InvalidateAgentRuntimeState();
         return ToResponse(agent, agent.Model);
     }
 
@@ -200,6 +207,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
         }
 
         await db.SaveChangesAsync(ct);
+        InvalidateAgentRuntimeState();
         return ToResponse(agent, agent.Model);
     }
 
@@ -363,6 +371,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
 
         db.Agents.Remove(agent);
         await db.SaveChangesAsync(ct);
+        InvalidateAgentRuntimeState();
         return true;
     }
 
@@ -411,6 +420,7 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
         }
 
         await db.SaveChangesAsync(ct);
+        chatCache.Remove(ChatCache.KeyHeaderUser(userId));
         return new MeResponse(user.Id, user.Username, user.Bio, user.RoleId, user.Role?.Name);
     }
 
@@ -471,6 +481,14 @@ public sealed class AgentService(SharpClawDbContext db, SessionService session, 
     {
         var value = configuration["UniqueNames:Agents"];
         return value is null || !bool.TryParse(value, out var enforced) || enforced;
+    }
+
+    private void InvalidateAgentRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixExtraTools);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
     }
 
     private async Task EnsureAgentNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)

@@ -76,6 +76,29 @@ public sealed class ChatCacheTests
     }
 
     [Test]
+    public async Task RemoveByPrefix_RemovesMatchingEntriesOnly()
+    {
+        var cache = CreateCache(cacheBytes: 1_000_000);
+
+        await cache.GetOrCreateAsync(
+            "prefix:one",
+            _ => Task.FromResult<string?>("one"),
+            _ => 8,
+            CancellationToken.None);
+        await cache.GetOrCreateAsync(
+            "other:two",
+            _ => Task.FromResult<string?>("two"),
+            _ => 8,
+            CancellationToken.None);
+
+        cache.RemoveByPrefix("prefix:");
+
+        cache.TryGet<string>("prefix:one", out _).Should().BeFalse();
+        cache.TryGet<string>("other:two", out var remaining).Should().BeTrue();
+        remaining.Should().Be("two");
+    }
+
+    [Test]
     public async Task RecordAssistantTokens_UpdatesActiveCostSnapshots()
     {
         var cache = CreateCache(cacheBytes: 1_000_000);

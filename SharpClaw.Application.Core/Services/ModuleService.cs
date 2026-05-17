@@ -35,6 +35,7 @@ public sealed class ModuleService(
     ModuleEventDispatcher eventDispatcher,
     ILoggerFactory loggerFactory,
     ILogger<ModuleService> logger,
+    ChatCache chatCache,
     IConfiguration? configuration = null)
 {
     // ═══════════════════════════════════════════════════════════════
@@ -214,6 +215,7 @@ public sealed class ModuleService(
             await ReconcilePermissionsForModuleAsync(module, ct);
         }
 
+        InvalidateModuleRuntimeState();
         eventDispatcher.InvalidateSinkCache();
         eventDispatcher.Dispatch(new SharpClawEvent(
             SharpClawEventType.ModuleEnabled,
@@ -282,6 +284,7 @@ public sealed class ModuleService(
         }
         await db.SaveChangesAsync(ct);
 
+        InvalidateModuleRuntimeState();
         eventDispatcher.InvalidateSinkCache();
         eventDispatcher.Dispatch(new SharpClawEvent(
             SharpClawEventType.ModuleDisabled,
@@ -337,6 +340,7 @@ public sealed class ModuleService(
 
             logger.LogInformation("External module '{ModuleId}' loaded from {Dir}",
                 PathGuard.SanitizeForLog(manifest.Id), PathGuard.SanitizeForLog(canonicalModuleDir));
+            InvalidateModuleRuntimeState();
             return ToResponse(host.Module, state: null, manifest, isExternal: true);
         }
         catch
@@ -361,6 +365,7 @@ public sealed class ModuleService(
         moduleDbContextRegistry.UnregisterModule(moduleId);
         registry.Unregister(moduleId);
         await host.DisposeAsync();
+        InvalidateModuleRuntimeState();
 
         var (attempts, delay) = ResolveUnloadVerifyOptions();
         var unloaded = await host.VerifyUnloadedAsync(attempts, delay, ct);
@@ -488,6 +493,7 @@ public sealed class ModuleService(
             logger.LogInformation("External module '{ModuleId}' loaded from absolute path {Dir}",
                 PathGuard.SanitizeForLog(manifest.Id), PathGuard.SanitizeForLog(canonicalDir));
 
+            InvalidateModuleRuntimeState();
             return ToResponse(host.Module, state: null, manifest, isExternal: true);
         }
         catch
@@ -523,6 +529,15 @@ public sealed class ModuleService(
         {
             await moduleJsonPersistence.LoadModuleAsync(registration, ct);
         }
+    }
+
+    private void InvalidateModuleRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixExtraTools);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
     }
 
     /// <summary>

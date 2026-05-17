@@ -8,7 +8,10 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class ChannelService(SharpClawDbContext db, IConfiguration configuration)
+public sealed class ChannelService(
+    SharpClawDbContext db,
+    IConfiguration configuration,
+    ChatCache chatCache)
 {
     /// <summary>
     /// Creates a new channel.  Either <see cref="CreateChannelRequest.AgentId"/>
@@ -187,6 +190,7 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
             channel.DisableToolSchemas = request.DisableToolSchemas.Value;
 
         await db.SaveChangesAsync(ct);
+        InvalidateChannelRuntimeState();
         return ToResponse(channel, channel.Agent, channel.AgentContext);
     }
 
@@ -236,6 +240,7 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
 
         db.Channels.Remove(channel);
         await db.SaveChangesAsync(ct);
+        InvalidateChannelRuntimeState();
         return true;
     }
 
@@ -261,6 +266,7 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
         channel.AgentId = agent.Id;
         channel.Agent = agent;
         await db.SaveChangesAsync(ct);
+        InvalidateChannelRuntimeState();
         return ToResponse(channel, channel.Agent, channel.AgentContext);
     }
 
@@ -304,6 +310,7 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
 
         channel.AllowedAgents.Add(agent);
         await db.SaveChangesAsync(ct);
+        InvalidateChannelRuntimeState();
         return await ListAllowedAgentsAsync(channelId, ct);
     }
 
@@ -321,6 +328,7 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
         {
             channel.AllowedAgents.Remove(agent);
             await db.SaveChangesAsync(ct);
+            InvalidateChannelRuntimeState();
         }
 
         return await ListAllowedAgentsAsync(channelId, ct);
@@ -339,6 +347,13 @@ public sealed class ChannelService(SharpClawDbContext db, IConfiguration configu
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
+
+    private void InvalidateChannelRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+    }
 
     private static ChannelResponse ToResponse(
         ChannelDB channel, AgentDB? agent, ChannelContextDB? context)

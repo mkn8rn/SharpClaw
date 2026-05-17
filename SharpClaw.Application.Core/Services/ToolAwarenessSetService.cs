@@ -5,7 +5,7 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class ToolAwarenessSetService(SharpClawDbContext db)
+public sealed class ToolAwarenessSetService(SharpClawDbContext db, ChatCache chatCache)
 {
     public async Task<ToolAwarenessSetResponse> CreateAsync(
         CreateToolAwarenessSetRequest request, CancellationToken ct = default)
@@ -48,6 +48,7 @@ public sealed class ToolAwarenessSetService(SharpClawDbContext db)
         if (request.Tools is not null) entity.Tools = request.Tools;
 
         await db.SaveChangesAsync(ct);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
         return ToResponse(entity);
     }
 
@@ -58,6 +59,7 @@ public sealed class ToolAwarenessSetService(SharpClawDbContext db)
 
         db.ToolAwarenessSets.Remove(entity);
         await db.SaveChangesAsync(ct);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
         return true;
     }
 

@@ -5,13 +5,15 @@ using SharpClaw.Contracts.DTOs.Users;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
+using SharpClaw.Application.Services;
 
 namespace SharpClaw.Application.Services.Auth;
 
 public sealed class AuthService(
     SharpClawDbContext db,
     TokenService tokenService,
-    JwtOptions jwtOptions)
+    JwtOptions jwtOptions,
+    ChatCache chatCache)
 {
     public async Task<LoginResponse?> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
@@ -209,6 +211,7 @@ public sealed class AuthService(
         }
 
         await db.SaveChangesAsync(ct);
+        chatCache.Remove(ChatCache.KeyHeaderUser(targetUserId));
 
         return new UserEntry(
             user.Id, user.Username, user.Bio,

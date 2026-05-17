@@ -32,7 +32,8 @@ public sealed class HostAgentBridge(
     SharpClawDbContext db,
     TaskService taskService,
     ChatService chatService,
-    IServiceScopeFactory scopeFactory) : IHostAgentBridge
+    IServiceScopeFactory scopeFactory,
+    ChatCache chatCache) : IHostAgentBridge
 {
     public async Task<string?> ChatAsync(
         Guid instanceId, string taskName, string message, Guid? agentId, CancellationToken ct)
@@ -145,6 +146,7 @@ public sealed class HostAgentBridge(
             agentEntity.ModelId = modelId;
             agentEntity.SystemPrompt = systemPrompt;
             await db.SaveChangesAsync(ct);
+            InvalidateAgentRuntimeState();
         }
         else
         {
@@ -157,6 +159,7 @@ public sealed class HostAgentBridge(
             };
             db.Agents.Add(agentEntity);
             await db.SaveChangesAsync(ct);
+            InvalidateAgentRuntimeState();
         }
 
         if (await TryGetInstanceChannelIdAsync(instanceId, ct) is { } channelId)
@@ -168,6 +171,7 @@ public sealed class HostAgentBridge(
             {
                 channel.AllowedAgents.Add(agentEntity);
                 await db.SaveChangesAsync(ct);
+                InvalidateChannelRuntimeState();
             }
         }
 
@@ -188,6 +192,7 @@ public sealed class HostAgentBridge(
         };
         db.ChatThreads.Add(thread);
         await db.SaveChangesAsync(ct);
+        InvalidateThreadRuntimeState(thread.Id);
         await taskService.AppendLogAsync(instanceId, $"CreateThread '{thread.Name}' → {thread.Id}", ct: ct);
         return thread.Id;
     }
@@ -272,6 +277,7 @@ public sealed class HostAgentBridge(
         }
 
         await db.SaveChangesAsync(ct);
+        InvalidatePermissionRuntimeState();
     }
 
     public async Task AssignRoleAsync(Guid agentId, Guid roleId, CancellationToken ct)
@@ -283,6 +289,7 @@ public sealed class HostAgentBridge(
 
         agentEntity.RoleId = roleId;
         await db.SaveChangesAsync(ct);
+        InvalidateAgentRuntimeState();
     }
 
     public async Task<Guid> CreateChannelAsync(
@@ -307,6 +314,7 @@ public sealed class HostAgentBridge(
             if (instanceContextId.HasValue)
                 existing.AgentContextId = instanceContextId;
             await db.SaveChangesAsync(ct);
+            InvalidateChannelRuntimeState();
             channelId = existing.Id;
         }
         else
@@ -353,6 +361,7 @@ public sealed class HostAgentBridge(
         {
             channel.AllowedAgents.Add(agentEntity);
             await db.SaveChangesAsync(ct);
+            InvalidateChannelRuntimeState();
         }
 
         await taskService.AppendLogAsync(
@@ -376,6 +385,34 @@ public sealed class HostAgentBridge(
     private static Task<bool> AutoApproveAsync(
         SharpClaw.Contracts.DTOs.AgentActions.AgentJobResponse _, CancellationToken __) =>
         Task.FromResult(false);
+
+    private void InvalidateAgentRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixExtraTools);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+    }
+
+    private void InvalidateChannelRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+    }
+
+    private void InvalidateThreadRuntimeState(Guid threadId)
+    {
+        chatCache.Remove(ChatCache.KeyThreadHistoryLimits(threadId));
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+    }
+
+    private void InvalidatePermissionRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
+        InvalidateAgentRuntimeState();
+    }
 
     private static string? ExtractJsonObject(string text)
     {

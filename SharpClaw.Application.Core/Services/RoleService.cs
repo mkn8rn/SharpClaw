@@ -13,7 +13,10 @@ namespace SharpClaw.Application.Services;
 /// Manages roles and their permission sets. Enforces the rule that a
 /// user can only grant permissions they already hold themselves.
 /// </summary>
-public sealed class RoleService(SharpClawDbContext db, IConfiguration configuration)
+public sealed class RoleService(
+    SharpClawDbContext db,
+    IConfiguration configuration,
+    ChatCache chatCache)
 {
     // ═══════════════════════════════════════════════════════════════
     // Read
@@ -125,6 +128,7 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
         ReconcileResourceAccesses(ps, request.ResourceGrants);
 
         await db.SaveChangesAsync(ct);
+        InvalidatePermissionRuntimeState();
 
         return ToResponse(role, ps);
     }
@@ -263,6 +267,7 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
 
         role.Name = newName;
         await db.SaveChangesAsync(ct);
+        InvalidatePermissionRuntimeState();
         return new RoleResponse(role.Id, role.Name, role.PermissionSetId);
     }
 
@@ -296,6 +301,7 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
 
         db.Roles.Remove(role);
         await db.SaveChangesAsync(ct);
+        InvalidatePermissionRuntimeState();
         return true;
     }
 
@@ -303,6 +309,15 @@ public sealed class RoleService(SharpClawDbContext db, IConfiguration configurat
     {
         var value = configuration["UniqueNames:Roles"];
         return value is null || !bool.TryParse(value, out var enforced) || enforced;
+    }
+
+    private void InvalidatePermissionRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixExtraTools);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
     }
 
     private async Task EnsureRoleNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)

@@ -5,7 +5,7 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class ThreadService(SharpClawDbContext db)
+public sealed class ThreadService(SharpClawDbContext db, ChatCache chatCache)
 {
     public async Task<ThreadResponse> CreateAsync(
         Guid channelId, CreateThreadRequest request, CancellationToken ct = default)
@@ -24,6 +24,7 @@ public sealed class ThreadService(SharpClawDbContext db)
 
         db.ChatThreads.Add(thread);
         await db.SaveChangesAsync(ct);
+        InvalidateThreadRuntimeState(thread.Id);
 
         return ToResponse(thread);
     }
@@ -64,6 +65,7 @@ public sealed class ThreadService(SharpClawDbContext db)
             thread.CustomId = request.CustomId;
 
         await db.SaveChangesAsync(ct);
+        InvalidateThreadRuntimeState(threadId);
         return ToResponse(thread);
     }
 
@@ -74,7 +76,15 @@ public sealed class ThreadService(SharpClawDbContext db)
 
         db.ChatThreads.Remove(thread);
         await db.SaveChangesAsync(ct);
+        InvalidateThreadRuntimeState(threadId);
         return true;
+    }
+
+    private void InvalidateThreadRuntimeState(Guid threadId)
+    {
+        chatCache.Remove(ChatCache.KeyThreadHistoryLimits(threadId));
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
     }
 
     private static ThreadResponse ToResponse(ChatThreadDB thread) =>

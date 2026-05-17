@@ -256,6 +256,7 @@ public sealed class ChannelCliCommandTests
         services.AddDbContext<SharpClawDbContext>(options =>
             options.UseInMemoryDatabase(databaseName, databaseRoot));
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        services.AddSingleton<ChatCache>();
         services.AddScoped<SessionService>();
         services.AddScoped<ChannelService>();
         services.AddScoped<ContextService>();

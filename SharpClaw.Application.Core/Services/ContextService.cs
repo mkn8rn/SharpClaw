@@ -7,7 +7,10 @@ using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class ContextService(SharpClawDbContext db, IConfiguration configuration)
+public sealed class ContextService(
+    SharpClawDbContext db,
+    IConfiguration configuration,
+    ChatCache chatCache)
 {
     public async Task<ContextResponse> CreateAsync(
         CreateContextRequest request, CancellationToken ct = default)
@@ -110,6 +113,7 @@ public sealed class ContextService(SharpClawDbContext db, IConfiguration configu
         }
 
         await db.SaveChangesAsync(ct);
+        InvalidateContextRuntimeState();
         return ToResponse(context, context.Agent);
     }
 
@@ -120,6 +124,7 @@ public sealed class ContextService(SharpClawDbContext db, IConfiguration configu
 
         db.AgentContexts.Remove(context);
         await db.SaveChangesAsync(ct);
+        InvalidateContextRuntimeState();
         return true;
     }
 
@@ -178,6 +183,7 @@ public sealed class ContextService(SharpClawDbContext db, IConfiguration configu
 
         context.AllowedAgents.Add(agent);
         await db.SaveChangesAsync(ct);
+        InvalidateContextRuntimeState();
         return await ListAllowedAgentsAsync(contextId, ct);
     }
 
@@ -195,6 +201,7 @@ public sealed class ContextService(SharpClawDbContext db, IConfiguration configu
         {
             context.AllowedAgents.Remove(agent);
             await db.SaveChangesAsync(ct);
+            InvalidateContextRuntimeState();
         }
 
         return await ListAllowedAgentsAsync(contextId, ct);
@@ -207,6 +214,13 @@ public sealed class ContextService(SharpClawDbContext db, IConfiguration configu
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
+
+    private void InvalidateContextRuntimeState()
+    {
+        chatCache.RemoveByPrefix(ChatCache.PrefixAccessibleThreads);
+        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+    }
 
     private static ContextResponse ToResponse(ChannelContextDB context, AgentDB agent) =>
         new(context.Id,

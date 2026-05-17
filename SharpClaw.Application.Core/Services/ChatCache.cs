@@ -9,6 +9,13 @@ public sealed class ChatCache(IConfiguration configuration)
     private const long DefaultMaxMegabytes = 2048;
     private const long BytesPerMegabyte = 1024 * 1024;
 
+    public const string PrefixExtraTools = "chat:extra-tools:";
+    public const string PrefixAccessibleThreads = "chat:accessible-threads:";
+    public const string PrefixHeaderUser = "chat:header:user:";
+    public const string PrefixHeaderAgentSuffix = "chat:header:agent-suffix:";
+    public const string PrefixThreadHistoryLimits = "chat:thread-history-limits:";
+    public const string PrefixEffectiveTools = "chat:effective-tools:";
+
     private readonly object _gate = new();
     private readonly Dictionary<string, CacheEntry> _entries = new(StringComparer.Ordinal);
     private readonly Queue<string> _fifo = new();
@@ -140,6 +147,30 @@ public sealed class ChatCache(IConfiguration configuration)
         }
     }
 
+    public void Remove(string key)
+    {
+        lock (_gate)
+        {
+            RemoveEntry(key);
+            CompactFifoIfNeeded();
+        }
+    }
+
+    public void RemoveByPrefix(string prefix)
+    {
+        lock (_gate)
+        {
+            foreach (var key in _entries.Keys
+                         .Where(key => key.StartsWith(prefix, StringComparison.Ordinal))
+                         .ToList())
+            {
+                RemoveEntry(key);
+            }
+
+            CompactFifoIfNeeded();
+        }
+    }
+
     public async Task<ChannelCostResponse> GetChannelCostAsync(
         Guid channelId,
         Func<CancellationToken, Task<ChannelCostResponse>> factory,
@@ -203,13 +234,13 @@ public sealed class ChatCache(IConfiguration configuration)
     }
 
     public static string KeyExtraTools(Guid agentId)
-        => $"chat:extra-tools:{agentId:D}";
+        => $"{PrefixExtraTools}{agentId:D}";
 
     public static string KeyAccessibleThreads(Guid agentId, Guid currentChannelId)
-        => $"chat:accessible-threads:{agentId:D}:{currentChannelId:D}";
+        => $"{PrefixAccessibleThreads}{agentId:D}:{currentChannelId:D}";
 
     public static string KeyHeaderUser(Guid userId)
-        => $"chat:header:user:{userId:D}";
+        => $"{PrefixHeaderUser}{userId:D}";
 
     public static string KeyHeaderAgentSuffix(
         Guid agentId,
@@ -217,10 +248,16 @@ public sealed class ChatCache(IConfiguration configuration)
         string providerKey,
         string? reasoningEffort,
         bool disableAccessibleThreadsHeader)
-        => "chat:header:agent-suffix:"
+        => PrefixHeaderAgentSuffix
            + $"{agentId:D}:{channelId:D}:"
            + $"{providerKey}:{reasoningEffort}:"
            + $"{disableAccessibleThreadsHeader}";
+
+    public static string KeyThreadHistoryLimits(Guid threadId)
+        => $"{PrefixThreadHistoryLimits}{threadId:D}";
+
+    public static string KeyEffectiveTools(Guid agentId, string awarenessFingerprint)
+        => $"{PrefixEffectiveTools}{agentId:D}:{awarenessFingerprint}";
 
     public static long EstimateString(string? value)
         => value is null ? 0 : Encoding.UTF8.GetByteCount(value);
@@ -238,6 +275,28 @@ public sealed class ChatCache(IConfiguration configuration)
 
             _currentBytes -= entry.SizeBytes;
         }
+    }
+
+    private void RemoveEntry(string key)
+    {
+        if (!_entries.Remove(key, out var entry))
+            return;
+
+        _currentBytes -= entry.SizeBytes;
+        if (_currentBytes < 0)
+            _currentBytes = 0;
+    }
+
+    private void CompactFifoIfNeeded()
+    {
+        if (_fifo.Count <= _entries.Count * 2 + 1024)
+            return;
+
+        var liveKeys = _entries.Keys.ToHashSet(StringComparer.Ordinal);
+        var retained = _fifo.Where(liveKeys.Contains).ToList();
+        _fifo.Clear();
+        foreach (var key in retained)
+            _fifo.Enqueue(key);
     }
 
     private long GetMaxBytes()
