@@ -19,6 +19,8 @@ public sealed class ModuleRegistry
     private readonly Dictionary<string, ISharpClawModule> _modules = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string ModuleId, string ToolName)> _toolIndex = new(StringComparer.Ordinal);
     private readonly HashSet<string> _inlineToolIndex = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string ModuleId, string ToolName), ModuleToolPermission?> _permissionDescriptorIndex = new();
+    private readonly Dictionary<(string ModuleId, string ToolName), int?> _toolTimeoutIndex = new();
     private readonly Dictionary<string, ModuleManifest> _manifestCache = new(StringComparer.Ordinal);
 
     // Contract name → (providing module ID, service type).
@@ -252,6 +254,8 @@ public sealed class ModuleRegistry
             foreach (var tool in toolDefs)
             {
                 _toolIndex[tool.Name] = (module.Id, tool.Name);
+                _permissionDescriptorIndex[(module.Id, tool.Name)] = tool.Permission;
+                _toolTimeoutIndex[(module.Id, tool.Name)] = tool.TimeoutSeconds;
 
                 if (tool.Aliases is { Count: > 0 } aliases)
                 {
@@ -264,6 +268,7 @@ public sealed class ModuleRegistry
             {
                 _toolIndex[tool.Name] = (module.Id, tool.Name);
                 _inlineToolIndex.Add(tool.Name);
+                _permissionDescriptorIndex[(module.Id, tool.Name)] = tool.Permission;
 
                 if (tool.Aliases is { Count: > 0 } aliases)
                 {
@@ -333,6 +338,8 @@ public sealed class ModuleRegistry
             foreach (var tool in module.GetToolDefinitions())
             {
                 _toolIndex.Remove(tool.Name);
+                _permissionDescriptorIndex.Remove((moduleId, tool.Name));
+                _toolTimeoutIndex.Remove((moduleId, tool.Name));
 
                 if (tool.Aliases is { Count: > 0 } aliases)
                 {
@@ -345,6 +352,7 @@ public sealed class ModuleRegistry
             {
                 _toolIndex.Remove(tool.Name);
                 _inlineToolIndex.Remove(tool.Name);
+                _permissionDescriptorIndex.Remove((moduleId, tool.Name));
 
                 if (tool.Aliases is { Count: > 0 } aliases)
                 {
@@ -568,13 +576,7 @@ public sealed class ModuleRegistry
         _lock.EnterReadLock();
         try
         {
-            if (!_modules.TryGetValue(moduleId, out var module)) return null;
-
-            // Check job-pipeline tools first, then inline tools.
-            return module.GetToolDefinitions()
-                       .FirstOrDefault(t => t.Name == toolName)?.Permission
-                ?? module.GetInlineToolDefinitions()
-                       .FirstOrDefault(t => t.Name == toolName)?.Permission;
+            return _permissionDescriptorIndex.GetValueOrDefault((moduleId, toolName));
         }
         finally
         {
@@ -591,9 +593,7 @@ public sealed class ModuleRegistry
         _lock.EnterReadLock();
         try
         {
-            if (!_modules.TryGetValue(moduleId, out var module)) return null;
-            return module.GetToolDefinitions()
-                .FirstOrDefault(t => t.Name == toolName)?.TimeoutSeconds;
+            return _toolTimeoutIndex.GetValueOrDefault((moduleId, toolName));
         }
         finally
         {

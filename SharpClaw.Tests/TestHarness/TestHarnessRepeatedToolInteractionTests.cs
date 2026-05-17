@@ -86,30 +86,30 @@ public sealed class TestHarnessRepeatedToolInteractionTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task ProviderStream_100AllowedNoOpToolCalls_WarmCache_ReportsMaxP95AndP99()
+    public async Task PerformanceGate_ProviderStream_100AllowedNoOpToolCalls_WarmCache_Max10P95_2P99_5()
     {
         var measurement = await CachedMeasurementAsync(
             "hundred-allowed-warm",
             MeasureHundredAllowedWarmAsync);
 
         measurement.ToolBodyInvocations.Should().Be(HundredCalls);
-        measurement.InterCallStats.Max.Should().BeLessThanOrEqualTo(25, measurement.ToString());
-        measurement.InterCallStats.P95.Should().BeLessThanOrEqualTo(10, measurement.ToString());
-        measurement.InterCallStats.P99.Should().BeLessThanOrEqualTo(25, measurement.ToString());
+        measurement.InterCallStats.Max.Should().BeLessThanOrEqualTo(10, measurement.ToString());
+        measurement.InterCallStats.P95.Should().BeLessThanOrEqualTo(2, measurement.ToString());
+        measurement.InterCallStats.P99.Should().BeLessThanOrEqualTo(5, measurement.ToString());
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task ProviderStream_100DeniedToolCalls_NeverInvokeModuleBodyAndStayWithinGateBudget()
+    public async Task PerformanceGate_ProviderStream_100DeniedToolCalls_WarmCache_Under25ms()
     {
         var denied = await CachedMeasurementAsync("hundred-denied-warm", MeasureHundredDeniedWarmAsync);
 
         denied.ToolBodyInvocations.Should().Be(0);
-        denied.DescriptorBuilds.Should().BeGreaterThan(0);
+        denied.DescriptorBuilds.Should().Be(0);
         denied.PermissionDeniedResults.Should().Be(HundredCalls);
         denied.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(
-            50,
-            $"denial should stop at host permission enforcement and stay below 0.5ms per denied tool call; denied={denied}");
+            25,
+            $"denial should stop at host permission enforcement and stay below 0.25ms per denied tool call; denied={denied}");
     }
 
     [Test]
@@ -188,7 +188,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
         host.Harness.ToolCalls.Should().BeEmpty();
         ToolResultMessages(host).Count(m => m.Content?.Contains("permission denied", StringComparison.OrdinalIgnoreCase) == true)
             .Should().Be(50);
-        host.Module.PermissionDescriptorBuilds.Should().BeGreaterThan(0);
+        host.Module.PermissionDescriptorBuilds.Should().Be(0);
     }
 
     [Test]
@@ -401,7 +401,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task ProviderStream_10ParallelChatsEachWith100AllowedNoOpToolCalls_DoNotSerializeOrContaminate()
+    public async Task PerformanceGate_ProviderStream_10ParallelChatsEachWith100AllowedNoOpToolCalls_NoGlobalSerialization()
     {
         var sw = Stopwatch.StartNew();
         var tasks = Enumerable.Range(0, 10)
@@ -412,14 +412,14 @@ public sealed class TestHarnessRepeatedToolInteractionTests
 
         results.Should().OnlyContain(r => r.ToolBodyInvocations == HundredCalls);
         sw.ElapsedMilliseconds.Should().BeLessThanOrEqualTo(
-            results.Max(r => r.ClientVisibleMs) + 2_000,
+            results.Max(r => r.ClientVisibleMs) + 200,
             "parallel 100-tool chats should not serialize behind a process-wide lock");
         results.Select(r => r.LastFinalText).Should().OnlyHaveUniqueItems();
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task ProviderStream_10ParallelChatsEachWith100DeniedToolCalls_DoNotSerializeOrInvokeTools()
+    public async Task PerformanceGate_ProviderStream_10ParallelChatsEachWith100DeniedToolCalls_NoGlobalSerialization()
     {
         var sw = Stopwatch.StartNew();
         var tasks = Enumerable.Range(0, 10)
@@ -431,7 +431,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
         results.Should().OnlyContain(r => r.ToolBodyInvocations == 0);
         results.Should().OnlyContain(r => r.PermissionDeniedResults == HundredCalls);
         sw.ElapsedMilliseconds.Should().BeLessThanOrEqualTo(
-            results.Max(r => r.ClientVisibleMs) + 2_000,
+            results.Max(r => r.ClientVisibleMs) + 200,
             "parallel denied 100-tool chats should stop at host permission checks without global serialization");
     }
 

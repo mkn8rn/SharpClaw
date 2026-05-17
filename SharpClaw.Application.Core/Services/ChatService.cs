@@ -1183,6 +1183,7 @@ public sealed class ChatService(
         var roundJobIds = new List<Guid>();
         string? finalProviderMetadataJson = null;
         var providerRound = 0;
+        var inlinePermissionCache = new Dictionary<InlineToolPermissionCacheKey, AgentActionResult>();
 
         while (true)
         {
@@ -1281,7 +1282,7 @@ public sealed class ChatService(
                 if (moduleRegistry.IsInlineTool(tc.Name))
                 {
                     var inlineResult = await HandleInlineModuleToolAsync(
-                        tc, agent.Id, channelId, threadId, ct);
+                        tc, agent.Id, channelId, threadId, inlinePermissionCache, ct);
                     messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     var inlineNotation = FormatInlineToolNotation(tc.Name);
                     fullContent.Append(inlineNotation);
@@ -1766,7 +1767,12 @@ public sealed class ChatService(
     /// <see cref="ISharpClawModule.ExecuteInlineToolAsync"/>.
     /// </summary>
     private async Task<string> HandleInlineModuleToolAsync(
-        ChatToolCall toolCall, Guid agentId, Guid channelId, Guid? threadId, CancellationToken ct)
+        ChatToolCall toolCall,
+        Guid agentId,
+        Guid channelId,
+        Guid? threadId,
+        Dictionary<InlineToolPermissionCacheKey, AgentActionResult> permissionCache,
+        CancellationToken ct)
     {
         if (!moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var canonicalName))
             return $"Error: inline tool '{toolCall.Name}' not found in any module.";
@@ -1793,12 +1799,17 @@ public sealed class ChatService(
         var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, canonicalName);
         if (descriptor is not null)
         {
-            var verdict = await jobService.CheckPermissionAsync(
-                agentId,
-                resourceId: null,
-                new ActionCaller(AgentId: agentId),
-                ct,
-                actionKey: toolCall.Name);
+            var permissionKey = new InlineToolPermissionCacheKey(agentId, moduleId, canonicalName);
+            if (!permissionCache.TryGetValue(permissionKey, out var verdict))
+            {
+                verdict = await jobService.CheckPermissionAsync(
+                    agentId,
+                    resourceId: null,
+                    new ActionCaller(AgentId: agentId),
+                    ct,
+                    actionKey: toolCall.Name);
+                permissionCache[permissionKey] = verdict;
+            }
 
             if (verdict.Verdict != ClearanceVerdict.Approved)
                 return $"Error: permission denied for inline tool '{toolCall.Name}': {verdict.Reason}";
@@ -1812,15 +1823,14 @@ public sealed class ChatService(
         var sw = Stopwatch.StartNew();
         try
         {
-            using var scope = externalHost is not null
-                ? externalHost.CreateScope()
-                : serviceScopeFactory.CreateScope();
+            using var externalScope = externalHost?.CreateScope();
+            var scopedProvider = externalScope?.ServiceProvider ?? serviceProvider;
 
             // Set ModuleExecutionContext so IModuleConfigStore resolves correctly.
-            var execCtx = scope.ServiceProvider.GetService<ModuleExecutionContext>();
+            var execCtx = scopedProvider.GetService<ModuleExecutionContext>();
             if (execCtx is not null) execCtx.ModuleId = module.Id;
 
-            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
+            var restrictedScope = new ModuleServiceScope(scopedProvider, module.Id);
 
             var result = await module.ExecuteInlineToolAsync(
                 canonicalName, parameters, context, restrictedScope, ct);
@@ -1966,6 +1976,7 @@ public sealed class ChatService(
         var roundJobIds = new List<Guid>();
         var logTiming = timingRequestId is not null && logger.IsEnabled(LogLevel.Debug);
         var providerRound = 0;
+        var inlinePermissionCache = new Dictionary<InlineToolPermissionCacheKey, AgentActionResult>();
 
         if (logTiming)
         {
@@ -2062,7 +2073,7 @@ public sealed class ChatService(
                 if (moduleRegistry.IsInlineTool(tc.Name))
                 {
                     var inlineResult = await HandleInlineModuleToolAsync(
-                        tc, agentId, channelId, threadId, ct);
+                        tc, agentId, channelId, threadId, inlinePermissionCache, ct);
                     messages.Add(ToolAwareMessage.ToolResult(tc.Id, inlineResult));
                     toolNotation.Append(FormatInlineToolNotation(tc.Name));
                     continue;
@@ -2415,6 +2426,11 @@ public sealed class ChatService(
         string? ScriptJson,
         string? RawJson = null,
         string? ActionKey = null);
+
+    private readonly record struct InlineToolPermissionCacheKey(
+        Guid AgentId,
+        string ModuleId,
+        string ToolName);
 
     private readonly record struct ToolLoopResult(
         string AssistantContent,

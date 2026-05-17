@@ -121,47 +121,47 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_StreamingOverhead_1000ms_AllSurfaces_Under200ms()
+    public async Task PerformanceGate_StreamingOverhead_1000ms_AllSurfaces_Under100ms()
     {
         var measured = await CachedSurfaceSetAsync("stream-all-1000", () => MeasureAllStreamingSurfacesAsync(1000));
         measured.MaxSharpClawOverheadMs.Should().BeLessThanOrEqualTo(
-            200,
-            "CI gates allow runner variance but still block user-visible streaming regressions; " +
+            100,
+            "streaming surfaces must stay within a tight user-visible forwarding budget; " +
             measured.Describe());
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_StreamingOverhead_100ms_ApiStream_Under50ms()
+    public async Task PerformanceGate_StreamingOverhead_100ms_ApiStream_Under25ms()
     {
         var measured = await CachedLatencyAsync("api-stream-100", () => MeasureApiStreamAsync(100));
         HarnessBudget.AssertSharpClawOverheadAbsolute(
             measured.ClientVisibleMs,
             measured.ProviderActualMs,
             measured.ProviderConfiguredMs,
-            50,
+            25,
             "API stream 100ms gate");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_NonStreamingOverhead_1000ms_Under200ms()
+    public async Task PerformanceGate_NonStreamingOverhead_1000ms_Under50ms()
     {
         var measured = await CachedLatencyAsync("non-stream-1000", () => MeasureNonStreamingAsync(1000));
         HarnessBudget.AssertSharpClawOverheadAbsolute(
             measured.ClientVisibleMs,
             measured.ProviderActualMs,
             measured.ProviderConfiguredMs,
-            200,
+            50,
             "non-streaming 1000ms gate");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task StreamingOverhead_Large1000ChunkStream_Under250ms()
+    public async Task PerformanceGate_StreamingOverhead_Large1000ChunkStream_Under100ms()
     {
         var measured = await MeasureApiStreamAsync(0, Enumerable.Repeat("x", 1000).ToArray());
-        measured.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(250, measured.Describe());
+        measured.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(100, measured.Describe());
     }
 
     [Test]
@@ -195,13 +195,13 @@ public sealed class TestHarnessPerformanceTierTests
             firstToken.ClientVisibleMs,
             firstToken.ProviderActualMs,
             firstToken.ProviderConfiguredMs,
-            100,
+            50,
             "first-token latency");
         HarnessBudget.AssertSharpClawOverheadAbsolute(
             completion.ClientVisibleMs,
             completion.ProviderActualMs,
             completion.ProviderConfiguredMs,
-            100,
+            50,
             "completion latency");
     }
 
@@ -219,10 +219,10 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_AccessibleThreads_List_0Threads_Under50ms()
+    public async Task PerformanceGate_AccessibleThreads_List_0Threads_Under10ms()
     {
         var measured = await CachedAsync("accessible-0", MeasureAccessibleThreadsZeroAsync);
-        measured.Should().BeLessThanOrEqualTo(50);
+        measured.Should().BeLessThanOrEqualTo(10);
     }
 
     [TestCase(5)]
@@ -239,10 +239,10 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_InlineToolPermissionCheck_Under25ms()
+    public async Task PerformanceGate_InlineToolPermissionCheck_Under5ms()
     {
         var measured = await CachedAsync("inline-permission", MeasureInlinePermissionCheckAsync);
-        measured.Should().BeLessThanOrEqualTo(25);
+        measured.Should().BeLessThanOrEqualTo(5);
     }
 
     [TestCaseSource(nameof(ToolCallRoundTripTiers))]
@@ -299,10 +299,10 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_PromptAssembly_AllDynamicDisabled_Under25ms()
+    public async Task PerformanceGate_PromptAssembly_AllDynamicDisabled_Under5ms()
     {
         var measured = await CachedAsync("prompt-disabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: false));
-        measured.Should().BeLessThanOrEqualTo(25);
+        measured.Should().BeLessThanOrEqualTo(5);
     }
 
     [TestCase(25)]
@@ -318,10 +318,10 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_PromptAssembly_AllDynamicEnabled_Under75ms()
+    public async Task PerformanceGate_PromptAssembly_AllDynamicEnabled_Under25ms()
     {
         var measured = await CachedAsync("prompt-enabled", () => MeasurePromptAssemblyAsync(dynamicEnabled: true));
-        measured.Should().BeLessThanOrEqualTo(75);
+        measured.Should().BeLessThanOrEqualTo(25);
     }
 
     [Test]
@@ -335,10 +335,10 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_CostLookup_Warm_Under10ms()
+    public async Task PerformanceGate_CostLookup_Warm_Under5ms()
     {
         var measured = await CachedAsync("warm-cost", MeasureWarmCostLookupAsync);
-        measured.Should().BeLessThanOrEqualTo(10);
+        measured.Should().BeLessThanOrEqualTo(5);
     }
 
     [TestCase(2)]
@@ -354,15 +354,15 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_ProviderResolution_Warm_Under10ms()
+    public async Task PerformanceGate_ProviderResolution_Warm_Under5ms()
     {
         var measured = await CachedAsync("provider-resolution", MeasureProviderResolutionAsync);
-        measured.Should().BeLessThanOrEqualTo(10);
+        measured.Should().BeLessThanOrEqualTo(5);
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task TenConcurrentStreams_1000msProviderDelay_CompletesWithinBudget()
+    public async Task PerformanceGate_TenConcurrentStreams_1000msProviderDelay_Under1200ms()
     {
         var sw = Stopwatch.StartNew();
         var tasks = Enumerable.Range(0, 10)
@@ -371,12 +371,12 @@ public sealed class TestHarnessPerformanceTierTests
         await Task.WhenAll(tasks);
         sw.Stop();
 
-        HarnessBudget.AssertOverheadAbsolute(sw.ElapsedMilliseconds, 1000, 500, "10 concurrent streams");
+        HarnessBudget.AssertOverheadAbsolute(sw.ElapsedMilliseconds, 1000, 200, "10 concurrent streams");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task FiftyConcurrentShortChats_DoNotSerializeBehindGlobalLocks()
+    public async Task PerformanceGate_FiftyConcurrentShortChats_ZeroProviderDelay_Under200ms()
     {
         await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
         {
@@ -435,12 +435,12 @@ public sealed class TestHarnessPerformanceTierTests
         sw.Stop();
 
         results.Should().OnlyContain(r => r.AssistantMessage.Content == "ok");
-        sw.ElapsedMilliseconds.Should().BeLessThan(2_000);
+        sw.ElapsedMilliseconds.Should().BeLessThan(200);
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task OneHundredSequentialWarmCacheChats_RecordMaxP95AndP99()
+    public async Task PerformanceGate_OneHundredSequentialWarmCacheChats_Max50P95_10P99_25()
     {
         await using var host = ChatHarnessHost.Create(new Dictionary<string, string?>
         {
@@ -455,16 +455,18 @@ public sealed class TestHarnessPerformanceTierTests
 
         for (var i = 0; i < 100; i++)
         {
+            await using var scope = host.CreateScope();
+            var chat = scope.ServiceProvider.GetRequiredService<ChatService>();
             var sw = Stopwatch.StartNew();
-            await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest($"warm-{i}"));
+            await chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest($"warm-{i}"));
             sw.Stop();
             measurements.Add(sw.ElapsedMilliseconds);
         }
 
         var stats = TimedRunStats.From(measurements);
-        stats.Max.Should().BeLessThan(250);
-        stats.P95.Should().BeLessThan(100);
-        stats.P99.Should().BeLessThan(200);
+        stats.Max.Should().BeLessThan(50);
+        stats.P95.Should().BeLessThan(10);
+        stats.P99.Should().BeLessThan(25);
     }
 
     private static IEnumerable<TestCaseData> StreamingAllSurfaceTiers()
