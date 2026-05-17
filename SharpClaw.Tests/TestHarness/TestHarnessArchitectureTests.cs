@@ -129,7 +129,10 @@ public sealed class TestHarnessArchitectureTests
         workflow.Should().Contain("name: Performance / ${{ matrix.domain }}");
         workflow.Should().Contain("domain: Chat");
         workflow.Should().Contain("domain: Jobs Tools Costs");
-        workflow.Should().Contain("domain: Agent Orchestration and Defaults");
+        workflow.Should().Contain("domain: Agent Orchestration");
+        workflow.Should().Contain("domain: Defaults");
+        workflow.Should().Contain("domain: Module Contracts");
+        workflow.Should().Contain("domain: Provider Registration");
         workflow.Should().Contain("FullyQualifiedName~TestHarnessApiGatewaySurfaceTests");
         workflow.Should().Contain("domain: Providers");
         workflow.Should().Contain("domain: Persistence");
@@ -143,6 +146,7 @@ public sealed class TestHarnessArchitectureTests
         workflow.Should().NotContain("name: Performance Diagnostics");
         workflow.Should().NotContain("name: Correctness Tests");
         workflow.Should().NotContain("name: Performance Gates");
+        workflow.Should().NotContain("domain: Agent Orchestration and Defaults");
         workflow.Should().NotContain("SHARPCLAW_RUN_PERF_DIAGNOSTICS");
         workflow.Should().NotContain("--filter \"TestCategory=PerformanceDiagnostic\"");
     }

@@ -50,8 +50,14 @@ jobs:
             filter: 'FullyQualifiedName~TestHarnessChatPipelineTests|FullyQualifiedName~TestHarnessPromptAssemblyExpandedTests|FullyQualifiedName~TestHarnessStreamingCorrectnessTests'
           - domain: Jobs Tools Costs
             filter: 'FullyQualifiedName~TestHarnessCostTrackingExpandedTests|FullyQualifiedName~TestHarnessToolCorrectnessExpandedTests|FullyQualifiedName~TestHarnessRepeatedToolInteractionTests'
-          - domain: Agent Orchestration and Defaults
-            filter: 'FullyQualifiedName~TestHarnessAgentOrchestrationExpandedTests|FullyQualifiedName~TestHarnessDefaultsAndResourcesTests|FullyQualifiedName~TestHarnessModuleTests|FullyQualifiedName~TestHarnessProviderRegistrationTests|FullyQualifiedName~TestHarnessArchitectureTests'
+          - domain: Agent Orchestration
+            filter: 'FullyQualifiedName~TestHarnessAgentOrchestrationExpandedTests'
+          - domain: Defaults
+            filter: 'FullyQualifiedName~TestHarnessDefaultsAndResourcesTests'
+          - domain: Module Contracts
+            filter: 'FullyQualifiedName~TestHarnessModuleTests|FullyQualifiedName~TestHarnessArchitectureTests'
+          - domain: Provider Registration
+            filter: 'FullyQualifiedName~TestHarnessProviderRegistrationTests'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
