@@ -14,6 +14,29 @@ can turn on modules without changing the base template. A module is enabled
 only when its module id is explicitly set to `"true"` in `Modules`. A missing
 key or a value of `"false"` keeps that module disabled.
 
+Module-owned configuration uses the same generic env loader. If an enabled
+module reads `IConfiguration["MyModule:EndpointUrl"]`, users can add a
+top-level `"MyModule"` section to Core `.env` without any change to
+`LocalEnvironment`, `ModuleLoader`, or the host startup code. The module owns
+the section name, default values, validation, and documentation. The host only
+loads the JSON tree and makes it available through DI.
+
+For example, a third-party module can document this shape:
+
+```jsonc
+"MyModule": {
+  "EndpointUrl": "https://example.internal/api",
+  "RetrySeconds": "15"
+}
+```
+
+That section is independent from the enablement entry. Users still enable the
+module under `Modules`, then add any module-specific section the module's own
+documentation describes. Bundled modules may place their defaults in the
+checked-in `.env.template` files for discoverability, but third-party modules
+do not need a SharpClaw source change just to introduce configuration keys.
+Changes to Core `.env` take effect after the Core process restarts.
+
 For example, this enables agent orchestration while keeping the VS Code editor
 bridge disabled:
 

@@ -50,6 +50,16 @@ Modules can contribute any combination of:
 - **Task pipeline contributions** — step methods, parser primitives, trigger attributes, and runtime trigger sources
 - **Seed data** — one-time database rows or config inserted on first install
 
+Modules can also own configuration under their own Core `.env` section. The
+env loader is generic: it reads the JSON-with-comments `.env` and `.dev.env`
+files into `IConfiguration`, so the loader does not need a code change when a
+new module introduces a section such as `"MyModule"`. Your module owns the
+section name, the key names, the defaults, and the code that reads them.
+Adding the section to the shipped Core `.env.template` is only needed when the
+SharpClaw repo itself wants to advertise a bundled module's default settings.
+Third-party modules should document the snippet that users add to their own
+Core `.env`.
+
 ---
 
 ## Project setup
@@ -175,6 +185,57 @@ public async Task SeedDataAsync(IServiceProvider services, CancellationToken ct)
     await db.SaveChangesAsync(ct);
 }
 ```
+
+---
+
+## Module configuration from env
+
+Core `.env` files are JSON-with-comments files loaded into the standard
+`IConfiguration` tree before modules are configured. There is no central
+registry of module env sections and no env-loader switch statement that must be
+updated for each module. If your module needs settings, choose a stable section
+name that belongs to the module, document the keys, and read them from DI in the
+service that uses them.
+
+For example, a module with id `my_module` can ask users to add this section next
+to the existing top-level sections in `SharpClaw.Application.Infrastructure`
+`/Environment/.env`:
+
+```jsonc
+"MyModule": {
+  "EndpointUrl": "https://example.internal/api",
+  "RetrySeconds": "15"
+}
+```
+
+The module code can then consume those values through normal constructor
+injection. The section does not need to appear in `LocalEnvironment`, and the
+Core loader does not need to know the module exists.
+
+```csharp
+using Microsoft.Extensions.Configuration;
+
+public sealed class MyService(IConfiguration configuration)
+{
+    private readonly string? _endpointUrl =
+        configuration["MyModule:EndpointUrl"];
+
+    private readonly int _retrySeconds =
+        configuration.GetValue("MyModule:RetrySeconds", 15);
+}
+```
+
+Keep defaults in module-owned code so the module still has predictable behavior
+when the section is absent. Use a unique, readable section name rather than a
+generic name such as `"Settings"` or `"Options"`. If a setting is sensitive,
+prefer the Core `.env` because it is the server-side env file and supports the
+same encrypted-at-rest path as the rest of Core configuration.
+
+Bundled modules may add their documented defaults to the checked-in
+`.env.template` files for discoverability. Third-party modules should not need a
+SharpClaw source change for configuration; they should ship documentation that
+shows the JSON section to paste into Core `.env`, plus the module enablement
+entry under `Modules`.
 
 ---
 
