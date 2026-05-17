@@ -78,6 +78,9 @@ One agent per model is created with the model's name.
 ### System Prompts
 
 The **system prompt** is a set of instructions sent before every user message.
+Core may append a small native-tool instruction suffix when tool schemas are
+enabled. Set `Chat:DisableSystemPrompt=true` in the Core `.env` to suppress
+that core suffix while keeping the prompt saved on the agent.
 
 **Example system prompts**:
 
@@ -126,6 +129,13 @@ Click **Save Parameters** to apply.
 #### Custom Chat Header
 
 Override the default metadata header sent with messages.
+Core `.env` can disable generated default headers with
+`Chat:DisableDefaultHeaders=true`; explicit agent and channel custom headers
+still run. `Chat:DisableAccessibleThreadsHeader=true` removes cross-thread
+summaries from generated headers and from `{{accessible-threads}}`.
+`Chat:DisableModuleHeaderTags=true` prevents module-owned header tags from
+executing. `Chat:RuntimeStateCacheSeconds` controls the short-lived cache for
+chat contributor and header state.
 
 **Available tags**:
 

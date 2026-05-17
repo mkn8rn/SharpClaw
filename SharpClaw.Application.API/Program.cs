@@ -346,6 +346,7 @@ try
     builder.Services.AddSingleton<IAgentJobCostTracker, HostAgentJobCostTracker>();
     builder.Services.AddSingleton<IModelInfoProvider, HostModelInfoProvider>();
     builder.Services.AddScoped<IModelRegistrar, HostModelRegistrar>();
+    builder.Services.AddSingleton<ChatRuntimeStateCache>();
     builder.Services.AddScoped<IChatProcessingBridge, ChatProcessingBridge>();
     builder.Services.AddScoped<IContainerProvisioner, HostContainerProvisioner>();
     builder.Services.AddScoped<IThreadResolver, HostThreadResolver>();

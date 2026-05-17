@@ -40,6 +40,7 @@ public sealed class ChatService(
     ThreadActivitySignal threadActivity,
     ModuleRegistry moduleRegistry,
     ModuleMetricsCollector metricsCollector,
+    ChatRuntimeStateCache runtimeState,
     ILogger<ChatService> logger,
     IServiceScopeFactory serviceScopeFactory,
     IServiceProvider serviceProvider,
@@ -58,6 +59,15 @@ public sealed class ChatService(
 
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
+
+    private readonly bool _disableDefaultChatHeaders =
+        configuration.GetValue<bool>("Chat:DisableDefaultHeaders");
+
+    private readonly bool _disableSystemPrompt =
+        configuration.GetValue<bool>("Chat:DisableSystemPrompt");
+
+    private readonly bool _disableAccessibleThreadsHeader =
+        configuration.GetValue<bool>("Chat:DisableAccessibleThreadsHeader");
 
     /// <summary>
     /// Sends a chat message through the specified channel, optionally
@@ -95,6 +105,7 @@ public sealed class ChatService(
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -158,9 +169,7 @@ public sealed class ChatService(
         var useNativeTools = client.SupportsNativeToolCalling;
         var disableTools = channel.DisableToolSchemas || agent.DisableToolSchemas;
         var enableTools = !disableTools && useNativeTools;
-        var systemPrompt = enableTools
-            ? BuildSystemPrompt(agent.SystemPrompt)
-            : agent.SystemPrompt ?? "";
+        var systemPrompt = BuildEffectiveSystemPrompt(agent.SystemPrompt, enableTools);
 
         // Resolve completion parameters early so they can feed the chat header
         // (reasoning-effort informational notice) as well as the wire payload.
@@ -655,6 +664,20 @@ public sealed class ChatService(
         if (disabled)
             return null;
 
+        // Custom headers are explicit operator configuration and remain
+        // available when the generated default header is disabled globally.
+        var customTemplate = channel.CustomChatHeader ?? agent.CustomChatHeader;
+        if (customTemplate is not null)
+        {
+            var userId2 = jobService.GetSessionUserId();
+            return await headerTagProcessor.ExpandAsync(
+                customTemplate, channel, agent, clientType, userId2, ct,
+                completionParameters, providerKey);
+        }
+
+        if (_disableDefaultChatHeaders)
+            return null;
+
         // ── Task-sourced message: lightweight header, no user lookup ──
         if (taskContext is not null)
         {
@@ -684,16 +707,6 @@ public sealed class ChatService(
             return taskSb.ToString();
         }
 
-        // ── Custom header resolution: channel overrides agent ────────
-        var customTemplate = channel.CustomChatHeader ?? agent.CustomChatHeader;
-        if (customTemplate is not null)
-        {
-            var userId2 = jobService.GetSessionUserId();
-            return await headerTagProcessor.ExpandAsync(
-                customTemplate, channel, agent, clientType, userId2, ct,
-                completionParameters, providerKey);
-        }
-
         var userId = jobService.GetSessionUserId();
 
         // ── External user (bot-forwarded message): no DB session ─────
@@ -714,6 +727,39 @@ public sealed class ChatService(
         if (userId is null)
             return null;
 
+        var userState = await runtimeState.GetOrCreateAsync(
+            $"chat:header:user:{userId.Value:D}",
+            innerCt => LoadUserHeaderStateAsync(userId.Value, innerCt),
+            ct);
+
+        if (userState is null)
+            return null;
+
+        var sb = new StringBuilder();
+        sb.Append("[time: ").Append(DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"));
+        sb.Append(" | user: ").Append(userState.Username);
+        sb.Append(" | via: ").Append(clientType);
+
+        if (userState.RoleName is not null)
+        {
+            if (userState.Grants.Count > 0)
+                sb.Append(" | role: ").Append(userState.RoleName)
+                  .Append(" (").Append(string.Join(", ", userState.Grants)).Append(')');
+            else
+                sb.Append(" | role: ").Append(userState.RoleName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(userState.Bio))
+            sb.Append(" | bio: ").Append(userState.Bio);
+
+        await AppendAgentSuffixAsync(sb, agent.Id, channel.Id, ct,
+            completionParameters, providerKey);
+        return sb.ToString();
+    }
+
+    private async Task<UserHeaderState?> LoadUserHeaderStateAsync(
+        Guid userId, CancellationToken ct)
+    {
         var user = await db.Users
             .Include(u => u.Role)
             .ThenInclude(r => r!.PermissionSet)
@@ -723,39 +769,42 @@ public sealed class ChatService(
         if (user is null)
             return null;
 
-        // Load resource grants if the user has a permission set
-        PermissionSetDB? ps = null;
+        var grants = new List<string>();
         if (user.Role?.PermissionSetId is { } psId)
         {
-            ps = await db.PermissionSets
+            var ps = await db.PermissionSets
                 .Include(p => p.GlobalFlags)
                 .Include(p => p.ResourceAccesses)
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(p => p.Id == psId, ct);
+
+            if (ps is not null)
+                grants = await CollectGrantsWithResourcesAsync(ps, ct);
         }
 
-        var sb = new StringBuilder();
-        sb.Append("[time: ").Append(DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"));
-        sb.Append(" | user: ").Append(user.Username);
-        sb.Append(" | via: ").Append(clientType);
+        return new UserHeaderState(
+            user.Username,
+            user.Role?.Name,
+            grants,
+            user.Bio);
+    }
 
-        if (user.Role is not null && ps is not null)
-        {
-            var grants = await CollectGrantsWithResourcesAsync(ps, ct);
+    private async Task AppendAgentSuffixAsync(
+        StringBuilder sb, Guid agentId, Guid channelId,
+        CancellationToken ct,
+        CompletionParameters? completionParameters = null,
+        string providerKey = "")
+    {
+        var suffix = await runtimeState.GetOrCreateAsync(
+            "chat:header:agent-suffix:"
+            + $"{agentId:D}:{channelId:D}:"
+            + $"{providerKey}:{completionParameters?.ReasoningEffort}:"
+            + $"{_disableAccessibleThreadsHeader}",
+            async innerCt => await BuildAgentSuffixTextAsync(
+                agentId, channelId, innerCt, completionParameters, providerKey),
+            ct);
 
-            if (grants.Count > 0)
-                sb.Append(" | role: ").Append(user.Role.Name)
-                  .Append(" (").Append(string.Join(", ", grants)).Append(')');
-            else
-                sb.Append(" | role: ").Append(user.Role.Name);
-        }
-
-        if (!string.IsNullOrWhiteSpace(user.Bio))
-            sb.Append(" | bio: ").Append(user.Bio);
-
-        await AppendAgentSuffixAsync(sb, agent.Id, channel.Id, ct,
-            completionParameters, providerKey);
-        return sb.ToString();
+        sb.Append(suffix ?? "]");
     }
 
     /// <summary>
@@ -763,12 +812,13 @@ public sealed class ChatService(
     /// bracket to a header being constructed.
     /// Shared across all header paths (authenticated user, external user, task).
     /// </summary>
-    private async Task AppendAgentSuffixAsync(
-        StringBuilder sb, Guid agentId, Guid channelId,
+    private async Task<string> BuildAgentSuffixTextAsync(
+        Guid agentId, Guid channelId,
         CancellationToken ct,
         CompletionParameters? completionParameters = null,
         string providerKey = "")
     {
+        var sb = new StringBuilder();
         var agentWithRole = await db.Agents
             .Include(a => a.Role)
             .ThenInclude(r => r!.PermissionSet)
@@ -801,13 +851,16 @@ public sealed class ChatService(
 
         sb.Append(" | policy: unlisted-resource/GUID=denied; disclose gaps to user");
 
-        var accessibleThreads = await chatProcessingBridge.GetAccessibleThreadsAsync(
-            agentId, channelId, ct);
-        if (accessibleThreads.Count > 0)
+        if (!_disableAccessibleThreadsHeader)
         {
-            sb.Append(" | accessible-threads: ");
-            sb.Append(string.Join(", ", accessibleThreads.Select(
-                t => $"{t.ThreadName} [{t.ChannelTitle}] ({t.ThreadId:D})")));
+            var accessibleThreads = await chatProcessingBridge.GetAccessibleThreadsAsync(
+                agentId, channelId, ct);
+            if (accessibleThreads.Count > 0)
+            {
+                sb.Append(" | accessible-threads: ");
+                sb.Append(string.Join(", ", accessibleThreads.Select(
+                    t => $"{t.ThreadName} [{t.ChannelTitle}] ({t.ThreadId:D})")));
+            }
         }
 
         // Informational notice: surfaced when the provider accepts
@@ -825,6 +878,7 @@ public sealed class ChatService(
         }
 
         sb.AppendLine("]");
+        return sb.ToString();
     }
 
     /// <summary>
@@ -947,6 +1001,7 @@ public sealed class ChatService(
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
@@ -1007,9 +1062,8 @@ public sealed class ChatService(
 
         var apiKey = requiresApiKey ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key) : "local";
         var client = clientFactory.GetClient(provider.ProviderKey, provider.ApiEndpoint);
-        var systemPrompt = channel.DisableToolSchemas || agent.DisableToolSchemas
-            ? agent.SystemPrompt ?? ""
-            : BuildSystemPrompt(agent.SystemPrompt);
+        var disableTools = channel.DisableToolSchemas || agent.DisableToolSchemas;
+        var systemPrompt = BuildEffectiveSystemPrompt(agent.SystemPrompt, !disableTools);
 
         // Resolve completion parameters early so they can feed the chat header
         // (reasoning-effort informational notice) as well as the wire payload.
@@ -1029,10 +1083,10 @@ public sealed class ChatService(
         var supportsVision = model.CapabilityTags.Contains(WellKnownCapabilityKeys.Vision);
         var maxTokens = agent.MaxCompletionTokens;
         var providerParams = _disableCustomProviderParameters ? null : agent.ProviderParameters;
-        var toolAwareness = channel.DisableToolSchemas || agent.DisableToolSchemas
+        var toolAwareness = disableTools
             ? null
             : (channel.ToolAwarenessSet?.Tools ?? agent.ToolAwarenessSet?.Tools);
-        var effectiveTools = channel.DisableToolSchemas || agent.DisableToolSchemas
+        var effectiveTools = disableTools
             ? []
             : await GetEffectiveToolsAsync(request.TaskContext, toolAwareness, agent.Id, ct);
 
@@ -2301,6 +2355,14 @@ public sealed class ChatService(
     // System prompt & tool definitions (loaded from embedded resources)
     // ═══════════════════════════════════════════════════════════════
 
+    private string BuildEffectiveSystemPrompt(string? agentPrompt, bool includeCorePrompt)
+    {
+        if (!includeCorePrompt || _disableSystemPrompt)
+            return agentPrompt ?? "";
+
+        return BuildSystemPrompt(agentPrompt);
+    }
+
     private static string BuildSystemPrompt(string? agentPrompt)
     {
         if (string.IsNullOrEmpty(agentPrompt))
@@ -2342,6 +2404,12 @@ public sealed class ChatService(
         int TotalPromptTokens = 0,
         int TotalCompletionTokens = 0,
         string? ProviderMetadataJson = null);
+
+    private sealed record UserHeaderState(
+        string Username,
+        string? RoleName,
+        IReadOnlyList<string> Grants,
+        string? Bio);
 
     // ═══════════════════════════════════════════════════════════════
     // Tool call notation (persisted in assistant message content)

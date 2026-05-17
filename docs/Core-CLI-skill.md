@@ -339,6 +339,18 @@ ENV
 ────────────────────────────────────────
 Manages Infrastructure/Environment/.env. Changes require backend restart.
 
+Chat switches in Core .env:
+Chat:DisableDefaultHeaders=true removes generated metadata headers, but
+  explicit agent/channel custom headers still run.
+Chat:DisableSystemPrompt=true removes the core native-tool instruction suffix,
+  but keeps the agent's configured system prompt.
+Chat:DisableAccessibleThreadsHeader=true suppresses cross-thread summaries in
+  generated headers and {{accessible-threads}}.
+Chat:DisableModuleHeaderTags=true prevents module-owned custom-header tags from
+  executing.
+Chat:RuntimeStateCacheSeconds=<n> caches chat contributor/header state; 0
+  disables that cache for debugging.
+
 env get                                Print raw JSON content.
 env set                                Write from stdin (blank line = end).
 env auth                               Pre-check: is current user authorised?

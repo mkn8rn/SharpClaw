@@ -265,12 +265,32 @@ Example `.env` snippet:
   },
   "Agent": {
     "DisableCustomProviderParameters": false
+  },
+  "Chat": {
+    "DisableDefaultHeaders": false,
+    "DisableSystemPrompt": false,
+    "DisableAccessibleThreadsHeader": false,
+    "DisableModuleHeaderTags": false,
+    "RuntimeStateCacheSeconds": 10
   }
 }
 ```
 
 When `DisableApiKeyCheck` is `true`, the `ApiKeyMiddleware` short-circuits
 immediately (equivalent to every request carrying a valid key).
+
+The `Chat` section controls prompt-shaping work on the hot path.
+`DisableDefaultHeaders` removes the generated per-message metadata header
+while leaving explicit agent or channel custom headers in place.
+`DisableSystemPrompt` removes the core-generated native-tool instruction
+suffix, but it does not erase an agent's own configured system prompt.
+`DisableAccessibleThreadsHeader` keeps cross-thread summaries out of
+default headers and out of `{{accessible-threads}}` custom-header tags.
+`DisableModuleHeaderTags` stops module-owned header tag resolvers from
+executing inside custom headers. `RuntimeStateCacheSeconds` caches
+chat-contributor output, accessible-thread summaries, and header user or
+agent state for a short window; set it to `0` when debugging permission or
+module registration changes and every chat must force a fresh lookup.
 
 When `DisableAccessTokenCheck` is `true`, the `JwtSessionMiddleware`
 skips enforcement — no 401 is returned for missing/expired tokens on
@@ -2726,6 +2746,12 @@ encryption toggles, the `Jwt` section for token signing, issuer, audience,
 and lifetimes, and the `Auth` section for local-only bypass switches.
 `Agent:DisableCustomProviderParameters` is also in the template because it
 is the hardening switch for free-form provider parameters.
+
+The `Chat` section controls chat-path prompt shaping and cache behavior.
+Default headers, the core-generated system prompt suffix, accessible-thread
+header content, and module-owned header tag execution can each be disabled
+independently. `RuntimeStateCacheSeconds` is the short-lived cache window
+for chat contributor output and header state.
 
 Database configuration lives in the `Database` section. `Database:Provider`
 accepts `JsonFile`, `Postgres`, `SqlServer`, or `SQLite`, and relational

@@ -16,10 +16,25 @@ namespace SharpClaw.Application.Services;
 /// them up automatically through <c>IEnumerable&lt;IChatProcessingContributor&gt;</c>.
 /// </summary>
 public sealed class ChatProcessingBridge(
-    IEnumerable<IChatProcessingContributor> contributors) : IChatProcessingBridge
+    IEnumerable<IChatProcessingContributor> contributors,
+    ChatRuntimeStateCache runtimeState) : IChatProcessingBridge
 {
     public async Task<IReadOnlyList<ChatToolDefinition>> GetExtraToolsAsync(
         Guid agentId, CancellationToken ct = default)
+        => await runtimeState.GetOrCreateAsync(
+            $"chat:extra-tools:{agentId:D}",
+            async innerCt => await ResolveExtraToolsAsync(agentId, innerCt),
+            ct) ?? [];
+
+    public async Task<IReadOnlyList<ThreadSummary>> GetAccessibleThreadsAsync(
+        Guid agentId, Guid currentChannelId, CancellationToken ct = default)
+        => await runtimeState.GetOrCreateAsync(
+            $"chat:accessible-threads:{agentId:D}:{currentChannelId:D}",
+            async innerCt => await ResolveAccessibleThreadsAsync(agentId, currentChannelId, innerCt),
+            ct) ?? [];
+
+    private async Task<IReadOnlyList<ChatToolDefinition>> ResolveExtraToolsAsync(
+        Guid agentId, CancellationToken ct)
     {
         var aggregated = new List<ChatToolDefinition>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -35,8 +50,8 @@ public sealed class ChatProcessingBridge(
         return aggregated;
     }
 
-    public async Task<IReadOnlyList<ThreadSummary>> GetAccessibleThreadsAsync(
-        Guid agentId, Guid currentChannelId, CancellationToken ct = default)
+    private async Task<IReadOnlyList<ThreadSummary>> ResolveAccessibleThreadsAsync(
+        Guid agentId, Guid currentChannelId, CancellationToken ct)
     {
         var aggregated = new List<ThreadSummary>();
         var seen = new HashSet<Guid>();

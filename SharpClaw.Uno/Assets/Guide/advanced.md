@@ -61,7 +61,7 @@ By default, every user message is prefixed with a metadata header:
 [time: 2025-01-15 14:23:00 UTC | user: alice | via: UnoWindows | role: Developer (SafeShell, Agent) | bio: Senior engineer | agent-role: Assistant (Chat, Log)]
 ```
 
-You can **override** this header at the **agent level** or **channel level** with custom templates.
+You can **override** this header at the **agent level** or **channel level** with custom templates. Operators can also turn off generated default headers globally with `Chat:DisableDefaultHeaders=true` in the Core `.env`; explicit agent or channel custom headers still run unless they are cleared or the channel's **Disable Chat Header** setting is enabled.
 
 ### Header Tag System
 
@@ -98,6 +98,8 @@ Agents: Alice (guid1), Bob (guid2), Charlie (guid3)
 
 Fields marked with `[HeaderSensitive]` render as `[redacted]`.
 
+Header expansion is on the chat hot path. `Chat:DisableAccessibleThreadsHeader=true` suppresses cross-thread summaries in the generated header and makes `{{accessible-threads}}` expand to an empty string. `Chat:DisableModuleHeaderTags=true` prevents module-owned header tag resolvers from executing inside custom headers. `Chat:RuntimeStateCacheSeconds` controls the short-lived cache used for chat contributor and header state; use `0` only when debugging and every message must force fresh state.
+
 ### Setting Custom Headers
 
 **For an agent:**
@@ -120,6 +122,8 @@ To suppress headers entirely:
 
 - **Agent level**: Set a blank custom header
 - **Channel level**: Enable **Disable Chat Header** in channel settings
+
+For instance-wide behavior, edit Core `.env` and set `Chat:DisableDefaultHeaders=true`. To remove the core-generated native-tool instruction suffix from provider calls, set `Chat:DisableSystemPrompt=true`; this does not remove the system prompt saved on each agent.
 
 ### Permissions
 
@@ -146,6 +150,7 @@ SharpClaw uses two `.env` files (JSON-with-comments format):
 - `Admin:Username` / `Admin:Password`: First-time admin credentials
 - `Browser:Executable` / `Browser:Arguments`: Chromium path for localhost browser action
 - `Local:GpuLayerCount` / `Local:ContextSize` / `Local:KeepLoaded` / `Local:IdleCooldownMinutes`: Local model settings
+- `Chat:DisableDefaultHeaders` / `Chat:DisableSystemPrompt` / `Chat:DisableAccessibleThreadsHeader` / `Chat:DisableModuleHeaderTags` / `Chat:RuntimeStateCacheSeconds`: Chat prompt-shaping and hot-path cache settings
 - `EnvEditor:AllowNonAdmin`: Allow non-admin users to edit the Core .env
 - `Backend:Enabled`: Enable/disable backend auto-start
 

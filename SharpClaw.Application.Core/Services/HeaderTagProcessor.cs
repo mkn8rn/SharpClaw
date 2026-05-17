@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Entities.Core.Clearance;
@@ -41,7 +42,8 @@ public sealed partial class HeaderTagProcessor(
     ModuleRegistry moduleRegistry,
     IChatProcessingBridge chatProcessingBridge,
     IServiceProvider serviceProvider,
-    ProviderApiClientFactory clientFactory)
+    ProviderApiClientFactory clientFactory,
+    IConfiguration configuration)
 {
     // ── Tag regex ────────────────────────────────────────────────
     // Matches {{TagName}} or {{TagName:{template with {Field} placeholders}}}
@@ -56,6 +58,12 @@ public sealed partial class HeaderTagProcessor(
 
     // ── Sensitive-field cache (thread-safe, lives for app lifetime) ─
     private static readonly ConcurrentDictionary<Type, HashSet<string>> SensitiveFieldCache = new();
+
+    private readonly bool _disableAccessibleThreadsHeader =
+        configuration.GetValue<bool>("Chat:DisableAccessibleThreadsHeader");
+
+    private readonly bool _disableModuleHeaderTags =
+        configuration.GetValue<bool>("Chat:DisableModuleHeaderTags");
 
     /// <summary>
     /// Expands all <c>{{tag}}</c> placeholders in <paramref name="template"/>
@@ -298,6 +306,7 @@ public sealed partial class HeaderTagProcessor(
     {
         var tag = moduleRegistry.GetHeaderTag(tagName);
         if (tag is null) return null;
+        if (_disableModuleHeaderTags) return "";
         return await tag.Resolve(serviceProvider, ct);
     }
 
@@ -322,6 +331,9 @@ public sealed partial class HeaderTagProcessor(
 
     private async Task<string> FormatAccessibleThreadsAsync(HeaderContext ctx, CancellationToken ct)
     {
+        if (_disableAccessibleThreadsHeader)
+            return "";
+
         var threads = await chatProcessingBridge.GetAccessibleThreadsAsync(
             ctx.Agent.Id, ctx.Channel.Id, ct);
 

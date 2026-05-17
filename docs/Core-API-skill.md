@@ -520,9 +520,20 @@ PUT  /env/core       { content }  → { saved: true }  (403 if not authorised)
 Core .env keys include Encryption:Key, EncryptDatabase, EncryptProviderKeys,
 Jwt:Secret, Jwt:Issuer, Jwt:Audience, Jwt:AccessTokenLifetime,
 Jwt:RefreshTokenLifetime, Auth:DisableApiKeyCheck,
-Auth:DisableAccessTokenCheck, database settings, logging settings, Admin,
-Local model settings, EnvEditor, UniqueNames, ExternalModules, and Modules.
-Jwt:Secret and Encryption:Key are generated per instance when omitted.
+Auth:DisableAccessTokenCheck, Agent:DisableCustomProviderParameters,
+database settings, logging settings, Admin, Local model settings, EnvEditor,
+UniqueNames, ExternalModules, and Modules. Jwt:Secret and Encryption:Key are
+generated per instance when omitted.
+
+Chat-path switches live under Chat. DisableDefaultHeaders removes the generated
+metadata header but still lets explicit agent/channel custom headers run.
+DisableSystemPrompt removes the core-generated native-tool instruction suffix
+but preserves the agent's configured prompt. DisableAccessibleThreadsHeader
+keeps cross-thread summaries out of generated headers and out of
+{{accessible-threads}}. DisableModuleHeaderTags prevents module-owned header
+tag resolvers from running in custom headers. RuntimeStateCacheSeconds caches
+chat contributor output and header state for the configured number of seconds;
+0 disables that cache.
 
 Interface .env keys include Api:Url, Backend:Enabled, Gateway:Enabled,
 Gateway:Url, process-startup flags, and logging settings. Gateway .env keys

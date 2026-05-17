@@ -798,6 +798,18 @@ For tutorial-style walkthroughs, see
 Manages the core `.env` file (`Infrastructure/Environment/.env`). This
 file controls encryption keys, JWT secrets, database connection strings,
 and other server-side configuration. Changes require a backend restart.
+Chat-path runtime switches live under the `Chat` section. Set
+`Chat:DisableDefaultHeaders` to `true` to remove the generated metadata
+header while keeping explicit agent or channel custom headers available.
+Set `Chat:DisableSystemPrompt` to `true` to remove the core-generated
+native-tool instruction suffix without erasing an agent's own configured
+system prompt. Set `Chat:DisableAccessibleThreadsHeader` to `true` to keep
+cross-thread summaries out of generated headers and the
+`{{accessible-threads}}` tag. Set `Chat:DisableModuleHeaderTags` to `true`
+to prevent module-owned custom-header tags from executing. Set
+`Chat:RuntimeStateCacheSeconds` to a short positive value to cache chat
+contributor and header state, or to `0` when debugging and every chat turn
+must force fresh state.
 
 ```
 env get
