@@ -120,17 +120,29 @@ public sealed class TestHarnessArchitectureTests
     }
 
     [Test]
-    public void CiWorkflowRunsCorrectnessGatesAndPerformanceGatesSeparately()
+    public void CiWorkflowSplitsCorrectnessAndPerformanceByDomain()
     {
         var root = FindSolutionRoot();
         var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
 
-        workflow.Should().Contain("name: Correctness Tests");
-        workflow.Should().Contain("name: Performance Gates");
-        workflow.Should().Contain("--filter \"TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate\"");
-        workflow.Should().Contain("--filter \"TestCategory=PerformanceGate\"");
-        workflow.Should().Contain("SHARPCLAW_RUN_PERF_DIAGNOSTICS: \"1\"");
-        workflow.Should().Contain("--filter \"TestCategory=PerformanceDiagnostic\"");
+        workflow.Should().Contain("name: Correctness / ${{ matrix.domain }}");
+        workflow.Should().Contain("name: Performance / ${{ matrix.domain }}");
+        workflow.Should().Contain("domain: Chat");
+        workflow.Should().Contain("domain: Jobs Tools Costs");
+        workflow.Should().Contain("domain: Agent Orchestration and Defaults");
+        workflow.Should().Contain("domain: Providers");
+        workflow.Should().Contain("domain: Persistence");
+        workflow.Should().Contain("domain: Streaming");
+        workflow.Should().Contain("domain: Chat Throughput");
+        workflow.Should().Contain("domain: Tools");
+        workflow.Should().Contain("domain: Cache and Resolution");
+        workflow.Should().Contain("--filter \"TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate&(${{ matrix.filter }})\"");
+        workflow.Should().Contain("--filter \"TestCategory=PerformanceGate&(${{ matrix.filter }})\"");
+        workflow.Should().NotContain("name: Performance Diagnostics");
+        workflow.Should().NotContain("name: Correctness Tests");
+        workflow.Should().NotContain("name: Performance Gates");
+        workflow.Should().NotContain("SHARPCLAW_RUN_PERF_DIAGNOSTICS");
+        workflow.Should().NotContain("--filter \"TestCategory=PerformanceDiagnostic\"");
     }
 
     private static IConfigurationRoot LoadTemplate(string path) =>

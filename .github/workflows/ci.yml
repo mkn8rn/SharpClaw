@@ -13,11 +13,6 @@ on:
       - release/**
 
   workflow_dispatch:
-    inputs:
-      run_diagnostics:
-        description: Run non-blocking performance diagnostic tiers
-        required: false
-        default: "false"
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
@@ -29,10 +24,34 @@ permissions:
   contents: read
 
 jobs:
-  correctness_tests:
-    name: Correctness Tests
+  correctness:
+    name: Correctness / ${{ matrix.domain }}
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - domain: Core
+            filter: 'FullyQualifiedName~SharpClaw.Tests.AppInfoTests|FullyQualifiedName~SharpClaw.Tests.Api|FullyQualifiedName~SharpClaw.Tests.Architecture|FullyQualifiedName~SharpClaw.Tests.Clients|FullyQualifiedName~SharpClaw.Tests.Modules|FullyQualifiedName~SharpClaw.Tests.Services'
+          - domain: CLI
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Cli'
+          - domain: Gateway
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Gateway'
+          - domain: Frontend
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Frontend'
+          - domain: Persistence
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence'
+          - domain: Providers
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Providers'
+          - domain: Tasks
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Tasks'
+          - domain: Chat
+            filter: 'FullyQualifiedName~TestHarnessChatPipelineTests|FullyQualifiedName~TestHarnessPromptAssemblyExpandedTests|FullyQualifiedName~TestHarnessStreamingCorrectnessTests'
+          - domain: Jobs Tools Costs
+            filter: 'FullyQualifiedName~TestHarnessCostTrackingExpandedTests|FullyQualifiedName~TestHarnessToolCorrectnessExpandedTests|FullyQualifiedName~TestHarnessRepeatedToolInteractionTests'
+          - domain: Agent Orchestration and Defaults
+            filter: 'FullyQualifiedName~TestHarnessAgentOrchestrationExpandedTests|FullyQualifiedName~TestHarnessDefaultsAndResourcesTests|FullyQualifiedName~TestHarnessModuleTests|FullyQualifiedName~TestHarnessProviderRegistrationTests|FullyQualifiedName~TestHarnessArchitectureTests|FullyQualifiedName~TestHarnessApiGatewaySurfaceTests'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,19 +65,31 @@ jobs:
         shell: pwsh
         run: dotnet restore $env:TEST_PROJECT
 
-      - name: Run correctness suite
+      - name: Run correctness domain
         shell: pwsh
         run: >
           dotnet test $env:TEST_PROJECT
           --configuration Release
           --no-restore
           --logger GitHubActions
-          --filter "TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate"
+          --filter "TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate&(${{ matrix.filter }})"
 
-  performance_gates:
-    name: Performance Gates
+  performance:
+    name: Performance / ${{ matrix.domain }}
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - domain: Streaming
+            filter: 'FullyQualifiedName~PerformanceGate_StreamingOverhead|FullyQualifiedName~PerformanceGate_TenConcurrentStreams'
+          - domain: Chat Throughput
+            filter: 'FullyQualifiedName~PerformanceGate_NonStreamingOverhead|FullyQualifiedName~PerformanceGate_FiftyConcurrentShortChats|FullyQualifiedName~PerformanceGate_OneHundredSequentialWarmCacheChats'
+          - domain: Tools
+            filter: 'FullyQualifiedName~PerformanceGate_InlineToolPermissionCheck|FullyQualifiedName~PerformanceGate_ProviderStream'
+          - domain: Cache and Resolution
+            filter: 'FullyQualifiedName~PerformanceGate_AccessibleThreads|FullyQualifiedName~PerformanceGate_PromptAssembly|FullyQualifiedName~PerformanceGate_CostLookup|FullyQualifiedName~PerformanceGate_ProviderResolution'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,41 +104,12 @@ jobs:
         run: dotnet restore $env:TEST_PROJECT
 
       # Require this check in GitHub branch protection. It is the blocking
-      # performance signal; diagnostic tiers below are for manual analysis.
-      - name: Run performance gates
+      # performance signal; diagnostic tiers remain local opt-in tests.
+      - name: Run performance domain
         shell: pwsh
         run: >
           dotnet test $env:TEST_PROJECT
           --configuration Release
           --no-restore
           --logger GitHubActions
-          --filter "TestCategory=PerformanceGate"
-
-  performance_diagnostics:
-    name: Performance Diagnostics
-    if: github.event_name == 'workflow_dispatch' && inputs.run_diagnostics == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Restore
-        shell: pwsh
-        run: dotnet restore $env:TEST_PROJECT
-
-      - name: Run diagnostic tiers
-        shell: pwsh
-        env:
-          SHARPCLAW_RUN_PERF_DIAGNOSTICS: "1"
-        run: >
-          dotnet test $env:TEST_PROJECT
-          --configuration Release
-          --no-restore
-          --logger GitHubActions
-          --filter "TestCategory=PerformanceDiagnostic"
+          --filter "TestCategory=PerformanceGate&(${{ matrix.filter }})"
