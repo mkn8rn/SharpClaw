@@ -804,7 +804,7 @@ function Resolve-PackageTargets {
     return @($set)
 }
 
-$packageTargets = Resolve-PackageTargets $Package
+$packageTargets = @(Resolve-PackageTargets $Package)
 
 function Get-ProjectVersion {
     $propsPath = Join-Path $repoRoot "Directory.Build.props"
