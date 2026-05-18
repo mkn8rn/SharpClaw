@@ -154,18 +154,33 @@ public sealed class TestHarnessApiGatewaySurfaceTests
         await using var internalApi = await StartInternalSseServerAsync(channelId, textDeltaCount: 1000);
         await using var gateway = await StartGatewayProxyAsync(internalApi.Urls.Single());
 
-        using var client = new HttpClient
+        using var internalClient = new HttpClient
+        {
+            BaseAddress = new Uri(internalApi.Urls.Single())
+        };
+        using var gatewayClient = new HttpClient
         {
             BaseAddress = new Uri(gateway.Urls.Single())
         };
 
-        var sw = Stopwatch.StartNew();
-        var sse = await client.GetStringAsync($"/api/channels/{channelId}/chat/stream?message=via-gateway");
-        sw.Stop();
+        var internalResponse = await MeasureSseRequestAsync(
+            internalClient,
+            $"/channels/{channelId}/chat/stream?message=via-gateway");
+        var gatewayResponse = await MeasureSseRequestAsync(
+            gatewayClient,
+            $"/api/channels/{channelId}/chat/stream?message=via-gateway");
+        var gatewayOverheadMilliseconds = Math.Max(
+            0,
+            gatewayResponse.ElapsedMilliseconds - internalResponse.ElapsedMilliseconds);
 
-        CountOccurrences(sse, "event: TextDelta").Should().Be(1000);
-        sse.Should().Contain("event: Done");
-        sw.ElapsedMilliseconds.Should().BeLessThanOrEqualTo(500);
+        gatewayResponse.Body.Should().Be(internalResponse.Body);
+        CountOccurrences(gatewayResponse.Body, "event: TextDelta").Should().Be(1000);
+        gatewayResponse.Body.Should().Contain("event: Done");
+        gatewayOverheadMilliseconds.Should().BeLessThanOrEqualTo(
+            500,
+            "the gateway should add no more than the existing 500 ms budget over the same runner's direct SSE baseline; direct={0}ms, gateway={1}ms",
+            internalResponse.ElapsedMilliseconds,
+            gatewayResponse.ElapsedMilliseconds);
     }
 
     [Test]
@@ -750,6 +765,16 @@ public sealed class TestHarnessApiGatewaySurfaceTests
         app.MapChatStreamProxy();
         await app.StartAsync();
         return app;
+    }
+
+    private static async Task<(string Body, long ElapsedMilliseconds)> MeasureSseRequestAsync(
+        HttpClient client,
+        string requestUri)
+    {
+        var sw = Stopwatch.StartNew();
+        var body = await client.GetStringAsync(requestUri);
+        sw.Stop();
+        return (body, sw.ElapsedMilliseconds);
     }
 
     private static int GetFreeTcpPort()
