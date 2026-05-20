@@ -5,6 +5,13 @@ internal static class ForeignModuleProtocol
     public const int Version = 1;
     public const string TokenHeaderName = "X-SharpClaw-Control-Token";
 
+    public const string ModuleDirectoryEnv = "SHARPCLAW_MODULE_DIR";
+    public const string ModuleDataDirectoryEnv = "SHARPCLAW_MODULE_DATA_DIR";
+    public const string ControlAddressEnv = "SHARPCLAW_CONTROL_ADDRESS";
+    public const string ControlTokenEnv = "SHARPCLAW_CONTROL_TOKEN";
+    public const string ModuleIdEnv = "SHARPCLAW_MODULE_ID";
+    public const string ModuleRuntimeEnv = "SHARPCLAW_MODULE_RUNTIME";
+
     public const string HandshakePath = "/.sharpclaw/handshake";
     public const string HealthPath = "/.sharpclaw/health";
     public const string InitializePath = "/.sharpclaw/initialize";
