@@ -13,6 +13,7 @@ internal sealed record class ForeignModuleHostLaunchOptions
     public required string ControlToken { get; init; }
     public string? WorkingDirectory { get; init; }
     public string? HostVersion { get; init; }
+    public IServiceProvider? HostServices { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get; init; } =
         new Dictionary<string, string>();
     public TimeSpan StartupTimeout { get; init; } = DefaultStartupTimeout;

@@ -26,11 +26,16 @@ public sealed class PythonModuleSdkTests
         source.Should().Contain("SHARPCLAW_CONTROL_TOKEN");
         source.Should().Contain("SHARPCLAW_MODULE_ID");
         source.Should().Contain("SHARPCLAW_MODULE_RUNTIME");
+        source.Should().Contain("SHARPCLAW_HOST_CAPABILITIES_ADDRESS");
+        source.Should().Contain("SHARPCLAW_HOST_CAPABILITIES_TOKEN");
         source.Should().Contain("/.sharpclaw/handshake");
         source.Should().Contain("/.sharpclaw/discovery");
         source.Should().Contain("/.sharpclaw/health");
         source.Should().Contain("/.sharpclaw/initialize");
         source.Should().Contain("/.sharpclaw/shutdown");
+        source.Should().Contain("/.sharpclaw/host/config/get");
+        source.Should().Contain("/.sharpclaw/host/job/log");
+        source.Should().Contain("HostCapabilitiesClient");
         source.Should().Contain("asgi_app");
     }
 

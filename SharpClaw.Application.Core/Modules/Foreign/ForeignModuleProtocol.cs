@@ -37,3 +37,18 @@ public static class ForeignModuleEndpointResponseMode
     public const string Static = "static";
     public const string Raw = "raw";
 }
+
+public static class ForeignModuleHostCapabilityProtocol
+{
+    public const string AddressEnv = "SHARPCLAW_HOST_CAPABILITIES_ADDRESS";
+    public const string TokenEnv = "SHARPCLAW_HOST_CAPABILITIES_TOKEN";
+
+    public const string ConfigGetPath = "/.sharpclaw/host/config/get";
+    public const string ConfigSetPath = "/.sharpclaw/host/config/set";
+    public const string ConfigAllPath = "/.sharpclaw/host/config/all";
+    public const string LogPath = "/.sharpclaw/host/log";
+    public const string JobLogPath = "/.sharpclaw/host/job/log";
+    public const string JobCompletePath = "/.sharpclaw/host/job/complete";
+    public const string JobFailPath = "/.sharpclaw/host/job/fail";
+    public const string JobCancelPath = "/.sharpclaw/host/job/cancel";
+}

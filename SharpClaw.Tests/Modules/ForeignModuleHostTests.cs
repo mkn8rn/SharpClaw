@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
@@ -34,6 +35,23 @@ public sealed class ForeignModuleHostTests
 
         await host.Module.ShutdownAsync();
         host.HasExited.Should().BeTrue();
+    }
+
+    [Test]
+    public async Task StartAsyncPassesHostCapabilityEnvironmentWhenHostServicesAreAvailable()
+    {
+        using var workspace = TestWorkspace.Create();
+        await using var hostServices = new ServiceCollection().BuildServiceProvider();
+        await using var host = await ForeignModuleHost.StartAsync(
+            Manifest(),
+            RuntimeInfo(),
+            CreateLaunchOptions(workspace, "normal") with
+            {
+                HostServices = hostServices,
+            });
+
+        host.CapturedOutput.StandardOutput.Should().Contain("hostCapabilities=http://127.0.0.1:");
+        host.CapturedOutput.StandardOutput.Should().Contain("hostCapabilitiesToken=");
     }
 
     [Test]

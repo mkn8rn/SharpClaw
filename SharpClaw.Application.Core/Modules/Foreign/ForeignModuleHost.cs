@@ -15,6 +15,7 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
     private readonly Process _process;
     private readonly HttpClient _httpClient;
     private readonly ServiceProvider _serviceProvider;
+    private readonly ForeignModuleHostCapabilityServer? _capabilityServer;
     private readonly StringBuilder _stdout = new();
     private readonly StringBuilder _stderr = new();
     private readonly object _stdoutLock = new();
@@ -37,7 +38,8 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
         Process process,
         HttpClient httpClient,
         ForeignModuleProtocolClient client,
-        ServiceProvider serviceProvider)
+        ServiceProvider serviceProvider,
+        ForeignModuleHostCapabilityServer? capabilityServer)
     {
         _manifest = manifest;
         _runtimeInfo = runtimeInfo;
@@ -46,6 +48,7 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
         _httpClient = httpClient;
         ProtocolClient = client;
         _serviceProvider = serviceProvider;
+        _capabilityServer = capabilityServer;
         SourceDirectory = options.ModuleDirectory;
         Module = new ForeignModuleProxy(manifest, client, () => ShutdownSidecarAsync(CancellationToken.None));
     }
@@ -82,27 +85,34 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
 
         Directory.CreateDirectory(options.ModuleDataDirectory);
 
-        var process = CreateProcess(manifest, runtimeInfo, options);
-        var httpClient = new HttpClient
-        {
-            BaseAddress = options.ControlAddress,
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
-        var client = new ForeignModuleProtocolClient(httpClient, options.ControlToken);
-        var services = new ServiceCollection().BuildServiceProvider();
-        var host = new ForeignModuleHost(
-            manifest,
-            runtimeInfo,
-            options,
-            process,
-            httpClient,
-            client,
-            services);
-
-        host.AttachOutputReaders();
-
+        ForeignModuleHost? host = null;
+        ForeignModuleHostCapabilityServer? capabilityServer = null;
         try
         {
+            capabilityServer = options.HostServices is null
+                ? null
+                : ForeignModuleHostCapabilityServer.Start(manifest.Id, options.HostServices);
+
+            var process = CreateProcess(manifest, runtimeInfo, options, capabilityServer);
+            var httpClient = new HttpClient
+            {
+                BaseAddress = options.ControlAddress,
+                Timeout = Timeout.InfiniteTimeSpan,
+            };
+            var client = new ForeignModuleProtocolClient(httpClient, options.ControlToken);
+            var services = new ServiceCollection().BuildServiceProvider();
+            host = new ForeignModuleHost(
+                manifest,
+                runtimeInfo,
+                options,
+                process,
+                httpClient,
+                client,
+                services,
+                capabilityServer);
+
+            host.AttachOutputReaders();
+
             if (!process.Start())
             {
                 throw new ForeignModuleStartupException(
@@ -117,7 +127,11 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
         }
         catch
         {
-            await host.DisposeAfterFailedStartupAsync();
+            if (host is not null)
+                await host.DisposeAfterFailedStartupAsync();
+            else if (capabilityServer is not null)
+                await capabilityServer.DisposeAsync();
+
             throw;
         }
     }
@@ -185,6 +199,9 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
 
         await ShutdownSidecarAsync(CancellationToken.None);
         await _serviceProvider.DisposeAsync();
+        if (_capabilityServer is not null)
+            await _capabilityServer.DisposeAsync();
+
         _httpClient.Dispose();
         _process.Dispose();
     }
@@ -192,7 +209,8 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
     private static Process CreateProcess(
         ModuleManifest manifest,
         ModuleManifestRuntimeInfo runtimeInfo,
-        ForeignModuleHostLaunchOptions options)
+        ForeignModuleHostLaunchOptions options,
+        ForeignModuleHostCapabilityServer? capabilityServer)
     {
         var psi = new ProcessStartInfo
         {
@@ -216,6 +234,13 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
         psi.Environment[ForeignModuleProtocol.ControlTokenEnv] = options.ControlToken;
         psi.Environment[ForeignModuleProtocol.ModuleIdEnv] = manifest.Id;
         psi.Environment[ForeignModuleProtocol.ModuleRuntimeEnv] = runtimeInfo.Runtime;
+        if (capabilityServer is not null)
+        {
+            psi.Environment[ForeignModuleHostCapabilityProtocol.AddressEnv] =
+                capabilityServer.Address.ToString();
+            psi.Environment[ForeignModuleHostCapabilityProtocol.TokenEnv] =
+                capabilityServer.Token;
+        }
 
         return new Process { StartInfo = psi, EnableRaisingEvents = true };
     }
@@ -354,6 +379,9 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
             await KillProcessAsync();
 
         await _serviceProvider.DisposeAsync();
+        if (_capabilityServer is not null)
+            await _capabilityServer.DisposeAsync();
+
         _httpClient.Dispose();
         _process.Dispose();
     }

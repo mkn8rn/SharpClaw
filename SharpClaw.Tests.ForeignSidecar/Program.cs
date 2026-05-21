@@ -18,10 +18,12 @@ var controlAddress = ReadEnv("SHARPCLAW_CONTROL_ADDRESS");
 var token = ReadEnv("SHARPCLAW_CONTROL_TOKEN");
 var moduleId = ReadEnv("SHARPCLAW_MODULE_ID");
 var runtime = ReadEnv("SHARPCLAW_MODULE_RUNTIME");
+var hostCapabilitiesAddress = Environment.GetEnvironmentVariable("SHARPCLAW_HOST_CAPABILITIES_ADDRESS");
+var hostCapabilitiesToken = Environment.GetEnvironmentVariable("SHARPCLAW_HOST_CAPABILITIES_TOKEN");
 var toolPrefix = Environment.GetEnvironmentVariable("SHARPCLAW_TEST_TOOL_PREFIX") ?? "snm";
 
 Console.WriteLine(
-    $"ENV|moduleDir={moduleDir}|dataDir={dataDir}|control={controlAddress}|token={token}|moduleId={moduleId}|runtime={runtime}");
+    $"ENV|moduleDir={moduleDir}|dataDir={dataDir}|control={controlAddress}|token={token}|moduleId={moduleId}|runtime={runtime}|hostCapabilities={hostCapabilitiesAddress}|hostCapabilitiesToken={hostCapabilitiesToken}");
 Console.Out.Flush();
 
 if (mode == "never-ready")

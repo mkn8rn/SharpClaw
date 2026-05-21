@@ -8,7 +8,9 @@ export const env = {
   controlAddress: 'SHARPCLAW_CONTROL_ADDRESS',
   controlToken: 'SHARPCLAW_CONTROL_TOKEN',
   moduleId: 'SHARPCLAW_MODULE_ID',
-  moduleRuntime: 'SHARPCLAW_MODULE_RUNTIME'
+  moduleRuntime: 'SHARPCLAW_MODULE_RUNTIME',
+  hostCapabilitiesAddress: 'SHARPCLAW_HOST_CAPABILITIES_ADDRESS',
+  hostCapabilitiesToken: 'SHARPCLAW_HOST_CAPABILITIES_TOKEN'
 };
 
 export const controlPaths = {
@@ -21,6 +23,17 @@ export const controlPaths = {
 
 export const tokenHeaderName = 'X-SharpClaw-Control-Token';
 
+export const hostCapabilityPaths = {
+  configGet: '/.sharpclaw/host/config/get',
+  configSet: '/.sharpclaw/host/config/set',
+  configAll: '/.sharpclaw/host/config/all',
+  log: '/.sharpclaw/host/log',
+  jobLog: '/.sharpclaw/host/job/log',
+  jobComplete: '/.sharpclaw/host/job/complete',
+  jobFail: '/.sharpclaw/host/job/fail',
+  jobCancel: '/.sharpclaw/host/job/cancel'
+};
+
 export function createSharpClawHost(definition, options = {}) {
   const normalized = normalizeDefinition(definition);
   const runtime = options.runtime ?? 'node';
@@ -28,6 +41,10 @@ export function createSharpClawHost(definition, options = {}) {
   const controlAddress = new URL(options.controlAddress ?? readRequiredEnv(env.controlAddress));
   const controlToken = options.controlToken ?? readRequiredEnv(env.controlToken);
   const moduleId = options.moduleId ?? process.env[env.moduleId] ?? normalized.moduleId;
+  const hostCapabilities =
+    options.hostCapabilities === undefined
+      ? createHostCapabilitiesClient()
+      : options.hostCapabilities;
   const compiledEndpoints = normalized.endpoints.map(compileEndpoint);
   let server;
 
@@ -101,13 +118,13 @@ export function createSharpClawHost(definition, options = {}) {
     }
 
     if (request.method === 'GET' && path === controlPaths.health) {
-      const health = await normalized.health(createContext(request, path, {}));
+      const health = await normalized.health(createContext(request, path, {}, hostCapabilities));
       writeJson(response, 200, health ?? { isHealthy: true });
       return;
     }
 
     if (request.method === 'POST' && path === controlPaths.initialize) {
-      const message = await normalized.initialize(createContext(request, path, {}));
+      const message = await normalized.initialize(createContext(request, path, {}, hostCapabilities));
       writeJson(response, 200, {
         accepted: true,
         message: typeof message === 'string' ? message : undefined
@@ -116,7 +133,7 @@ export function createSharpClawHost(definition, options = {}) {
     }
 
     if (request.method === 'POST' && path === controlPaths.shutdown) {
-      const message = await normalized.shutdown(createContext(request, path, {}));
+      const message = await normalized.shutdown(createContext(request, path, {}, hostCapabilities));
       writeJson(response, 200, {
         accepted: true,
         message: typeof message === 'string' ? message : undefined
@@ -144,7 +161,7 @@ export function createSharpClawHost(definition, options = {}) {
     }
 
     const params = endpoint.match(path) ?? {};
-    const context = createContext(request, path, params);
+    const context = createContext(request, path, params, hostCapabilities);
     const result = await endpoint.handler(context);
     await writeEndpointResult(response, result);
   }
@@ -171,6 +188,52 @@ export function text(value, status = 200, headers = {}) {
       ...headers
     },
     body: value
+  };
+}
+
+export function createHostCapabilitiesClient(options = {}) {
+  const address = options.address ?? process.env[env.hostCapabilitiesAddress];
+  const token = options.token ?? process.env[env.hostCapabilitiesToken];
+  if (!address || !token) {
+    return null;
+  }
+
+  async function call(path, body = {}) {
+    const response = await fetch(new URL(path, address), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [tokenHeaderName]: token
+      },
+      body: JSON.stringify(body ?? {})
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(
+        `SharpClaw host capability call failed: ${response.status} ${detail}`);
+    }
+
+    if (response.status === 204) {
+      return undefined;
+    }
+
+    return response.json();
+  }
+
+  return {
+    getConfig: async key => (await call(hostCapabilityPaths.configGet, { key }))?.value,
+    setConfig: (key, value) => call(hostCapabilityPaths.configSet, { key, value }),
+    getAllConfig: async () => (await call(hostCapabilityPaths.configAll))?.values ?? {},
+    log: (message, level = 'Info') => call(hostCapabilityPaths.log, { message, level }),
+    addJobLog: (jobId, message, level = 'Info') =>
+      call(hostCapabilityPaths.jobLog, { jobId, message, level }),
+    completeJob: (jobId, resultData = null, message = null) =>
+      call(hostCapabilityPaths.jobComplete, { jobId, resultData, message }),
+    failJob: (jobId, message, details = null) =>
+      call(hostCapabilityPaths.jobFail, { jobId, message, details }),
+    cancelJob: (jobId, message = null) =>
+      call(hostCapabilityPaths.jobCancel, { jobId, message })
   };
 }
 
@@ -276,7 +339,7 @@ function compileRoutePattern(routePattern) {
   };
 }
 
-function createContext(request, path, params) {
+function createContext(request, path, params, hostCapabilities) {
   const parsed = new URL(request.url ?? '/', 'http://127.0.0.1');
   return {
     request,
@@ -291,6 +354,7 @@ function createContext(request, path, params) {
       moduleId: process.env[env.moduleId],
       runtime: process.env[env.moduleRuntime]
     },
+    hostCapabilities,
     readText: () => readText(request),
     readJson: async () => JSON.parse(await readText(request))
   };

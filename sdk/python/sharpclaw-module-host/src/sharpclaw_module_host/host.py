@@ -9,7 +9,10 @@ import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Awaitable, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 PROTOCOL_VERSION = 1
 TOKEN_HEADER_NAME = "X-SharpClaw-Control-Token"
@@ -21,6 +24,8 @@ ENV = {
     "control_token": "SHARPCLAW_CONTROL_TOKEN",
     "module_id": "SHARPCLAW_MODULE_ID",
     "module_runtime": "SHARPCLAW_MODULE_RUNTIME",
+    "host_capabilities_address": "SHARPCLAW_HOST_CAPABILITIES_ADDRESS",
+    "host_capabilities_token": "SHARPCLAW_HOST_CAPABILITIES_TOKEN",
 }
 
 CONTROL_PATHS = {
@@ -31,7 +36,106 @@ CONTROL_PATHS = {
     "shutdown": "/.sharpclaw/shutdown",
 }
 
+HOST_CAPABILITY_PATHS = {
+    "config_get": "/.sharpclaw/host/config/get",
+    "config_set": "/.sharpclaw/host/config/set",
+    "config_all": "/.sharpclaw/host/config/all",
+    "log": "/.sharpclaw/host/log",
+    "job_log": "/.sharpclaw/host/job/log",
+    "job_complete": "/.sharpclaw/host/job/complete",
+    "job_fail": "/.sharpclaw/host/job/fail",
+    "job_cancel": "/.sharpclaw/host/job/cancel",
+}
+
 Handler = Callable[["RequestContext"], Any | Awaitable[Any]]
+
+
+class HostCapabilitiesClient:
+    def __init__(self, *, address: str, token: str) -> None:
+        self.address = address.rstrip("/") + "/"
+        self.token = token
+
+    def get_config(self, key: str) -> str | None:
+        return self._post_json(HOST_CAPABILITY_PATHS["config_get"], {"key": key}).get("value")
+
+    def set_config(self, key: str, value: str | None) -> dict[str, Any]:
+        return self._post_json(HOST_CAPABILITY_PATHS["config_set"], {"key": key, "value": value})
+
+    def get_all_config(self) -> dict[str, str]:
+        return self._post_json(HOST_CAPABILITY_PATHS["config_all"], {}).get("values", {})
+
+    def log(self, message: str, level: str = "Info") -> dict[str, Any]:
+        return self._post_json(HOST_CAPABILITY_PATHS["log"], {"message": message, "level": level})
+
+    def add_job_log(self, job_id: str, message: str, level: str = "Info") -> dict[str, Any]:
+        return self._post_json(
+            HOST_CAPABILITY_PATHS["job_log"],
+            {"jobId": job_id, "message": message, "level": level},
+        )
+
+    def complete_job(
+        self,
+        job_id: str,
+        result_data: str | None = None,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        return self._post_json(
+            HOST_CAPABILITY_PATHS["job_complete"],
+            {"jobId": job_id, "resultData": result_data, "message": message},
+        )
+
+    def fail_job(
+        self,
+        job_id: str,
+        message: str,
+        details: str | None = None,
+    ) -> dict[str, Any]:
+        return self._post_json(
+            HOST_CAPABILITY_PATHS["job_fail"],
+            {"jobId": job_id, "message": message, "details": details},
+        )
+
+    def cancel_job(self, job_id: str, message: str | None = None) -> dict[str, Any]:
+        return self._post_json(
+            HOST_CAPABILITY_PATHS["job_cancel"],
+            {"jobId": job_id, "message": message},
+        )
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        request = UrlRequest(
+            urljoin(self.address, path.lstrip("/")),
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                TOKEN_HEADER_NAME: self.token,
+            },
+        )
+
+        try:
+            with urlopen(request) as response:
+                raw = response.read()
+        except HTTPError as ex:
+            detail = ex.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"SharpClaw host capability call failed: {ex.code} {detail}"
+            ) from ex
+
+        return json.loads(raw.decode("utf-8") or "{}")
+
+
+def create_host_capabilities_client(
+    *,
+    address: str | None = None,
+    token: str | None = None,
+) -> HostCapabilitiesClient | None:
+    resolved_address = address or os.getenv(ENV["host_capabilities_address"])
+    resolved_token = token or os.getenv(ENV["host_capabilities_token"])
+    if not resolved_address or not resolved_token:
+        return None
+
+    return HostCapabilitiesClient(address=resolved_address, token=resolved_token)
 
 
 @dataclass(slots=True)
@@ -50,6 +154,7 @@ class RequestContext:
     params: dict[str, str]
     body: bytes
     environ: dict[str, str | None]
+    host_capabilities: HostCapabilitiesClient | None = None
 
     def read_text(self) -> str:
         return self.body.decode("utf-8")
@@ -70,6 +175,7 @@ class SharpClawHost:
         health: Handler | None = None,
         asgi_app: Callable[..., Awaitable[None]] | None = None,
         capabilities: list[str] | None = None,
+        host_capabilities: HostCapabilitiesClient | None = None,
         runtime: str = "python",
         runtime_version: str | None = None,
         control_address: str | None = None,
@@ -89,6 +195,7 @@ class SharpClawHost:
         self.health = health or (lambda _: {"isHealthy": True, "message": "ready"})
         self.asgi_app = asgi_app
         self.capabilities = capabilities or ["endpoints", "lifecycleHooks"]
+        self.host_capabilities = host_capabilities or create_host_capabilities_client()
         self.runtime = runtime
         self.runtime_version = runtime_version or sys.version.split()[0]
         self.control_address = control_address or _read_required_env(ENV["control_address"])
@@ -234,6 +341,7 @@ class SharpClawHost:
                 "module_id": os.getenv(ENV["module_id"]),
                 "runtime": os.getenv(ENV["module_runtime"]),
             },
+            host_capabilities=self.host_capabilities,
         )
 
 
