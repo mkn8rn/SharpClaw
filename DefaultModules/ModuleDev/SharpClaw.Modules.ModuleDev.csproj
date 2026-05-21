@@ -19,9 +19,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Templates\ModuleClass.cs.template" />
-    <EmbeddedResource Include="Templates\ProjectFile.csproj.template" />
-    <EmbeddedResource Include="Templates\Manifest.json.template" />
+    <InternalsVisibleTo Include="SharpClaw.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\ModuleClass.cs.template" WithCulture="false" />
+    <EmbeddedResource Include="Templates\ProjectFile.csproj.template" WithCulture="false" />
+    <EmbeddedResource Include="Templates\Manifest.json.template" WithCulture="false" />
+    <EmbeddedResource Include="Templates\NodePackage.json.template" WithCulture="false" />
+    <EmbeddedResource Include="Templates\NodeModule.mjs.template" WithCulture="false" />
+    <EmbeddedResource Include="Templates\NodeManifest.json.template" WithCulture="false" />
   </ItemGroup>
 
   <ItemGroup>

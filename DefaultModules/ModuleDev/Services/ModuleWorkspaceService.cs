@@ -11,7 +11,20 @@ namespace SharpClaw.Modules.ModuleDev.Services;
 /// </summary>
 internal sealed class ModuleWorkspaceService
 {
-    private static readonly HashSet<string> AllowedExtensions = [".cs", ".json"];
+    private static readonly HashSet<string> AllowedExtensions =
+    [
+        ".cs",
+        ".json",
+        ".js",
+        ".mjs",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".css",
+        ".html",
+        ".md",
+        ".lock"
+    ];
 
     private readonly string _externalModulesDir;
 
@@ -173,6 +186,6 @@ internal sealed class ModuleWorkspaceService
         var ext = Path.GetExtension(fullPath).ToLowerInvariant();
         if (!AllowedExtensions.Contains(ext))
             throw new InvalidOperationException(
-                $"Cannot write files with extension '{ext}'. Only .cs and .json files are allowed.");
+                $"Cannot write files with extension '{ext}'. Allowed extensions: {string.Join(", ", AllowedExtensions.Order())}.");
     }
 }

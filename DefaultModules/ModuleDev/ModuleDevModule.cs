@@ -260,7 +260,7 @@ public sealed class ModuleDevModule : ISharpClawModule
         return
         [
             new("scaffold_module",
-                "Generate a complete module project from a specification. Creates .csproj, module class, and module.json in external-modules/{module_id}/.",
+                "Generate a complete module project from a specification. Creates a dotnet or node module scaffold in external-modules/{module_id}/.",
                 BuildScaffoldModuleSchema(), scaffold),
 
             new("write_file",
@@ -419,7 +419,8 @@ public sealed class ModuleDevModule : ISharpClawModule
             DisplayName: Str(p, "display_name") ?? throw new InvalidOperationException("display_name is required."),
             ToolPrefix: Str(p, "tool_prefix") ?? throw new InvalidOperationException("tool_prefix is required."),
             Description: Str(p, "description"),
-            Tools: tools);
+            Tools: tools,
+            Runtime: Str(p, "runtime"));
 
         var result = await scaffold.ScaffoldAsync(spec, ct);
         return JsonSerializer.Serialize(new { result.ModuleDir, result.Files }, ToolJsonOpts);
@@ -703,6 +704,7 @@ public sealed class ModuleDevModule : ISharpClawModule
                 "module_id":   { "type": "string", "description": "Module ID (^[a-z][a-z0-9_]{0,39}$)." },
                 "display_name": { "type": "string", "description": "Human-readable name." },
                 "tool_prefix": { "type": "string", "description": "Tool prefix (^[a-z][a-z0-9]{0,19}$)." },
+                "runtime": { "type": "string", "enum": ["dotnet", "node"], "description": "Module runtime. Defaults to dotnet." },
                 "description": { "type": "string", "description": "Module description." },
                 "tools": {
                     "type": "array",

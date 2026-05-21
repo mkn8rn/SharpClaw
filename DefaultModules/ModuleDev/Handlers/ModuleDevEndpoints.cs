@@ -33,7 +33,8 @@ public static class ModuleDevEndpoints
                 ModuleId: root.GetProperty("module_id").GetString()!,
                 DisplayName: root.GetProperty("display_name").GetString()!,
                 ToolPrefix: root.GetProperty("tool_prefix").GetString()!,
-                Description: root.TryGetProperty("description", out var d) ? d.GetString() : null);
+                Description: root.TryGetProperty("description", out var d) ? d.GetString() : null,
+                Runtime: root.TryGetProperty("runtime", out var r) ? r.GetString() : null);
 
             var result = await scaffold.ScaffoldAsync(spec);
             return Results.Ok(new { moduleDir = result.ModuleDir, files = result.Files });

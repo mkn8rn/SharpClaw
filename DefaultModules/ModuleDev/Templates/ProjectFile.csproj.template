@@ -18,9 +18,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="SharpClaw.Contracts">
-      <HintPath>{{CONTRACTS_PATH}}</HintPath>
-    </Reference>
+    <PackageReference Include="SharpClaw.Contracts" />
   </ItemGroup>
 
   <ItemGroup>
