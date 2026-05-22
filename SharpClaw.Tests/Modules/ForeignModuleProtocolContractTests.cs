@@ -41,6 +41,48 @@ public sealed class ForeignModuleProtocolContractTests
     }
 
     [Test]
+    public async Task ForeignModuleProxyExposesDiscoveredContributionDescriptors()
+    {
+        using var workspace = TestWorkspace.Create();
+        await using var foreignHost = await ForeignModuleHost.StartAsync(
+            Manifest(),
+            RuntimeInfo(),
+            CreateLaunchOptions(workspace));
+        var module = foreignHost.Module;
+
+        var headerTag = module.GetHeaderTags().Should().ContainSingle().Subject;
+        var resource = module.GetResourceTypeDescriptors().Should().ContainSingle().Subject;
+        var globalFlag = module.GetGlobalFlagDescriptors().Should().ContainSingle().Subject;
+        var uiContribution = module.GetUiContributions().Should().ContainSingle().Subject;
+        var frontendContribution = module.GetFrontendContributions().Should().ContainSingle().Subject;
+        var cliCommand = module.GetCliCommands().Should().ContainSingle().Subject;
+
+        headerTag.Name.Should().Be("sample_header");
+        (await headerTag.Resolve(foreignHost.Services, CancellationToken.None))
+            .Should()
+            .Be("header:sample_header");
+
+        resource.ResourceType.Should().Be("SampleResource");
+        resource.DefaultResourceKey.Should().Be("sample");
+        (await resource.LoadAllIds(foreignHost.Services, CancellationToken.None))
+            .Should()
+            .Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        (await resource.LoadLookupItems!(foreignHost.Services, CancellationToken.None))
+            .Should()
+            .ContainSingle(item => item.Id == Guid.Parse("11111111-1111-1111-1111-111111111111")
+                                   && item.Name == "Sample One");
+
+        globalFlag.FlagKey.Should().Be("CanUseSampleForeign");
+        globalFlag.DelegateMethodName.Should().Be("UseSampleForeignAsync");
+        uiContribution.ElementId.Should().Be("sample-sidecar");
+        frontendContribution.Id.Should().Be("sample.settings");
+        frontendContribution.Point.Should().Be(FrontendContributionPoint.SettingsPage);
+        cliCommand.Name.Should().Be("sample");
+        cliCommand.Aliases.Should().Equal("smp");
+        cliCommand.Scope.Should().Be(ModuleCliScope.TopLevel);
+    }
+
+    [Test]
     public void ProtocolContractsParticipateInInitializationOrder()
     {
         var registry = new ModuleRegistry();

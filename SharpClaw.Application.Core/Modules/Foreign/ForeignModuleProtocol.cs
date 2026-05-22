@@ -21,6 +21,10 @@ public static class ForeignModuleProtocol
     public const string ToolStreamPath = "/.sharpclaw/tools/stream";
     public const string InlineToolExecutePath = "/.sharpclaw/inline-tools/execute";
     public const string ContractInvokePath = "/.sharpclaw/contracts/invoke";
+    public const string HeaderTagResolvePath = "/.sharpclaw/header-tags/resolve";
+    public const string ResourceIdsPath = "/.sharpclaw/resources/ids";
+    public const string ResourceLookupPath = "/.sharpclaw/resources/lookup";
+    public const string CliExecutePath = "/.sharpclaw/cli/execute";
 }
 
 internal static class ForeignModuleCapability
@@ -30,6 +34,7 @@ internal static class ForeignModuleCapability
     public const string InlineTools = "inlineTools";
     public const string StreamingTools = "streamingTools";
     public const string FrontendContributions = "frontendContributions";
+    public const string ModuleContributionDescriptors = "moduleContributionDescriptors";
     public const string LifecycleHooks = "lifecycleHooks";
     public const string HostCapabilities = "hostCapabilities";
 }

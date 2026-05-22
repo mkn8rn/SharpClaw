@@ -119,6 +119,64 @@ internal sealed class ForeignModuleProtocolClient
                 parameters),
             ct);
 
+    public Task<ForeignModuleHeaderTagResolveResponse> ResolveHeaderTagAsync(
+        ModuleManifest manifest,
+        string name,
+        ModuleHeaderTagContext? context,
+        CancellationToken ct = default) =>
+        PostAsync<ForeignModuleHeaderTagResolveRequest, ForeignModuleHeaderTagResolveResponse>(
+            ForeignModuleProtocol.HeaderTagResolvePath,
+            new ForeignModuleHeaderTagResolveRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                name,
+                context),
+            ct);
+
+    public async Task<List<Guid>> LoadResourceIdsAsync(
+        ModuleManifest manifest,
+        string resourceType,
+        CancellationToken ct = default)
+    {
+        var response = await PostAsync<ForeignModuleResourceRequest, ForeignModuleResourceIdsResponse>(
+            ForeignModuleProtocol.ResourceIdsPath,
+            new ForeignModuleResourceRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                resourceType),
+            ct);
+        return [.. response.Ids];
+    }
+
+    public async Task<List<ForeignModuleResourceLookupItem>> LoadResourceLookupItemsAsync(
+        ModuleManifest manifest,
+        string resourceType,
+        CancellationToken ct = default)
+    {
+        var response = await PostAsync<ForeignModuleResourceRequest, ForeignModuleResourceLookupResponse>(
+            ForeignModuleProtocol.ResourceLookupPath,
+            new ForeignModuleResourceRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                resourceType),
+            ct);
+        return [.. response.Items];
+    }
+
+    public Task<ForeignModuleCliExecutionResponse> ExecuteCliCommandAsync(
+        ModuleManifest manifest,
+        string commandName,
+        IReadOnlyList<string> args,
+        CancellationToken ct = default) =>
+        PostAsync<ForeignModuleCliExecutionRequest, ForeignModuleCliExecutionResponse>(
+            ForeignModuleProtocol.CliExecutePath,
+            new ForeignModuleCliExecutionRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                commandName,
+                args),
+            ct);
+
     public async IAsyncEnumerable<string> ExecuteToolStreamingAsync(
         ModuleManifest manifest,
         string toolName,

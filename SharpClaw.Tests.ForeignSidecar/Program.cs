@@ -91,6 +91,8 @@ async Task HandleAsync(TcpClient client)
                         "inlineTools",
                         "streamingTools",
                         "protocolContracts",
+                        "moduleContributionDescriptors",
+                        "frontendContributions",
                         "lifecycleHooks",
                     },
                 });
@@ -188,6 +190,83 @@ async Task HandleAsync(TcpClient client)
                             description = "Optional theme bridge sample dependency.",
                         },
                     },
+                    headerTags = new[]
+                    {
+                        new
+                        {
+                            name = "sample_header",
+                            supportsContext = true,
+                        },
+                    },
+                    resourceTypes = new[]
+                    {
+                        new
+                        {
+                            resourceType = "SampleResource",
+                            grantLabel = "Sample Resource",
+                            delegateMethodName = "AccessSampleResourceAsync",
+                            defaultResourceKey = "sample",
+                            supportsLookupItems = true,
+                        },
+                    },
+                    globalFlags = new[]
+                    {
+                        new
+                        {
+                            flagKey = "CanUseSampleForeign",
+                            displayName = "Use Sample Foreign",
+                            description = "Use sample foreign module capabilities.",
+                            delegateMethodName = "UseSampleForeignAsync",
+                        },
+                    },
+                    uiContributions = new[]
+                    {
+                        new
+                        {
+                            contributionPoint = "settings_sidebar",
+                            elementType = "button",
+                            elementId = "sample-sidecar",
+                            label = "Sample Sidecar",
+                            actionToolName = "sample_job",
+                        },
+                    },
+                    frontendContributions = new[]
+                    {
+                        new
+                        {
+                            id = "sample.settings",
+                            moduleId,
+                            point = "SettingsPage",
+                            builderKey = "sample-list",
+                            label = "Sample Foreign",
+                            requiredModuleId = moduleId,
+                            order = 10,
+                            list = new
+                            {
+                                listInternalApiPath = "/modules/sample/ping",
+                                emptyText = "No sample resources.",
+                                columns = new[]
+                                {
+                                    new
+                                    {
+                                        key = "name",
+                                        label = "Name",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    cliCommands = new[]
+                    {
+                        new
+                        {
+                            name = "sample",
+                            aliases = new[] { "smp" },
+                            scope = "TopLevel",
+                            description = "Sample foreign CLI command.",
+                            usageLines = new[] { "sample ping" },
+                        },
+                    },
                 });
                 break;
 
@@ -243,6 +322,46 @@ async Task HandleAsync(TcpClient client)
                 await WriteJsonAsync(stream, new
                 {
                     result = BuildContractResult(request.Body),
+                });
+                break;
+
+            case "/.sharpclaw/header-tags/resolve":
+                await WriteJsonAsync(stream, new
+                {
+                    value = BuildHeaderTagResult(request.Body),
+                });
+                break;
+
+            case "/.sharpclaw/resources/ids":
+                await WriteJsonAsync(stream, new
+                {
+                    ids = new[]
+                    {
+                        Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                    },
+                });
+                break;
+
+            case "/.sharpclaw/resources/lookup":
+                await WriteJsonAsync(stream, new
+                {
+                    items = new[]
+                    {
+                        new
+                        {
+                            id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                            name = "Sample One",
+                        },
+                    },
+                });
+                break;
+
+            case "/.sharpclaw/cli/execute":
+                await WriteJsonAsync(stream, new
+                {
+                    success = true,
+                    stdout = BuildCliResult(request.Body),
+                    stderr = "",
                 });
                 break;
 
@@ -320,6 +439,24 @@ static object BuildContractResult(string body)
         operation = root.GetProperty("operation").GetString(),
         parameters = root.GetProperty("parameters").Clone(),
     };
+}
+
+static string BuildHeaderTagResult(string body)
+{
+    using var document = JsonDocument.Parse(body);
+    var root = document.RootElement;
+    return "header:" + root.GetProperty("name").GetString();
+}
+
+static string BuildCliResult(string body)
+{
+    using var document = JsonDocument.Parse(body);
+    var root = document.RootElement;
+    var command = root.GetProperty("commandName").GetString();
+    var args = root.GetProperty("args").EnumerateArray()
+        .Select(arg => arg.GetString())
+        .Where(arg => arg is not null);
+    return $"cli:{command}:{string.Join(",", args)}";
 }
 
 static async Task<SidecarRequest> ReadRequestAsync(NetworkStream stream)

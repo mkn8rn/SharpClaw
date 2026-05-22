@@ -14,6 +14,12 @@ internal sealed class ForeignModuleProxy(
     private IReadOnlyList<ForeignModuleInlineToolDescriptor> _inlineTools = [];
     private IReadOnlyList<ForeignModuleProtocolContractExportDescriptor> _protocolContracts = [];
     private IReadOnlyList<ForeignModuleProtocolContractRequirementDescriptor> _requiredProtocolContracts = [];
+    private IReadOnlyList<ForeignModuleHeaderTagDescriptor> _headerTags = [];
+    private IReadOnlyList<ForeignModuleResourceTypeDescriptor> _resourceTypes = [];
+    private IReadOnlyList<ForeignModuleGlobalFlagDescriptor> _globalFlags = [];
+    private IReadOnlyList<ModuleUiContribution> _uiContributions = [];
+    private IReadOnlyList<ModuleFrontendContribution> _frontendContributions = [];
+    private IReadOnlyList<ForeignModuleCliCommandDescriptor> _cliCommands = [];
 
     public string Id => manifest.Id;
     public string DisplayName => manifest.DisplayName;
@@ -29,6 +35,22 @@ internal sealed class ForeignModuleProxy(
     public IReadOnlyList<ModuleInlineToolDefinition> GetInlineToolDefinitions() =>
         [.. _inlineTools.Select(tool => tool.ToModuleInlineToolDefinition())];
 
+    public IReadOnlyList<ModuleHeaderTag>? GetHeaderTags() =>
+        [.. _headerTags.Select(tag => tag.ToModuleHeaderTag(manifest, client))];
+
+    public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+        [.. _resourceTypes.Select(resource => resource.ToModuleResourceTypeDescriptor(manifest, client))];
+
+    public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+        [.. _globalFlags.Select(flag => flag.ToModuleGlobalFlagDescriptor())];
+
+    public IReadOnlyList<ModuleUiContribution> GetUiContributions() => _uiContributions;
+
+    public IReadOnlyList<ModuleFrontendContribution> GetFrontendContributions() => _frontendContributions;
+
+    public IReadOnlyList<ModuleCliCommand>? GetCliCommands() =>
+        [.. _cliCommands.Select(command => command.ToModuleCliCommand(manifest, client))];
+
     public IReadOnlyList<ForeignModuleProtocolContractExport> ExportedProtocolContracts =>
         [.. _protocolContracts.Select(contract => contract.ToProtocolContractExport())];
 
@@ -41,6 +63,12 @@ internal sealed class ForeignModuleProxy(
         _inlineTools = discovery.InlineTools ?? [];
         _protocolContracts = discovery.ProtocolContracts ?? [];
         _requiredProtocolContracts = discovery.RequiredProtocolContracts ?? [];
+        _headerTags = discovery.HeaderTags ?? [];
+        _resourceTypes = discovery.ResourceTypes ?? [];
+        _globalFlags = discovery.GlobalFlags ?? [];
+        _uiContributions = discovery.UiContributions ?? [];
+        _frontendContributions = discovery.FrontendContributions ?? [];
+        _cliCommands = discovery.CliCommands ?? [];
     }
 
     public IForeignModuleProtocolContractInvoker GetProtocolContractInvoker(string contractName)
