@@ -90,6 +90,7 @@ async Task HandleAsync(TcpClient client)
                         "jobTools",
                         "inlineTools",
                         "streamingTools",
+                        "protocolContracts",
                         "lifecycleHooks",
                     },
                 });
@@ -147,6 +148,34 @@ async Task HandleAsync(TcpClient client)
                             parametersSchema = EmptyObjectSchema(),
                         },
                     },
+                    protocolContracts = new[]
+                    {
+                        new
+                        {
+                            contractName = "editor_bridge",
+                            schema = EmptyObjectSchema(),
+                            operations = new[]
+                            {
+                                new
+                                {
+                                    name = "open_file",
+                                    parametersSchema = EmptyObjectSchema(),
+                                    resultSchema = EmptyObjectSchema(),
+                                    description = "Open a file in an editor.",
+                                },
+                            },
+                            description = "Sample editor bridge protocol contract.",
+                        },
+                    },
+                    requiredProtocolContracts = new[]
+                    {
+                        new
+                        {
+                            contractName = "theme_bridge",
+                            optional = true,
+                            description = "Optional theme bridge sample dependency.",
+                        },
+                    },
                 });
                 break;
 
@@ -198,6 +227,13 @@ async Task HandleAsync(TcpClient client)
                     new { isFinal = true });
                 break;
 
+            case "/.sharpclaw/contracts/invoke":
+                await WriteJsonAsync(stream, new
+                {
+                    result = BuildContractResult(request.Body),
+                });
+                break;
+
             case "/modules/sample/ping":
                 await WriteJsonAsync(stream, new
                 {
@@ -243,6 +279,18 @@ static string BuildToolResult(string kind, string body)
     var toolName = root.GetProperty("toolName").GetString();
     var parameters = root.GetProperty("parameters").GetRawText();
     return $"{kind}:{toolName}:{parameters}";
+}
+
+static object BuildContractResult(string body)
+{
+    using var document = JsonDocument.Parse(body);
+    var root = document.RootElement;
+    return new
+    {
+        contractName = root.GetProperty("contractName").GetString(),
+        operation = root.GetProperty("operation").GetString(),
+        parameters = root.GetProperty("parameters").Clone(),
+    };
 }
 
 static async Task<SidecarRequest> ReadRequestAsync(NetworkStream stream)

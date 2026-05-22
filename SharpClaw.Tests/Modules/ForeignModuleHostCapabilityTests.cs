@@ -87,6 +87,42 @@ public sealed class ForeignModuleHostCapabilityTests
         getPayload.RootElement.GetProperty("value").GetString().Should().Be("dense");
     }
 
+    [Test]
+    public async Task HostCapabilityServerInvokesProtocolContracts()
+    {
+        var resolver = new RecordingProtocolContractResolver();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IForeignModuleProtocolContractResolver>(resolver)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+
+        using var listResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ProtocolContractsListPath,
+            new { });
+        using var invokeResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ProtocolContractInvokePath,
+            new
+            {
+                contractName = "editor_bridge",
+                operation = "open_file",
+                parameters = new
+                {
+                    path = "README.md",
+                },
+            });
+        var listPayload = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var invokePayload = JsonDocument.Parse(await invokeResponse.Content.ReadAsStringAsync());
+
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        invokeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        listPayload.RootElement.GetProperty("contracts")[0]
+            .GetProperty("contractName").GetString().Should().Be("editor_bridge");
+        invokePayload.RootElement.GetProperty("result")
+            .GetProperty("operation").GetString().Should().Be("open_file");
+        resolver.Invoker.LastParameters.GetProperty("path").GetString().Should().Be("README.md");
+    }
+
     private static HttpClient CreateClient(ForeignModuleHostCapabilityServer server)
     {
         var client = new HttpClient { BaseAddress = server.Address };
@@ -199,5 +235,52 @@ public sealed class ForeignModuleHostCapabilityTests
             string actionKeyPrefix,
             CancellationToken ct = default) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class RecordingProtocolContractResolver : IForeignModuleProtocolContractResolver
+    {
+        private readonly ForeignModuleProtocolContractExport _export = CreateExport();
+
+        public RecordingProtocolContractInvoker Invoker { get; } = new();
+
+        public IForeignModuleProtocolContractInvoker? Resolve(string contractName) =>
+            contractName == _export.ContractName ? Invoker : null;
+
+        public IReadOnlyList<ForeignModuleProtocolContractExport> GetAllExports() => [_export];
+
+        private static ForeignModuleProtocolContractExport CreateExport() =>
+            new(
+                "editor_bridge",
+                EmptyObjectSchema(),
+                [
+                    new ForeignModuleProtocolContractOperation(
+                        "open_file",
+                        EmptyObjectSchema(),
+                        EmptyObjectSchema())
+                ]);
+    }
+
+    private sealed class RecordingProtocolContractInvoker : IForeignModuleProtocolContractInvoker
+    {
+        public string ContractName => "editor_bridge";
+        public IReadOnlyList<ForeignModuleProtocolContractOperation> Operations => [];
+        public JsonElement LastParameters { get; private set; }
+
+        public Task<JsonElement> InvokeAsync(
+            string operation,
+            JsonElement parameters,
+            CancellationToken ct = default)
+        {
+            LastParameters = parameters.Clone();
+            using var document = JsonDocument.Parse(
+                $$"""{"operation":"{{operation}}","ok":true}""");
+            return Task.FromResult(document.RootElement.Clone());
+        }
+    }
+
+    private static JsonElement EmptyObjectSchema()
+    {
+        using var document = JsonDocument.Parse("""{"type":"object","properties":{}}""");
+        return document.RootElement.Clone();
     }
 }

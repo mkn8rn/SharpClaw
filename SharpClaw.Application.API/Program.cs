@@ -14,6 +14,7 @@ using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.API.Webhooks;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Application.Infrastructure.Tasks;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Application.Core.Services;
@@ -351,6 +352,7 @@ try
     builder.Services.AddScoped<IThreadResolver, HostThreadResolver>();
     builder.Services.AddSingleton<IModuleLifecycleManager, HostModuleLifecycleManager>();
     builder.Services.AddSingleton<IModuleInfoProvider, HostModuleInfoProvider>();
+    builder.Services.AddSingleton<IForeignModuleProtocolContractResolver, HostModuleProtocolContractResolver>();
 
     builder.Services.AddScoped<HeaderTagProcessor>();
     builder.Services.AddScoped<ChatService>();

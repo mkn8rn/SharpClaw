@@ -169,6 +169,13 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
                 await FailJobAsync(services, Deserialize<ForeignModuleJobFailRequest>(request), ct),
             ForeignModuleHostCapabilityProtocol.JobCancelPath =>
                 await CancelJobAsync(services, Deserialize<ForeignModuleJobCancelRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ProtocolContractsListPath =>
+                ListProtocolContracts(services),
+            ForeignModuleHostCapabilityProtocol.ProtocolContractInvokePath =>
+                await InvokeProtocolContractAsync(
+                    services,
+                    Deserialize<ForeignModuleProtocolContractInvokeRequest>(request),
+                    ct),
             _ => throw new ArgumentException($"Unknown SharpClaw host capability path '{request.Path}'."),
         };
     }
@@ -270,6 +277,28 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
         return new ForeignModuleCapabilityAck();
     }
 
+    private static ForeignModuleProtocolContractsListResponse ListProtocolContracts(
+        IServiceProvider services) =>
+        new(ResolveProtocolContractResolver(services).GetAllExports());
+
+    private static async Task<ForeignModuleProtocolContractInvokeResponse> InvokeProtocolContractAsync(
+        IServiceProvider services,
+        ForeignModuleProtocolContractInvokeRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ContractName))
+            throw new ArgumentException("Protocol contract name is required.", nameof(request));
+
+        if (string.IsNullOrWhiteSpace(request.Operation))
+            throw new ArgumentException("Protocol contract operation is required.", nameof(request));
+
+        var invoker = ResolveProtocolContractResolver(services).Resolve(request.ContractName)
+            ?? throw new NotSupportedException(
+                $"The SharpClaw host does not provide protocol contract '{request.ContractName}'.");
+        return new ForeignModuleProtocolContractInvokeResponse(
+            await invoker.InvokeAsync(request.Operation, request.Parameters, ct));
+    }
+
     private IModuleConfigStore ResolveConfigStore(IServiceProvider services)
     {
         if (services.GetService<IModuleConfigStore>() is { } store)
@@ -284,6 +313,10 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
     private static IAgentJobController ResolveJobController(IServiceProvider services) =>
         services.GetService<IAgentJobController>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide a job controller.");
+
+    private static IForeignModuleProtocolContractResolver ResolveProtocolContractResolver(IServiceProvider services) =>
+        services.GetService<IForeignModuleProtocolContractResolver>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide a protocol contract resolver.");
 
     private static T Deserialize<T>(CapabilityHttpRequest request)
     {

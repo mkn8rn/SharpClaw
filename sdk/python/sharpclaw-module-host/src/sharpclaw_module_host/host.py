@@ -37,6 +37,7 @@ CONTROL_PATHS = {
     "tool_execute": "/.sharpclaw/tools/execute",
     "tool_stream": "/.sharpclaw/tools/stream",
     "inline_tool_execute": "/.sharpclaw/inline-tools/execute",
+    "contract_invoke": "/.sharpclaw/contracts/invoke",
 }
 
 HOST_CAPABILITY_PATHS = {
@@ -48,6 +49,8 @@ HOST_CAPABILITY_PATHS = {
     "job_complete": "/.sharpclaw/host/job/complete",
     "job_fail": "/.sharpclaw/host/job/fail",
     "job_cancel": "/.sharpclaw/host/job/cancel",
+    "contracts_list": "/.sharpclaw/host/contracts/list",
+    "contract_invoke": "/.sharpclaw/host/contracts/invoke",
 }
 
 Handler = Callable[["RequestContext"], Any | Awaitable[Any]]
@@ -105,6 +108,24 @@ class HostCapabilitiesClient:
             HOST_CAPABILITY_PATHS["job_cancel"],
             {"jobId": job_id, "message": message},
         )
+
+    def list_protocol_contracts(self) -> list[dict[str, Any]]:
+        return self._post_json(HOST_CAPABILITY_PATHS["contracts_list"], {}).get("contracts", [])
+
+    def invoke_protocol_contract(
+        self,
+        contract_name: str,
+        operation: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._post_json(
+            HOST_CAPABILITY_PATHS["contract_invoke"],
+            {
+                "contractName": contract_name,
+                "operation": operation,
+                "parameters": parameters or {},
+            },
+        ).get("result")
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -184,6 +205,14 @@ class InlineToolExecutionContext:
     host_capabilities: HostCapabilitiesClient | None = None
 
 
+@dataclass(slots=True)
+class ProtocolContractContext:
+    contract_name: str
+    operation: str
+    parameters: dict[str, Any]
+    host_capabilities: HostCapabilitiesClient | None = None
+
+
 class SharpClawHost:
     def __init__(
         self,
@@ -193,6 +222,8 @@ class SharpClawHost:
         endpoints: list[dict[str, Any]] | None = None,
         tools: list[dict[str, Any]] | None = None,
         inline_tools: list[dict[str, Any]] | None = None,
+        protocol_contracts: list[dict[str, Any]] | None = None,
+        required_protocol_contracts: list[dict[str, Any]] | None = None,
         initialize: Handler | None = None,
         shutdown: Handler | None = None,
         health: Handler | None = None,
@@ -215,6 +246,11 @@ class SharpClawHost:
         self.endpoints = [_normalize_endpoint(endpoint) for endpoint in endpoints or []]
         self.tools = [_normalize_tool(tool) for tool in tools or []]
         self.inline_tools = [_normalize_tool(tool) for tool in inline_tools or []]
+        self.protocol_contracts = [
+            _normalize_protocol_contract(contract)
+            for contract in protocol_contracts or []
+        ]
+        self.required_protocol_contracts = required_protocol_contracts or []
         self.initialize = initialize or _noop
         self.shutdown = shutdown or _noop
         self.health = health or (lambda _: {"isHealthy": True, "message": "ready"})
@@ -296,6 +332,11 @@ class SharpClawHost:
                         _tool_descriptor(tool)
                         for tool in self.inline_tools
                     ],
+                    "protocolContracts": [
+                        _protocol_contract_descriptor(contract)
+                        for contract in self.protocol_contracts
+                    ],
+                    "requiredProtocolContracts": self.required_protocol_contracts,
                 }
             )
 
@@ -330,6 +371,9 @@ class SharpClawHost:
 
         if method == "POST" and path == CONTROL_PATHS["tool_stream"]:
             return self._stream_tool(body)
+
+        if method == "POST" and path == CONTROL_PATHS["contract_invoke"]:
+            return self._invoke_protocol_contract(body)
 
         return json_response({"error": "Unknown SharpClaw control route"}, status=404)
 
@@ -400,6 +444,36 @@ class SharpClawHost:
             status=200,
             headers={"Content-Type": "application/x-ndjson; charset=utf-8"},
         )
+
+    def _invoke_protocol_contract(self, body: bytes) -> Response:
+        payload = json.loads(body.decode("utf-8") or "{}")
+        contract_name = payload.get("contractName")
+        operation = payload.get("operation")
+        contract = next(
+            (
+                candidate
+                for candidate in self.protocol_contracts
+                if candidate["contractName"] == contract_name
+            ),
+            None,
+        )
+        if contract is None:
+            return json_response({"error": f"Contract '{contract_name}' not found"}, status=404)
+
+        handler = (contract.get("handlers") or {}).get(operation)
+        if handler is None:
+            return json_response(
+                {"error": f"Contract '{contract_name}' operation '{operation}' not found"},
+                status=404,
+            )
+
+        context = ProtocolContractContext(
+            contract_name=contract_name,
+            operation=operation,
+            parameters=payload.get("parameters") or {},
+            host_capabilities=self.host_capabilities,
+        )
+        return json_response({"result": _run_handler(handler, context)})
 
     def _handle_endpoint(
         self,
@@ -569,6 +643,19 @@ def _normalize_tool(tool: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_protocol_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    contract_name = contract.get("contractName") or contract.get("contract_name")
+    if not contract_name:
+        raise ValueError("SharpClaw protocol contracts must include contractName.")
+
+    normalized = dict(contract)
+    normalized["contractName"] = str(contract_name)
+    normalized["schema"] = contract.get("schema") or {"type": "object", "properties": {}}
+    normalized["operations"] = contract.get("operations") or []
+    normalized["handlers"] = contract.get("handlers") or {}
+    return normalized
+
+
 def _endpoint_descriptor(endpoint: dict[str, Any]) -> dict[str, Any]:
     return {
         "method": endpoint["method"],
@@ -591,6 +678,15 @@ def _tool_descriptor(tool: dict[str, Any]) -> dict[str, Any]:
         "aliases": tool.get("aliases"),
         "supportsStreaming": tool.get("supportsStreaming", False),
         "completionBehavior": tool.get("completionBehavior"),
+    }
+
+
+def _protocol_contract_descriptor(contract: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contractName": contract["contractName"],
+        "schema": contract["schema"],
+        "operations": contract["operations"],
+        "description": contract.get("description"),
     }
 
 

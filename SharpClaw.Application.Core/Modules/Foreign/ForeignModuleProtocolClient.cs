@@ -103,6 +103,22 @@ internal sealed class ForeignModuleProtocolClient
                 ForeignModuleInlineToolContext.From(context)),
             ct);
 
+    public Task<ForeignModuleProtocolContractInvocationResponse> InvokeProtocolContractAsync(
+        ModuleManifest manifest,
+        string contractName,
+        string operation,
+        JsonElement parameters,
+        CancellationToken ct = default) =>
+        PostAsync<ForeignModuleProtocolContractInvocationRequest, ForeignModuleProtocolContractInvocationResponse>(
+            ForeignModuleProtocol.ContractInvokePath,
+            new ForeignModuleProtocolContractInvocationRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                contractName,
+                operation,
+                parameters),
+            ct);
+
     public async IAsyncEnumerable<string> ExecuteToolStreamingAsync(
         ModuleManifest manifest,
         string toolName,

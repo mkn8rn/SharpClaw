@@ -39,7 +39,9 @@ internal sealed record ForeignModuleHealthResponse(
 public sealed record ForeignModuleDiscoveryResponse(
     IReadOnlyList<ForeignModuleEndpointDescriptor>? Endpoints = null,
     IReadOnlyList<ForeignModuleToolDescriptor>? Tools = null,
-    IReadOnlyList<ForeignModuleInlineToolDescriptor>? InlineTools = null);
+    IReadOnlyList<ForeignModuleInlineToolDescriptor>? InlineTools = null,
+    IReadOnlyList<ForeignModuleProtocolContractExportDescriptor>? ProtocolContracts = null,
+    IReadOnlyList<ForeignModuleProtocolContractRequirementDescriptor>? RequiredProtocolContracts = null);
 
 public sealed record ForeignModuleEndpointDescriptor(
     string Method,
@@ -147,3 +149,33 @@ internal sealed record ForeignModuleToolStreamEvent(
     string? Result = null,
     string? Error = null,
     bool IsFinal = false);
+
+public sealed record ForeignModuleProtocolContractExportDescriptor(
+    string ContractName,
+    JsonElement Schema,
+    IReadOnlyList<ForeignModuleProtocolContractOperation> Operations,
+    string? Description = null)
+{
+    public ForeignModuleProtocolContractExport ToProtocolContractExport() =>
+        new(ContractName, Schema, Operations, Description);
+}
+
+public sealed record ForeignModuleProtocolContractRequirementDescriptor(
+    string ContractName,
+    JsonElement? Schema = null,
+    bool Optional = false,
+    string? Description = null)
+{
+    public ForeignModuleProtocolContractRequirement ToProtocolContractRequirement() =>
+        new(ContractName, Schema, Optional, Description);
+}
+
+internal sealed record ForeignModuleProtocolContractInvocationRequest(
+    int ProtocolVersion,
+    string ModuleId,
+    string ContractName,
+    string Operation,
+    JsonElement Parameters);
+
+internal sealed record ForeignModuleProtocolContractInvocationResponse(
+    JsonElement Result);

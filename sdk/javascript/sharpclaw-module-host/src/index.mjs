@@ -21,7 +21,8 @@ export const controlPaths = {
   shutdown: '/.sharpclaw/shutdown',
   toolExecute: '/.sharpclaw/tools/execute',
   toolStream: '/.sharpclaw/tools/stream',
-  inlineToolExecute: '/.sharpclaw/inline-tools/execute'
+  inlineToolExecute: '/.sharpclaw/inline-tools/execute',
+  contractInvoke: '/.sharpclaw/contracts/invoke'
 };
 
 export const tokenHeaderName = 'X-SharpClaw-Control-Token';
@@ -34,7 +35,9 @@ export const hostCapabilityPaths = {
   jobLog: '/.sharpclaw/host/job/log',
   jobComplete: '/.sharpclaw/host/job/complete',
   jobFail: '/.sharpclaw/host/job/fail',
-  jobCancel: '/.sharpclaw/host/job/cancel'
+  jobCancel: '/.sharpclaw/host/job/cancel',
+  contractsList: '/.sharpclaw/host/contracts/list',
+  contractInvoke: '/.sharpclaw/host/contracts/invoke'
 };
 
 export function createSharpClawHost(definition, options = {}) {
@@ -51,6 +54,8 @@ export function createSharpClawHost(definition, options = {}) {
   const compiledEndpoints = normalized.endpoints.map(compileEndpoint);
   const compiledTools = normalized.tools.map(compileTool);
   const compiledInlineTools = normalized.inlineTools.map(compileInlineTool);
+  const compiledProtocolContracts =
+    normalized.protocolContracts.map(compileProtocolContract);
   let server;
 
   async function start() {
@@ -119,7 +124,10 @@ export function createSharpClawHost(definition, options = {}) {
       writeJson(response, 200, {
         endpoints: normalized.endpoints.map(toEndpointDescriptor),
         tools: normalized.tools.map(toToolDescriptor),
-        inlineTools: normalized.inlineTools.map(toInlineToolDescriptor)
+        inlineTools: normalized.inlineTools.map(toInlineToolDescriptor),
+        protocolContracts:
+          normalized.protocolContracts.map(toProtocolContractDescriptor),
+        requiredProtocolContracts: normalized.requiredProtocolContracts
       });
       return;
     }
@@ -178,6 +186,15 @@ export function createSharpClawHost(definition, options = {}) {
         response,
         compiledTools,
         body => createToolContext(request, path, body, hostCapabilities));
+      return;
+    }
+
+    if (request.method === 'POST' && path === controlPaths.contractInvoke) {
+      await executeProtocolContractRequest(
+        request,
+        response,
+        compiledProtocolContracts,
+        hostCapabilities);
       return;
     }
 
@@ -249,6 +266,32 @@ export function createSharpClawHost(definition, options = {}) {
     response.end();
   }
 
+  async function executeProtocolContractRequest(request, response, contracts, hostCapabilities) {
+    const body = JSON.parse(await readText(request) || '{}');
+    const contract = contracts.find(candidate =>
+      candidate.contractName === body.contractName);
+    if (!contract) {
+      writeJson(response, 404, { error: `Contract '${body.contractName}' not found` });
+      return;
+    }
+
+    const handler = contract.handlers?.[body.operation];
+    if (typeof handler !== 'function') {
+      writeJson(response, 404, {
+        error: `Contract '${body.contractName}' operation '${body.operation}' not found`
+      });
+      return;
+    }
+
+    const result = await handler({
+      contractName: body.contractName,
+      operation: body.operation,
+      parameters: body.parameters ?? {},
+      hostCapabilities
+    });
+    writeJson(response, 200, { result: result ?? null });
+  }
+
   return { start, stop };
 }
 
@@ -316,7 +359,15 @@ export function createHostCapabilitiesClient(options = {}) {
     failJob: (jobId, message, details = null) =>
       call(hostCapabilityPaths.jobFail, { jobId, message, details }),
     cancelJob: (jobId, message = null) =>
-      call(hostCapabilityPaths.jobCancel, { jobId, message })
+      call(hostCapabilityPaths.jobCancel, { jobId, message }),
+    listProtocolContracts: async () =>
+      (await call(hostCapabilityPaths.contractsList))?.contracts ?? [],
+    invokeProtocolContract: async (contractName, operation, parameters = {}) =>
+      (await call(hostCapabilityPaths.contractInvoke, {
+        contractName,
+        operation,
+        parameters
+      }))?.result
   };
 }
 
@@ -341,6 +392,12 @@ function normalizeDefinition(definition) {
     endpoints,
     tools: Array.isArray(definition.tools) ? definition.tools : [],
     inlineTools: Array.isArray(definition.inlineTools) ? definition.inlineTools : [],
+    protocolContracts: Array.isArray(definition.protocolContracts)
+      ? definition.protocolContracts
+      : [],
+    requiredProtocolContracts: Array.isArray(definition.requiredProtocolContracts)
+      ? definition.requiredProtocolContracts
+      : [],
     initialize: definition.initialize ?? noop,
     shutdown: definition.shutdown ?? noop,
     health: definition.health ?? (() => ({ isHealthy: true, message: 'ready' }))
@@ -391,6 +448,23 @@ function compileInlineTool(tool) {
   }
 
   return { ...tool };
+}
+
+function compileProtocolContract(contract) {
+  if (!contract || typeof contract !== 'object') {
+    throw new TypeError('Protocol contract descriptors must be objects.');
+  }
+
+  if (!contract.contractName) {
+    throw new TypeError('Protocol contract descriptors must include contractName.');
+  }
+
+  return {
+    ...contract,
+    schema: contract.schema ?? emptyObjectSchema(),
+    operations: Array.isArray(contract.operations) ? contract.operations : [],
+    handlers: contract.handlers ?? {}
+  };
 }
 
 function toEndpointDescriptor(endpoint) {
@@ -454,6 +528,22 @@ function toInlineToolDescriptor(tool) {
     parametersSchema: parametersSchema ?? emptyObjectSchema(),
     permission,
     aliases
+  };
+}
+
+function toProtocolContractDescriptor(contract) {
+  const {
+    contractName,
+    schema,
+    operations,
+    description
+  } = contract;
+
+  return {
+    contractName,
+    schema: schema ?? emptyObjectSchema(),
+    operations: operations ?? [],
+    description
   };
 }
 

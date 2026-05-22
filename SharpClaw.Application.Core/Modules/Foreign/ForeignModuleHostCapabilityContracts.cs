@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace SharpClaw.Application.Core.Modules.Foreign;
 
 internal sealed record ForeignModuleConfigGetRequest
@@ -49,3 +51,15 @@ internal sealed record ForeignModuleJobCancelRequest
 }
 
 internal sealed record ForeignModuleCapabilityAck(bool Accepted = true, string? Message = null);
+
+internal sealed record ForeignModuleProtocolContractsListResponse(
+    IReadOnlyList<ForeignModuleProtocolContractExport> Contracts);
+
+internal sealed record ForeignModuleProtocolContractInvokeRequest
+{
+    public string ContractName { get; init; } = string.Empty;
+    public string Operation { get; init; } = string.Empty;
+    public JsonElement Parameters { get; init; }
+}
+
+internal sealed record ForeignModuleProtocolContractInvokeResponse(JsonElement Result);

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts;
@@ -113,12 +114,24 @@ public sealed class ModuleService(
         var enabled = isExternal || (state?.Enabled ?? false);
         var toolCount = module.GetToolDefinitions().Count;
         var inlineToolCount = module.GetInlineToolDefinitions().Count;
-        var exportedContracts = module.ExportedContracts.Select(e => e.ContractName).ToArray();
-        var requiredContracts = module.RequiredContracts.Select(r => r.ContractName).ToArray();
+        var protocolModule = module as IForeignModuleProtocolContractModule;
+        var exportedContracts = module.ExportedContracts
+            .Select(e => e.ContractName)
+            .Concat(protocolModule?.ExportedProtocolContracts.Select(e => e.ContractName)
+                ?? Enumerable.Empty<string>())
+            .ToArray();
+        var requiredContracts = module.RequiredContracts
+            .Select(r => r.ContractName)
+            .Concat(protocolModule?.RequiredProtocolContracts.Select(r => r.ContractName)
+                ?? Enumerable.Empty<string>())
+            .ToArray();
 
         var allSatisfied = !module.RequiredContracts
             .Where(r => !r.Optional)
-            .Any(r => registry.ResolveContract(r.ContractName) is null);
+            .Any(r => registry.ResolveContract(r.ContractName) is null)
+            && !(protocolModule?.RequiredProtocolContracts
+                .Where(r => !r.Optional)
+                .Any(r => registry.ResolveProtocolContract(r.ContractName) is null) ?? false);
 
         return new ModuleDetailResponse(
             ModuleId: module.Id,
@@ -191,9 +204,12 @@ public sealed class ModuleService(
 
                 // Check unsatisfied dependencies before init
                 var unsatisfied = registry.GetUnsatisfiedRequirements(moduleId);
-                if (unsatisfied.Count > 0)
+                var unsatisfiedProtocol = registry.GetUnsatisfiedProtocolRequirements(moduleId);
+                if (unsatisfied.Count > 0 || unsatisfiedProtocol.Count > 0)
                 {
-                    var names = string.Join(", ", unsatisfied.Select(r => r.ContractName));
+                    var names = string.Join(", ",
+                        unsatisfied.Select(r => r.ContractName)
+                            .Concat(unsatisfiedProtocol.Select(r => r.ContractName)));
                     moduleDbContextRegistry.UnregisterModule(moduleId);
                     registry.Unregister(moduleId);
                     throw new InvalidOperationException(
@@ -236,7 +252,12 @@ public sealed class ModuleService(
             ?? throw new ArgumentException($"Unknown module: {moduleId}");
 
         // Check that no other enabled module depends on this module's contracts
-        var exportedNames = module.ExportedContracts.Select(e => e.ContractName).ToHashSet(StringComparer.Ordinal);
+        var protocolModule = module as IForeignModuleProtocolContractModule;
+        var exportedNames = module.ExportedContracts
+            .Select(e => e.ContractName)
+            .Concat(protocolModule?.ExportedProtocolContracts.Select(e => e.ContractName)
+                ?? Enumerable.Empty<string>())
+            .ToHashSet(StringComparer.Ordinal);
         if (exportedNames.Count > 0)
         {
             foreach (var other in registry.GetAllModules())
@@ -246,6 +267,12 @@ public sealed class ModuleService(
                     .Where(r => !r.Optional && exportedNames.Contains(r.ContractName))
                     .Select(r => r.ContractName)
                     .ToList();
+                if (other is IForeignModuleProtocolContractModule otherProtocolModule)
+                {
+                    deps.AddRange(otherProtocolModule.RequiredProtocolContracts
+                        .Where(r => !r.Optional && exportedNames.Contains(r.ContractName))
+                        .Select(r => r.ContractName));
+                }
                 if (deps.Count > 0)
                     throw new InvalidOperationException(
                         $"Cannot disable '{moduleId}': module '{other.Id}' depends on contract(s) {string.Join(", ", deps)}.");

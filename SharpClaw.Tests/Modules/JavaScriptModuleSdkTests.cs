@@ -35,10 +35,13 @@ public sealed class JavaScriptModuleSdkTests
         source.Should().Contain("/.sharpclaw/tools/execute");
         source.Should().Contain("/.sharpclaw/tools/stream");
         source.Should().Contain("/.sharpclaw/inline-tools/execute");
+        source.Should().Contain("/.sharpclaw/contracts/invoke");
         source.Should().Contain("/.sharpclaw/host/config/get");
         source.Should().Contain("/.sharpclaw/host/job/log");
+        source.Should().Contain("/.sharpclaw/host/contracts/invoke");
         source.Should().Contain("createHostCapabilitiesClient");
         source.Should().Contain("inlineTools");
+        source.Should().Contain("protocolContracts");
         source.Should().Contain("supportsStreaming");
     }
 

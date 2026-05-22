@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.DefaultResources;
+using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 
@@ -26,6 +27,10 @@ public sealed class ModuleRegistry
     // Contract name → (providing module ID, service type).
     // Only one module may export a given contract at a time.
     private readonly Dictionary<string, (string ModuleId, Type ServiceType)> _contractProviders = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string ModuleId, ForeignModuleProtocolContractExport Export)> _protocolContractProviders =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IForeignModuleProtocolContractInvoker> _protocolContractInvokers =
+        new(StringComparer.Ordinal);
 
     // CLI command name/alias → (module ID, command definition).
     private readonly Dictionary<string, (string ModuleId, ModuleCliCommand Command)> _cliTopLevel = new(StringComparer.OrdinalIgnoreCase);
@@ -125,6 +130,9 @@ public sealed class ModuleRegistry
             var toolDefs = module.GetToolDefinitions();
             var inlineDefs = module.GetInlineToolDefinitions();
             var exports = module.ExportedContracts;
+            var protocolModule = module as IForeignModuleProtocolContractModule;
+            var protocolExports = protocolModule?.ExportedProtocolContracts ?? [];
+            var protocolRequirements = protocolModule?.RequiredProtocolContracts ?? [];
             var cliCommands = module.GetCliCommands() ?? [];
 
             // Validate job-pipeline tool names and aliases.
@@ -179,6 +187,36 @@ public sealed class ModuleRegistry
                     throw new InvalidOperationException(
                         $"Contract '{export.ContractName}' from module '{module.Id}' " +
                         $"is already provided by module '{existing.ModuleId}'.");
+            }
+
+            // Validate protocol contract exports and requirements.
+            foreach (var export in protocolExports)
+            {
+                if (!ContractNamePattern.IsMatch(export.ContractName))
+                    throw new InvalidOperationException(
+                        $"Protocol contract name '{export.ContractName}' from module '{module.Id}' is invalid. " +
+                        "Must be lowercase alphanumeric + underscores, start with a letter, max 60 chars.");
+
+                if (_protocolContractProviders.TryGetValue(export.ContractName, out var existing))
+                    throw new InvalidOperationException(
+                        $"Protocol contract '{export.ContractName}' from module '{module.Id}' " +
+                        $"is already provided by module '{existing.ModuleId}'.");
+
+                ValidateProtocolContractOperations(module.Id, export);
+            }
+
+            if (protocolExports.Count > 0 && module is not IForeignModuleProtocolContractExporter)
+            {
+                throw new InvalidOperationException(
+                    $"Module '{module.Id}' exports protocol contract(s) but does not provide protocol invokers.");
+            }
+
+            foreach (var requirement in protocolRequirements)
+            {
+                if (!ContractNamePattern.IsMatch(requirement.ContractName))
+                    throw new InvalidOperationException(
+                        $"Protocol contract requirement '{requirement.ContractName}' from module '{module.Id}' is invalid. " +
+                        "Must be lowercase alphanumeric + underscores, start with a letter, max 60 chars.");
             }
 
             // Validate CLI commands.
@@ -283,6 +321,16 @@ public sealed class ModuleRegistry
             foreach (var export in exports)
                 _contractProviders[export.ContractName] = (module.Id, export.ServiceType);
 
+            if (module is IForeignModuleProtocolContractExporter protocolExporter)
+            {
+                foreach (var export in protocolExports)
+                {
+                    _protocolContractProviders[export.ContractName] = (module.Id, export);
+                    _protocolContractInvokers[export.ContractName] =
+                        protocolExporter.GetProtocolContractInvoker(export.ContractName);
+                }
+            }
+
             foreach (var cmd in cliCommands)
             {
                 var target = cmd.Scope == ModuleCliScope.TopLevel ? _cliTopLevel : _cliResourceTypes;
@@ -367,6 +415,15 @@ public sealed class ModuleRegistry
             // Remove any contracts this module exported.
             foreach (var export in module.ExportedContracts)
                 _contractProviders.Remove(export.ContractName);
+
+            if (module is IForeignModuleProtocolContractModule protocolModule)
+            {
+                foreach (var export in protocolModule.ExportedProtocolContracts)
+                {
+                    _protocolContractProviders.Remove(export.ContractName);
+                    _protocolContractInvokers.Remove(export.ContractName);
+                }
+            }
 
             // Remove any CLI commands this module provided.
             foreach (var cmd in module.GetCliCommands() ?? [])
@@ -946,6 +1003,44 @@ public sealed class ModuleRegistry
         }
     }
 
+    /// <summary>Resolve a protocol contract name to its providing module and descriptor.</summary>
+    public (string ModuleId, ForeignModuleProtocolContractExport Export)? ResolveProtocolContract(string contractName)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            return _protocolContractProviders.TryGetValue(contractName, out var entry)
+                ? entry
+                : null;
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>Resolve the invoker for a registered protocol contract.</summary>
+    public IForeignModuleProtocolContractInvoker? ResolveProtocolContractInvoker(string contractName)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            return _protocolContractInvokers.GetValueOrDefault(contractName);
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>Get all registered protocol contract exports.</summary>
+    public IReadOnlyList<ForeignModuleProtocolContractExport> GetAllProtocolContractExports()
+    {
+        _lock.EnterReadLock();
+        try { return [.. _protocolContractProviders.Values.Select(v => v.Export)]; }
+        finally { _lock.ExitReadLock(); }
+    }
+
     /// <summary>
     /// Get the runtime host for a module loaded outside the bundled-module
     /// provider, or <c>null</c> if the module is bundled or not registered.
@@ -1035,6 +1130,31 @@ public sealed class ModuleRegistry
     }
 
     /// <summary>
+    /// Return non-optional protocol requirements for a module that do not
+    /// currently have a protocol provider.
+    /// </summary>
+    public IReadOnlyList<ForeignModuleProtocolContractRequirement> GetUnsatisfiedProtocolRequirements(string moduleId)
+    {
+        _lock.EnterReadLock();
+        try
+        {
+            if (!_modules.TryGetValue(moduleId, out var module))
+                return [];
+
+            if (module is not IForeignModuleProtocolContractModule protocolModule)
+                return [];
+
+            return protocolModule.RequiredProtocolContracts
+                .Where(r => !r.Optional && !IsProtocolContractSatisfied(r))
+                .ToList();
+        }
+        finally
+        {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>
     /// Compute a topological initialization order for all registered modules
     /// based on their contract dependencies. Modules that export contracts
     /// required by other modules are initialized first.
@@ -1078,6 +1198,9 @@ public sealed class ModuleRegistry
         return true;
     }
 
+    private bool IsProtocolContractSatisfied(ForeignModuleProtocolContractRequirement requirement) =>
+        _protocolContractProviders.ContainsKey(requirement.ContractName);
+
     /// <summary>
     /// Kahn's algorithm with iterative exclusion of unsatisfied modules.
     /// Deterministic tie-breaking via ordinal sort on module ID.
@@ -1099,6 +1222,13 @@ public sealed class ModuleRegistry
                 contractOwners[name] = modId;
         }
 
+        var protocolContractOwners = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, (modId, _)) in _protocolContractProviders)
+        {
+            if (eligible.Contains(modId))
+                protocolContractOwners[name] = modId;
+        }
+
         // Iteratively remove modules whose non-optional requirements are
         // not satisfiable by remaining eligible providers. Repeat until
         // stable because removing a provider can cascade to its dependents.
@@ -1109,10 +1239,17 @@ public sealed class ModuleRegistry
             foreach (var modId in eligible.ToList())
             {
                 var module = _modules[modId];
+                var protocolModule = module as IForeignModuleProtocolContractModule;
                 var missing = module.RequiredContracts
                     .Where(r => !r.Optional && !IsEligibleContractSatisfied(r, eligible, contractOwners))
                     .Select(r => r.ContractName)
                     .ToList();
+                if (protocolModule is not null)
+                {
+                    missing.AddRange(protocolModule.RequiredProtocolContracts
+                        .Where(r => !r.Optional && !IsEligibleProtocolContractSatisfied(r, eligible, protocolContractOwners))
+                        .Select(r => r.ContractName));
+                }
 
                 if (missing.Count == 0)
                     continue;
@@ -1122,6 +1259,12 @@ public sealed class ModuleRegistry
                 // Remove any contracts this module provided — may cascade.
                 foreach (var export in module.ExportedContracts)
                     contractOwners.Remove(export.ContractName);
+
+                if (protocolModule is not null)
+                {
+                    foreach (var export in protocolModule.ExportedProtocolContracts)
+                        protocolContractOwners.Remove(export.ContractName);
+                }
 
                 excludedList.Add((modId,
                     $"Unsatisfied contract(s): {string.Join(", ", missing)}"));
@@ -1148,6 +1291,7 @@ public sealed class ModuleRegistry
             // Collect distinct provider IDs for all resolved requirements.
             var providers = new HashSet<string>(StringComparer.Ordinal);
             var module = _modules[modId];
+            var protocolModule = module as IForeignModuleProtocolContractModule;
 
             foreach (var req in module.RequiredContracts)
             {
@@ -1159,6 +1303,20 @@ public sealed class ModuleRegistry
                     continue; // Self-dependency is a no-op.
 
                 providers.Add(providerId);
+            }
+
+            if (protocolModule is not null)
+            {
+                foreach (var req in protocolModule.RequiredProtocolContracts)
+                {
+                    if (!protocolContractOwners.TryGetValue(req.ContractName, out var providerId))
+                        continue;
+
+                    if (providerId == modId)
+                        continue;
+
+                    providers.Add(providerId);
+                }
             }
 
             foreach (var providerId in providers)
@@ -1220,5 +1378,34 @@ public sealed class ModuleRegistry
             return false;
 
         return true;
+    }
+
+    private static bool IsEligibleProtocolContractSatisfied(
+        ForeignModuleProtocolContractRequirement requirement,
+        HashSet<string> eligible,
+        Dictionary<string, string> protocolContractOwners) =>
+        protocolContractOwners.TryGetValue(requirement.ContractName, out var providerId)
+        && eligible.Contains(providerId);
+
+    private static void ValidateProtocolContractOperations(
+        string moduleId,
+        ForeignModuleProtocolContractExport export)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var operation in export.Operations)
+        {
+            if (string.IsNullOrWhiteSpace(operation.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Protocol contract '{export.ContractName}' from module '{moduleId}' has an unnamed operation.");
+            }
+
+            if (!seen.Add(operation.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Protocol contract '{export.ContractName}' from module '{moduleId}' " +
+                    $"declares operation '{operation.Name}' more than once.");
+            }
+        }
     }
 }

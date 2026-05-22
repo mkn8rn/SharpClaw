@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts.Entities.Core.Context;
@@ -271,8 +272,24 @@ public sealed class HostModuleInfoProvider(ModuleRegistry registry) : IModuleInf
             .Select(m => new ModuleInfo(
                 m.Id,
                 m.ToolPrefix,
-                m.ExportedContracts.Select(e => e.ContractName).ToList()))
+                m.ExportedContracts
+                    .Select(e => e.ContractName)
+                    .Concat(
+                        m is IForeignModuleProtocolContractModule protocolModule
+                            ? protocolModule.ExportedProtocolContracts.Select(e => e.ContractName)
+                            : Enumerable.Empty<string>())
+                    .ToList()))
             .ToList();
+}
+
+public sealed class HostModuleProtocolContractResolver(
+    ModuleRegistry registry) : IForeignModuleProtocolContractResolver
+{
+    public IForeignModuleProtocolContractInvoker? Resolve(string contractName) =>
+        registry.ResolveProtocolContractInvoker(contractName);
+
+    public IReadOnlyList<ForeignModuleProtocolContractExport> GetAllExports() =>
+        registry.GetAllProtocolContractExports();
 }
 
 public sealed class HostModuleLifecycleManager(

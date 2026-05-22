@@ -36,10 +36,13 @@ public sealed class PythonModuleSdkTests
         source.Should().Contain("/.sharpclaw/tools/execute");
         source.Should().Contain("/.sharpclaw/tools/stream");
         source.Should().Contain("/.sharpclaw/inline-tools/execute");
+        source.Should().Contain("/.sharpclaw/contracts/invoke");
         source.Should().Contain("/.sharpclaw/host/config/get");
         source.Should().Contain("/.sharpclaw/host/job/log");
+        source.Should().Contain("/.sharpclaw/host/contracts/invoke");
         source.Should().Contain("HostCapabilitiesClient");
         source.Should().Contain("InlineToolExecutionContext");
+        source.Should().Contain("ProtocolContractContext");
         source.Should().Contain("supportsStreaming");
         source.Should().Contain("asgi_app");
     }

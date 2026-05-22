@@ -8,10 +8,12 @@ internal sealed class ForeignModuleProxy(
     ModuleManifest manifest,
     ForeignModuleProtocolClient client,
     Func<Task> shutdown)
-    : ISharpClawModule
+    : ISharpClawModule, IForeignModuleProtocolContractExporter
 {
     private IReadOnlyList<ForeignModuleToolDescriptor> _tools = [];
     private IReadOnlyList<ForeignModuleInlineToolDescriptor> _inlineTools = [];
+    private IReadOnlyList<ForeignModuleProtocolContractExportDescriptor> _protocolContracts = [];
+    private IReadOnlyList<ForeignModuleProtocolContractRequirementDescriptor> _requiredProtocolContracts = [];
 
     public string Id => manifest.Id;
     public string DisplayName => manifest.DisplayName;
@@ -27,10 +29,32 @@ internal sealed class ForeignModuleProxy(
     public IReadOnlyList<ModuleInlineToolDefinition> GetInlineToolDefinitions() =>
         [.. _inlineTools.Select(tool => tool.ToModuleInlineToolDefinition())];
 
+    public IReadOnlyList<ForeignModuleProtocolContractExport> ExportedProtocolContracts =>
+        [.. _protocolContracts.Select(contract => contract.ToProtocolContractExport())];
+
+    public IReadOnlyList<ForeignModuleProtocolContractRequirement> RequiredProtocolContracts =>
+        [.. _requiredProtocolContracts.Select(contract => contract.ToProtocolContractRequirement())];
+
     public void ApplyDiscovery(ForeignModuleDiscoveryResponse discovery)
     {
         _tools = discovery.Tools ?? [];
         _inlineTools = discovery.InlineTools ?? [];
+        _protocolContracts = discovery.ProtocolContracts ?? [];
+        _requiredProtocolContracts = discovery.RequiredProtocolContracts ?? [];
+    }
+
+    public IForeignModuleProtocolContractInvoker GetProtocolContractInvoker(string contractName)
+    {
+        var export = _protocolContracts.FirstOrDefault(contract =>
+            string.Equals(contract.ContractName, contractName, StringComparison.Ordinal));
+        if (export is null)
+            throw new InvalidOperationException(
+                $"Foreign module '{Id}' does not export protocol contract '{contractName}'.");
+
+        return new ForeignModuleProtocolContractInvoker(
+            manifest,
+            client,
+            export.ToProtocolContractExport());
     }
 
     public Task InitializeAsync(IServiceProvider services, CancellationToken ct) =>
@@ -97,5 +121,34 @@ internal sealed class ForeignModuleProxy(
     {
         var response = await client.ExecuteInlineToolAsync(manifest, toolName, parameters, context, ct);
         return response.Result ?? string.Empty;
+    }
+
+    private sealed class ForeignModuleProtocolContractInvoker(
+        ModuleManifest manifest,
+        ForeignModuleProtocolClient client,
+        ForeignModuleProtocolContractExport export) : IForeignModuleProtocolContractInvoker
+    {
+        public string ContractName => export.ContractName;
+        public IReadOnlyList<ForeignModuleProtocolContractOperation> Operations => export.Operations;
+
+        public async Task<JsonElement> InvokeAsync(
+            string operation,
+            JsonElement parameters,
+            CancellationToken ct = default)
+        {
+            if (!Operations.Any(candidate => string.Equals(candidate.Name, operation, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    $"Protocol contract '{ContractName}' does not define operation '{operation}'.");
+            }
+
+            var response = await client.InvokeProtocolContractAsync(
+                manifest,
+                ContractName,
+                operation,
+                parameters,
+                ct);
+            return response.Result;
+        }
     }
 }
