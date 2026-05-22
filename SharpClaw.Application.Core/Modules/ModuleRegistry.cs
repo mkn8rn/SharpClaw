@@ -72,8 +72,9 @@ public sealed class ModuleRegistry
     private readonly Dictionary<string, ModuleHeaderTag> _headerTags =
         new(StringComparer.OrdinalIgnoreCase);
 
-    // Runtime hosts for modules loaded outside the bundled-module provider.
+    // Runtime hosts for modules that do not execute inside the parent host.
     private readonly Dictionary<string, IModuleRuntimeHost> _runtimeHosts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _externalModuleIds = new(StringComparer.Ordinal);
 
     // Tool name → async resource-id extractor contributed by owning module.
     // Modules register this when the tool uses a non-standard argument name
@@ -100,7 +101,10 @@ public sealed class ModuleRegistry
     /// step fails, all mutations are rolled back so the registry is never
     /// left in a partially-registered state.
     /// </summary>
-    public void Register(ISharpClawModule module, IModuleRuntimeHost? runtimeHost = null)
+    public void Register(
+        ISharpClawModule module,
+        IModuleRuntimeHost? runtimeHost = null,
+        bool isExternal = false)
     {
         ArgumentNullException.ThrowIfNull(module);
 
@@ -367,6 +371,9 @@ public sealed class ModuleRegistry
             if (runtimeHost is not null)
                 _runtimeHosts[module.Id] = runtimeHost;
 
+            if (isExternal || runtimeHost is ExternalModuleHost)
+                _externalModuleIds.Add(module.Id);
+
             _toolDefsCache = null; // Invalidate
         }
         finally
@@ -464,6 +471,7 @@ public sealed class ModuleRegistry
 
             _manifestCache.Remove(moduleId);
             _runtimeHosts.Remove(moduleId);
+            _externalModuleIds.Remove(moduleId);
             _toolDefsCache = null;
         }
         finally
@@ -1042,8 +1050,8 @@ public sealed class ModuleRegistry
     }
 
     /// <summary>
-    /// Get the runtime host for a module loaded outside the bundled-module
-    /// provider, or <c>null</c> if the module is bundled or not registered.
+    /// Get the runtime host for a module that executes outside the parent host,
+    /// or <c>null</c> if the module is in-process or not registered.
     /// </summary>
     public IModuleRuntimeHost? GetRuntimeHost(string moduleId)
     {
@@ -1093,13 +1101,13 @@ public sealed class ModuleRegistry
         }
     }
 
-    /// <summary>Whether the given module was loaded externally (hot-loaded).</summary>
+    /// <summary>Whether the given module was loaded as a user/package external module.</summary>
     public bool IsExternal(string moduleId)
     {
         _lock.EnterReadLock();
         try
         {
-            return _runtimeHosts.ContainsKey(moduleId);
+            return _externalModuleIds.Contains(moduleId);
         }
         finally
         {

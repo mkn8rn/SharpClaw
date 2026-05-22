@@ -411,7 +411,7 @@ public sealed class ModuleService(
         var host = await CreateRuntimeHostAsync(canonicalModuleDir, manifest, runtimeInfo, hostServices, ct);
         try
         {
-            registry.Register(host.Module, host);
+            registry.Register(host.Module, host, isExternal: true);
             RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
             await LoadModulePersistenceAsync(host.Module, ct);
@@ -581,7 +581,7 @@ public sealed class ModuleService(
         var host = await CreateRuntimeHostAsync(canonicalDir, manifest, runtimeInfo, hostServices, ct);
         try
         {
-            registry.Register(host.Module, host);
+            registry.Register(host.Module, host, isExternal: true);
             RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
             await LoadModulePersistenceAsync(host.Module, ct);

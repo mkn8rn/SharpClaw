@@ -3360,10 +3360,9 @@ public static class CliDispatcher
     }
 
     /// <summary>
-    /// Invokes a module-provided CLI handler. For externally hosted modules
-    /// the handler receives a service provider drawn from the module's own DI
-    /// container so module-internal services resolve correctly. The host's
-    /// service provider is passed through for bundled modules.
+    /// Invokes a module-provided CLI handler. Runtime-hosted modules receive a
+    /// service provider drawn from their own DI container so module-internal
+    /// services resolve correctly. In-process modules receive the host provider.
     /// </summary>
     private static async Task InvokeModuleCliHandlerAsync(
         string moduleId, ModuleCliCommand cmd, string[] args,

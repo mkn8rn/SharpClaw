@@ -34,6 +34,9 @@ public sealed class BundledDotNetSidecarDefaultTests
         response.Enabled.Should().BeTrue();
         var runtimeHost = harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId);
         runtimeHost.Should().BeAssignableTo<IForeignModuleRuntimeHost>();
+        harness.Registry.IsExternal(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeFalse("bundled sidecars have runtime hosts without becoming user-loaded external modules");
 
         var module = harness.Registry.GetModule(TestHarnessConstants.ModuleId);
         module.Should().NotBeNull();
