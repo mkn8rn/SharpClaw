@@ -13,6 +13,7 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.JSON;
 using SharpClaw.Infrastructure.Persistence.Modules;
+using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Utils.Instances;
 
@@ -62,6 +63,73 @@ public sealed class BundledDotNetSidecarDefaultTests
         harness.Registry.GetModule(TestHarnessConstants.ModuleId).Should().BeNull();
     }
 
+    [Test]
+    public async Task SidecarOnlyModeKeepsReadinessCleanBundledModulesOutOfProcess()
+    {
+        await using var harness = ModuleServiceHarness.Create(new Dictionary<string, string?>
+        {
+            [DotNetModuleHostingModeOptions.ConfigKey] = "sidecar-only",
+        });
+
+        var response = await harness.ModuleService.EnableAsync(
+            TestHarnessConstants.ModuleId,
+            harness.RootServices,
+            CancellationToken.None);
+
+        response.Enabled.Should().BeTrue();
+        harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeAssignableTo<IForeignModuleRuntimeHost>();
+        harness.Registry.GetModule(TestHarnessConstants.ModuleId)
+            .Should()
+            .NotBeOfType<TestHarnessModule>();
+    }
+
+    [Test]
+    public async Task SidecarOnlyModeRejectsBundledModulesWithReadinessBlockers()
+    {
+        await using var harness = ModuleServiceHarness.Create(
+            new Dictionary<string, string?>
+            {
+                [DotNetModuleHostingModeOptions.ConfigKey] = "sidecar-only",
+            },
+            [new TestHarnessModule(), new AgentOrchestrationModule()]);
+
+        var act = async () => await harness.ModuleService.EnableAsync(
+            "sharpclaw_agent_orchestration",
+            harness.RootServices,
+            CancellationToken.None);
+
+        var assertion = await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Sidecar readiness blocker*");
+        assertion.Which.Message.Should().Contain("storage.module_dbcontexts");
+        assertion.Which.Message.Should().Contain("tasks.runtime_services");
+
+        harness.Registry.GetModule("sharpclaw_agent_orchestration").Should().BeNull();
+        harness.Registry.GetRuntimeHost("sharpclaw_agent_orchestration").Should().BeNull();
+    }
+
+    [Test]
+    public async Task LegacyForceInProcessSettingStillOverridesSidecarManifest()
+    {
+        await using var harness = ModuleServiceHarness.Create(new Dictionary<string, string?>
+        {
+            [DotNetModuleHostingModeOptions.ForceInProcessKey] = "true",
+        });
+
+        var response = await harness.ModuleService.EnableAsync(
+            TestHarnessConstants.ModuleId,
+            harness.RootServices,
+            CancellationToken.None);
+
+        response.Enabled.Should().BeTrue();
+        harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId).Should().BeNull();
+        harness.Registry.GetModule(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeOfType<TestHarnessModule>();
+    }
+
     private sealed class ModuleServiceHarness : IAsyncDisposable
     {
         private ModuleServiceHarness(
@@ -81,7 +149,9 @@ public sealed class BundledDotNetSidecarDefaultTests
         public ModuleService ModuleService => Scope.ServiceProvider.GetRequiredService<ModuleService>();
         public ModuleRegistry Registry => Root.GetRequiredService<ModuleRegistry>();
 
-        public static ModuleServiceHarness Create()
+        public static ModuleServiceHarness Create(
+            Dictionary<string, string?>? configurationOverrides = null,
+            ISharpClawModule[]? modules = null)
         {
             var instanceRoot = Path.Combine(
                 TestContext.CurrentContext.WorkDirectory,
@@ -92,11 +162,18 @@ public sealed class BundledDotNetSidecarDefaultTests
                 explicitInstanceRoot: instanceRoot);
             instancePaths.EnsureDirectories();
 
+            var configurationValues = new Dictionary<string, string?>
+            {
+                ["Modules:DotNetSidecarHostPath"] = ResolveDotNetSidecarHostPath(),
+            };
+            if (configurationOverrides is not null)
+            {
+                foreach (var pair in configurationOverrides)
+                    configurationValues[pair.Key] = pair.Value;
+            }
+
             var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Modules:DotNetSidecarHostPath"] = ResolveDotNetSidecarHostPath(),
-                })
+                .AddInMemoryCollection(configurationValues)
                 .Build();
 
             var services = new ServiceCollection();
@@ -108,7 +185,7 @@ public sealed class BundledDotNetSidecarDefaultTests
                 options.UseInMemoryDatabase(
                     "BundledSidecarDefault_" + Guid.NewGuid().ToString("N"),
                     new InMemoryDatabaseRoot()));
-            services.AddSingleton(new ModuleLoader(new TestHarnessModule()));
+            services.AddSingleton(new ModuleLoader(modules ?? [new TestHarnessModule()]));
             services.AddSingleton<ModuleRegistry>();
             services.AddSingleton<RuntimeModuleDbContextRegistry>();
             services.AddSingleton<ModulePersistenceRegistrationFactory>();

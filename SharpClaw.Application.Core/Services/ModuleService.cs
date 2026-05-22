@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
+using SharpClaw.Application.Core.Modules.Sidecar;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts;
@@ -666,6 +667,7 @@ public sealed class ModuleService(
             return (bundledModule, null);
 
         var runtimeInfo = LoadRuntimeInfo(manifest);
+        runtimeInfo = ResolveBundledDotNetRuntimeInfo(manifest, bundledModule, runtimeInfo);
         if (!ShouldUseDotNetSidecar(runtimeInfo))
             return (bundledModule, null);
 
@@ -681,6 +683,8 @@ public sealed class ModuleService(
         IServiceProvider hostServices,
         CancellationToken ct)
     {
+        runtimeInfo = ResolveExternalDotNetRuntimeInfo(manifest, runtimeInfo);
+
         if (ShouldUseDotNetSidecar(runtimeInfo))
         {
             return await ForeignModuleHost.StartAsync(
@@ -694,9 +698,71 @@ public sealed class ModuleService(
     }
 
     private bool ShouldUseDotNetSidecar(ModuleManifestRuntimeInfo runtimeInfo) =>
-        runtimeInfo.IsDotNet
-        && runtimeInfo.IsSidecarHostMode
-        && !(configuration?.GetValue("Modules:ForceInProcessDotNetSidecars", false) ?? false);
+        runtimeInfo.IsDotNet && runtimeInfo.IsSidecarHostMode;
+
+    private ModuleManifestRuntimeInfo ResolveBundledDotNetRuntimeInfo(
+        ModuleManifest manifest,
+        ISharpClawModule bundledModule,
+        ModuleManifestRuntimeInfo runtimeInfo)
+    {
+        if (!runtimeInfo.IsDotNet)
+            return runtimeInfo;
+
+        var mode = DotNetModuleHostingModeOptions.Resolve(configuration);
+        if (mode == DotNetModuleHostingMode.InProcess)
+            return runtimeInfo with { HostMode = ModuleManifestRuntimeInfo.HostModeInProcess };
+
+        if (mode == DotNetModuleHostingMode.SidecarOnly)
+        {
+            EnsureBundledModuleReadyForDotNetSidecar(manifest, bundledModule);
+            return runtimeInfo with { HostMode = ModuleManifestRuntimeInfo.HostModeSidecar };
+        }
+
+        if (runtimeInfo.IsSidecarHostMode)
+            EnsureBundledModuleReadyForDotNetSidecar(manifest, bundledModule);
+
+        return runtimeInfo;
+    }
+
+    private ModuleManifestRuntimeInfo ResolveExternalDotNetRuntimeInfo(
+        ModuleManifest manifest,
+        ModuleManifestRuntimeInfo runtimeInfo)
+    {
+        if (!runtimeInfo.IsDotNet)
+            return runtimeInfo;
+
+        var mode = DotNetModuleHostingModeOptions.Resolve(configuration);
+        if (mode == DotNetModuleHostingMode.InProcess)
+            return runtimeInfo with { HostMode = ModuleManifestRuntimeInfo.HostModeInProcess };
+
+        if (mode == DotNetModuleHostingMode.SidecarOnly && !runtimeInfo.IsSidecarHostMode)
+        {
+            throw new InvalidOperationException(
+                $"External .NET module '{manifest.Id}' cannot load under " +
+                $"{DotNetModuleHostingModeOptions.ConfigKey}=sidecar-only unless its manifest declares " +
+                "\"hostMode\": \"sidecar\". This prevents sidecar-only runs from silently loading " +
+                "third-party .NET modules in-process.");
+        }
+
+        return runtimeInfo;
+    }
+
+    private static void EnsureBundledModuleReadyForDotNetSidecar(
+        ModuleManifest manifest,
+        ISharpClawModule module)
+    {
+        var report = new SidecarReadinessAnalyzer().Analyze(module);
+        if (report.IsReadyForSidecarDefault)
+            return;
+
+        var blockers = string.Join(", ",
+            report.Blockers.Select(blocker => $"{blocker.Key} ({blocker.Kind})"));
+        throw new InvalidOperationException(
+            $"Bundled .NET module '{manifest.Id}' cannot run as a sidecar yet. " +
+            $"Sidecar readiness blocker(s): {blockers}. Clear these before declaring " +
+            "\"hostMode\": \"sidecar\" or enabling " +
+            $"{DotNetModuleHostingModeOptions.ConfigKey}=sidecar-only.");
+    }
 
     private ModuleManifestRuntimeInfo LoadRuntimeInfo(ModuleManifest manifest)
     {
