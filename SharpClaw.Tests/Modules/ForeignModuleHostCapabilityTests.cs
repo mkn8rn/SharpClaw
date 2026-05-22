@@ -5,7 +5,10 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Tasks;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Tests.Modules;
 
@@ -121,6 +124,220 @@ public sealed class ForeignModuleHostCapabilityTests
         invokePayload.RootElement.GetProperty("result")
             .GetProperty("operation").GetString().Should().Be("open_file");
         resolver.Invoker.LastParameters.GetProperty("path").GetString().Should().Be("README.md");
+    }
+
+    [Test]
+    public async Task HostCapabilityServerForwardsTaskAuthoringAndLaunch()
+    {
+        var authoring = new RecordingTaskAuthoring();
+        var launcher = new RecordingTaskLauncher();
+        await using var services = new ServiceCollection()
+            .AddSingleton<ITaskAuthoring>(authoring)
+            .AddSingleton<ITaskInstanceLauncher>(launcher)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+        var taskId = authoring.TaskId;
+
+        using var validateResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskValidatePath,
+            new { sourceText = "task source" });
+        using var createResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskCreatePath,
+            new { sourceText = "create source" });
+        using var getResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskGetPath,
+            new { id = taskId });
+        using var listResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskListPath,
+            new { });
+        using var updateResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskUpdatePath,
+            new { id = taskId, sourceText = "updated", isActive = false });
+        using var deleteResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskDeletePath,
+            new { id = taskId });
+        using var launchResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.TaskLaunchPath,
+            new
+            {
+                taskDefinitionId = taskId,
+                parameterValues = new Dictionary<string, string>
+                {
+                    ["input"] = "value",
+                },
+                callerAgentId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                channelId = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            });
+
+        validateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        updateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        launchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        authoring.ValidatedSource.Should().Be("task source");
+        authoring.CreatedSource.Should().Be("create source");
+        authoring.Updated.Should().NotBeNull();
+        authoring.Updated!.Value.Id.Should().Be(taskId);
+        authoring.Updated!.Value.SourceText.Should().Be("updated");
+        authoring.Updated!.Value.IsActive.Should().BeFalse();
+        authoring.DeletedId.Should().Be(taskId);
+        launcher.LastLaunch!.Value.TaskDefinitionId.Should().Be(taskId);
+        launcher.LastLaunch!.Value.ParameterValues.Should().ContainKey("input").WhoseValue.Should().Be("value");
+
+        var launchPayload = JsonDocument.Parse(await launchResponse.Content.ReadAsStringAsync());
+        launchPayload.RootElement.GetProperty("instanceId").GetGuid()
+            .Should()
+            .Be(launcher.InstanceId);
+    }
+
+    [Test]
+    public async Task HostCapabilityServerForwardsCoreMetricsAndAgentCapabilities()
+    {
+        var core = new RecordingCoreEntityIds();
+        var metrics = new RecordingQueueMetrics();
+        var agents = new RecordingAgentManager();
+        await using var services = new ServiceCollection()
+            .AddSingleton<ICoreEntityIdProvider>(core)
+            .AddSingleton<IHostQueueMetrics>(metrics)
+            .AddSingleton<IAgentManager>(agents)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+
+        using var agentIdsResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.CoreAgentIdsPath,
+            new { });
+        using var channelLookupResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.CoreChannelLookupPath,
+            new { });
+        using var metricsResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.QueueMetricsPath,
+            new { });
+        using var createAgentResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.AgentCreateSubAgentPath,
+            new
+            {
+                name = "Helper",
+                modelId = agents.ModelId,
+                systemPrompt = "assist",
+            });
+        using var updateAgentResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.AgentUpdatePath,
+            new
+            {
+                agentId = agents.AgentId,
+                name = "Renamed",
+                systemPrompt = "updated",
+            });
+        using var setAgentHeaderResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.AgentSetHeaderPath,
+            new { id = agents.AgentId, header = "agent header" });
+        using var setChannelHeaderResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ChannelSetHeaderPath,
+            new { id = agents.ChannelId, header = "channel header" });
+
+        agentIdsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        channelLookupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        metricsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        createAgentResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        updateAgentResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        setAgentHeaderResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        setChannelHeaderResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var agentIds = JsonDocument.Parse(await agentIdsResponse.Content.ReadAsStringAsync());
+        agentIds.RootElement.GetProperty("ids")[0].GetGuid().Should().Be(core.AgentId);
+        var channelLookup = JsonDocument.Parse(await channelLookupResponse.Content.ReadAsStringAsync());
+        channelLookup.RootElement.GetProperty("items")[0].GetProperty("name").GetString().Should().Be("Clinic");
+        var metricPayload = JsonDocument.Parse(await metricsResponse.Content.ReadAsStringAsync());
+        metricPayload.RootElement.GetProperty("pendingJobCount").GetDouble().Should().Be(2);
+        metricPayload.RootElement.GetProperty("pendingTaskCount").GetDouble().Should().Be(3);
+        metricPayload.RootElement.GetProperty("schedulerPendingJobCount").GetDouble().Should().Be(5);
+        agents.Created.Should().NotBeNull();
+        agents.Created!.Value.Name.Should().Be("Helper");
+        agents.Created!.Value.ModelId.Should().Be(agents.ModelId);
+        agents.Created!.Value.SystemPrompt.Should().Be("assist");
+        agents.Updated.Should().NotBeNull();
+        agents.Updated!.Value.AgentId.Should().Be(agents.AgentId);
+        agents.Updated!.Value.Name.Should().Be("Renamed");
+        agents.Updated!.Value.SystemPrompt.Should().Be("updated");
+        agents.Updated!.Value.ModelId.Should().BeNull();
+        agents.AgentHeader.Should().NotBeNull();
+        agents.AgentHeader!.Value.AgentId.Should().Be(agents.AgentId);
+        agents.AgentHeader!.Value.Header.Should().Be("agent header");
+        agents.ChannelHeader.Should().NotBeNull();
+        agents.ChannelHeader!.Value.ChannelId.Should().Be(agents.ChannelId);
+        agents.ChannelHeader!.Value.Header.Should().Be("channel header");
+    }
+
+    [Test]
+    public async Task HostCapabilityServerForwardsModuleLifecycleInfoAndToolInvocation()
+    {
+        var lifecycle = new RecordingModuleLifecycle();
+        var info = new RecordingModuleInfo();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IModuleLifecycleManager>(lifecycle)
+            .AddSingleton<IModuleInfoProvider>(info)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+
+        using var rootResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModulesExternalRootPath,
+            new { });
+        using var infoResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModulesInfoListPath,
+            new { });
+        using var registeredResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleRegisteredPath,
+            new { moduleId = "loaded_module" });
+        using var prefixResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleToolPrefixRegisteredPath,
+            new { toolPrefix = "lm" });
+        using var loadResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleLoadPath,
+            new { moduleDir = "E:/modules/new_module" });
+        using var reloadResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleReloadPath,
+            new { moduleId = "loaded_module" });
+        using var toolResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleToolInvokePath,
+            new
+            {
+                toolName = "echo_tool",
+                parameters = new
+                {
+                    value = "payload",
+                },
+            });
+        using var unloadResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleUnloadPath,
+            new { moduleId = "loaded_module" });
+
+        rootResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        infoResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        registeredResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        prefixResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        loadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        reloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        toolResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        unloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rootPayload = JsonDocument.Parse(await rootResponse.Content.ReadAsStringAsync());
+        rootPayload.RootElement.GetProperty("directory").GetString().Should().Be(lifecycle.ExternalModulesDir);
+        var infoPayload = JsonDocument.Parse(await infoResponse.Content.ReadAsStringAsync());
+        infoPayload.RootElement.GetProperty("modules")[0].GetProperty("id").GetString().Should().Be("loaded_module");
+        var registeredPayload = JsonDocument.Parse(await registeredResponse.Content.ReadAsStringAsync());
+        registeredPayload.RootElement.GetProperty("isRegistered").GetBoolean().Should().BeTrue();
+        var prefixPayload = JsonDocument.Parse(await prefixResponse.Content.ReadAsStringAsync());
+        prefixPayload.RootElement.GetProperty("isRegistered").GetBoolean().Should().BeTrue();
+        var toolPayload = JsonDocument.Parse(await toolResponse.Content.ReadAsStringAsync());
+        toolPayload.RootElement.GetProperty("result").GetString().Should().Be("echo:payload");
+        lifecycle.LoadedDir.Should().Be("E:/modules/new_module");
+        lifecycle.ReloadedId.Should().Be("loaded_module");
+        lifecycle.UnloadedId.Should().Be("loaded_module");
     }
 
     private static HttpClient CreateClient(ForeignModuleHostCapabilityServer server)
@@ -282,5 +499,219 @@ public sealed class ForeignModuleHostCapabilityTests
     {
         using var document = JsonDocument.Parse("""{"type":"object","properties":{}}""");
         return document.RootElement.Clone();
+    }
+
+    private sealed class RecordingTaskAuthoring : ITaskAuthoring
+    {
+        public Guid TaskId { get; } = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        public string? ValidatedSource { get; private set; }
+        public string? CreatedSource { get; private set; }
+        public (Guid Id, string? SourceText, bool? IsActive)? Updated { get; private set; }
+        public Guid? DeletedId { get; private set; }
+
+        public TaskValidationResponse ValidateDefinition(string sourceText)
+        {
+            ValidatedSource = sourceText;
+            return new TaskValidationResponse(true, []);
+        }
+
+        public Task<TaskDefinitionResponse> CreateDefinitionAsync(
+            CreateTaskDefinitionRequest request,
+            CancellationToken ct = default)
+        {
+            CreatedSource = request.SourceText;
+            return Task.FromResult(Response(TaskId));
+        }
+
+        public Task<TaskDefinitionResponse?> GetDefinitionAsync(Guid id, CancellationToken ct = default) =>
+            Task.FromResult<TaskDefinitionResponse?>(id == TaskId ? Response(id) : null);
+
+        public Task<IReadOnlyList<TaskDefinitionResponse>> ListDefinitionsAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<TaskDefinitionResponse>>([Response(TaskId)]);
+
+        public Task<TaskDefinitionResponse?> UpdateDefinitionAsync(
+            Guid id,
+            UpdateTaskDefinitionRequest request,
+            CancellationToken ct = default)
+        {
+            Updated = (id, request.SourceText, request.IsActive);
+            return Task.FromResult<TaskDefinitionResponse?>(Response(id));
+        }
+
+        public Task<bool> DeleteDefinitionAsync(Guid id, CancellationToken ct = default)
+        {
+            DeletedId = id;
+            return Task.FromResult(true);
+        }
+
+        private static TaskDefinitionResponse Response(Guid id) =>
+            new(
+                id,
+                "Sample Task",
+                null,
+                null,
+                true,
+                [],
+                [],
+                [],
+                DateTimeOffset.UnixEpoch,
+                DateTimeOffset.UnixEpoch);
+    }
+
+    private sealed class RecordingTaskLauncher : ITaskInstanceLauncher
+    {
+        public Guid InstanceId { get; } = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        public (Guid TaskDefinitionId, IReadOnlyDictionary<string, string>? ParameterValues, Guid? CallerAgentId, Guid? ChannelId, Guid? ContextId)? LastLaunch { get; private set; }
+
+        public Task<Guid> LaunchAsync(
+            Guid taskDefinitionId,
+            IReadOnlyDictionary<string, string>? parameterValues,
+            Guid? callerAgentId,
+            Guid? channelId,
+            Guid? contextId,
+            CancellationToken ct)
+        {
+            LastLaunch = (taskDefinitionId, parameterValues, callerAgentId, channelId, contextId);
+            return Task.FromResult(InstanceId);
+        }
+    }
+
+    private sealed class RecordingCoreEntityIds : ICoreEntityIdProvider
+    {
+        public Guid AgentId { get; } = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        public Guid ChannelId { get; } = Guid.Parse("66666666-6666-6666-6666-666666666666");
+
+        public Task<List<Guid>> GetAgentIdsAsync(CancellationToken ct = default) =>
+            Task.FromResult(new List<Guid> { AgentId });
+
+        public Task<List<Guid>> GetChannelIdsAsync(CancellationToken ct = default) =>
+            Task.FromResult(new List<Guid> { ChannelId });
+
+        public Task<List<(Guid Id, string Name)>> GetAgentLookupItemsAsync(CancellationToken ct = default) =>
+            Task.FromResult(new List<(Guid Id, string Name)> { (AgentId, "Analyst") });
+
+        public Task<List<(Guid Id, string Name)>> GetChannelLookupItemsAsync(CancellationToken ct = default) =>
+            Task.FromResult(new List<(Guid Id, string Name)> { (ChannelId, "Clinic") });
+    }
+
+    private sealed class RecordingQueueMetrics : IHostQueueMetrics
+    {
+        public Task<double> GetPendingJobCountAsync(CancellationToken ct) => Task.FromResult(2d);
+        public Task<double> GetPendingTaskCountAsync(CancellationToken ct) => Task.FromResult(3d);
+        public Task<double> GetSchedulerPendingJobCountAsync(CancellationToken ct) => Task.FromResult(5d);
+    }
+
+    private sealed class RecordingAgentManager : IAgentManager
+    {
+        public Guid AgentId { get; } = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        public Guid ChannelId { get; } = Guid.Parse("88888888-8888-8888-8888-888888888888");
+        public Guid ModelId { get; } = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        public (string Name, Guid ModelId, string? SystemPrompt)? Created { get; private set; }
+        public (Guid AgentId, string? Name, string? SystemPrompt, Guid? ModelId)? Updated { get; private set; }
+        public (Guid AgentId, string? Header)? AgentHeader { get; private set; }
+        public (Guid ChannelId, string? Header)? ChannelHeader { get; private set; }
+
+        public Task<(Guid AgentId, string ModelName, string AgentName)> CreateSubAgentAsync(
+            string name,
+            Guid modelId,
+            string? systemPrompt,
+            CancellationToken ct = default)
+        {
+            Created = (name, modelId, systemPrompt);
+            return Task.FromResult((AgentId, "gpt-test", name));
+        }
+
+        public Task<string> UpdateAgentAsync(
+            Guid agentId,
+            string? name,
+            string? systemPrompt,
+            Guid? modelId,
+            CancellationToken ct = default)
+        {
+            Updated = (agentId, name, systemPrompt, modelId);
+            return Task.FromResult("updated");
+        }
+
+        public Task SetAgentHeaderAsync(Guid agentId, string? header, CancellationToken ct = default)
+        {
+            AgentHeader = (agentId, header);
+            return Task.CompletedTask;
+        }
+
+        public Task SetChannelHeaderAsync(Guid channelId, string? header, CancellationToken ct = default)
+        {
+            ChannelHeader = (channelId, header);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingModuleLifecycle : IModuleLifecycleManager
+    {
+        private readonly EchoModule _module = new();
+        public string ExternalModulesDir => "E:/source/SharpClaw/external-modules";
+        public string? LoadedDir { get; private set; }
+        public string? UnloadedId { get; private set; }
+        public string? ReloadedId { get; private set; }
+
+        public bool IsModuleRegistered(string moduleId) => moduleId == "loaded_module";
+        public bool IsToolPrefixRegistered(string toolPrefix) => toolPrefix == "lm";
+        public (ISharpClawModule Module, string ToolName)? FindToolByName(string toolName) =>
+            toolName == "echo_tool" ? (_module, "echo_tool") : null;
+
+        public Task<ModuleStateResponse> LoadExternalAsync(
+            string moduleDir,
+            IServiceProvider hostServices,
+            CancellationToken ct = default)
+        {
+            LoadedDir = moduleDir;
+            return Task.FromResult(State("loaded_module"));
+        }
+
+        public Task UnloadExternalAsync(string moduleId, CancellationToken ct = default)
+        {
+            UnloadedId = moduleId;
+            return Task.CompletedTask;
+        }
+
+        public Task<ModuleStateResponse> ReloadExternalAsync(
+            string moduleId,
+            IServiceProvider hostServices,
+            CancellationToken ct = default)
+        {
+            ReloadedId = moduleId;
+            return Task.FromResult(State(moduleId));
+        }
+
+        private static ModuleStateResponse State(string moduleId) =>
+            new(moduleId, "Loaded Module", "lm", true, "1.0.0", true, true, null, null);
+    }
+
+    private sealed class RecordingModuleInfo : IModuleInfoProvider
+    {
+        public IReadOnlyList<ModuleInfo> GetAllModules() =>
+        [
+            new("loaded_module", "lm", ["editor_bridge"])
+        ];
+    }
+
+    private sealed class EchoModule : ISharpClawModule
+    {
+        public string Id => "echo_module";
+        public string DisplayName => "Echo Module";
+        public string ToolPrefix => "echo";
+
+        public void ConfigureServices(IServiceCollection services)
+        {
+        }
+
+        public IReadOnlyList<ModuleToolDefinition> GetToolDefinitions() => [];
+
+        public Task<string> ExecuteToolAsync(
+            string toolName,
+            JsonElement parameters,
+            AgentJobContext job,
+            IServiceProvider scopedServices,
+            CancellationToken ct) =>
+            Task.FromResult("echo:" + parameters.GetProperty("value").GetString());
     }
 }

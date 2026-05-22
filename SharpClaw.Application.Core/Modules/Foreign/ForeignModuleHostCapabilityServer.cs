@@ -7,7 +7,9 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Core.Modules.Foreign;
@@ -176,6 +178,56 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
                     services,
                     Deserialize<ForeignModuleProtocolContractInvokeRequest>(request),
                     ct),
+            ForeignModuleHostCapabilityProtocol.TaskValidatePath =>
+                ValidateTask(services, Deserialize<ForeignModuleTaskSourceRequest>(request)),
+            ForeignModuleHostCapabilityProtocol.TaskCreatePath =>
+                await CreateTaskAsync(services, Deserialize<ForeignModuleTaskSourceRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.TaskGetPath =>
+                await GetTaskAsync(services, Deserialize<ForeignModuleTaskIdRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.TaskListPath =>
+                await ListTasksAsync(services, ct),
+            ForeignModuleHostCapabilityProtocol.TaskUpdatePath =>
+                await UpdateTaskAsync(services, Deserialize<ForeignModuleTaskUpdateRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.TaskDeletePath =>
+                await DeleteTaskAsync(services, Deserialize<ForeignModuleTaskIdRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.TaskLaunchPath =>
+                await LaunchTaskAsync(services, Deserialize<ForeignModuleTaskLaunchRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.CoreAgentIdsPath =>
+                new ForeignModuleIdsResponse(await ResolveCoreEntityIds(services).GetAgentIdsAsync(ct)),
+            ForeignModuleHostCapabilityProtocol.CoreChannelIdsPath =>
+                new ForeignModuleIdsResponse(await ResolveCoreEntityIds(services).GetChannelIdsAsync(ct)),
+            ForeignModuleHostCapabilityProtocol.CoreAgentLookupPath =>
+                new ForeignModuleLookupItemsResponse([.. (await ResolveCoreEntityIds(services).GetAgentLookupItemsAsync(ct))
+                    .Select(item => new ForeignModuleLookupItem(item.Id, item.Name))]),
+            ForeignModuleHostCapabilityProtocol.CoreChannelLookupPath =>
+                new ForeignModuleLookupItemsResponse([.. (await ResolveCoreEntityIds(services).GetChannelLookupItemsAsync(ct))
+                    .Select(item => new ForeignModuleLookupItem(item.Id, item.Name))]),
+            ForeignModuleHostCapabilityProtocol.QueueMetricsPath =>
+                await GetQueueMetricsAsync(services, ct),
+            ForeignModuleHostCapabilityProtocol.AgentCreateSubAgentPath =>
+                await CreateSubAgentAsync(services, Deserialize<ForeignModuleAgentCreateRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.AgentUpdatePath =>
+                await UpdateAgentAsync(services, Deserialize<ForeignModuleAgentUpdateRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.AgentSetHeaderPath =>
+                await SetAgentHeaderAsync(services, Deserialize<ForeignModuleSetHeaderRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ChannelSetHeaderPath =>
+                await SetChannelHeaderAsync(services, Deserialize<ForeignModuleSetHeaderRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModulesExternalRootPath =>
+                new ForeignModuleExternalModulesRootResponse(ResolveModuleLifecycle(services).ExternalModulesDir),
+            ForeignModuleHostCapabilityProtocol.ModulesInfoListPath =>
+                new ForeignModuleInfoListResponse(ResolveModuleInfo(services).GetAllModules()),
+            ForeignModuleHostCapabilityProtocol.ModuleRegisteredPath =>
+                IsModuleRegistered(services, Deserialize<ForeignModuleRegisteredRequest>(request)),
+            ForeignModuleHostCapabilityProtocol.ModuleToolPrefixRegisteredPath =>
+                IsToolPrefixRegistered(services, Deserialize<ForeignModuleToolPrefixRegisteredRequest>(request)),
+            ForeignModuleHostCapabilityProtocol.ModuleLoadPath =>
+                await LoadModuleAsync(services, Deserialize<ForeignModuleLoadRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModuleUnloadPath =>
+                await UnloadModuleAsync(services, Deserialize<ForeignModuleModuleIdRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModuleReloadPath =>
+                await ReloadModuleAsync(services, Deserialize<ForeignModuleModuleIdRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModuleToolInvokePath =>
+                await InvokeModuleToolAsync(services, Deserialize<ForeignModuleToolInvokeRequest>(request), ct),
             _ => throw new ArgumentException($"Unknown SharpClaw host capability path '{request.Path}'."),
         };
     }
@@ -299,6 +351,239 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
             await invoker.InvokeAsync(request.Operation, request.Parameters, ct));
     }
 
+    private static TaskValidationResponse ValidateTask(
+        IServiceProvider services,
+        ForeignModuleTaskSourceRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.SourceText))
+            throw new ArgumentException("Task source text is required.", nameof(request));
+
+        return ResolveTaskAuthoring(services).ValidateDefinition(request.SourceText);
+    }
+
+    private static async Task<TaskDefinitionResponse> CreateTaskAsync(
+        IServiceProvider services,
+        ForeignModuleTaskSourceRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.SourceText))
+            throw new ArgumentException("Task source text is required.", nameof(request));
+
+        return await ResolveTaskAuthoring(services)
+            .CreateDefinitionAsync(new CreateTaskDefinitionRequest(request.SourceText), ct);
+    }
+
+    private static async Task<ForeignModuleTaskGetResponse> GetTaskAsync(
+        IServiceProvider services,
+        ForeignModuleTaskIdRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Task definition ID is required.");
+        return new ForeignModuleTaskGetResponse(
+            await ResolveTaskAuthoring(services).GetDefinitionAsync(request.Id, ct));
+    }
+
+    private static async Task<ForeignModuleTaskListResponse> ListTasksAsync(
+        IServiceProvider services,
+        CancellationToken ct) =>
+        new(await ResolveTaskAuthoring(services).ListDefinitionsAsync(ct));
+
+    private static async Task<ForeignModuleTaskGetResponse> UpdateTaskAsync(
+        IServiceProvider services,
+        ForeignModuleTaskUpdateRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Task definition ID is required.");
+        var updated = await ResolveTaskAuthoring(services)
+            .UpdateDefinitionAsync(
+                request.Id,
+                new UpdateTaskDefinitionRequest(request.SourceText, request.IsActive),
+                ct);
+        return new ForeignModuleTaskGetResponse(updated);
+    }
+
+    private static async Task<ForeignModuleTaskDeleteResponse> DeleteTaskAsync(
+        IServiceProvider services,
+        ForeignModuleTaskIdRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Task definition ID is required.");
+        return new ForeignModuleTaskDeleteResponse(
+            await ResolveTaskAuthoring(services).DeleteDefinitionAsync(request.Id, ct));
+    }
+
+    private static async Task<ForeignModuleTaskLaunchResponse> LaunchTaskAsync(
+        IServiceProvider services,
+        ForeignModuleTaskLaunchRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.TaskDefinitionId, "Task definition ID is required.");
+        var instanceId = await ResolveTaskLauncher(services)
+            .LaunchAsync(
+                request.TaskDefinitionId,
+                request.ParameterValues,
+                request.CallerAgentId,
+                request.ChannelId,
+                request.ContextId,
+                ct);
+        return new ForeignModuleTaskLaunchResponse(instanceId);
+    }
+
+    private static async Task<ForeignModuleQueueMetricsResponse> GetQueueMetricsAsync(
+        IServiceProvider services,
+        CancellationToken ct)
+    {
+        var metrics = ResolveQueueMetrics(services);
+        return new ForeignModuleQueueMetricsResponse(
+            await metrics.GetPendingJobCountAsync(ct),
+            await metrics.GetPendingTaskCountAsync(ct),
+            await metrics.GetSchedulerPendingJobCountAsync(ct));
+    }
+
+    private static async Task<ForeignModuleAgentCreateResponse> CreateSubAgentAsync(
+        IServiceProvider services,
+        ForeignModuleAgentCreateRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Agent name is required.", nameof(request));
+        RequireId(request.ModelId, "Model ID is required.");
+
+        var (agentId, modelName, agentName) = await ResolveAgentManager(services)
+            .CreateSubAgentAsync(request.Name, request.ModelId, request.SystemPrompt, ct);
+        return new ForeignModuleAgentCreateResponse(agentId, modelName, agentName);
+    }
+
+    private static async Task<ForeignModuleAgentUpdateResponse> UpdateAgentAsync(
+        IServiceProvider services,
+        ForeignModuleAgentUpdateRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.AgentId, "Agent ID is required.");
+        return new ForeignModuleAgentUpdateResponse(
+            await ResolveAgentManager(services)
+                .UpdateAgentAsync(
+                    request.AgentId,
+                    request.Name,
+                    request.SystemPrompt,
+                    request.ModelId,
+                    ct));
+    }
+
+    private static async Task<ForeignModuleCapabilityAck> SetAgentHeaderAsync(
+        IServiceProvider services,
+        ForeignModuleSetHeaderRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Agent ID is required.");
+        await ResolveAgentManager(services).SetAgentHeaderAsync(request.Id, request.Header, ct);
+        return new ForeignModuleCapabilityAck();
+    }
+
+    private static async Task<ForeignModuleCapabilityAck> SetChannelHeaderAsync(
+        IServiceProvider services,
+        ForeignModuleSetHeaderRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Channel ID is required.");
+        await ResolveAgentManager(services).SetChannelHeaderAsync(request.Id, request.Header, ct);
+        return new ForeignModuleCapabilityAck();
+    }
+
+    private static ForeignModuleRegisteredResponse IsModuleRegistered(
+        IServiceProvider services,
+        ForeignModuleRegisteredRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModuleId))
+            throw new ArgumentException("Module ID is required.", nameof(request));
+
+        return new ForeignModuleRegisteredResponse(
+            ResolveModuleLifecycle(services).IsModuleRegistered(request.ModuleId));
+    }
+
+    private static ForeignModuleRegisteredResponse IsToolPrefixRegistered(
+        IServiceProvider services,
+        ForeignModuleToolPrefixRegisteredRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ToolPrefix))
+            throw new ArgumentException("Tool prefix is required.", nameof(request));
+
+        return new ForeignModuleRegisteredResponse(
+            ResolveModuleLifecycle(services).IsToolPrefixRegistered(request.ToolPrefix));
+    }
+
+    private async Task<ForeignModuleStateResponseEnvelope> LoadModuleAsync(
+        IServiceProvider services,
+        ForeignModuleLoadRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModuleDir))
+            throw new ArgumentException("Module directory is required.", nameof(request));
+
+        return new ForeignModuleStateResponseEnvelope(
+            await ResolveModuleLifecycle(services).LoadExternalAsync(request.ModuleDir, _services, ct));
+    }
+
+    private static async Task<ForeignModuleCapabilityAck> UnloadModuleAsync(
+        IServiceProvider services,
+        ForeignModuleModuleIdRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModuleId))
+            throw new ArgumentException("Module ID is required.", nameof(request));
+
+        await ResolveModuleLifecycle(services).UnloadExternalAsync(request.ModuleId, ct);
+        return new ForeignModuleCapabilityAck();
+    }
+
+    private async Task<ForeignModuleStateResponseEnvelope> ReloadModuleAsync(
+        IServiceProvider services,
+        ForeignModuleModuleIdRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModuleId))
+            throw new ArgumentException("Module ID is required.", nameof(request));
+
+        return new ForeignModuleStateResponseEnvelope(
+            await ResolveModuleLifecycle(services).ReloadExternalAsync(request.ModuleId, _services, ct));
+    }
+
+    private static async Task<ForeignModuleToolInvokeResponse> InvokeModuleToolAsync(
+        IServiceProvider services,
+        ForeignModuleToolInvokeRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ToolName))
+            throw new ArgumentException("Tool name is required.", nameof(request));
+
+        var lifecycle = ResolveModuleLifecycle(services);
+        var toolEntry = lifecycle.FindToolByName(request.ToolName)
+            ?? throw new NotSupportedException($"Tool '{request.ToolName}' was not found in any loaded module.");
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (request.TimeoutSeconds is > 0)
+            timeout.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds.Value));
+
+        using var emptyParameters = request.Parameters.ValueKind == JsonValueKind.Undefined
+            ? JsonDocument.Parse("{}")
+            : null;
+        var parameters = emptyParameters?.RootElement ?? request.Parameters;
+        var job = new AgentJobContext(
+            Guid.NewGuid(),
+            Guid.Empty,
+            Guid.Empty,
+            ResourceId: null,
+            ActionKey: request.ToolName);
+        var result = await toolEntry.Module.ExecuteToolAsync(
+            toolEntry.ToolName,
+            parameters,
+            job,
+            services,
+            timeout.Token);
+
+        return new ForeignModuleToolInvokeResponse(result);
+    }
+
     private IModuleConfigStore ResolveConfigStore(IServiceProvider services)
     {
         if (services.GetService<IModuleConfigStore>() is { } store)
@@ -317,6 +602,34 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
     private static IForeignModuleProtocolContractResolver ResolveProtocolContractResolver(IServiceProvider services) =>
         services.GetService<IForeignModuleProtocolContractResolver>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide a protocol contract resolver.");
+
+    private static ITaskAuthoring ResolveTaskAuthoring(IServiceProvider services) =>
+        services.GetService<ITaskAuthoring>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide task authoring.");
+
+    private static ITaskInstanceLauncher ResolveTaskLauncher(IServiceProvider services) =>
+        services.GetService<ITaskInstanceLauncher>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide a task launcher.");
+
+    private static ICoreEntityIdProvider ResolveCoreEntityIds(IServiceProvider services) =>
+        services.GetService<ICoreEntityIdProvider>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide core entity lookup.");
+
+    private static IHostQueueMetrics ResolveQueueMetrics(IServiceProvider services) =>
+        services.GetService<IHostQueueMetrics>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide queue metrics.");
+
+    private static IAgentManager ResolveAgentManager(IServiceProvider services) =>
+        services.GetService<IAgentManager>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide agent management.");
+
+    private static IModuleLifecycleManager ResolveModuleLifecycle(IServiceProvider services) =>
+        services.GetService<IModuleLifecycleManager>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide module lifecycle management.");
+
+    private static IModuleInfoProvider ResolveModuleInfo(IServiceProvider services) =>
+        services.GetService<IModuleInfoProvider>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide module information.");
 
     private static T Deserialize<T>(CapabilityHttpRequest request)
     {
@@ -337,6 +650,12 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
     {
         if (jobId == Guid.Empty)
             throw new ArgumentException("Job ID is required.", nameof(jobId));
+    }
+
+    private static void RequireId(Guid id, string message)
+    {
+        if (id == Guid.Empty)
+            throw new ArgumentException(message, nameof(id));
     }
 
     private static LogLevel ParseLogLevel(string? level) =>
