@@ -178,10 +178,25 @@ internal sealed class ForeignModuleProxy(
     public ModuleJobCompletionBehavior GetJobCompletionBehavior(
         string toolName,
         JsonElement parameters,
-        AgentJobContext job) =>
-        _tools.FirstOrDefault(tool => string.Equals(tool.Name, toolName, StringComparison.Ordinal))
-            ?.CompletionBehavior
-        ?? ModuleJobCompletionBehavior.CompleteWhenExecutionReturns;
+        AgentJobContext job)
+    {
+        var tool = _tools.FirstOrDefault(tool => string.Equals(tool.Name, toolName, StringComparison.Ordinal));
+        if (tool?.SupportsDynamicCompletionBehavior == true)
+        {
+            return client.GetToolCompletionBehaviorAsync(
+                    manifest,
+                    toolName,
+                    parameters,
+                    job,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult()
+                .CompletionBehavior;
+        }
+
+        return tool?.CompletionBehavior
+            ?? ModuleJobCompletionBehavior.CompleteWhenExecutionReturns;
+    }
 
     public Task<string> ExecuteInlineToolAsync(
         string toolName,

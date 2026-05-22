@@ -183,6 +183,14 @@ internal sealed class DotNetSidecarHost
             return Json(new ForeignModuleToolExecutionResponse(result, completionBehavior));
         });
 
+        _app.MapPost(ForeignModuleProtocol.ToolCompletionBehaviorPath, (
+            ForeignModuleToolCompletionBehaviorRequest request) =>
+            Json(new ForeignModuleToolCompletionBehaviorResponse(
+                _module.GetJobCompletionBehavior(
+                    request.ToolName,
+                    NormalizeJsonObject(request.Parameters),
+                    request.Job.ToAgentJobContext()))));
+
         _app.MapPost(ForeignModuleProtocol.ToolStreamPath, async (
             HttpContext context,
             ForeignModuleToolExecutionRequest request,
@@ -437,7 +445,10 @@ internal sealed class DotNetSidecarHost
         var protocolModule = _module as IForeignModuleProtocolContractModule;
         return new ForeignModuleDiscoveryResponse(
             Endpoints: DiscoverMappedEndpoints(),
-            Tools: [.. _module.GetToolDefinitions().Select(tool => ToForeignTool(tool, HasStreamingOverride(_module)))],
+            Tools: [.. _module.GetToolDefinitions().Select(tool => ToForeignTool(
+                tool,
+                HasStreamingOverride(_module),
+                HasCompletionBehaviorOverride(_module)))],
             InlineTools: [.. _module.GetInlineToolDefinitions().Select(ToForeignInlineTool)],
             ProtocolContracts: [.. (protocolModule?.ExportedProtocolContracts ?? []).Select(ToExportDescriptor)],
             RequiredProtocolContracts: [.. (protocolModule?.RequiredProtocolContracts ?? []).Select(ToRequirementDescriptor)],
@@ -517,7 +528,10 @@ internal sealed class DotNetSidecarHost
         return [.. capabilities.Order(StringComparer.Ordinal)];
     }
 
-    private static ForeignModuleToolDescriptor ToForeignTool(ModuleToolDefinition tool, bool supportsStreaming) =>
+    private static ForeignModuleToolDescriptor ToForeignTool(
+        ModuleToolDefinition tool,
+        bool supportsStreaming,
+        bool supportsDynamicCompletionBehavior) =>
         new(
             tool.Name,
             tool.Description,
@@ -525,7 +539,8 @@ internal sealed class DotNetSidecarHost
             ToForeignPermission(tool.Permission),
             tool.TimeoutSeconds,
             tool.Aliases,
-            SupportsStreaming: supportsStreaming);
+            SupportsStreaming: supportsStreaming,
+            SupportsDynamicCompletionBehavior: supportsDynamicCompletionBehavior);
 
     private static ForeignModuleInlineToolDescriptor ToForeignInlineTool(ModuleInlineToolDefinition tool) =>
         new(
@@ -587,6 +602,11 @@ internal sealed class DotNetSidecarHost
         module.GetType()
             .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
             .Any(method => method.Name == nameof(ISharpClawModule.ExecuteToolStreamingAsync));
+
+    private static bool HasCompletionBehaviorOverride(ISharpClawModule module) =>
+        module.GetType()
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Any(method => method.Name == nameof(ISharpClawModule.GetJobCompletionBehavior));
 
     private static string ResolveRuntimeVersion(Assembly moduleAssembly)
     {

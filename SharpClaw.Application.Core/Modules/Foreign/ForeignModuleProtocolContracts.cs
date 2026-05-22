@@ -92,6 +92,7 @@ public sealed record ForeignModuleToolDescriptor(
     int? TimeoutSeconds = null,
     IReadOnlyList<string>? Aliases = null,
     bool SupportsStreaming = false,
+    bool SupportsDynamicCompletionBehavior = false,
     ModuleJobCompletionBehavior CompletionBehavior =
         ModuleJobCompletionBehavior.CompleteWhenExecutionReturns)
 {
@@ -241,6 +242,16 @@ internal sealed record ForeignModuleInlineToolExecutionRequest(
 internal sealed record ForeignModuleToolExecutionResponse(
     string? Result = null,
     ModuleJobCompletionBehavior? CompletionBehavior = null);
+
+internal sealed record ForeignModuleToolCompletionBehaviorRequest(
+    int ProtocolVersion,
+    string ModuleId,
+    string ToolName,
+    JsonElement Parameters,
+    ForeignModuleAgentJobContext Job);
+
+internal sealed record ForeignModuleToolCompletionBehaviorResponse(
+    ModuleJobCompletionBehavior CompletionBehavior);
 
 internal sealed record ForeignModuleAgentJobContext(
     Guid JobId,

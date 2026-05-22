@@ -18,6 +18,7 @@ public static class ForeignModuleProtocol
     public const string ShutdownPath = "/.sharpclaw/shutdown";
     public const string DiscoveryPath = "/.sharpclaw/discovery";
     public const string ToolExecutePath = "/.sharpclaw/tools/execute";
+    public const string ToolCompletionBehaviorPath = "/.sharpclaw/tools/completion-behavior";
     public const string ToolStreamPath = "/.sharpclaw/tools/stream";
     public const string InlineToolExecutePath = "/.sharpclaw/inline-tools/execute";
     public const string ContractInvokePath = "/.sharpclaw/contracts/invoke";

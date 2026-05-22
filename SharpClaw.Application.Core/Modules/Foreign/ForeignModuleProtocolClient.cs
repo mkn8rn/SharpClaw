@@ -90,6 +90,22 @@ internal sealed class ForeignModuleProtocolClient
                 ForeignModuleAgentJobContext.From(job)),
             ct);
 
+    public Task<ForeignModuleToolCompletionBehaviorResponse> GetToolCompletionBehaviorAsync(
+        ModuleManifest manifest,
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job,
+        CancellationToken ct = default) =>
+        PostAsync<ForeignModuleToolCompletionBehaviorRequest, ForeignModuleToolCompletionBehaviorResponse>(
+            ForeignModuleProtocol.ToolCompletionBehaviorPath,
+            new ForeignModuleToolCompletionBehaviorRequest(
+                ForeignModuleProtocol.Version,
+                manifest.Id,
+                toolName,
+                parameters,
+                ForeignModuleAgentJobContext.From(job)),
+            ct);
+
     public Task<ForeignModuleToolExecutionResponse> ExecuteInlineToolAsync(
         ModuleManifest manifest,
         string toolName,
