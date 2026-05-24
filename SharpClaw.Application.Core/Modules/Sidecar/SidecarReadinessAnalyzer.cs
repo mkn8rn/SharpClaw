@@ -169,31 +169,41 @@ public sealed class SidecarReadinessAnalyzer
                 "contracts.clr.exports",
                 $"{contributions.ExportedClrContractCount} CLR contract export(s) need protocol contract equivalents."));
 
-        if (contributions.RequiredClrContractCount > 0)
+        var requiredClrContracts = module.RequiredContracts;
+        var requiredNonOptionalClrContracts = requiredClrContracts.Count(requirement => !requirement.Optional);
+        var requiredOptionalClrContracts = requiredClrContracts.Count - requiredNonOptionalClrContracts;
+
+        if (requiredNonOptionalClrContracts > 0)
             findings.Add(new(
                 SidecarReadinessFindingKind.RequiresClrContractBridge,
                 "contracts.clr.requirements",
-                $"{contributions.RequiredClrContractCount} CLR contract requirement(s) need protocol contract equivalents."));
+                $"{requiredNonOptionalClrContracts} non-optional CLR contract requirement(s) need protocol contract equivalents."));
 
-        if (contributions.IsTaskParserAware)
-            findings.Add(new(
-                SidecarReadinessFindingKind.RequiresProtocolSurface,
-                "tasks.parser_extension",
-                "Task parser extensions need a sidecar parser-extension protocol."));
+        AddCovered(
+            findings,
+            requiredOptionalClrContracts,
+            "contracts.clr.optional_requirements",
+            "Optional CLR contract requirements do not block sidecar loading.");
 
-        if (services.TaskRuntimeServiceRegistrations.Count > 0)
-            findings.Add(new(
-                SidecarReadinessFindingKind.RequiresProtocolSurface,
-                "tasks.runtime_services",
-                "Task runtime services need sidecar step, trigger, metric, and binding protocols: "
-                + string.Join(", ", services.TaskRuntimeServiceRegistrations)));
+        AddCovered(
+            findings,
+            contributions.IsTaskParserAware ? 1 : 0,
+            "tasks.parser_extension",
+            "Task parser extensions are covered by the current foreign protocol.");
 
-        if (services.EventSinkRegistrations.Count > 0)
-            findings.Add(new(
-                SidecarReadinessFindingKind.RequiresProtocolSurface,
-                "events.sinks",
-                "Host event sinks need parent-to-sidecar event delivery: "
-                + string.Join(", ", services.EventSinkRegistrations)));
+        AddCovered(
+            findings,
+            services.TaskRuntimeServiceRegistrations.Count,
+            "tasks.runtime_services",
+            "Task runtime services are covered by the current foreign protocol: "
+            + string.Join(", ", services.TaskRuntimeServiceRegistrations));
+
+        AddCovered(
+            findings,
+            services.EventSinkRegistrations.Count,
+            "events.sinks",
+            "Host event sinks are covered by the current foreign protocol: "
+            + string.Join(", ", services.EventSinkRegistrations));
 
         AddCovered(
             findings,

@@ -28,9 +28,11 @@
     <ProjectReference Include="..\SharpClaw.Gateway\SharpClaw.Gateway.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
     <ProjectReference Include="..\SharpClaw.Providers.Common\SharpClaw.Providers.Common.csproj" />
+    <ProjectReference Include="..\DefaultModules\Providers\Anthropic\SharpClaw.Modules.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\Google\SharpClaw.Modules.Providers.Google.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\OpenAICompatible\SharpClaw.Modules.Providers.OpenAICompatible.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\LlamaSharp\SharpClaw.Modules.Providers.LlamaSharp.csproj" />
+    <ProjectReference Include="..\DefaultModules\Providers\Ollama\SharpClaw.Modules.Providers.Ollama.csproj" />
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
     <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj" />
     <ProjectReference Include="..\DefaultModules\Metrics\SharpClaw.Modules.Metrics.csproj" />

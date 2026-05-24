@@ -14,6 +14,12 @@ using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.JSON;
 using SharpClaw.Infrastructure.Persistence.Modules;
 using SharpClaw.Modules.AgentOrchestration;
+using SharpClaw.Modules.Metrics;
+using SharpClaw.Modules.ModuleDev;
+using SharpClaw.Modules.Providers.Anthropic;
+using SharpClaw.Modules.Providers.Google;
+using SharpClaw.Modules.Providers.Ollama;
+using SharpClaw.Modules.Providers.OpenAICompatible;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Utils.Instances;
 
@@ -86,6 +92,48 @@ public sealed class BundledDotNetSidecarDefaultTests
     }
 
     [Test]
+    public async Task SidecarManifestBundledModulesRegisterThroughForeignRuntimeHost()
+    {
+        ISharpClawModule[] bundledModules =
+        [
+            new TestHarnessModule(),
+            new MetricsModule(),
+            new ModuleDevModule(),
+            new AnthropicProviderModule(),
+            new GoogleProvidersModule(),
+            new OllamaProviderModule(),
+            new OpenAICompatibleProvidersModule(),
+        ];
+        await using var harness = ModuleServiceHarness.Create(modules: bundledModules);
+        var enabledModuleIds = new List<string>();
+
+        try
+        {
+            foreach (var bundledModule in bundledModules.OrderBy(module => module.Id, StringComparer.Ordinal))
+            {
+                var response = await harness.ModuleService.EnableAsync(
+                    bundledModule.Id,
+                    harness.RootServices,
+                    CancellationToken.None);
+
+                enabledModuleIds.Add(bundledModule.Id);
+                response.Enabled.Should().BeTrue();
+                harness.Registry.GetRuntimeHost(bundledModule.Id)
+                    .Should()
+                    .BeAssignableTo<IForeignModuleRuntimeHost>();
+                harness.Registry.GetModule(bundledModule.Id)
+                    .Should()
+                    .NotBeSameAs(bundledModule);
+            }
+        }
+        finally
+        {
+            foreach (var moduleId in enabledModuleIds.AsEnumerable().Reverse())
+                await harness.ModuleService.DisableAsync(moduleId, CancellationToken.None);
+        }
+    }
+
+    [Test]
     public async Task SidecarOnlyModeRejectsBundledModulesWithReadinessBlockers()
     {
         await using var harness = ModuleServiceHarness.Create(
@@ -104,7 +152,6 @@ public sealed class BundledDotNetSidecarDefaultTests
             .ThrowAsync<InvalidOperationException>()
             .WithMessage("*Sidecar readiness blocker*");
         assertion.Which.Message.Should().Contain("storage.module_dbcontexts");
-        assertion.Which.Message.Should().Contain("tasks.runtime_services");
 
         harness.Registry.GetModule("sharpclaw_agent_orchestration").Should().BeNull();
         harness.Registry.GetRuntimeHost("sharpclaw_agent_orchestration").Should().BeNull();

@@ -29,25 +29,15 @@ public sealed class SidecarReadinessInventoryTests
     {
         ["sharpclaw_agent_orchestration"] =
         [
-            "events.sinks",
             "storage.module_dbcontexts",
-            "tasks.parser_extension",
-            "tasks.runtime_services",
         ],
         ["sharpclaw_editor_common"] =
         [
             "contracts.clr.exports",
             "storage.module_dbcontexts",
         ],
-        ["sharpclaw_metrics"] =
-        [
-            "tasks.parser_extension",
-            "tasks.runtime_services",
-        ],
-        ["sharpclaw_module_dev"] =
-        [
-            "contracts.clr.requirements",
-        ],
+        ["sharpclaw_metrics"] = [],
+        ["sharpclaw_module_dev"] = [],
         ["sharpclaw_providers_anthropic"] = [],
         ["sharpclaw_providers_google"] = [],
         ["sharpclaw_providers_llamasharp"] =
@@ -99,6 +89,8 @@ public sealed class SidecarReadinessInventoryTests
             .Should()
             .Equal(
             [
+                "sharpclaw_metrics",
+                "sharpclaw_module_dev",
                 "sharpclaw_providers_anthropic",
                 "sharpclaw_providers_google",
                 "sharpclaw_providers_ollama",
@@ -125,6 +117,25 @@ public sealed class SidecarReadinessInventoryTests
             reports[moduleId].Blockers.Should().BeEmpty(
                 $"module '{moduleId}' opted into hostMode=sidecar and must stay protocol-ready");
         }
+    }
+
+    [Test]
+    public void ReadinessCleanBundledModulesMustDeclareSidecarHostMode()
+    {
+        var readyModuleIds = AnalyzeBundledModules()
+            .Where(report => report.IsReadyForSidecarDefault)
+            .Select(report => report.ModuleId)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var sidecarModuleIds = LoadBundledManifests()
+            .Where(entry => entry.RuntimeInfo.IsSidecarHostMode)
+            .Select(entry => entry.Manifest.Id)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        sidecarModuleIds.Should().Equal(
+            readyModuleIds,
+            "phase two should route every readiness-clean bundled module through the .NET sidecar manifest path");
     }
 
     [Test]
