@@ -6,7 +6,7 @@ using LLama.Native;
 namespace SharpClaw.Modules.Providers.LlamaSharp.LocalInference;
 
 /// <summary>
-/// Manages locally-loaded GGUF models via LLamaSharp (in-process llama.cpp).
+/// Manages locally-loaded GGUF models via LLamaSharp inside the module process.
 /// Each loaded model holds a <see cref="LLamaWeights"/> instance that is
 /// shared across concurrent requests.
 /// <para>

@@ -5,10 +5,12 @@ Full human-readable guide: guides/Module-Creation-Guide.md
 ────────────────────────────────────────
 WHAT A MODULE IS
 ────────────────────────────────────────
-A C# class implementing ISharpClawModule compiled into the solution.
-Discovered automatically by ModuleLoader at startup.
+A manifest-backed module running in a sidecar process.
+C# modules still implement ISharpClawModule, but the parent host discovers
+module.json and talks to the module through the sidecar protocol.
 Enabled/disabled by the Modules section in Infrastructure/Environment/.env.
-Can be toggled at runtime with no restart: module enable/disable <id>
+Can be toggled at runtime without restarting the Core API process:
+module enable/disable <id>
 
 ────────────────────────────────────────
 REQUIRED INTERFACE MEMBERS

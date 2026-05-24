@@ -2471,7 +2471,7 @@ public sealed class ChatService(
     /// Maps the typed provider parameter fields from <see cref="AgentDB"/> into
     /// a <see cref="CompletionParameters"/> instance and stamps the host model
     /// id and (optional) thread id so providers that need either to manage
-    /// internal state — currently the LlamaSharp in-process client for model
+    /// internal state — currently the LlamaSharp sidecar client for model
     /// acquire/release and KV-cache reuse — can resolve them from the call
     /// parameters instead of relying on out-of-band ambient state.
     /// </summary>

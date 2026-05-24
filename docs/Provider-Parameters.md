@@ -72,7 +72,7 @@ format examples, and provider-specific notes:
 | Mistral | `mistral` | OpenAI-compatible | [providers/Mistral.md](providers/Mistral.md) |
 | GitHub Copilot | `github-copilot` | OpenAI-compatible | [providers/GitHub-Copilot.md](providers/GitHub-Copilot.md) |
 | Custom | `custom` | OpenAI-compatible (user endpoint) | [providers/Custom.md](providers/Custom.md) |
-| LlamaSharp | `llamasharp` | In-process (GBNF grammar-constrained) | [providers/LlamaSharp.md](providers/LlamaSharp.md) |
+| LlamaSharp | `llamasharp` | Sidecar-local GBNF grammar-constrained | [providers/LlamaSharp.md](providers/LlamaSharp.md) |
 | Minimax | `minimax` | OpenAI-compatible | [providers/Minimax.md](providers/Minimax.md) |
 | Google Gemini (OpenAI) | `google-gemini-openai` | OpenAI-compatible | [providers/Google-Gemini-OpenAI.md](providers/Google-Gemini-OpenAI.md) |
 | Google Vertex AI (OpenAI) | `google-vertex-ai-openai` | OpenAI-compatible | [providers/Google-Vertex-AI-OpenAI.md](providers/Google-Vertex-AI-OpenAI.md) |

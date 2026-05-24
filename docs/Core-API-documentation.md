@@ -2241,7 +2241,7 @@ Same fields as the request, plus an `id` field for the
 
 ## Local models
 
-In-process local model management for LLamaSharp. Endpoints live under
+LlamaSharp sidecar local model management. Endpoints live under
 `/models/local`.
 
 ### POST /models/local/download

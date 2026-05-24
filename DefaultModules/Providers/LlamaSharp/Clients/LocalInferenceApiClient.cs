@@ -18,10 +18,10 @@ using SharpClaw.Providers.Common;
 namespace SharpClaw.Modules.Providers.LlamaSharp.Clients;
 
 /// <summary>
-/// Provider client that runs inference in-process via LLamaSharp.
+/// Provider client that runs inference inside the LlamaSharp module process.
 /// The <see cref="LocalInferenceProcessManager"/> holds loaded model
 /// weights; this client creates a context per-request and runs the
-/// executor directly — no HTTP, no external server process.
+/// executor directly without a separate model server.
 /// <para>
 /// Uses the model's embedded GGUF chat template via
 /// <see cref="PromptTemplateTransformer"/> to format prompts correctly

@@ -36,10 +36,16 @@ task triggers, and troubleshooting at runtime.
 
 ## What a module is
 
-A module is a C# class that implements `ISharpClawModule` and is compiled into the
-solution. The `ModuleLoader` discovers it at startup automatically — no registration
-list to maintain. Whether it runs is controlled by a single line in the core `.env`
-file, and it can be toggled on and off at runtime without restarting the process.
+A module is a manifest-backed package that runs as a sidecar process. A C#
+module still implements `ISharpClawModule`, but the parent host discovers the
+`module.json` manifest and talks to the module through the sidecar protocol
+instead of composing the module assembly into the API process. Whether it runs
+is controlled by a single line in the core `.env` file, and it can be toggled
+on and off at runtime without restarting the Core API process.
+
+`ConfigureServices` still matters for C# modules. Those registrations build the
+module sidecar's own service provider, so module internals resolve normally
+without giving the module direct access to the parent host container.
 
 Modules can contribute any combination of:
 

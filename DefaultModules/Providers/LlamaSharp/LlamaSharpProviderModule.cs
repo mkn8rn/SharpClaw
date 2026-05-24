@@ -16,8 +16,8 @@ using SharpClaw.Providers.LocalCommon;
 namespace SharpClaw.Modules.Providers.LlamaSharp;
 
 /// <summary>
-/// Default module: registers the LlamaSharp (in-process llama.cpp)
-/// provider plugin, owns local-model records through host-backed module
+/// Default module: registers the LlamaSharp llama.cpp provider plugin
+/// inside its sidecar, owns local-model records through host-backed module
 /// config, and exposes <c>/models/local</c> REST + <c>localmodel</c>
 /// CLI surfaces.
 /// </summary>
@@ -79,7 +79,7 @@ public sealed class LlamaSharpProviderModule : ISharpClawModule
         services.AddScoped<LocalModelLookup>();
         services.AddScoped<ILocalModelFileLookup>(sp => sp.GetRequiredService<LocalModelLookup>());
 
-        // Provider plugin — in-process LLamaSharp client.
+        // Provider plugin - local LLamaSharp client.
         services.AddSingleton<IProviderPlugin>(sp =>
         {
             var pm = sp.GetRequiredService<LocalInferenceProcessManager>();
