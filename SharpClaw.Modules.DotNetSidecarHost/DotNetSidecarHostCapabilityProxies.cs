@@ -23,6 +23,7 @@ internal static class DotNetSidecarHostCapabilityProxies
         services.TryAddSingleton<ITaskAuthoring, TaskAuthoringProxy>();
         services.TryAddSingleton<ITaskInstanceLauncher, TaskInstanceLauncherProxy>();
         services.TryAddSingleton<IHostQueueMetrics, HostQueueMetricsProxy>();
+        services.TryAddSingleton<IHostAgentBridge, HostAgentBridgeProxy>();
         services.TryAddSingleton<ICoreEntityIdProvider, CoreEntityIdProviderProxy>();
         services.TryAddSingleton<IAgentManager, AgentManagerProxy>();
         services.TryAddSingleton<IModuleInfoProvider, ModuleInfoProviderProxy>();
@@ -178,6 +179,198 @@ internal static class DotNetSidecarHostCapabilityProxies
                 ForeignModuleHostCapabilityProtocol.CoreChannelLookupPath,
                 new { },
                 ct)).Items.Select(item => (item.Id, item.Name))];
+    }
+
+    private sealed class HostAgentBridgeProxy(DotNetSidecarHostCapabilityClient client) : IHostAgentBridge
+    {
+        public async Task<string?> ChatAsync(
+            Guid instanceId,
+            string taskName,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            (await client.PostAsync<ForeignModuleHostAgentChatRequest, ForeignModuleHostAgentTextResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentChatPath,
+                new ForeignModuleHostAgentChatRequest
+                {
+                    InstanceId = instanceId,
+                    TaskName = taskName,
+                    Message = message,
+                    AgentId = agentId,
+                },
+                ct)).Text;
+
+        public async Task<string> ChatStreamAsync(
+            Guid instanceId,
+            string taskName,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            (await client.PostAsync<ForeignModuleHostAgentChatRequest, ForeignModuleHostAgentTextResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentChatStreamPath,
+                new ForeignModuleHostAgentChatRequest
+                {
+                    InstanceId = instanceId,
+                    TaskName = taskName,
+                    Message = message,
+                    AgentId = agentId,
+                },
+                ct)).Text ?? string.Empty;
+
+        public async Task<string?> ChatToThreadAsync(
+            Guid instanceId,
+            string taskName,
+            Guid threadId,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            (await client.PostAsync<ForeignModuleHostAgentChatToThreadRequest, ForeignModuleHostAgentTextResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentChatToThreadPath,
+                new ForeignModuleHostAgentChatToThreadRequest
+                {
+                    InstanceId = instanceId,
+                    TaskName = taskName,
+                    ThreadId = threadId,
+                    Message = message,
+                    AgentId = agentId,
+                },
+                ct)).Text;
+
+        public string ParseStructuredResponse(Guid instanceId, string text, string? typeName) =>
+            client.PostAsync<ForeignModuleHostAgentParseStructuredResponseRequest, ForeignModuleHostAgentTextResponse>(
+                    ForeignModuleHostCapabilityProtocol.HostAgentParseStructuredResponsePath,
+                    new ForeignModuleHostAgentParseStructuredResponseRequest
+                    {
+                        InstanceId = instanceId,
+                        Text = text,
+                        TypeName = typeName,
+                    },
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult()
+                .Text ?? string.Empty;
+
+        public Task<Guid?> FindModelAsync(string search, CancellationToken ct) =>
+            FindAsync(ForeignModuleHostCapabilityProtocol.HostAgentFindModelPath, search, ct);
+
+        public Task<Guid?> FindProviderAsync(string search, CancellationToken ct) =>
+            FindAsync(ForeignModuleHostCapabilityProtocol.HostAgentFindProviderPath, search, ct);
+
+        public Task<Guid?> FindAgentAsync(string search, CancellationToken ct) =>
+            FindAsync(ForeignModuleHostCapabilityProtocol.HostAgentFindAgentPath, search, ct);
+
+        public Task<Guid?> FindRoleAsync(string search, CancellationToken ct) =>
+            FindAsync(ForeignModuleHostCapabilityProtocol.HostAgentFindRolePath, search, ct);
+
+        public Task<Guid?> FindChannelAsync(string search, CancellationToken ct) =>
+            FindAsync(ForeignModuleHostCapabilityProtocol.HostAgentFindChannelPath, search, ct);
+
+        public async Task<Guid> CreateAgentAsync(
+            Guid instanceId,
+            string name,
+            Guid modelId,
+            string? systemPrompt,
+            string? customId,
+            CancellationToken ct) =>
+            RequireId(await client.PostAsync<ForeignModuleHostAgentCreateAgentRequest, ForeignModuleHostAgentIdResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentCreateAgentPath,
+                new ForeignModuleHostAgentCreateAgentRequest
+                {
+                    InstanceId = instanceId,
+                    Name = name,
+                    ModelId = modelId,
+                    SystemPrompt = systemPrompt,
+                    CustomId = customId,
+                },
+                ct));
+
+        public async Task<Guid> CreateThreadAsync(
+            Guid instanceId,
+            Guid? channelId,
+            string? threadName,
+            CancellationToken ct) =>
+            RequireId(await client.PostAsync<ForeignModuleHostAgentCreateThreadRequest, ForeignModuleHostAgentIdResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentCreateThreadPath,
+                new ForeignModuleHostAgentCreateThreadRequest
+                {
+                    InstanceId = instanceId,
+                    ChannelId = channelId,
+                    ThreadName = threadName,
+                },
+                ct));
+
+        public async Task<Guid> CreateRoleAsync(string roleName, CancellationToken ct) =>
+            RequireId(await client.PostAsync<ForeignModuleHostAgentCreateRoleRequest, ForeignModuleHostAgentIdResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentCreateRolePath,
+                new ForeignModuleHostAgentCreateRoleRequest { RoleName = roleName },
+                ct));
+
+        public Task SetRolePermissionsAsync(
+            Guid roleId,
+            string requestJson,
+            CancellationToken ct) =>
+            client.PostAckAsync(
+                ForeignModuleHostCapabilityProtocol.HostAgentSetRolePermissionsPath,
+                new ForeignModuleHostAgentSetRolePermissionsRequest
+                {
+                    RoleId = roleId,
+                    RequestJson = requestJson,
+                },
+                ct);
+
+        public Task AssignRoleAsync(
+            Guid agentId,
+            Guid roleId,
+            CancellationToken ct) =>
+            client.PostAckAsync(
+                ForeignModuleHostCapabilityProtocol.HostAgentAssignRolePath,
+                new ForeignModuleHostAgentAssignRoleRequest
+                {
+                    AgentId = agentId,
+                    RoleId = roleId,
+                },
+                ct);
+
+        public async Task<Guid> CreateChannelAsync(
+            Guid instanceId,
+            string title,
+            Guid agentId,
+            string? customId,
+            CancellationToken ct) =>
+            RequireId(await client.PostAsync<ForeignModuleHostAgentCreateChannelRequest, ForeignModuleHostAgentIdResponse>(
+                ForeignModuleHostCapabilityProtocol.HostAgentCreateChannelPath,
+                new ForeignModuleHostAgentCreateChannelRequest
+                {
+                    InstanceId = instanceId,
+                    Title = title,
+                    AgentId = agentId,
+                    CustomId = customId,
+                },
+                ct));
+
+        public Task AddAllowedAgentAsync(
+            Guid instanceId,
+            Guid agentId,
+            Guid? channelId,
+            CancellationToken ct) =>
+            client.PostAckAsync(
+                ForeignModuleHostCapabilityProtocol.HostAgentAddAllowedAgentPath,
+                new ForeignModuleHostAgentAddAllowedAgentRequest
+                {
+                    InstanceId = instanceId,
+                    AgentId = agentId,
+                    ChannelId = channelId,
+                },
+                ct);
+
+        private async Task<Guid?> FindAsync(string path, string search, CancellationToken ct) =>
+            (await client.PostAsync<ForeignModuleHostAgentFindRequest, ForeignModuleHostAgentIdResponse>(
+                path,
+                new ForeignModuleHostAgentFindRequest { Search = search },
+                ct)).Id;
+
+        private static Guid RequireId(ForeignModuleHostAgentIdResponse response) =>
+            response.Id ?? throw new InvalidOperationException("SharpClaw host returned an empty ID.");
     }
 
     private sealed class AgentManagerProxy(DotNetSidecarHostCapabilityClient client) : IAgentManager

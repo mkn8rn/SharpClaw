@@ -402,11 +402,13 @@ internal sealed record ForeignModuleTaskStepExecutionContextSnapshot(
     Guid InstanceId,
     Guid ChannelId,
     IReadOnlyDictionary<string, JsonElement>? Variables = null,
-    IReadOnlyList<ForeignModuleTaskEventHandlerSnapshot>? EventHandlers = null);
+    IReadOnlyList<ForeignModuleTaskEventHandlerSnapshot>? EventHandlers = null,
+    string? ContextCallbackId = null);
 
 internal sealed record ForeignModuleTaskEventHandlerSnapshot(
     string? ModuleTriggerKey,
-    string? ParameterName);
+    string? ParameterName,
+    string? HandlerCallbackId = null);
 
 internal sealed record ForeignModuleTaskStepInvocationDescriptor(
     string StepKey,
@@ -441,7 +443,13 @@ internal sealed record ForeignModuleTaskStepExecutionResponse(
     JsonElement? ResultVariableValue = null,
     IReadOnlyList<string>? Logs = null,
     string? OutputJson = null,
-    Guid? ChannelId = null);
+    Guid? ChannelId = null,
+    IReadOnlyList<ForeignModuleTaskRegisteredEventHandlerDescriptor>? RegisteredEventHandlers = null);
+
+internal sealed record ForeignModuleTaskRegisteredEventHandlerDescriptor(
+    string ModuleTriggerKey,
+    string? ParameterName,
+    IReadOnlyList<ForeignModuleTaskStepInvocationDescriptor> Body);
 
 internal sealed record ForeignModuleTaskTriggerAttributeHandleRequest(
     int ProtocolVersion,

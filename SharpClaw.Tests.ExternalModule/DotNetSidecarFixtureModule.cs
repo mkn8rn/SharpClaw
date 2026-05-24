@@ -120,6 +120,8 @@ public sealed class DotNetSidecarFixtureModule : ISharpClawModule, ITaskParserAw
 public sealed class DotNetSidecarFixtureTaskStepDescriptorProvider : ITaskStepDescriptorProvider
 {
     public const string StepKey = "synthetic.dotnet.step";
+    public const string ParentHandlerTriggerKey = "synthetic.dotnet.parent_handler";
+    public const string RegisteredHandlerTriggerKey = "synthetic.dotnet.registered_handler";
     public string ModuleId => DotNetSidecarFixtureModule.ModuleId;
     public IReadOnlyList<TaskStepDescriptor> Descriptors { get; } =
     [
@@ -162,6 +164,41 @@ internal sealed class DotNetSidecarFixtureTaskStepExecutor : ITaskStepInvocation
         ITaskStepInvocation step,
         ITaskStepExecutionContext context)
     {
+        if (string.Equals(step.RawExpression, "run-nested", StringComparison.Ordinal)
+            && step.Body is not null)
+        {
+            var nestedResult = await context.ExecuteStepsAsync(step.Body, context.CancellationToken);
+            context.Variables["dotnetSidecarNestedResult"] = nestedResult.ToString();
+            return nestedResult;
+        }
+
+        if (string.Equals(step.RawExpression, "bridge-find-model", StringComparison.Ordinal))
+        {
+            var bridge = context.Services.GetRequiredService<IHostAgentBridge>();
+            var modelId = await bridge.FindModelAsync("sidecar-model", context.CancellationToken);
+            context.Variables["dotnetSidecarBridgeModelId"] = modelId?.ToString();
+        }
+
+        if (string.Equals(step.RawExpression, "execute-parent-handler", StringComparison.Ordinal))
+        {
+            var handler = context.EventHandlers.First(candidate =>
+                string.Equals(
+                    candidate.ModuleTriggerKey,
+                    DotNetSidecarFixtureTaskStepDescriptorProvider.ParentHandlerTriggerKey,
+                    StringComparison.Ordinal));
+            await handler.ExecuteBodyAsync(context.CancellationToken);
+            context.Variables["dotnetSidecarParentHandlerExecuted"] = "true";
+        }
+
+        if (string.Equals(step.RawExpression, "register-handler", StringComparison.Ordinal)
+            && step.Body is not null)
+        {
+            context.RegisterEventHandler(
+                DotNetSidecarFixtureTaskStepDescriptorProvider.RegisteredHandlerTriggerKey,
+                "evt",
+                step.Body);
+        }
+
         context.Variables["dotnetSidecarInvocation"] = step.RawExpression ?? "invoked";
         if (step.ResultVariable is not null)
             context.Variables[step.ResultVariable] = "dotnet-sidecar-invocation-result";

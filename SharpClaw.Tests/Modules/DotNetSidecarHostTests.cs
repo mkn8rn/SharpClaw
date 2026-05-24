@@ -63,8 +63,12 @@ public sealed class DotNetSidecarHostTests
             SecureJsonOptions.Manifest)!;
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(
             await File.ReadAllTextAsync(Path.Combine(workspace.ModuleDir, "module.json")));
+        var taskContextRegistry = new ForeignModuleTaskContextRegistry();
+        var hostAgentBridge = new RecordingHostAgentBridge();
         await using var hostServices = new ServiceCollection()
             .AddSingleton<IModuleConfigStore, RecordingConfigStore>()
+            .AddSingleton(taskContextRegistry)
+            .AddSingleton<IHostAgentBridge>(hostAgentBridge)
             .BuildServiceProvider();
         await using var foreignHost = await ForeignModuleHost.StartAsync(
             manifest,
@@ -135,7 +139,7 @@ public sealed class DotNetSidecarHostTests
             .Should()
             .ContainSingle()
             .Subject;
-        var executionContext = new TestTaskStepExecutionContext();
+        var executionContext = new TestTaskStepExecutionContext(hostServices);
         (await executor.ExecuteAsync(
             DotNetSidecarFixtureTaskStepDescriptorProvider.StepKey,
             executionContext,
@@ -157,6 +161,61 @@ public sealed class DotNetSidecarHostTests
         invocationResult.Should().Be(TaskStepResult.Continue);
         executionContext.Variables["dotnetSidecarInvocation"].Should().Be("raw expression");
         executionContext.Variables["invocationResult"].Should().Be("dotnet-sidecar-invocation-result");
+
+        var nestedResult = await ((ITaskStepInvocationExecutor)executor).ExecuteInvocationAsync(
+            new TestTaskStepInvocation(DotNetSidecarFixtureTaskStepDescriptorProvider.StepKey)
+            {
+                RawExpression = "run-nested",
+                Body =
+                [
+                    new TestTaskStepInvocation("synthetic.parent.nested"),
+                ],
+            },
+            executionContext);
+        nestedResult.Should().Be(TaskStepResult.Continue);
+        executionContext.NestedStepKeys.Should().ContainSingle().Which.Should().Be("synthetic.parent.nested");
+        executionContext.Variables["dotnetSidecarNestedResult"].Should().Be("Continue");
+        executionContext.Variables["parentNestedExecuted"].Should().Be("true");
+
+        await ((ITaskStepInvocationExecutor)executor).ExecuteInvocationAsync(
+            new TestTaskStepInvocation(DotNetSidecarFixtureTaskStepDescriptorProvider.StepKey)
+            {
+                RawExpression = "bridge-find-model",
+            },
+            executionContext);
+        executionContext.Variables["dotnetSidecarBridgeModelId"]
+            .Should()
+            .Be(hostAgentBridge.ModelId.ToString());
+        hostAgentBridge.FindModelSearches.Should().ContainSingle().Which.Should().Be("sidecar-model");
+
+        executionContext.EventHandlers.Add(new TestTaskEventHandler(
+            DotNetSidecarFixtureTaskStepDescriptorProvider.ParentHandlerTriggerKey,
+            "evt",
+            () => executionContext.Variables["parentHandlerExecuted"] = "true"));
+        await ((ITaskStepInvocationExecutor)executor).ExecuteInvocationAsync(
+            new TestTaskStepInvocation(DotNetSidecarFixtureTaskStepDescriptorProvider.StepKey)
+            {
+                RawExpression = "execute-parent-handler",
+            },
+            executionContext);
+        executionContext.Variables["dotnetSidecarParentHandlerExecuted"].Should().Be("true");
+        executionContext.Variables["parentHandlerExecuted"].Should().Be("true");
+
+        await ((ITaskStepInvocationExecutor)executor).ExecuteInvocationAsync(
+            new TestTaskStepInvocation(DotNetSidecarFixtureTaskStepDescriptorProvider.StepKey)
+            {
+                RawExpression = "register-handler",
+                Body =
+                [
+                    new TestTaskStepInvocation("synthetic.registered.body"),
+                ],
+            },
+            executionContext);
+        executionContext.RegisteredHandlers
+            .Should()
+            .ContainSingle(handler =>
+                handler.ModuleTriggerKey == DotNetSidecarFixtureTaskStepDescriptorProvider.RegisteredHandlerTriggerKey
+                && handler.Body.Single().StepKey == "synthetic.registered.body");
 
         var triggerSource = taskProvider.GetServices<ITaskTriggerSource>()
             .Should()
@@ -363,16 +422,19 @@ public sealed class DotNetSidecarHostTests
                 new Dictionary<string, string>(_values, StringComparer.Ordinal));
     }
 
-    private sealed class TestTaskStepExecutionContext : ITaskStepExecutionContext
+    private sealed class TestTaskStepExecutionContext(IServiceProvider services) : ITaskStepExecutionContext
     {
         public Guid InstanceId { get; } = Guid.NewGuid();
         public Guid ChannelId { get; private set; } = Guid.NewGuid();
         public CancellationToken CancellationToken => CancellationToken.None;
-        public IServiceProvider Services { get; } = new ServiceCollection().BuildServiceProvider();
+        public IServiceProvider Services { get; } = services;
         public IDictionary<string, object?> Variables { get; } = new Dictionary<string, object?>(StringComparer.Ordinal);
-        public IReadOnlyList<ITaskEventHandler> EventHandlers => [];
+        public List<ITaskEventHandler> EventHandlers { get; } = [];
+        IReadOnlyList<ITaskEventHandler> ITaskStepExecutionContext.EventHandlers => EventHandlers;
         public List<string> Logs { get; } = [];
         public List<string?> Outputs { get; } = [];
+        public List<string> NestedStepKeys { get; } = [];
+        public List<(string ModuleTriggerKey, string? ParameterName, IReadOnlyList<ITaskStepInvocation> Body)> RegisteredHandlers { get; } = [];
 
         public string ResolveExpression(string expression) =>
             Variables.TryGetValue(expression, out var value)
@@ -395,8 +457,12 @@ public sealed class DotNetSidecarHostTests
 
         public Task<TaskStepResult> ExecuteStepsAsync(
             IReadOnlyList<ITaskStepInvocation> steps,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(TaskStepResult.Continue);
+            CancellationToken cancellationToken)
+        {
+            NestedStepKeys.AddRange(steps.Select(step => step.StepKey));
+            Variables["parentNestedExecuted"] = "true";
+            return Task.FromResult(TaskStepResult.Continue);
+        }
 
         public bool EvaluateCondition(string? expression) =>
             bool.TryParse(expression, out var value) && value;
@@ -406,9 +472,119 @@ public sealed class DotNetSidecarHostTests
             string? parameterName,
             IReadOnlyList<ITaskStepInvocation> body)
         {
+            RegisteredHandlers.Add((moduleTriggerKey, parameterName, body));
         }
 
         public Task WaitIfPausedAsync() => Task.CompletedTask;
+    }
+
+    private sealed class RecordingHostAgentBridge : IHostAgentBridge
+    {
+        public Guid ModelId { get; } = Guid.Parse("abababab-abab-abab-abab-abababababab");
+        public List<string> FindModelSearches { get; } = [];
+
+        public Task<string?> ChatAsync(
+            Guid instanceId,
+            string taskName,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            Task.FromResult<string?>("chat response");
+
+        public Task<string> ChatStreamAsync(
+            Guid instanceId,
+            string taskName,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            Task.FromResult("stream response");
+
+        public Task<string?> ChatToThreadAsync(
+            Guid instanceId,
+            string taskName,
+            Guid threadId,
+            string message,
+            Guid? agentId,
+            CancellationToken ct) =>
+            Task.FromResult<string?>("thread response");
+
+        public string ParseStructuredResponse(Guid instanceId, string text, string? typeName) => text;
+
+        public Task<Guid?> FindModelAsync(string search, CancellationToken ct)
+        {
+            FindModelSearches.Add(search);
+            return Task.FromResult<Guid?>(ModelId);
+        }
+
+        public Task<Guid?> FindProviderAsync(string search, CancellationToken ct) =>
+            Task.FromResult<Guid?>(Guid.NewGuid());
+
+        public Task<Guid?> FindAgentAsync(string search, CancellationToken ct) =>
+            Task.FromResult<Guid?>(Guid.NewGuid());
+
+        public Task<Guid?> FindRoleAsync(string search, CancellationToken ct) =>
+            Task.FromResult<Guid?>(Guid.NewGuid());
+
+        public Task<Guid?> FindChannelAsync(string search, CancellationToken ct) =>
+            Task.FromResult<Guid?>(Guid.NewGuid());
+
+        public Task<Guid> CreateAgentAsync(
+            Guid instanceId,
+            string name,
+            Guid modelId,
+            string? systemPrompt,
+            string? customId,
+            CancellationToken ct) =>
+            Task.FromResult(Guid.NewGuid());
+
+        public Task<Guid> CreateThreadAsync(
+            Guid instanceId,
+            Guid? channelId,
+            string? threadName,
+            CancellationToken ct) =>
+            Task.FromResult(Guid.NewGuid());
+
+        public Task<Guid> CreateRoleAsync(string roleName, CancellationToken ct) =>
+            Task.FromResult(Guid.NewGuid());
+
+        public Task SetRolePermissionsAsync(
+            Guid roleId,
+            string requestJson,
+            CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task AssignRoleAsync(
+            Guid agentId,
+            Guid roleId,
+            CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task<Guid> CreateChannelAsync(
+            Guid instanceId,
+            string title,
+            Guid agentId,
+            string? customId,
+            CancellationToken ct) =>
+            Task.FromResult(Guid.NewGuid());
+
+        public Task AddAllowedAgentAsync(
+            Guid instanceId,
+            Guid agentId,
+            Guid? channelId,
+            CancellationToken ct) =>
+            Task.CompletedTask;
+    }
+
+    private sealed record TestTaskEventHandler(
+        string? ModuleTriggerKey,
+        string? ParameterName,
+        Action Action) : ITaskEventHandler
+    {
+        public Task ExecuteBodyAsync(CancellationToken ct)
+        {
+            Action();
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record TestTaskStepInvocation(string StepKey) : ITaskStepInvocation

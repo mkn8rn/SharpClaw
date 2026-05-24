@@ -2,6 +2,7 @@ using System.Text.Json;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Application.Core.Modules.Foreign;
 
@@ -101,6 +102,26 @@ internal sealed record ForeignModuleTaskLaunchRequest
 
 internal sealed record ForeignModuleTaskLaunchResponse(Guid InstanceId);
 
+internal sealed record ForeignModuleTaskContextExecuteStepsRequest
+{
+    public string ContextId { get; init; } = string.Empty;
+    public Guid? ChannelId { get; init; }
+    public IReadOnlyDictionary<string, JsonElement>? Variables { get; init; }
+    public IReadOnlyList<ForeignModuleTaskStepInvocationDescriptor> Steps { get; init; } = [];
+}
+
+internal sealed record ForeignModuleTaskContextExecuteEventHandlerRequest
+{
+    public string HandlerId { get; init; } = string.Empty;
+    public Guid? ChannelId { get; init; }
+    public IReadOnlyDictionary<string, JsonElement>? Variables { get; init; }
+}
+
+internal sealed record ForeignModuleTaskContextExecutionResponse(
+    TaskStepResult Result,
+    Guid ChannelId,
+    IReadOnlyDictionary<string, JsonElement> Variables);
+
 internal sealed record ForeignModuleIdsResponse(IReadOnlyList<Guid> Ids);
 
 internal sealed record ForeignModuleLookupItemsResponse(IReadOnlyList<ForeignModuleLookupItem> Items);
@@ -111,6 +132,87 @@ internal sealed record ForeignModuleQueueMetricsResponse(
     double PendingJobCount,
     double PendingTaskCount,
     double SchedulerPendingJobCount);
+
+internal sealed record ForeignModuleHostAgentChatRequest
+{
+    public Guid InstanceId { get; init; }
+    public string TaskName { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
+    public Guid? AgentId { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentChatToThreadRequest
+{
+    public Guid InstanceId { get; init; }
+    public string TaskName { get; init; } = string.Empty;
+    public Guid ThreadId { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public Guid? AgentId { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentTextResponse(string? Text);
+
+internal sealed record ForeignModuleHostAgentParseStructuredResponseRequest
+{
+    public Guid InstanceId { get; init; }
+    public string Text { get; init; } = string.Empty;
+    public string? TypeName { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentFindRequest
+{
+    public string Search { get; init; } = string.Empty;
+}
+
+internal sealed record ForeignModuleHostAgentIdResponse(Guid? Id);
+
+internal sealed record ForeignModuleHostAgentCreateAgentRequest
+{
+    public Guid InstanceId { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public Guid ModelId { get; init; }
+    public string? SystemPrompt { get; init; }
+    public string? CustomId { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentCreateThreadRequest
+{
+    public Guid InstanceId { get; init; }
+    public Guid? ChannelId { get; init; }
+    public string? ThreadName { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentCreateRoleRequest
+{
+    public string RoleName { get; init; } = string.Empty;
+}
+
+internal sealed record ForeignModuleHostAgentSetRolePermissionsRequest
+{
+    public Guid RoleId { get; init; }
+    public string RequestJson { get; init; } = string.Empty;
+}
+
+internal sealed record ForeignModuleHostAgentAssignRoleRequest
+{
+    public Guid AgentId { get; init; }
+    public Guid RoleId { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentCreateChannelRequest
+{
+    public Guid InstanceId { get; init; }
+    public string Title { get; init; } = string.Empty;
+    public Guid AgentId { get; init; }
+    public string? CustomId { get; init; }
+}
+
+internal sealed record ForeignModuleHostAgentAddAllowedAgentRequest
+{
+    public Guid InstanceId { get; init; }
+    public Guid AgentId { get; init; }
+    public Guid? ChannelId { get; init; }
+}
 
 internal sealed record ForeignModuleAgentCreateRequest
 {

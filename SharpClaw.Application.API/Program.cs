@@ -370,6 +370,7 @@ try
     builder.Services.AddScoped<EnvFileService>();
     builder.Services.AddScoped<TaskOrchestrator>();
     builder.Services.AddScoped<IHostAgentBridge, HostAgentBridge>();
+    builder.Services.AddSingleton<ForeignModuleTaskContextRegistry>();
     builder.Services.AddSingleton<TaskRuntimeHost>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TaskRuntimeHost>());
     // Trigger host service + built-in sources

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Application.Infrastructure.Tasks.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
@@ -240,8 +241,13 @@ internal sealed class ForeignModuleProxy(
         return response.Result ?? string.Empty;
     }
 
-    private static ForeignModuleTaskStepExecutionContextSnapshot SnapshotContext(
+    private static ForeignModuleTaskContextRegistry.ForeignModuleTaskContextRegistration? CreateTaskContextRegistration(
         ITaskStepExecutionContext context) =>
+        context.Services.GetService<ForeignModuleTaskContextRegistry>()?.Register(context);
+
+    private static ForeignModuleTaskStepExecutionContextSnapshot SnapshotContext(
+        ITaskStepExecutionContext context,
+        ForeignModuleTaskContextRegistry.ForeignModuleTaskContextRegistration? registration) =>
         new(
             context.InstanceId,
             context.ChannelId,
@@ -249,7 +255,9 @@ internal sealed class ForeignModuleProxy(
             [.. context.EventHandlers.Select(handler =>
                 new ForeignModuleTaskEventHandlerSnapshot(
                     handler.ModuleTriggerKey,
-                    handler.ParameterName))]);
+                    handler.ParameterName,
+                    registration?.RegisterEventHandler(handler)))],
+            registration?.ContextId);
 
     private static IReadOnlyDictionary<string, JsonElement> SnapshotVariables(
         IDictionary<string, object?> variables)
@@ -305,7 +313,36 @@ internal sealed class ForeignModuleProxy(
 
         if (response.OutputJson is not null)
             await context.WriteOutputAsync(response.OutputJson);
+
+        if (response.RegisteredEventHandlers is not null)
+        {
+            foreach (var handler in response.RegisteredEventHandlers)
+            {
+                context.RegisterEventHandler(
+                    handler.ModuleTriggerKey,
+                    handler.ParameterName,
+                    [.. handler.Body.Select(ToTaskStepDefinition)]);
+            }
+        }
     }
+
+    internal static TaskStepDefinition ToTaskStepDefinition(
+        ForeignModuleTaskStepInvocationDescriptor descriptor) =>
+        new()
+        {
+            StepKey = descriptor.StepKey,
+            Line = 0,
+            Column = 0,
+            VariableName = descriptor.VariableName,
+            TypeName = descriptor.TypeName,
+            ResultVariable = descriptor.ResultVariable,
+            Expression = descriptor.RawExpression,
+            Arguments = descriptor.Arguments,
+            ModuleTriggerKey = descriptor.ModuleTriggerKey,
+            HandlerParameter = descriptor.HandlerParameter,
+            Body = descriptor.Body is null ? null : [.. descriptor.Body.Select(ToTaskStepDefinition)],
+            ElseBody = descriptor.ElseBody is null ? null : [.. descriptor.ElseBody.Select(ToTaskStepDefinition)],
+        };
 
     private static object? ConvertJsonValue(JsonElement value) =>
         value.ValueKind switch
@@ -454,10 +491,11 @@ internal sealed class ForeignModuleProxy(
             string? expression,
             string? resultVariable)
         {
+            using var registration = CreateTaskContextRegistration(context);
             var response = await Client.ExecuteTaskStepAsync(
                 Manifest,
                 moduleStepKey,
-                SnapshotContext(context),
+                SnapshotContext(context, registration),
                 arguments,
                 expression,
                 resultVariable,
@@ -478,10 +516,11 @@ internal sealed class ForeignModuleProxy(
             ITaskStepInvocation step,
             ITaskStepExecutionContext context)
         {
+            using var registration = CreateTaskContextRegistration(context);
             var response = await Client.ExecuteTaskStepInvocationAsync(
                 Manifest,
                 step,
-                SnapshotContext(context),
+                SnapshotContext(context, registration),
                 context.CancellationToken);
 
             await ApplyTaskStepResponseAsync(response, context, step.ResultVariable);

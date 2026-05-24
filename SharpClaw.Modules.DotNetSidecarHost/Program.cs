@@ -1012,30 +1012,50 @@ internal sealed class DotNetSidecarHost
 
     private sealed record ConsoleCaptureResult(bool Success, string? Stdout, string? Stderr);
 
-    private sealed class DotNetSidecarTaskStepExecutionContext(
-        IServiceProvider services,
-        ForeignModuleTaskStepExecutionContextSnapshot snapshot,
-        CancellationToken cancellationToken) : ITaskStepExecutionContext
+    private sealed class DotNetSidecarTaskStepExecutionContext : ITaskStepExecutionContext
     {
-        private readonly Guid _initialChannelId = snapshot.ChannelId;
+        private readonly ForeignModuleTaskStepExecutionContextSnapshot _snapshot;
+        private readonly Guid _initialChannelId;
         private readonly List<string> _logs = [];
         private readonly List<string?> _outputs = [];
-        private readonly List<ITaskEventHandler> _eventHandlers =
-        [
-            .. (snapshot.EventHandlers ?? []).Select(handler =>
-                new DotNetSidecarTaskEventHandler(handler.ModuleTriggerKey, handler.ParameterName))
-        ];
+        private readonly List<ForeignModuleTaskRegisteredEventHandlerDescriptor> _registeredEventHandlers = [];
+        private readonly List<ITaskEventHandler> _eventHandlers = [];
 
-        public Guid InstanceId { get; } = snapshot.InstanceId;
-        public Guid ChannelId { get; private set; } = snapshot.ChannelId;
-        public CancellationToken CancellationToken { get; } = cancellationToken;
-        public IServiceProvider Services { get; } = services;
-        public IDictionary<string, object?> Variables { get; } =
-            (snapshot.Variables ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal))
-            .ToDictionary(
-                pair => pair.Key,
-                pair => ConvertJsonValue(pair.Value),
-                StringComparer.Ordinal);
+        public DotNetSidecarTaskStepExecutionContext(
+            IServiceProvider services,
+            ForeignModuleTaskStepExecutionContextSnapshot snapshot,
+            CancellationToken cancellationToken)
+        {
+            _snapshot = snapshot;
+            _initialChannelId = snapshot.ChannelId;
+            InstanceId = snapshot.InstanceId;
+            ChannelId = snapshot.ChannelId;
+            CancellationToken = cancellationToken;
+            Services = services;
+            Variables = (snapshot.Variables ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal))
+                .ToDictionary(
+                    pair => pair.Key,
+                    pair => ConvertJsonValue(pair.Value),
+                    StringComparer.Ordinal);
+
+            foreach (var handler in snapshot.EventHandlers ?? [])
+            {
+                _eventHandlers.Add(new DotNetSidecarTaskEventHandler(
+                    handler.ModuleTriggerKey,
+                    handler.ParameterName,
+                    handler.HandlerCallbackId,
+                    services.GetService<DotNetSidecarHostCapabilityClient>(),
+                    () => ChannelId,
+                    SnapshotVariables,
+                    ApplyHostContextResponse));
+            }
+        }
+
+        public Guid InstanceId { get; }
+        public Guid ChannelId { get; private set; }
+        public CancellationToken CancellationToken { get; }
+        public IServiceProvider Services { get; }
+        public IDictionary<string, object?> Variables { get; }
         public IReadOnlyList<ITaskEventHandler> EventHandlers => _eventHandlers;
 
         public string ResolveExpression(string expression) =>
@@ -1057,11 +1077,30 @@ internal sealed class DotNetSidecarHost
 
         public void SetChannelId(Guid channelId) => ChannelId = channelId;
 
-        public Task<TaskStepResult> ExecuteStepsAsync(
+        public async Task<TaskStepResult> ExecuteStepsAsync(
             IReadOnlyList<ITaskStepInvocation> steps,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException(
-                "Nested task step execution from a .NET sidecar requires a host callback that is not exposed yet.");
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(_snapshot.ContextCallbackId))
+                throw new NotSupportedException("Nested task step execution requires an active host context callback.");
+
+            var client = Services.GetService<DotNetSidecarHostCapabilityClient>()
+                ?? throw new NotSupportedException("Nested task step execution requires host capability access.");
+            var response = await client.PostAsync<
+                ForeignModuleTaskContextExecuteStepsRequest,
+                ForeignModuleTaskContextExecutionResponse>(
+                ForeignModuleHostCapabilityProtocol.TaskContextExecuteStepsPath,
+                new ForeignModuleTaskContextExecuteStepsRequest
+                {
+                    ContextId = _snapshot.ContextCallbackId,
+                    ChannelId = ChannelId,
+                    Variables = SnapshotVariables(),
+                    Steps = [.. steps.Select(ForeignModuleTaskStepInvocationDescriptor.From)],
+                },
+                cancellationToken);
+            ApplyHostContextResponse(response);
+            return response.Result;
+        }
 
         public bool EvaluateCondition(string? expression)
         {
@@ -1075,8 +1114,21 @@ internal sealed class DotNetSidecarHost
         public void RegisterEventHandler(
             string moduleTriggerKey,
             string? parameterName,
-            IReadOnlyList<ITaskStepInvocation> body) =>
-            _eventHandlers.Add(new DotNetSidecarTaskEventHandler(moduleTriggerKey, parameterName));
+            IReadOnlyList<ITaskStepInvocation> body)
+        {
+            var descriptorBody = body
+                .Select(ForeignModuleTaskStepInvocationDescriptor.From)
+                .ToArray();
+            _registeredEventHandlers.Add(new ForeignModuleTaskRegisteredEventHandlerDescriptor(
+                moduleTriggerKey,
+                parameterName,
+                descriptorBody));
+            _eventHandlers.Add(new DotNetSidecarLocalTaskEventHandler(
+                moduleTriggerKey,
+                parameterName,
+                this,
+                body));
+        }
 
         public Task WaitIfPausedAsync() => Task.CompletedTask;
 
@@ -1114,7 +1166,22 @@ internal sealed class DotNetSidecarHost
                 resultVariableValue,
                 _logs,
                 _outputs.LastOrDefault(),
-                ChannelId == _initialChannelId ? null : ChannelId);
+                ChannelId == _initialChannelId ? null : ChannelId,
+                _registeredEventHandlers);
+        }
+
+        private IReadOnlyDictionary<string, JsonElement> SnapshotVariables() =>
+            Variables.ToDictionary(
+                pair => pair.Key,
+                pair => SerializeVariableValue(pair.Value),
+                StringComparer.Ordinal);
+
+        private void ApplyHostContextResponse(ForeignModuleTaskContextExecutionResponse response)
+        {
+            ChannelId = response.ChannelId;
+            Variables.Clear();
+            foreach (var (key, value) in response.Variables)
+                Variables[key] = ConvertJsonValue(value);
         }
 
         private static object? ConvertJsonValue(JsonElement value) =>
@@ -1149,11 +1216,42 @@ internal sealed class DotNetSidecarHost
 
     private sealed record DotNetSidecarTaskEventHandler(
         string? ModuleTriggerKey,
-        string? ParameterName) : ITaskEventHandler
+        string? ParameterName,
+        string? HandlerCallbackId,
+        DotNetSidecarHostCapabilityClient? Client,
+        Func<Guid> GetChannelId,
+        Func<IReadOnlyDictionary<string, JsonElement>> SnapshotVariables,
+        Action<ForeignModuleTaskContextExecutionResponse> ApplyResponse) : ITaskEventHandler
     {
-        public Task ExecuteBodyAsync(CancellationToken ct) =>
-            throw new NotSupportedException(
-                "Executing task event handler bodies from a .NET sidecar requires a host callback that is not exposed yet.");
+        public async Task ExecuteBodyAsync(CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(HandlerCallbackId) || Client is null)
+                throw new NotSupportedException(
+                    "Executing a parent task event handler from a .NET sidecar requires an active host callback.");
+
+            var response = await Client.PostAsync<
+                ForeignModuleTaskContextExecuteEventHandlerRequest,
+                ForeignModuleTaskContextExecutionResponse>(
+                ForeignModuleHostCapabilityProtocol.TaskContextExecuteEventHandlerPath,
+                new ForeignModuleTaskContextExecuteEventHandlerRequest
+                {
+                    HandlerId = HandlerCallbackId,
+                    ChannelId = GetChannelId(),
+                    Variables = SnapshotVariables(),
+                },
+                ct);
+            ApplyResponse(response);
+        }
+    }
+
+    private sealed record DotNetSidecarLocalTaskEventHandler(
+        string? ModuleTriggerKey,
+        string? ParameterName,
+        DotNetSidecarTaskStepExecutionContext Context,
+        IReadOnlyList<ITaskStepInvocation> Body) : ITaskEventHandler
+    {
+        public async Task ExecuteBodyAsync(CancellationToken ct) =>
+            _ = await Context.ExecuteStepsAsync(Body, ct);
     }
 
     private sealed class DotNetSidecarTaskStepInvocation(
