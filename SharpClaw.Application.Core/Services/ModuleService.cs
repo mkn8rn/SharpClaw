@@ -731,9 +731,6 @@ public sealed class ModuleService(
             return runtimeInfo;
 
         var mode = DotNetModuleHostingModeOptions.Resolve(configuration);
-        if (mode == DotNetModuleHostingMode.InProcess)
-            return runtimeInfo with { HostMode = ModuleManifestRuntimeInfo.HostModeInProcess };
-
         if (mode == DotNetModuleHostingMode.SidecarOnly)
         {
             EnsureBundledModuleReadyForDotNetSidecar(manifest, bundledModule);
@@ -753,17 +750,11 @@ public sealed class ModuleService(
         if (!runtimeInfo.IsDotNet)
             return runtimeInfo;
 
-        var mode = DotNetModuleHostingModeOptions.Resolve(configuration);
-        if (mode == DotNetModuleHostingMode.InProcess)
-            return runtimeInfo with { HostMode = ModuleManifestRuntimeInfo.HostModeInProcess };
-
-        if (mode == DotNetModuleHostingMode.SidecarOnly && !runtimeInfo.IsSidecarHostMode)
+        if (!runtimeInfo.IsSidecarHostMode)
         {
             throw new InvalidOperationException(
-                $"External .NET module '{manifest.Id}' cannot load under " +
-                $"{DotNetModuleHostingModeOptions.ConfigKey}=sidecar-only unless its manifest declares " +
-                "\"hostMode\": \"sidecar\". This prevents sidecar-only runs from silently loading " +
-                "third-party .NET modules in-process.");
+                $"External .NET module '{manifest.Id}' must declare \"hostMode\": \"sidecar\". " +
+                "SharpClaw no longer hot-loads third-party .NET modules into the parent process.");
         }
 
         return runtimeInfo;

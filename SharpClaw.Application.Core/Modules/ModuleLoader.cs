@@ -37,21 +37,19 @@ public sealed class ModuleLoader
 
     /// <summary>
     /// Discover bundled modules from manifests and in-process module assemblies.
-    /// Sidecar-manifest modules are represented by manifest metadata unless the
-    /// host explicitly forces .NET sidecars back in-process.
+    /// Sidecar-manifest modules are represented by manifest metadata so the
+    /// parent host does not load them into its own DI container.
     /// </summary>
     public static ModuleLoader DiscoverBundled(IConfiguration? configuration = null)
     {
         var manifests = LoadBundledManifestsFromDisk();
         var runtimeInfos = LoadBundledRuntimeInfosFromDisk();
-        var hostingMode = DotNetModuleHostingModeOptions.Resolve(configuration);
-        var manifestOnlyManifests = hostingMode == DotNetModuleHostingMode.InProcess
-            ? Array.Empty<ModuleManifest>()
-            : manifests.Values
-                .Where(manifest =>
-                    runtimeInfos.TryGetValue(manifest.Id, out var runtimeInfo)
-                    && IsDotNetSidecarManifest(runtimeInfo))
-                .ToArray();
+        DotNetModuleHostingModeOptions.Resolve(configuration);
+        var manifestOnlyManifests = manifests.Values
+            .Where(manifest =>
+                runtimeInfos.TryGetValue(manifest.Id, out var runtimeInfo)
+                && IsDotNetSidecarManifest(runtimeInfo))
+            .ToArray();
         var manifestOnlyIds = manifestOnlyManifests
             .Select(manifest => manifest.Id)
             .ToHashSet(StringComparer.Ordinal);

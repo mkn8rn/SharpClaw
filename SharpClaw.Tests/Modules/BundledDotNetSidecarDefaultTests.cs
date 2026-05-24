@@ -36,21 +36,38 @@ public sealed class BundledDotNetSidecarDefaultTests
     }
 
     [Test]
-    public void DiscoverBundledForceInProcessLoadsConcreteModules()
+    public void DiscoverBundledIgnoresLegacyForceInProcessSetting()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                [DotNetModuleHostingModeOptions.ForceInProcessKey] = "true",
+                ["Modules:ForceInProcessDotNetSidecars"] = "true",
             })
             .Build();
 
         var loader = ModuleLoader.DiscoverBundled(configuration);
 
-        loader.IsManifestOnlyBundledModule(TestHarnessConstants.ModuleId).Should().BeFalse();
+        loader.IsManifestOnlyBundledModule(TestHarnessConstants.ModuleId).Should().BeTrue();
         loader.GetBundledModule(TestHarnessConstants.ModuleId)
             .Should()
-            .BeOfType<TestHarnessModule>();
+            .NotBeOfType<TestHarnessModule>();
+    }
+
+    [Test]
+    public void InProcessDotNetHostingModeIsRejected()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [DotNetModuleHostingModeOptions.ConfigKey] = "in-process",
+            })
+            .Build();
+
+        var act = () => ModuleLoader.DiscoverBundled(configuration);
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*Allowed values are manifest and sidecar-only*");
     }
 
     [Test]
@@ -243,11 +260,11 @@ public sealed class BundledDotNetSidecarDefaultTests
     }
 
     [Test]
-    public async Task LegacyForceInProcessSettingStillOverridesSidecarManifest()
+    public async Task LegacyForceInProcessSettingNoLongerOverridesSidecarManifest()
     {
         await using var harness = ModuleServiceHarness.Create(new Dictionary<string, string?>
         {
-            [DotNetModuleHostingModeOptions.ForceInProcessKey] = "true",
+            ["Modules:ForceInProcessDotNetSidecars"] = "true",
         });
 
         var response = await harness.ModuleService.EnableAsync(
@@ -256,10 +273,47 @@ public sealed class BundledDotNetSidecarDefaultTests
             CancellationToken.None);
 
         response.Enabled.Should().BeTrue();
-        harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId).Should().BeNull();
+        harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeAssignableTo<IForeignModuleRuntimeHost>();
         harness.Registry.GetModule(TestHarnessConstants.ModuleId)
             .Should()
-            .BeOfType<TestHarnessModule>();
+            .NotBeOfType<TestHarnessModule>();
+    }
+
+    [Test]
+    public async Task ExternalDotNetModuleWithoutSidecarHostModeIsRejected()
+    {
+        await using var harness = ModuleServiceHarness.Create();
+        var moduleDir = Path.Combine(
+            TestContext.CurrentContext.WorkDirectory,
+            "external-dotnet-hosting-mode",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(moduleDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(moduleDir, "module.json"),
+            """
+            {
+              "id": "synthetic_external_inprocess",
+              "displayName": "Synthetic External In Process",
+              "version": "1.0.0",
+              "toolPrefix": "sei",
+              "entryAssembly": "SharpClaw.Tests.ExternalModule.dll",
+              "minHostVersion": "0.0.0"
+            }
+            """);
+
+        var act = async () => await harness.ModuleService.LoadExternalFromAbsolutePathAsync(
+            moduleDir,
+            harness.RootServices,
+            CancellationToken.None,
+            persistDisabledEnvEntry: false);
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*must declare \"hostMode\": \"sidecar\"*");
+
+        harness.Registry.GetModule("synthetic_external_inprocess").Should().BeNull();
     }
 
     private sealed class ModuleServiceHarness : IAsyncDisposable
