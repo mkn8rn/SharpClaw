@@ -8,6 +8,7 @@ namespace SharpClaw.Application.Core.Modules.Foreign;
 internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
 {
     private static readonly TimeSpan ReadinessPollInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan EarlyExitObservationGrace = TimeSpan.FromMilliseconds(250);
 
     private readonly ModuleManifest _manifest;
     private readonly ModuleManifestRuntimeInfo _runtimeInfo;
@@ -268,8 +269,9 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
         {
             if (_process.HasExited)
             {
+                var exitCode = await GetObservedExitCodeAsync();
                 ThrowStartupFailure(
-                    $"Foreign module '{_manifest.Id}' exited with code {_process.ExitCode} before readiness.");
+                    $"Foreign module '{_manifest.Id}' exited with code {exitCode} before readiness.");
             }
 
             try
@@ -291,6 +293,13 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
+                if (await TryObserveExitCodeAsync(EarlyExitObservationGrace) is { } exitCode)
+                {
+                    ThrowStartupFailure(
+                        $"Foreign module '{_manifest.Id}' exited with code {exitCode} before readiness.",
+                        lastConnectionFailure);
+                }
+
                 await KillProcessAsync();
                 ThrowStartupFailure(
                     $"Foreign module '{_manifest.Id}' did not become ready within {_options.StartupTimeout.TotalSeconds:0.###}s.",
@@ -310,8 +319,9 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
                 var winner = await Task.WhenAny(delay, _exited.Task);
                 if (winner == _exited.Task)
                 {
+                    var exitCode = await GetObservedExitCodeAsync();
                     ThrowStartupFailure(
-                        $"Foreign module '{_manifest.Id}' exited with code {_exited.Task.Result} before readiness.",
+                        $"Foreign module '{_manifest.Id}' exited with code {exitCode} before readiness.",
                         lastConnectionFailure);
                 }
             }
@@ -322,6 +332,51 @@ internal sealed class ForeignModuleHost : IForeignModuleRuntimeHost
                     $"Foreign module '{_manifest.Id}' did not become ready within {_options.StartupTimeout.TotalSeconds:0.###}s.",
                     lastConnectionFailure);
             }
+        }
+    }
+
+    private async Task<int?> TryObserveExitCodeAsync(TimeSpan grace)
+    {
+        if (_process.HasExited || _exited.Task.IsCompleted)
+            return await GetObservedExitCodeAsync();
+
+        if (grace <= TimeSpan.Zero)
+            return null;
+
+        var winner = await Task.WhenAny(_exited.Task, Task.Delay(grace));
+        return winner == _exited.Task
+            ? await GetObservedExitCodeAsync()
+            : null;
+    }
+
+    private async Task<int> GetObservedExitCodeAsync()
+    {
+        var exitCode = -1;
+        try
+        {
+            if (_exited.Task.IsCompletedSuccessfully)
+                exitCode = await _exited.Task;
+            else if (_process.HasExited)
+                exitCode = _process.ExitCode;
+        }
+        catch
+        {
+            exitCode = -1;
+        }
+
+        WaitForCapturedOutputAfterExit();
+        return exitCode;
+    }
+
+    private void WaitForCapturedOutputAfterExit()
+    {
+        try
+        {
+            if (_process.HasExited)
+                _process.WaitForExit();
+        }
+        catch
+        {
         }
     }
 

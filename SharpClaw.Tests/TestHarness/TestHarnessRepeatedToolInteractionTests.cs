@@ -409,15 +409,10 @@ public sealed class TestHarnessRepeatedToolInteractionTests
             for (var i = 0; i < 10; i++)
                 chats.Add(await CreateIsolatedHundredToolChatAsync(grantPermission: true));
 
-            var sw = Stopwatch.StartNew();
-            var tasks = chats
-                .Select((chat, i) => chat.RunAsync($"parallel-allowed-{i}"))
-                .ToArray();
-            var results = await Task.WhenAll(tasks);
-            sw.Stop();
+            var (results, elapsedMs) = await RunParallelChatsAsync(chats, "parallel-allowed");
 
             results.Should().OnlyContain(r => r.ToolBodyInvocations == HundredCalls);
-            sw.ElapsedMilliseconds.Should().BeLessThanOrEqualTo(
+            elapsedMs.Should().BeLessThanOrEqualTo(
                 results.Max(r => r.ClientVisibleMs) + 200,
                 "parallel 100-tool chats should not serialize behind a process-wide lock");
             results.Select(r => r.LastFinalText).Should().OnlyHaveUniqueItems();
@@ -439,16 +434,11 @@ public sealed class TestHarnessRepeatedToolInteractionTests
             for (var i = 0; i < 10; i++)
                 chats.Add(await CreateIsolatedHundredToolChatAsync(grantPermission: false));
 
-            var sw = Stopwatch.StartNew();
-            var tasks = chats
-                .Select((chat, i) => chat.RunAsync($"parallel-denied-{i}"))
-                .ToArray();
-            var results = await Task.WhenAll(tasks);
-            sw.Stop();
+            var (results, elapsedMs) = await RunParallelChatsAsync(chats, "parallel-denied");
 
             results.Should().OnlyContain(r => r.ToolBodyInvocations == 0);
             results.Should().OnlyContain(r => r.PermissionDeniedResults == HundredCalls);
-            sw.ElapsedMilliseconds.Should().BeLessThanOrEqualTo(
+            elapsedMs.Should().BeLessThanOrEqualTo(
                 results.Max(r => r.ClientVisibleMs) + 200,
                 "parallel denied 100-tool chats should stop at host permission checks without global serialization");
         }
@@ -576,6 +566,43 @@ public sealed class TestHarnessRepeatedToolInteractionTests
             await host.DisposeAsync();
             throw;
         }
+    }
+
+    private static async Task<(RepeatedToolRunMeasurement[] Results, long ElapsedMs)> RunParallelChatsAsync(
+        IReadOnlyList<IsolatedHundredToolChat> chats,
+        string finalTextPrefix)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readyCount = 0;
+
+        var tasks = chats
+            .Select((chat, i) => Task.Run(async () =>
+            {
+                if (Interlocked.Increment(ref readyCount) == chats.Count)
+                    allReady.TrySetResult();
+
+                await release.Task;
+                return await chat.RunAsync($"{finalTextPrefix}-{i}");
+            }))
+            .ToArray();
+
+        try
+        {
+            await allReady.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            release.TrySetResult();
+            throw;
+        }
+
+        var sw = Stopwatch.StartNew();
+        release.SetResult();
+        var results = await Task.WhenAll(tasks);
+        sw.Stop();
+
+        return (results, sw.ElapsedMilliseconds);
     }
 
     private sealed class IsolatedHundredToolChat(ChatHarnessHost host, Guid channelId) : IAsyncDisposable
