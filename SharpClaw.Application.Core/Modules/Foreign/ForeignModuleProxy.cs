@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Application.Infrastructure.Tasks.Parsing;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
@@ -119,6 +120,8 @@ internal sealed class ForeignModuleProxy(
 
     public IReadOnlyList<ForeignModuleProtocolContractRequirement> RequiredProtocolContracts =>
         [.. _requiredProtocolContracts.Select(contract => contract.ToProtocolContractRequirement())];
+
+    internal IReadOnlyList<TaskStepDescriptor> TaskStepDescriptors => _taskStepDescriptors;
 
     public ITaskParserModuleExtension ParserExtension =>
         _parserExtension ??= new ForeignModuleTaskParserExtension(manifest, client, _taskParser);
@@ -412,8 +415,14 @@ internal sealed class ForeignModuleProxy(
     private sealed class ForeignModuleTaskTriggerAttributeHandler(
         ModuleManifest manifest,
         ForeignModuleProtocolClient client,
-        ForeignModuleTaskTriggerAttributeHandlerDescriptor descriptor) : ITaskTriggerAttributeHandler
+        ForeignModuleTaskTriggerAttributeHandlerDescriptor descriptor)
+        : ITaskTriggerAttributeHandler, ITaskTriggerAttributeHandlerOwnerHint
     {
+        public string? TriggerAttributeOwnerKey =>
+            string.IsNullOrWhiteSpace(manifest.EntryAssembly)
+                ? manifest.Id
+                : Path.GetFileNameWithoutExtension(manifest.EntryAssembly);
+
         public TaskTriggerDefinition? Handle(TaskTriggerAttributeContext context)
         {
             var response = client.HandleTaskTriggerAttributeAsync(

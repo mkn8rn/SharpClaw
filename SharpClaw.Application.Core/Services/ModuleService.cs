@@ -7,6 +7,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Contracts.Tasks;
+using SharpClaw.Application.Infrastructure.Tasks.Parsing;
+using SharpClaw.Application.Infrastructure.Tasks.Registry;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Application.Core.Modules.Sidecar;
@@ -58,10 +61,11 @@ public sealed class ModuleService(
             .ToDictionaryAsync(s => s.ModuleId, StringComparer.Ordinal, ct);
 
         var result = new List<ModuleStateResponse>();
-        foreach (var module in loader.GetAllBundled())
+        foreach (var bundledModule in loader.GetAllBundled())
         {
-            states.TryGetValue(module.Id, out var state);
-            var manifest = loader.GetManifest(module.Id);
+            var module = registry.GetModule(bundledModule.Id) ?? bundledModule;
+            states.TryGetValue(bundledModule.Id, out var state);
+            var manifest = loader.GetManifest(bundledModule.Id);
             result.Add(ToResponse(module, state, manifest));
         }
 
@@ -82,6 +86,7 @@ public sealed class ModuleService(
         var module = loader.GetBundledModule(moduleId);
         if (module is not null)
         {
+            module = registry.GetModule(moduleId) ?? module;
             var state = await db.ModuleStates.FirstOrDefaultAsync(s => s.ModuleId == moduleId, ct);
             var manifest = loader.GetManifest(moduleId);
             return ToResponse(module, state, manifest);
@@ -108,6 +113,7 @@ public sealed class ModuleService(
 
         if (module is not null)
         {
+            module = registry.GetModule(moduleId) ?? module;
             state = await db.ModuleStates.FirstOrDefaultAsync(s => s.ModuleId == moduleId, ct);
             manifest = loader.GetManifest(moduleId);
         }
@@ -212,6 +218,7 @@ public sealed class ModuleService(
                     ct);
 
                 registry.Register(module, runtimeHost);
+                RegisterTaskRuntimeContributions(module);
                 RegisterModulePersistence(module);
                 await LoadModulePersistenceAsync(module, ct);
 
@@ -283,6 +290,7 @@ public sealed class ModuleService(
             runtimeHost = host;
 
             registry.Register(module, runtimeHost);
+            RegisterTaskRuntimeContributions(module);
             if (manifest is not null)
                 registry.CacheManifest(moduleId, manifest);
 
@@ -413,6 +421,7 @@ public sealed class ModuleService(
         try
         {
             registry.Register(host.Module, host, isExternal: true);
+            RegisterTaskRuntimeContributions(host.Module);
             RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
             await LoadModulePersistenceAsync(host.Module, ct);
@@ -583,6 +592,7 @@ public sealed class ModuleService(
         try
         {
             registry.Register(host.Module, host, isExternal: true);
+            RegisterTaskRuntimeContributions(host.Module);
             RegisterModulePersistence(host.Module);
             registry.CacheManifest(manifest.Id, manifest);
             await LoadModulePersistenceAsync(host.Module, ct);
@@ -641,6 +651,18 @@ public sealed class ModuleService(
 
         foreach (var registration in registrations)
             moduleDbContextRegistry.Register(registration);
+    }
+
+    private static void RegisterTaskRuntimeContributions(ISharpClawModule module)
+    {
+        if (module is ForeignModuleProxy foreignModule)
+        {
+            if (foreignModule is ITaskParserAware parserAware)
+                TaskScriptParser.RegisterModule(parserAware.ParserExtension);
+
+            foreach (var descriptor in foreignModule.TaskStepDescriptors)
+                TaskStepRegistry.Default.Register(descriptor);
+        }
     }
 
     public async Task LoadModulePersistenceAsync(ISharpClawModule module, CancellationToken ct = default)

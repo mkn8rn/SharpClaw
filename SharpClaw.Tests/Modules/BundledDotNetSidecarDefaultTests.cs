@@ -29,6 +29,64 @@ namespace SharpClaw.Tests.Modules;
 public sealed class BundledDotNetSidecarDefaultTests
 {
     [Test]
+    public void DiscoverBundledUsesManifestOnlyEntriesForSidecarHostModeByDefault()
+    {
+        var loader = ModuleLoader.DiscoverBundled();
+
+        loader.IsManifestOnlyBundledModule(TestHarnessConstants.ModuleId).Should().BeTrue();
+        loader.GetBundledModule(TestHarnessConstants.ModuleId)
+            .Should()
+            .NotBeOfType<TestHarnessModule>();
+        loader.IsManifestOnlyBundledModule("sharpclaw_agent_orchestration")
+            .Should()
+            .BeFalse("agent orchestration still has sidecar readiness blockers");
+    }
+
+    [Test]
+    public void DiscoverBundledForceInProcessLoadsConcreteModules()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [DotNetModuleHostingModeOptions.ForceInProcessKey] = "true",
+            })
+            .Build();
+
+        var loader = ModuleLoader.DiscoverBundled(configuration);
+
+        loader.IsManifestOnlyBundledModule(TestHarnessConstants.ModuleId).Should().BeFalse();
+        loader.GetBundledModule(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeOfType<TestHarnessModule>();
+    }
+
+    [Test]
+    public async Task ManifestOnlyBundledSidecarReportsRuntimeDetailsAfterEnable()
+    {
+        var loader = ModuleLoader.DiscoverBundled();
+        loader.IsManifestOnlyBundledModule(TestHarnessConstants.ModuleId).Should().BeTrue();
+        await using var harness = ModuleServiceHarness.Create(moduleLoader: loader);
+
+        var response = await harness.ModuleService.EnableAsync(
+            TestHarnessConstants.ModuleId,
+            harness.RootServices,
+            CancellationToken.None);
+
+        response.Enabled.Should().BeTrue();
+        harness.Registry.GetRuntimeHost(TestHarnessConstants.ModuleId)
+            .Should()
+            .BeAssignableTo<IForeignModuleRuntimeHost>();
+
+        var detail = await harness.ModuleService.GetDetailAsync(
+            TestHarnessConstants.ModuleId,
+            CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.ToolCount.Should().BeGreaterThan(0);
+        detail.DisplayName.Should().Be("Test Harness");
+    }
+
+    [Test]
     public async Task BundledModuleWithSidecarHostModeRegistersThroughForeignRuntimeHost()
     {
         await using var harness = ModuleServiceHarness.Create();
@@ -198,7 +256,8 @@ public sealed class BundledDotNetSidecarDefaultTests
 
         public static ModuleServiceHarness Create(
             Dictionary<string, string?>? configurationOverrides = null,
-            ISharpClawModule[]? modules = null)
+            ISharpClawModule[]? modules = null,
+            ModuleLoader? moduleLoader = null)
         {
             var instanceRoot = Path.Combine(
                 TestContext.CurrentContext.WorkDirectory,
@@ -232,7 +291,7 @@ public sealed class BundledDotNetSidecarDefaultTests
                 options.UseInMemoryDatabase(
                     "BundledSidecarDefault_" + Guid.NewGuid().ToString("N"),
                     new InMemoryDatabaseRoot()));
-            services.AddSingleton(new ModuleLoader(modules ?? [new TestHarnessModule()]));
+            services.AddSingleton(moduleLoader ?? new ModuleLoader(modules ?? [new TestHarnessModule()]));
             services.AddSingleton<ModuleRegistry>();
             services.AddSingleton<RuntimeModuleDbContextRegistry>();
             services.AddSingleton<ModulePersistenceRegistrationFactory>();

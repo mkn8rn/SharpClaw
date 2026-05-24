@@ -85,6 +85,7 @@ public sealed class TestHarnessArchitectureTests
         "Module Bundled Outputs",
         "Module External Lifecycle",
         "Module Foreign Runtime",
+        "Module Sidecar Parity",
         "Module Harness Integration",
         "Module Harness Cost And Matrix",
         "Module Contracts Architecture",

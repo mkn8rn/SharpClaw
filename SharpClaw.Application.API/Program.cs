@@ -400,16 +400,17 @@ try
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ModuleHealthCheckService>());
 
     // ──────── PHASE 11 ─── Bundled-module discovery + ConfigureServices ────
-    // Discover every bundled module's assembly, give each one a chance to
-    // contribute DI services and task-step descriptors, and gather task-script
-    // parser extensions.  ⚠ This MUST happen before builder.Build() because
-    // the container is sealed at that point — disabled modules still need to
-    // register their DbContext factories etc. so other services can resolve
-    // optional dependencies on them lazily without throwing.
-    var moduleLoader = ModuleLoader.DiscoverBundled();
+    // Discover bundled modules. Modules that declare sidecar host mode are
+    // kept out of parent DI composition by default; legacy in-process modules
+    // still register services before builder.Build() because the container is
+    // sealed after this point.
+    var moduleLoader = ModuleLoader.DiscoverBundled(builder.Configuration);
 
     foreach (var bundledModule in moduleLoader.GetAllBundled())
     {
+        if (moduleLoader.IsManifestOnlyBundledModule(bundledModule.Id))
+            continue;
+
         bundledModule.ConfigureServices(builder.Services);
         if (bundledModule is ITaskParserAware parserAware)
             TaskScriptParser.RegisterModule(parserAware.ParserExtension);
@@ -516,19 +517,15 @@ try
     var registeredBundledCount = 0;
     var disabledBundledCount = 0;
 
-    // DbContext registry must be populated for ALL discovered bundled modules,
-    // not just enabled ones. ConfigureServices already ran for every bundled
-    // module (the DI container is immutable post-Build), so any scoped factory
-    // delegate registered by a disabled module — e.g. the LlamaSharp module's
-    // `sp => factory.CreateDbContext<LlamaSharpDbContext>()` — can still be
-    // resolved lazily through optional dependencies on other services. If the
-    // module's DbContext type is missing from the runtime registry that
-    // resolution throws InvalidOperationException at request time. Registering
-    // here is cheap (just type-table inserts) and does not load any JSON data.
+    // DbContext registry must be populated for every in-process bundled module,
+    // not just enabled ones. Sidecar-manifest modules do not contribute parent
+    // DbContexts here; their services live behind the runtime host. Legacy
+    // in-process modules still need type-table registration so optional
+    // dependencies can resolve lazily without request-time surprises.
     using (var scope = app.Services.CreateScope())
     {
         var moduleSvc = scope.ServiceProvider.GetRequiredService<ModuleService>();
-        foreach (var bundledModule in allBundled)
+        foreach (var bundledModule in allBundled.Where(m => !moduleLoader.IsManifestOnlyBundledModule(m.Id)))
             moduleSvc.RegisterModulePersistence(bundledModule);
     }
 
@@ -563,7 +560,9 @@ try
     {
         using var moduleLoadScope = app.Services.CreateScope();
         var moduleSvc = moduleLoadScope.ServiceProvider.GetRequiredService<ModuleService>();
-        foreach (var bundledModule in allBundled.Where(m => enabledModuleIds.Contains(m.Id)))
+        foreach (var bundledModule in allBundled.Where(m =>
+                     enabledModuleIds.Contains(m.Id)
+                     && !moduleLoader.IsManifestOnlyBundledModule(m.Id)))
             await moduleSvc.LoadModulePersistenceAsync(bundledModule);
     }
 

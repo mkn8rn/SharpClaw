@@ -7,6 +7,11 @@ using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Application.Infrastructure.Tasks.Parsing;
 
+public interface ITaskTriggerAttributeHandlerOwnerHint
+{
+    string? TriggerAttributeOwnerKey { get; }
+}
+
 /// <summary>
 /// Parses task script .cs files into <see cref="TaskScriptDefinition"/>.
 /// Uses Roslyn to parse the C# syntax tree, then extracts the task
@@ -30,6 +35,8 @@ public sealed class TaskScriptParser
     private static readonly Dictionary<string, (string TriggerKey, string ModuleId)> _moduleEventTriggers = [];
     private static readonly HashSet<string> _moduleSingleArgMethods = [];
     private static readonly Dictionary<string, ITaskTriggerAttributeHandler> _moduleTriggerAttributeHandlers
+        = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, string> _moduleTriggerAttributeHandlerOwners
         = new(StringComparer.Ordinal);
     private static readonly Lock _registryLock = new();
     private static TaskParserPrimitives? _primitives;
@@ -102,9 +109,15 @@ public sealed class TaskScriptParser
 
     private static void RegisterTriggerAttributeHandler(string attrName, ITaskTriggerAttributeHandler handler)
     {
+        var ownerKey = ResolveTriggerAttributeOwnerKey(handler);
         if (_moduleTriggerAttributeHandlers.TryGetValue(attrName, out var existing))
         {
-            if (!ReferenceEquals(existing, handler))
+            var existingOwnerKey = _moduleTriggerAttributeHandlerOwners.TryGetValue(attrName, out var storedOwnerKey)
+                ? storedOwnerKey
+                : ResolveTriggerAttributeOwnerKey(existing);
+
+            if (!ReferenceEquals(existing, handler)
+                && !string.Equals(existingOwnerKey, ownerKey, StringComparison.Ordinal))
             {
                 // Surface both claimants so this is diagnosable from the
                 // crash log alone (e.g. when a stale module DLL is left in
@@ -123,6 +136,20 @@ public sealed class TaskScriptParser
             return;
         }
         _moduleTriggerAttributeHandlers[attrName] = handler;
+        _moduleTriggerAttributeHandlerOwners[attrName] = ownerKey;
+    }
+
+    private static string ResolveTriggerAttributeOwnerKey(ITaskTriggerAttributeHandler handler)
+    {
+        if (handler is ITaskTriggerAttributeHandlerOwnerHint hint
+            && !string.IsNullOrWhiteSpace(hint.TriggerAttributeOwnerKey))
+        {
+            return hint.TriggerAttributeOwnerKey;
+        }
+
+        return handler.GetType().Assembly.GetName().Name
+            ?? handler.GetType().FullName
+            ?? "<unknown>";
     }
 
     /// <summary>
