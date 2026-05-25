@@ -53,11 +53,15 @@ public sealed class ForeignModuleHostCapabilityTests
         using var cancelResponse = await client.PostAsJsonAsync(
             ForeignModuleHostCapabilityProtocol.JobCancelPath,
             new { jobId, message = "stopping" });
+        using var cancelStaleResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.JobCancelStaleByActionPrefixPath,
+            new { actionKeyPrefix = "cur_transcribe" });
 
         logResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         failResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         cancelResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        cancelStaleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         jobs.Logs.Should().ContainSingle()
             .Which.Should().Be((jobId, "step one", "Warning"));
         jobs.Completed.Should().ContainSingle()
@@ -66,6 +70,63 @@ public sealed class ForeignModuleHostCapabilityTests
             .Which.Should().Be((jobId, "failed", "details"));
         jobs.Cancelled.Should().ContainSingle()
             .Which.Should().Be((jobId, "stopping"));
+        jobs.CancelledStalePrefixes.Should().ContainSingle()
+            .Which.Should().Be("cur_transcribe");
+    }
+
+    [Test]
+    public async Task HostCapabilityServerForwardsJobReaderCalls()
+    {
+        var reader = new RecordingJobReader();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IAgentJobReader>(reader)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+
+        using var getResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.JobGetPath,
+            new { id = reader.JobId });
+        using var listResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.JobListByActionPrefixPath,
+            new { actionKeyPrefix = "cur_", resourceId = reader.ResourceId });
+        using var summariesResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.JobListSummariesByActionPrefixPath,
+            new { actionKeyPrefix = "cur_", resourceId = reader.ResourceId });
+        using var existsResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.JobExistsWithActionPrefixPath,
+            new { jobId = reader.JobId, actionKeyPrefix = "cur_" });
+
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        summariesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        existsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var getPayload = JsonDocument.Parse(await getResponse.Content.ReadAsStringAsync());
+        getPayload.RootElement.GetProperty("job")
+            .GetProperty("id")
+            .GetGuid()
+            .Should()
+            .Be(reader.JobId);
+
+        var listPayload = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        listPayload.RootElement.GetProperty("jobs").GetArrayLength().Should().Be(1);
+
+        var summariesPayload = JsonDocument.Parse(await summariesResponse.Content.ReadAsStringAsync());
+        summariesPayload.RootElement.GetProperty("jobs")[0]
+            .GetProperty("actionKey")
+            .GetString()
+            .Should()
+            .Be("cur_transcribe_audio_device");
+
+        var existsPayload = JsonDocument.Parse(await existsResponse.Content.ReadAsStringAsync());
+        existsPayload.RootElement.GetProperty("value").GetBoolean().Should().BeTrue();
+        reader.ListRequest.Should().NotBeNull();
+        reader.ListRequest!.Value.Prefix.Should().Be("cur_");
+        reader.ListRequest.Value.ResourceId.Should().Be(reader.ResourceId);
+        reader.SummaryRequest.Should().NotBeNull();
+        reader.SummaryRequest!.Value.Prefix.Should().Be("cur_");
+        reader.SummaryRequest.Value.ResourceId.Should().Be(reader.ResourceId);
     }
 
     [Test]
@@ -439,6 +500,40 @@ public sealed class ForeignModuleHostCapabilityTests
         registrar.DeletedModelId.Should().Be(modelId);
     }
 
+    [Test]
+    public async Task HostCapabilityServerForwardsModelInfoProviderCapabilities()
+    {
+        var modelInfo = new RecordingModelInfoProvider();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IModelInfoProvider>(modelInfo)
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+        var modelId = Guid.NewGuid();
+
+        using var providerInfoResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModelProviderInfoPath,
+            new { modelId });
+        using var localPathResponse = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModelLocalFilePathPath,
+            new { modelId });
+
+        providerInfoResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        localPathResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var providerInfoPayload = JsonDocument.Parse(await providerInfoResponse.Content.ReadAsStringAsync());
+        var info = providerInfoPayload.RootElement.GetProperty("info");
+        info.GetProperty("modelName").GetString().Should().Be("whisper-large-v3");
+        info.GetProperty("providerKey").GetString().Should().Be("groq");
+        info.GetProperty("decryptedApiKey").GetString().Should().Be("secret-key");
+
+        var localPathPayload = JsonDocument.Parse(await localPathResponse.Content.ReadAsStringAsync());
+        localPathPayload.RootElement.GetProperty("path").GetString().Should().Be("E:/models/demo.gguf");
+
+        modelInfo.ProviderInfoModelId.Should().Be(modelId);
+        modelInfo.LocalPathModelId.Should().Be(modelId);
+    }
+
     private static HttpClient CreateClient(ForeignModuleHostCapabilityServer server)
     {
         var client = new HttpClient { BaseAddress = server.Address };
@@ -486,6 +581,7 @@ public sealed class ForeignModuleHostCapabilityTests
         public List<(Guid JobId, string? ResultData, string? Message)> Completed { get; } = [];
         public List<(Guid JobId, string Message, string? Details)> Failed { get; } = [];
         public List<(Guid JobId, string? Message)> Cancelled { get; } = [];
+        public List<string> CancelledStalePrefixes { get; } = [];
 
         public Task<AgentJobResponse> SubmitJobAsync(
             Guid channelId,
@@ -549,8 +645,76 @@ public sealed class ForeignModuleHostCapabilityTests
 
         public Task CancelStaleJobsByActionPrefixAsync(
             string actionKeyPrefix,
+            CancellationToken ct = default)
+        {
+            CancelledStalePrefixes.Add(actionKeyPrefix);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingJobReader : IAgentJobReader
+    {
+        public Guid JobId { get; } = Guid.Parse("12121212-1212-1212-1212-121212121212");
+        public Guid ChannelId { get; } = Guid.Parse("23232323-2323-2323-2323-232323232323");
+        public Guid AgentId { get; } = Guid.Parse("34343434-3434-3434-3434-343434343434");
+        public Guid ResourceId { get; } = Guid.Parse("45454545-4545-4545-4545-454545454545");
+        public (string Prefix, Guid? ResourceId)? ListRequest { get; private set; }
+        public (string Prefix, Guid? ResourceId)? SummaryRequest { get; private set; }
+
+        public Task<AgentJobResponse?> GetJobAsync(Guid jobId, CancellationToken ct = default) =>
+            Task.FromResult<AgentJobResponse?>(jobId == JobId ? Job() : null);
+
+        public Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
+            string actionKeyPrefix,
+            Guid? resourceId = null,
+            CancellationToken ct = default)
+        {
+            ListRequest = (actionKeyPrefix, resourceId);
+            return Task.FromResult<IReadOnlyList<AgentJobResponse>>([Job()]);
+        }
+
+        public Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
+            string actionKeyPrefix,
+            Guid? resourceId = null,
+            CancellationToken ct = default)
+        {
+            SummaryRequest = (actionKeyPrefix, resourceId);
+            return Task.FromResult<IReadOnlyList<AgentJobSummaryResponse>>([Summary()]);
+        }
+
+        public Task<bool> JobExistsWithActionPrefixAsync(
+            Guid jobId,
+            string actionKeyPrefix,
             CancellationToken ct = default) =>
-            throw new NotSupportedException();
+            Task.FromResult(jobId == JobId && actionKeyPrefix == "cur_");
+
+        private AgentJobResponse Job() =>
+            new(
+                JobId,
+                ChannelId,
+                AgentId,
+                "cur_transcribe_audio_device",
+                ResourceId,
+                AgentJobStatus.Executing,
+                PermissionClearance.Independent,
+                ResultData: null,
+                ErrorLog: null,
+                Logs: [],
+                CreatedAt: DateTimeOffset.UnixEpoch,
+                StartedAt: DateTimeOffset.UnixEpoch,
+                CompletedAt: null);
+
+        private AgentJobSummaryResponse Summary() =>
+            new(
+                JobId,
+                ChannelId,
+                AgentId,
+                "cur_transcribe_audio_device",
+                ResourceId,
+                AgentJobStatus.Executing,
+                DateTimeOffset.UnixEpoch,
+                DateTimeOffset.UnixEpoch,
+                CompletedAt: null);
     }
 
     private sealed class RecordingProtocolContractResolver : IForeignModuleProtocolContractResolver
@@ -867,6 +1031,29 @@ public sealed class ForeignModuleHostCapabilityTests
         {
             DeletedModelId = modelId;
             return Task.FromResult(true);
+        }
+    }
+
+    private sealed class RecordingModelInfoProvider : IModelInfoProvider
+    {
+        public Guid? ProviderInfoModelId { get; private set; }
+        public Guid? LocalPathModelId { get; private set; }
+
+        public Task<ModelProviderInfo?> GetModelProviderInfoAsync(
+            Guid modelId,
+            CancellationToken ct = default)
+        {
+            ProviderInfoModelId = modelId;
+            return Task.FromResult<ModelProviderInfo?>(
+                new("whisper-large-v3", "groq", "secret-key"));
+        }
+
+        public Task<string?> GetLocalModelFilePathAsync(
+            Guid modelId,
+            CancellationToken ct = default)
+        {
+            LocalPathModelId = modelId;
+            return Task.FromResult<string?>("E:/models/demo.gguf");
         }
     }
 

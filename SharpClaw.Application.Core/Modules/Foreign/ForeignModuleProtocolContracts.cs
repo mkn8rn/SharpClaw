@@ -72,6 +72,12 @@ public sealed record ForeignModuleEndpointDescriptor(
     string? ContributionId = null,
     IReadOnlyDictionary<string, JsonElement>? Metadata = null);
 
+public static class ForeignModuleEndpointAuthPolicy
+{
+    public const string Anonymous = "anonymous";
+    public const string Authenticated = "authenticated";
+}
+
 public sealed record ForeignModulePermissionDescriptor(
     bool IsPerResource,
     string? DelegateTo = null)

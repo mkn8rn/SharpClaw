@@ -171,6 +171,28 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
                 await FailJobAsync(services, Deserialize<ForeignModuleJobFailRequest>(request), ct),
             ForeignModuleHostCapabilityProtocol.JobCancelPath =>
                 await CancelJobAsync(services, Deserialize<ForeignModuleJobCancelRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.JobCancelStaleByActionPrefixPath =>
+                await CancelStaleJobsByActionPrefixAsync(
+                    services,
+                    Deserialize<ForeignModuleJobActionPrefixRequest>(request),
+                    ct),
+            ForeignModuleHostCapabilityProtocol.JobGetPath =>
+                await GetJobAsync(services, Deserialize<ForeignModuleTaskIdRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.JobListByActionPrefixPath =>
+                await ListJobsByActionPrefixAsync(
+                    services,
+                    Deserialize<ForeignModuleJobActionPrefixRequest>(request),
+                    ct),
+            ForeignModuleHostCapabilityProtocol.JobListSummariesByActionPrefixPath =>
+                await ListJobSummariesByActionPrefixAsync(
+                    services,
+                    Deserialize<ForeignModuleJobActionPrefixRequest>(request),
+                    ct),
+            ForeignModuleHostCapabilityProtocol.JobExistsWithActionPrefixPath =>
+                await JobExistsWithActionPrefixAsync(
+                    services,
+                    Deserialize<ForeignModuleJobExistsWithActionPrefixRequest>(request),
+                    ct),
             ForeignModuleHostCapabilityProtocol.ProtocolContractsListPath =>
                 ListProtocolContracts(services),
             ForeignModuleHostCapabilityProtocol.ProtocolContractInvokePath =>
@@ -313,6 +335,10 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
                 await EnsureProviderAsync(services, Deserialize<ForeignModuleModelEnsureProviderRequest>(request), ct),
             ForeignModuleHostCapabilityProtocol.ModelEnsureModelPath =>
                 await EnsureModelAsync(services, Deserialize<ForeignModuleModelEnsureModelRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModelProviderInfoPath =>
+                await GetModelProviderInfoAsync(services, Deserialize<ForeignModuleModelMetadataRequest>(request), ct),
+            ForeignModuleHostCapabilityProtocol.ModelLocalFilePathPath =>
+                await GetLocalModelFilePathAsync(services, Deserialize<ForeignModuleModelMetadataRequest>(request), ct),
             ForeignModuleHostCapabilityProtocol.ModelMetadataPath =>
                 await GetModelMetadataAsync(services, Deserialize<ForeignModuleModelMetadataRequest>(request), ct),
             ForeignModuleHostCapabilityProtocol.ModelDeletePath =>
@@ -436,6 +462,61 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
         await ResolveJobController(services)
             .MarkJobCancelledAsync(request.JobId, request.Message, ct);
         return new ForeignModuleCapabilityAck();
+    }
+
+    private static async Task<ForeignModuleCapabilityAck> CancelStaleJobsByActionPrefixAsync(
+        IServiceProvider services,
+        ForeignModuleJobActionPrefixRequest request,
+        CancellationToken ct)
+    {
+        RequireActionKeyPrefix(request.ActionKeyPrefix);
+        await ResolveJobController(services)
+            .CancelStaleJobsByActionPrefixAsync(request.ActionKeyPrefix, ct);
+        return new ForeignModuleCapabilityAck();
+    }
+
+    private static async Task<ForeignModuleJobGetResponse> GetJobAsync(
+        IServiceProvider services,
+        ForeignModuleTaskIdRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.Id, "Job ID is required.");
+        return new ForeignModuleJobGetResponse(
+            await ResolveJobReader(services).GetJobAsync(request.Id, ct));
+    }
+
+    private static async Task<ForeignModuleJobListResponse> ListJobsByActionPrefixAsync(
+        IServiceProvider services,
+        ForeignModuleJobActionPrefixRequest request,
+        CancellationToken ct)
+    {
+        RequireActionKeyPrefix(request.ActionKeyPrefix);
+        return new ForeignModuleJobListResponse(
+            await ResolveJobReader(services)
+                .ListJobsByActionPrefixAsync(request.ActionKeyPrefix, request.ResourceId, ct));
+    }
+
+    private static async Task<ForeignModuleJobSummaryListResponse> ListJobSummariesByActionPrefixAsync(
+        IServiceProvider services,
+        ForeignModuleJobActionPrefixRequest request,
+        CancellationToken ct)
+    {
+        RequireActionKeyPrefix(request.ActionKeyPrefix);
+        return new ForeignModuleJobSummaryListResponse(
+            await ResolveJobReader(services)
+                .ListJobSummariesByActionPrefixAsync(request.ActionKeyPrefix, request.ResourceId, ct));
+    }
+
+    private static async Task<ForeignModuleBooleanResponse> JobExistsWithActionPrefixAsync(
+        IServiceProvider services,
+        ForeignModuleJobExistsWithActionPrefixRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.JobId, "Job ID is required.");
+        RequireActionKeyPrefix(request.ActionKeyPrefix);
+        return new ForeignModuleBooleanResponse(
+            await ResolveJobReader(services)
+                .JobExistsWithActionPrefixAsync(request.JobId, request.ActionKeyPrefix, ct));
     }
 
     private static ForeignModuleProtocolContractsListResponse ListProtocolContracts(
@@ -885,6 +966,26 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
             await ResolveModelRegistrar(services).GetModelMetadataAsync(request.ModelId, ct));
     }
 
+    private static async Task<ForeignModuleModelProviderInfoResponse> GetModelProviderInfoAsync(
+        IServiceProvider services,
+        ForeignModuleModelMetadataRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.ModelId, "Model ID is required.");
+        return new ForeignModuleModelProviderInfoResponse(
+            await ResolveModelInfoProvider(services).GetModelProviderInfoAsync(request.ModelId, ct));
+    }
+
+    private static async Task<ForeignModuleModelLocalFilePathResponse> GetLocalModelFilePathAsync(
+        IServiceProvider services,
+        ForeignModuleModelMetadataRequest request,
+        CancellationToken ct)
+    {
+        RequireId(request.ModelId, "Model ID is required.");
+        return new ForeignModuleModelLocalFilePathResponse(
+            await ResolveModelInfoProvider(services).GetLocalModelFilePathAsync(request.ModelId, ct));
+    }
+
     private static async Task<ForeignModuleBooleanResponse> DeleteModelAsync(
         IServiceProvider services,
         ForeignModuleModelDeleteRequest request,
@@ -1030,6 +1131,10 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
         services.GetService<IAgentJobController>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide a job controller.");
 
+    private static IAgentJobReader ResolveJobReader(IServiceProvider services) =>
+        services.GetService<IAgentJobReader>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide a job reader.");
+
     private static IForeignModuleProtocolContractResolver ResolveProtocolContractResolver(IServiceProvider services) =>
         services.GetService<IForeignModuleProtocolContractResolver>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide a protocol contract resolver.");
@@ -1070,6 +1175,10 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
         services.GetService<IModelRegistrar>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide model registration.");
 
+    private static IModelInfoProvider ResolveModelInfoProvider(IServiceProvider services) =>
+        services.GetService<IModelInfoProvider>()
+        ?? throw new NotSupportedException("The SharpClaw host did not provide model information.");
+
     private static IModuleLifecycleManager ResolveModuleLifecycle(IServiceProvider services) =>
         services.GetService<IModuleLifecycleManager>()
         ?? throw new NotSupportedException("The SharpClaw host did not provide module lifecycle management.");
@@ -1107,6 +1216,12 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
     {
         if (id == Guid.Empty)
             throw new ArgumentException(message, nameof(id));
+    }
+
+    private static void RequireActionKeyPrefix(string actionKeyPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(actionKeyPrefix))
+            throw new ArgumentException("Action key prefix is required.", nameof(actionKeyPrefix));
     }
 
     private static LogLevel ParseLogLevel(string? level) =>

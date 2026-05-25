@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
@@ -53,6 +54,24 @@ internal sealed record ForeignModuleJobCancelRequest
     public Guid JobId { get; init; }
     public string? Message { get; init; }
 }
+
+internal sealed record ForeignModuleJobActionPrefixRequest
+{
+    public string ActionKeyPrefix { get; init; } = string.Empty;
+    public Guid? ResourceId { get; init; }
+}
+
+internal sealed record ForeignModuleJobExistsWithActionPrefixRequest
+{
+    public Guid JobId { get; init; }
+    public string ActionKeyPrefix { get; init; } = string.Empty;
+}
+
+internal sealed record ForeignModuleJobGetResponse(AgentJobResponse? Job);
+
+internal sealed record ForeignModuleJobListResponse(IReadOnlyList<AgentJobResponse> Jobs);
+
+internal sealed record ForeignModuleJobSummaryListResponse(IReadOnlyList<AgentJobSummaryResponse> Jobs);
 
 internal sealed record ForeignModuleCapabilityAck(bool Accepted = true, string? Message = null);
 
@@ -284,6 +303,10 @@ internal sealed record ForeignModuleModelDeleteRequest
 }
 
 internal sealed record ForeignModuleGuidResponse(Guid Id);
+
+internal sealed record ForeignModuleModelProviderInfoResponse(ModelProviderInfo? Info);
+
+internal sealed record ForeignModuleModelLocalFilePathResponse(string? Path);
 
 internal sealed record ForeignModuleModelMetadataResponse(ModelMetadata? Metadata);
 

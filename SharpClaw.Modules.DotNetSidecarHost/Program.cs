@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -716,7 +717,10 @@ internal sealed class DotNetSidecarHost
                     route,
                     IsWebSocketEndpoint(endpoint, route, method)
                         ? ForeignModuleEndpointResponseMode.WebSocket
-                        : ForeignModuleEndpointResponseMode.Raw));
+                        : ForeignModuleEndpointResponseMode.Raw,
+                    AuthPolicy: endpoint.Metadata.GetMetadata<IAllowAnonymous>() is not null
+                        ? ForeignModuleEndpointAuthPolicy.Anonymous
+                        : null));
             }
         }
 

@@ -28,12 +28,14 @@ internal static class DotNetSidecarHostCapabilityProxies
         services.TryAddSingleton<IHostAgentBridge, HostAgentBridgeProxy>();
         services.TryAddSingleton<ICoreEntityIdProvider, CoreEntityIdProviderProxy>();
         services.TryAddSingleton<IAgentManager, AgentManagerProxy>();
+        services.TryAddSingleton<IModelInfoProvider, ModelInfoProviderProxy>();
         services.TryAddSingleton<IModelRegistrar, ModelRegistrarProxy>();
         services.TryAddSingleton<IModuleInfoProvider, ModuleInfoProviderProxy>();
         services.TryAddSingleton<IModuleLifecycleManager, ModuleLifecycleManagerProxy>();
         services.TryAddSingleton<IForeignModuleProtocolContractResolver, ProtocolContractResolverProxy>();
         services.TryAddSingleton<IModuleStorageGateway, ModuleStorageGatewayProxy>();
         services.TryAddSingleton<IAgentJobController, AgentJobControllerProxy>();
+        services.TryAddSingleton<IAgentJobReader, AgentJobReaderProxy>();
     }
 
     private sealed class NoOpEventSinkRegistry : ISharpClawEventSinkRegistry
@@ -445,6 +447,25 @@ internal static class DotNetSidecarHostCapabilityProxies
                 .Modules;
     }
 
+    private sealed class ModelInfoProviderProxy(DotNetSidecarHostCapabilityClient client) : IModelInfoProvider
+    {
+        public async Task<ModelProviderInfo?> GetModelProviderInfoAsync(
+            Guid modelId,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleModelMetadataRequest, ForeignModuleModelProviderInfoResponse>(
+                ForeignModuleHostCapabilityProtocol.ModelProviderInfoPath,
+                new ForeignModuleModelMetadataRequest { ModelId = modelId },
+                ct)).Info;
+
+        public async Task<string?> GetLocalModelFilePathAsync(
+            Guid modelId,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleModelMetadataRequest, ForeignModuleModelLocalFilePathResponse>(
+                ForeignModuleHostCapabilityProtocol.ModelLocalFilePathPath,
+                new ForeignModuleModelMetadataRequest { ModelId = modelId },
+                ct)).Path;
+    }
+
     private sealed class ModelRegistrarProxy(DotNetSidecarHostCapabilityClient client) : IModelRegistrar
     {
         public async Task<Guid> EnsureProviderAsync(
@@ -683,7 +704,60 @@ internal static class DotNetSidecarHostCapabilityProxies
                 ct);
 
         public Task CancelStaleJobsByActionPrefixAsync(string actionKeyPrefix, CancellationToken ct = default) =>
-            throw new NotSupportedException("Cancelling stale jobs by prefix from a .NET sidecar is not exposed yet.");
+            client.PostAckAsync(
+                ForeignModuleHostCapabilityProtocol.JobCancelStaleByActionPrefixPath,
+                new ForeignModuleJobActionPrefixRequest { ActionKeyPrefix = actionKeyPrefix },
+                ct);
+    }
+
+    private sealed class AgentJobReaderProxy(DotNetSidecarHostCapabilityClient client) : IAgentJobReader
+    {
+        public async Task<AgentJobResponse?> GetJobAsync(
+            Guid jobId,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleTaskIdRequest, ForeignModuleJobGetResponse>(
+                ForeignModuleHostCapabilityProtocol.JobGetPath,
+                new ForeignModuleTaskIdRequest { Id = jobId },
+                ct)).Job;
+
+        public async Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
+            string actionKeyPrefix,
+            Guid? resourceId = null,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleJobActionPrefixRequest, ForeignModuleJobListResponse>(
+                ForeignModuleHostCapabilityProtocol.JobListByActionPrefixPath,
+                new ForeignModuleJobActionPrefixRequest
+                {
+                    ActionKeyPrefix = actionKeyPrefix,
+                    ResourceId = resourceId,
+                },
+                ct)).Jobs;
+
+        public async Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
+            string actionKeyPrefix,
+            Guid? resourceId = null,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleJobActionPrefixRequest, ForeignModuleJobSummaryListResponse>(
+                ForeignModuleHostCapabilityProtocol.JobListSummariesByActionPrefixPath,
+                new ForeignModuleJobActionPrefixRequest
+                {
+                    ActionKeyPrefix = actionKeyPrefix,
+                    ResourceId = resourceId,
+                },
+                ct)).Jobs;
+
+        public async Task<bool> JobExistsWithActionPrefixAsync(
+            Guid jobId,
+            string actionKeyPrefix,
+            CancellationToken ct = default) =>
+            (await client.PostAsync<ForeignModuleJobExistsWithActionPrefixRequest, ForeignModuleBooleanResponse>(
+                ForeignModuleHostCapabilityProtocol.JobExistsWithActionPrefixPath,
+                new ForeignModuleJobExistsWithActionPrefixRequest
+                {
+                    JobId = jobId,
+                    ActionKeyPrefix = actionKeyPrefix,
+                },
+                ct)).Value;
     }
 
     private sealed class ProtocolContractInvokerProxy(

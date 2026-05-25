@@ -79,6 +79,12 @@ public sealed class DotNetSidecarHostTests
         foreignHost.Endpoints.Should().Contain(endpoint =>
             endpoint.Method == "GET"
             && endpoint.RoutePattern == "/modules/dotnet-sidecar/ping");
+        foreignHost.Endpoints.Single(endpoint =>
+                endpoint.Method == "GET"
+                && endpoint.RoutePattern == "/modules/dotnet-sidecar/ping")
+            .AuthPolicy
+            .Should()
+            .Be(ForeignModuleEndpointAuthPolicy.Anonymous);
         foreignHost.Module.GetToolDefinitions()
             .Should()
             .ContainSingle(tool => tool.Name == DotNetSidecarFixtureModule.JobTool);

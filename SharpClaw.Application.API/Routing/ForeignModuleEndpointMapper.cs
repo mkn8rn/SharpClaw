@@ -73,10 +73,18 @@ public static class ForeignModuleEndpointMapper
                     continue;
                 }
 
-                routes.MapMethods(
+                var builder = routes.MapMethods(
                     endpoint.RoutePattern,
                     [method],
                     context => ProxyAsync(context, registry, moduleId, endpoint));
+                if (string.Equals(
+                        endpoint.AuthPolicy,
+                        ForeignModuleEndpointAuthPolicy.Anonymous,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    builder.AllowAnonymous();
+                }
+
                 mapped++;
             }
         }

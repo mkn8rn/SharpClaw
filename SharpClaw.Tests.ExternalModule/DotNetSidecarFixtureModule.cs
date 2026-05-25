@@ -84,7 +84,8 @@ public sealed class DotNetSidecarFixtureModule : ISharpClawModule, ITaskParserAw
     public void MapEndpoints(object app)
     {
         var endpoints = (IEndpointRouteBuilder)app;
-        endpoints.MapGet("/modules/dotnet-sidecar/ping", () => Results.Text("dotnet sidecar pong"));
+        endpoints.MapGet("/modules/dotnet-sidecar/ping", () => Results.Text("dotnet sidecar pong"))
+            .AllowAnonymous();
     }
 
     public async Task<string> ExecuteToolAsync(

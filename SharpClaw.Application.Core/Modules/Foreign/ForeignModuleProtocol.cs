@@ -86,6 +86,11 @@ public static class ForeignModuleHostCapabilityProtocol
     public const string JobCompletePath = "/.sharpclaw/host/job/complete";
     public const string JobFailPath = "/.sharpclaw/host/job/fail";
     public const string JobCancelPath = "/.sharpclaw/host/job/cancel";
+    public const string JobCancelStaleByActionPrefixPath = "/.sharpclaw/host/job/cancel-stale-by-action-prefix";
+    public const string JobGetPath = "/.sharpclaw/host/job/get";
+    public const string JobListByActionPrefixPath = "/.sharpclaw/host/job/list-by-action-prefix";
+    public const string JobListSummariesByActionPrefixPath = "/.sharpclaw/host/job/list-summaries-by-action-prefix";
+    public const string JobExistsWithActionPrefixPath = "/.sharpclaw/host/job/exists-with-action-prefix";
     public const string ProtocolContractsListPath = "/.sharpclaw/host/contracts/list";
     public const string ProtocolContractInvokePath = "/.sharpclaw/host/contracts/invoke";
     public const string TaskValidatePath = "/.sharpclaw/host/tasks/validate";
@@ -126,6 +131,8 @@ public static class ForeignModuleHostCapabilityProtocol
     public const string ChannelSetHeaderPath = "/.sharpclaw/host/channels/set-header";
     public const string ModelEnsureProviderPath = "/.sharpclaw/host/models/ensure-provider";
     public const string ModelEnsureModelPath = "/.sharpclaw/host/models/ensure-model";
+    public const string ModelProviderInfoPath = "/.sharpclaw/host/models/provider-info";
+    public const string ModelLocalFilePathPath = "/.sharpclaw/host/models/local-file-path";
     public const string ModelMetadataPath = "/.sharpclaw/host/models/metadata";
     public const string ModelDeletePath = "/.sharpclaw/host/models/delete";
     public const string ModulesExternalRootPath = "/.sharpclaw/host/modules/external-root";
