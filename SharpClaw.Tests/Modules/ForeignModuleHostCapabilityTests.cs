@@ -447,6 +447,31 @@ public sealed class ForeignModuleHostCapabilityTests
     }
 
     [Test]
+    public async Task HostCapabilityServerRejectsModuleStorageRequestsForOtherModules()
+    {
+        await using var services = new ServiceCollection()
+            .AddSingleton<IModuleStorageGateway>(new RecordingModuleStorageGateway())
+            .BuildServiceProvider();
+        await using var server = ForeignModuleHostCapabilityServer.Start("sample_module", services);
+        using var client = CreateClient(server);
+
+        using var response = await client.PostAsJsonAsync(
+            ForeignModuleHostCapabilityProtocol.ModuleStorageInvokePath,
+            new
+            {
+                moduleId = "other_module",
+                storageName = "records",
+                operation = "get",
+                parameters = new
+                {
+                    id = "sample",
+                },
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
     public async Task HostCapabilityServerForwardsModelRegistrarCapabilities()
     {
         var registrar = new RecordingModelRegistrar();

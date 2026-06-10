@@ -4,64 +4,43 @@ using SharpClaw.Modules.AgentOrchestration.Models;
 
 namespace SharpClaw.Modules.AgentOrchestration.Services;
 
-public sealed class SkillStore(IModuleConfigStore configStore)
+public sealed class SkillStore
 {
-    private const string StoreKey = "skills.v1";
+    private const string StorageName = "skills";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
     };
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ModuleDocumentStore<SkillDB> _store;
+
+    public SkillStore(IModuleStorageGateway storageGateway)
+    {
+        _store = new ModuleDocumentStore<SkillDB>(
+            storageGateway,
+            AgentOrchestrationModule.ModuleIdValue,
+            StorageName,
+            JsonOptions);
+    }
 
     public async Task<SkillDB> CreateAsync(SkillDB skill, CancellationToken ct = default)
     {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var skills = await LoadUnlockedAsync(ct);
-            var now = DateTimeOffset.UtcNow;
-            if (skill.Id == Guid.Empty)
-                skill.Id = Guid.NewGuid();
-            if (skill.CreatedAt == default)
-                skill.CreatedAt = now;
-            skill.UpdatedAt = now;
-            skills.Add(skill);
-            await SaveUnlockedAsync(skills, ct);
-            return skill;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        var now = DateTimeOffset.UtcNow;
+        if (skill.Id == Guid.Empty)
+            skill.Id = Guid.NewGuid();
+        if (skill.CreatedAt == default)
+            skill.CreatedAt = now;
+        skill.UpdatedAt = now;
+        await SaveAsync(skill, ct);
+        return skill;
     }
 
-    public async Task<SkillDB?> GetByIdAsync(Guid id, CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            return (await LoadUnlockedAsync(ct)).FirstOrDefault(skill => skill.Id == id);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<SkillDB?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        _store.GetAsync(Key(id), ct);
 
-    public async Task<IReadOnlyList<SkillDB>> ListAsync(CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            return [.. await LoadUnlockedAsync(ct)];
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public async Task<IReadOnlyList<SkillDB>> ListAsync(CancellationToken ct = default) =>
+        [.. (await _store.ListAsync(ct)).OrderBy(skill => skill.Name, StringComparer.Ordinal)];
 
     public async Task<SkillDB?> UpdateAsync(
         Guid id,
@@ -70,54 +49,25 @@ public sealed class SkillStore(IModuleConfigStore configStore)
     {
         ArgumentNullException.ThrowIfNull(update);
 
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var skills = await LoadUnlockedAsync(ct);
-            var skill = skills.FirstOrDefault(candidate => candidate.Id == id);
-            if (skill is null)
-                return null;
+        var skill = await GetByIdAsync(id, ct);
+        if (skill is null)
+            return null;
 
-            update(skill);
-            skill.UpdatedAt = DateTimeOffset.UtcNow;
-            await SaveUnlockedAsync(skills, ct);
-            return skill;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        update(skill);
+        skill.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(skill, ct);
+        return skill;
     }
 
-    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var skills = await LoadUnlockedAsync(ct);
-            var removed = skills.RemoveAll(skill => skill.Id == id) > 0;
-            if (removed)
-                await SaveUnlockedAsync(skills, ct);
-            return removed;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<bool> DeleteAsync(Guid id, CancellationToken ct = default) =>
+        _store.DeleteAsync(Key(id), ct);
 
-    private async Task<List<SkillDB>> LoadUnlockedAsync(CancellationToken ct)
-    {
-        var json = await configStore.GetAsync(StoreKey, ct);
-        if (string.IsNullOrWhiteSpace(json))
-            return [];
+    private Task SaveAsync(SkillDB skill, CancellationToken ct) =>
+        _store.UpsertAsync(
+            Key(skill.Id),
+            skill,
+            new { name = skill.Name },
+            ct);
 
-        return JsonSerializer.Deserialize<List<SkillDB>>(json, JsonOptions) ?? [];
-    }
-
-    private async Task SaveUnlockedAsync(List<SkillDB> skills, CancellationToken ct)
-    {
-        var json = JsonSerializer.Serialize(skills, JsonOptions);
-        await configStore.SetAsync(StoreKey, json, ct);
-    }
+    private static string Key(Guid id) => id.ToString("N");
 }

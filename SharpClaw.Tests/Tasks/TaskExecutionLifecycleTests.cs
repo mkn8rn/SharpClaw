@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Application.API;
 using SharpClaw.Application.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
@@ -447,14 +448,17 @@ internal sealed class ScheduledJobHost : IAsyncDisposable
     public static ScheduledJobHost Create(IReadOnlyDictionary<string, string?>? settings = null)
     {
         var services = new ServiceCollection();
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseName = "SharpClawScheduledJobs_" + Guid.NewGuid().ToString("N");
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(settings ?? new Dictionary<string, string?>())
             .Build();
 
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
-        services.AddSingleton<IModuleConfigStore, InMemoryModuleConfigStore>();
-        services.AddSingleton<ScheduledJobStore>();
+        services.AddDbContext<SharpClawDbContext>(options => options.UseInMemoryDatabase(databaseName, databaseRoot));
+        services.AddScoped<IModuleStorageGateway, BundledModuleStorageGateway>();
+        services.AddScoped<ScheduledJobStore>();
         services.AddSingleton<RecordingTaskInstanceLauncher>();
         services.AddSingleton<ITaskInstanceLauncher>(sp => sp.GetRequiredService<RecordingTaskInstanceLauncher>());
         services.AddSingleton<ScheduledJobWorker>();
@@ -474,37 +478,6 @@ internal sealed class ScheduledJobHost : IAsyncDisposable
         await _scope.DisposeAsync();
         await _root.DisposeAsync();
     }
-}
-
-internal sealed class InMemoryModuleConfigStore : IModuleConfigStore
-{
-    private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
-
-    public Task<string?> GetAsync(string key, CancellationToken ct = default) =>
-        Task.FromResult(_values.GetValueOrDefault(key));
-
-    public Task<T?> GetAsync<T>(string key, CancellationToken ct = default)
-        where T : IParsable<T>
-    {
-        return Task.FromResult(
-            _values.TryGetValue(key, out var value)
-            && T.TryParse(value, null, out var parsed)
-                ? parsed
-                : default);
-    }
-
-    public Task SetAsync(string key, string? value, CancellationToken ct = default)
-    {
-        if (value is null)
-            _values.Remove(key);
-        else
-            _values[key] = value;
-        return Task.CompletedTask;
-    }
-
-    public Task<IReadOnlyDictionary<string, string>> GetAllAsync(CancellationToken ct = default) =>
-        Task.FromResult<IReadOnlyDictionary<string, string>>(
-            new Dictionary<string, string>(_values, StringComparer.Ordinal));
 }
 
 internal sealed class RecordingTaskInstanceLauncher : ITaskInstanceLauncher

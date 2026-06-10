@@ -5,36 +5,42 @@ using SharpClaw.Providers.LocalCommon;
 
 namespace SharpClaw.Modules.Providers.LlamaSharp.Services;
 
-public sealed class LocalModelStore(IModuleConfigStore configStore)
+public sealed class LocalModelStore
 {
-    private const string StoreKey = "local_models.v1";
+    private const string ModuleId = "sharpclaw_providers_llamasharp";
+    private const string StorageName = "local_models";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
     };
 
+    private readonly ModuleDocumentStore<LocalModelFileRecord> _store;
+
+    public LocalModelStore(IModuleStorageGateway storageGateway)
+    {
+        _store = new ModuleDocumentStore<LocalModelFileRecord>(
+            storageGateway,
+            ModuleId,
+            StorageName,
+            JsonOptions);
+    }
+
     public async Task<LocalModelFileRecord?> GetByModelIdAsync(
         Guid modelId,
-        CancellationToken ct = default)
-    {
-        var records = await LoadAsync(ct);
-        return records.FirstOrDefault(record => record.ModelId == modelId);
-    }
+        CancellationToken ct = default) =>
+        (await RecordsByModelIdAsync(modelId, ct)).FirstOrDefault();
 
     public async Task<LocalModelFileRecord?> GetReadyByModelIdAsync(
         Guid modelId,
-        CancellationToken ct = default)
-    {
-        var records = await LoadAsync(ct);
-        return records
-            .Where(record => record.ModelId == modelId && record.Status == LocalModelStatus.Ready)
+        CancellationToken ct = default) =>
+        (await RecordsByModelIdAsync(modelId, ct))
+            .Where(record => record.Status == LocalModelStatus.Ready)
             .OrderByDescending(record => record.UpdatedAt)
             .FirstOrDefault();
-    }
 
     public async Task<IReadOnlyList<LocalModelFileRecord>> ListAsync(CancellationToken ct = default) =>
-        [.. (await LoadAsync(ct)).OrderBy(record => record.SourceUrl, StringComparer.Ordinal)];
+        [.. (await _store.ListAsync(ct)).OrderBy(record => record.SourceUrl, StringComparer.Ordinal)];
 
     public async Task<(Guid ModelId, Guid FileId)> CreateOrReuseDownloadPlaceholderAsync(
         Guid modelId,
@@ -43,9 +49,9 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
         string destinationPath,
         CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
+        var records = await RecordsByModelIdAsync(modelId, ct);
         var now = DateTimeOffset.UtcNow;
-        var existing = records.FirstOrDefault(record => record.ModelId == modelId);
+        var existing = records.FirstOrDefault();
         if (existing is null)
         {
             existing = new LocalModelFileRecord(
@@ -62,7 +68,6 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
                 MmprojPath: null,
                 CreatedAt: now,
                 UpdatedAt: now);
-            records.Add(existing);
         }
         else if (existing.Status == LocalModelStatus.Downloading)
         {
@@ -81,26 +86,23 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
                 DownloadProgress = 0.0,
                 UpdatedAt = now,
             };
-            Replace(records, existing);
         }
 
-        await SaveAsync(records, ct);
+        await SaveAsync(existing, ct);
         return (modelId, existing.Id);
     }
 
     public async Task MarkDownloadFailedAsync(Guid fileId, CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
-        var record = records.FirstOrDefault(candidate => candidate.Id == fileId);
+        var record = await GetByFileIdAsync(fileId, ct);
         if (record is null)
             return;
 
-        Replace(records, record with
+        await SaveAsync(record with
         {
             Status = LocalModelStatus.Failed,
             UpdatedAt = DateTimeOffset.UtcNow,
-        });
-        await SaveAsync(records, ct);
+        }, ct);
     }
 
     public async Task UpdateDownloadProgressAsync(
@@ -108,17 +110,15 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
         double progress,
         CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
-        var record = records.FirstOrDefault(candidate => candidate.Id == fileId);
+        var record = await GetByFileIdAsync(fileId, ct);
         if (record is null)
             return;
 
-        Replace(records, record with
+        await SaveAsync(record with
         {
             DownloadProgress = Math.Clamp(progress, 0.0, 1.0),
             UpdatedAt = DateTimeOffset.UtcNow,
-        });
-        await SaveAsync(records, ct);
+        }, ct);
     }
 
     public async Task<LocalModelFileRecord> FinaliseDownloadAsync(
@@ -128,8 +128,7 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
         long fileSizeBytes,
         CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
-        var record = records.FirstOrDefault(candidate => candidate.Id == fileId)
+        var record = await GetByFileIdAsync(fileId, ct)
             ?? throw new InvalidOperationException($"Local model file '{fileId}' was not found.");
 
         record = record with
@@ -141,8 +140,7 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
             DownloadProgress = 1.0,
             UpdatedAt = DateTimeOffset.UtcNow,
         };
-        Replace(records, record);
-        await SaveAsync(records, ct);
+        await SaveAsync(record, ct);
         return record;
     }
 
@@ -151,50 +149,48 @@ public sealed class LocalModelStore(IModuleConfigStore configStore)
         string? mmprojPath,
         CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
-        var record = records.FirstOrDefault(candidate => candidate.ModelId == modelId)
+        var record = await GetByModelIdAsync(modelId, ct)
             ?? throw new ArgumentException("No local file found for this model.");
 
-        Replace(records, record with
+        await SaveAsync(record with
         {
             MmprojPath = mmprojPath,
             UpdatedAt = DateTimeOffset.UtcNow,
-        });
-        await SaveAsync(records, ct);
+        }, ct);
     }
 
     public async Task<bool> DeleteByModelIdAsync(Guid modelId, CancellationToken ct = default)
     {
-        var records = await LoadAsync(ct);
-        var removed = records.RemoveAll(record => record.ModelId == modelId) > 0;
-        if (removed)
-            await SaveAsync(records, ct);
-        return removed;
+        var records = await RecordsByModelIdAsync(modelId, ct);
+        var deleted = false;
+        foreach (var record in records)
+            deleted |= await _store.DeleteAsync(Key(record.Id), ct);
+
+        return deleted;
     }
 
-    private async Task<List<LocalModelFileRecord>> LoadAsync(CancellationToken ct)
-    {
-        var json = await configStore.GetAsync(StoreKey, ct);
-        if (string.IsNullOrWhiteSpace(json))
-            return [];
+    private async Task<IReadOnlyList<LocalModelFileRecord>> RecordsByModelIdAsync(
+        Guid modelId,
+        CancellationToken ct) =>
+        await _store.QueryAsync("modelId", equals: modelId.ToString("N"), ct: ct);
 
-        return JsonSerializer.Deserialize<List<LocalModelFileRecord>>(json, JsonOptions) ?? [];
-    }
+    private Task<LocalModelFileRecord?> GetByFileIdAsync(Guid fileId, CancellationToken ct) =>
+        _store.GetAsync(Key(fileId), ct);
 
-    private async Task SaveAsync(List<LocalModelFileRecord> records, CancellationToken ct)
-    {
-        var json = JsonSerializer.Serialize(records, JsonOptions);
-        await configStore.SetAsync(StoreKey, json, ct);
-    }
+    private Task SaveAsync(LocalModelFileRecord record, CancellationToken ct) =>
+        _store.UpsertAsync(
+            Key(record.Id),
+            record,
+            new
+            {
+                modelId = record.ModelId.ToString("N"),
+                status = record.Status.ToString(),
+                sourceUrl = record.SourceUrl,
+                updatedAt = record.UpdatedAt,
+            },
+            ct);
 
-    private static void Replace(List<LocalModelFileRecord> records, LocalModelFileRecord record)
-    {
-        var index = records.FindIndex(candidate => candidate.Id == record.Id);
-        if (index < 0)
-            records.Add(record);
-        else
-            records[index] = record;
-    }
+    private static string Key(Guid id) => id.ToString("N");
 }
 
 public sealed record LocalModelFileRecord(

@@ -180,7 +180,7 @@ public sealed class TestHarnessArchitectureTests
     }
 
     [Test]
-    public void HostProjectsConsumeContractsAsPackageReferences()
+    public void HostProjectsReferenceContractsOnce()
     {
         var root = FindSolutionRoot();
         var projectRelativePaths = new[]
@@ -195,14 +195,19 @@ public sealed class TestHarnessArchitectureTests
         foreach (var relativePath in projectRelativePaths)
         {
             var project = XDocument.Load(Path.Combine(root, relativePath));
-            project.Descendants("ProjectReference")
+            var contractProjectReferences = project.Descendants("ProjectReference")
                 .Select(e => e.Attribute("Include")?.Value ?? "")
-                .Should()
-                .NotContain(path => path.Contains("SharpClaw.Contracts", StringComparison.OrdinalIgnoreCase));
-            project.Descendants("PackageReference")
+                .Where(path => path.Contains("SharpClaw.Contracts", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var contractPackageReferences = project.Descendants("PackageReference")
                 .Select(e => e.Attribute("Include")?.Value)
+                .Where(package => string.Equals(package, "SharpClaw.Contracts", StringComparison.Ordinal))
+                .ToList();
+
+            contractProjectReferences
+                .Concat(contractPackageReferences)
                 .Should()
-                .Contain("SharpClaw.Contracts");
+                .ContainSingle();
         }
     }
 

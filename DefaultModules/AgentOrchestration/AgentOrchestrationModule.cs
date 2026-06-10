@@ -35,8 +35,8 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton<ScheduledJobStore>();
-        services.AddSingleton<SkillStore>();
+        services.AddScoped<ScheduledJobStore>();
+        services.AddScoped<SkillStore>();
         services.TryAddScoped<AgentOrchestrationService>();
         services.AddScoped<ITaskStepExecutorExtension, AgentOrchestrationTaskStepExecutor>();
 

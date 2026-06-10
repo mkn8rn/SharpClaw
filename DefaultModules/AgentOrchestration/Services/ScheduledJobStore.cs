@@ -5,82 +5,58 @@ using SharpClaw.Modules.AgentOrchestration.ScheduledJobs;
 
 namespace SharpClaw.Modules.AgentOrchestration.Services;
 
-public sealed class ScheduledJobStore(IModuleConfigStore configStore)
+public sealed class ScheduledJobStore
 {
-    private const string StoreKey = "scheduled_jobs.v1";
+    private const string StorageName = "scheduled_jobs";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
     };
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ModuleDocumentStore<ScheduledJobDB> _store;
+
+    public ScheduledJobStore(IModuleStorageGateway storageGateway)
+    {
+        _store = new ModuleDocumentStore<ScheduledJobDB>(
+            storageGateway,
+            AgentOrchestrationModule.ModuleIdValue,
+            StorageName,
+            JsonOptions);
+    }
 
     public async Task<ScheduledJobDB> CreateAsync(
         ScheduledJobDB job,
         CancellationToken ct = default)
     {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var jobs = await LoadUnlockedAsync(ct);
-            var now = DateTimeOffset.UtcNow;
-            if (job.Id == Guid.Empty)
-                job.Id = Guid.NewGuid();
-            if (job.CreatedAt == default)
-                job.CreatedAt = now;
-            job.UpdatedAt = now;
-            jobs.Add(job);
-            await SaveUnlockedAsync(jobs, ct);
-            return job;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        var now = DateTimeOffset.UtcNow;
+        if (job.Id == Guid.Empty)
+            job.Id = Guid.NewGuid();
+        if (job.CreatedAt == default)
+            job.CreatedAt = now;
+        job.UpdatedAt = now;
+        await SaveAsync(job, ct);
+        return job;
     }
 
-    public async Task<ScheduledJobDB?> GetByIdAsync(Guid id, CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            return (await LoadUnlockedAsync(ct)).FirstOrDefault(job => job.Id == id);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<ScheduledJobDB?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        _store.GetAsync(Key(id), ct);
 
-    public async Task<IReadOnlyList<ScheduledJobDB>> ListAsync(CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            return [.. await LoadUnlockedAsync(ct)];
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public async Task<IReadOnlyList<ScheduledJobDB>> ListAsync(CancellationToken ct = default) =>
+        [.. (await _store.ListAsync(ct)).OrderBy(job => job.Name, StringComparer.Ordinal)];
 
     public async Task<IReadOnlyList<ScheduledJobDB>> ListDueAsync(
         DateTimeOffset now,
         CancellationToken ct = default)
     {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            return [.. (await LoadUnlockedAsync(ct))
-                .Where(job => job.Status == ScheduledTaskStatus.Pending && job.NextRunAt <= now)
-                .OrderBy(job => job.NextRunAt)];
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        var due = await _store.QueryAsync(
+            "nextRunAt",
+            lessThanOrEqual: now,
+            order: "asc",
+            ct: ct);
+        return [.. due
+            .Where(job => job.Status == ScheduledTaskStatus.Pending && job.NextRunAt <= now)
+            .OrderBy(job => job.NextRunAt)];
     }
 
     public async Task<ScheduledJobDB?> UpdateAsync(
@@ -90,54 +66,30 @@ public sealed class ScheduledJobStore(IModuleConfigStore configStore)
     {
         ArgumentNullException.ThrowIfNull(update);
 
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var jobs = await LoadUnlockedAsync(ct);
-            var job = jobs.FirstOrDefault(candidate => candidate.Id == id);
-            if (job is null)
-                return null;
+        var job = await GetByIdAsync(id, ct);
+        if (job is null)
+            return null;
 
-            update(job);
-            job.UpdatedAt = DateTimeOffset.UtcNow;
-            await SaveUnlockedAsync(jobs, ct);
-            return job;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        update(job);
+        job.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(job, ct);
+        return job;
     }
 
-    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
-    {
-        await _gate.WaitAsync(ct);
-        try
-        {
-            var jobs = await LoadUnlockedAsync(ct);
-            var removed = jobs.RemoveAll(job => job.Id == id) > 0;
-            if (removed)
-                await SaveUnlockedAsync(jobs, ct);
-            return removed;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<bool> DeleteAsync(Guid id, CancellationToken ct = default) =>
+        _store.DeleteAsync(Key(id), ct);
 
-    private async Task<List<ScheduledJobDB>> LoadUnlockedAsync(CancellationToken ct)
-    {
-        var json = await configStore.GetAsync(StoreKey, ct);
-        if (string.IsNullOrWhiteSpace(json))
-            return [];
+    private Task SaveAsync(ScheduledJobDB job, CancellationToken ct) =>
+        _store.UpsertAsync(
+            Key(job.Id),
+            job,
+            new
+            {
+                name = job.Name,
+                status = job.Status.ToString(),
+                nextRunAt = job.NextRunAt,
+            },
+            ct);
 
-        return JsonSerializer.Deserialize<List<ScheduledJobDB>>(json, JsonOptions) ?? [];
-    }
-
-    private async Task SaveUnlockedAsync(List<ScheduledJobDB> jobs, CancellationToken ct)
-    {
-        var json = JsonSerializer.Serialize(jobs, JsonOptions);
-        await configStore.SetAsync(StoreKey, json, ct);
-    }
+    private static string Key(Guid id) => id.ToString("N");
 }

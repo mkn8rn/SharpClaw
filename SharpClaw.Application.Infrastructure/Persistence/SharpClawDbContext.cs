@@ -67,6 +67,8 @@ public class SharpClawDbContext(
     // ── Module state & config ─────────────────────────────────────
     public DbSet<ModuleStateDB> ModuleStates => Set<ModuleStateDB>();
     public DbSet<ModuleConfigEntryDB> ModuleConfigEntries => Set<ModuleConfigEntryDB>();
+    public DbSet<ModuleStorageRecordDB> ModuleStorageRecords => Set<ModuleStorageRecordDB>();
+    public DbSet<ModuleStorageIndexEntryDB> ModuleStorageIndexEntries => Set<ModuleStorageIndexEntryDB>();
 
     // ── Task scripts ──────────────────────────────────────────────
     public DbSet<TaskDefinitionDB> TaskDefinitions => Set<TaskDefinitionDB>();
@@ -363,6 +365,30 @@ public class SharpClawDbContext(
             e.Property(c => c.ModuleId).HasMaxLength(128);
             e.Property(c => c.Key).HasMaxLength(128);
             e.Property(c => c.Value).HasMaxLength(4096);
+        });
+
+        modelBuilder.Entity<ModuleStorageRecordDB>(e =>
+        {
+            e.ToTable("ModuleStorageRecords");
+            e.HasIndex(r => new { r.ModuleId, r.StorageName, r.RecordKey }).IsUnique();
+            e.Property(r => r.ModuleId).HasMaxLength(128);
+            e.Property(r => r.StorageName).HasMaxLength(128);
+            e.Property(r => r.RecordKey).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<ModuleStorageIndexEntryDB>(e =>
+        {
+            e.ToTable("ModuleStorageIndexes");
+            e.HasIndex(i => new { i.ModuleId, i.StorageName, i.IndexName, i.StringValue, i.RecordKey });
+            e.HasIndex(i => new { i.ModuleId, i.StorageName, i.IndexName, i.NumberValue, i.RecordKey });
+            e.HasIndex(i => new { i.ModuleId, i.StorageName, i.IndexName, i.DateTimeValue, i.RecordKey });
+            e.HasIndex(i => new { i.ModuleId, i.StorageName, i.IndexName, i.BoolValue, i.RecordKey });
+            e.HasIndex(i => new { i.ModuleId, i.StorageName, i.RecordKey });
+            e.Property(i => i.ModuleId).HasMaxLength(128);
+            e.Property(i => i.StorageName).HasMaxLength(128);
+            e.Property(i => i.IndexName).HasMaxLength(128);
+            e.Property(i => i.RecordKey).HasMaxLength(256);
+            e.Property(i => i.StringValue).HasMaxLength(1024);
         });
 
         // ── Default resource entries ──────────────────────────────

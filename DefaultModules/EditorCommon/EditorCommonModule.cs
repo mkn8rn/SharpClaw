@@ -37,7 +37,7 @@ public sealed class EditorCommonModule : ISharpClawModule, IForeignModuleProtoco
 
     public void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton<EditorSessionStore>();
+        services.AddScoped<EditorSessionStore>();
         services.AddSingleton<EditorBridgeService>();
         services.AddScoped<EditorSessionService>();
         services.AddScoped<IForeignModuleProtocolContractInvoker, EditorBridgeProtocolContractInvoker>();

@@ -1095,9 +1095,15 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
         ForeignModuleStorageInvokeRequest request,
         CancellationToken ct)
     {
-        var moduleId = string.IsNullOrWhiteSpace(request.ModuleId)
-            ? _moduleId
-            : request.ModuleId;
+        if (!string.IsNullOrWhiteSpace(request.ModuleId)
+            && !string.Equals(request.ModuleId, _moduleId, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Module storage access is restricted to module '{_moduleId}'.",
+                nameof(request));
+        }
+
+        var moduleId = _moduleId;
         if (string.IsNullOrWhiteSpace(request.StorageName))
             throw new ArgumentException("Storage name is required.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.Operation))
