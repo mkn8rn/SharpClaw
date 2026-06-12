@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Tasks;
@@ -30,6 +31,7 @@ public sealed class ModuleDevModule : ISharpClawModule
         services.AddScoped<ModuleWorkspaceService>();
         services.AddScoped<ModuleBuildService>();
         services.AddScoped<ModuleScaffoldService>();
+        services.AddSingleton<SharpClawSdkReferenceService>();
         services.AddScoped<DevEnvironmentService>();
         services.AddSingleton<ProcessInspectionService>();
         services.AddSingleton<ComTypeLibInspector>();
@@ -66,6 +68,9 @@ public sealed class ModuleDevModule : ISharpClawModule
         new("CanTestModuleTools",  "Test Module Tools",   "Invoke tools from loaded modules for testing.",                "TestModuleToolAsync"),
         new("CanInspectProcesses", "Inspect Processes",   "Enumerate loaded DLLs, exports, COM type libraries of live processes.", "InspectProcessAsync"),
         new("CanManageTasks",      "Manage Agent Tasks",  "Detect, list, view, create, update, and delete SharpClaw task definitions.", "ManageTaskAsync"),
+        new("CanUseSdkReference",  "Use SDK Reference",   "Read SharpClaw SDK and sidecar development reference material.", "UseSdkReferenceAsync"),
+        new("CanRunAgentWorkflow", "Run Agent Workflow",  "Apply module or task source, verify it, hot-load when requested, and steer the next conversation turn.", "RunAgentWorkflowAsync"),
+        new("CanSteerConversation","Steer Conversation",  "Persist host-owned system steering messages into a channel or thread.", "SteerConversationAsync"),
     ];
 
     // ═══════════════════════════════════════════════════════════════
@@ -256,6 +261,9 @@ public sealed class ModuleDevModule : ISharpClawModule
         var test     = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "TestModuleToolAsync");
         var inspect  = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "InspectProcessAsync");
         var task     = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "ManageTaskAsync");
+        var sdk      = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "UseSdkReferenceAsync");
+        var workflow = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "RunAgentWorkflowAsync");
+        var steer    = new ModuleToolPermission(IsPerResource: false, Check: null, DelegateTo: "SteerConversationAsync");
 
         return
         [
@@ -303,6 +311,22 @@ public sealed class ModuleDevModule : ISharpClawModule
                 "Report the development environment: installed SDKs, runtimes, global tools, contracts version, loaded modules, available contracts.",
                 BuildEmptySchema(), scaffold),
 
+            new("get_sdk_reference",
+                "Return SharpClaw SDK reference material for AI agents, including .NET, JavaScript, Python, storage, task, manifest, and conversation steering examples.",
+                BuildSdkReferenceSchema(), sdk),
+
+            new("apply_module_files",
+                "Write a batch of module files, build .NET modules when appropriate, hot-load the module, optionally invoke test tools, and persist conversation steering for the next turn.",
+                BuildApplyModuleFilesSchema(), workflow, TimeoutSeconds: 180),
+
+            new("record_conversation_steering",
+                "Persist a host-owned system steering message into a channel or thread so the next chat turn sees the feedback.",
+                BuildRecordConversationSteeringSchema(), steer),
+
+            new("list_conversation_steering",
+                "List recent conversation steering messages for a channel or thread.",
+                BuildListConversationSteeringSchema(), steer),
+
             // ── Task management ──────────────────────────────────
             new("list_tasks",
                 "Detect and list every SharpClaw task definition (id, name, description, active flag, parameters, requirements, triggers).",
@@ -327,6 +351,10 @@ public sealed class ModuleDevModule : ISharpClawModule
             new("delete_task",
                 "Delete a task definition by id. Removes its trigger bindings as well.",
                 BuildTaskIdOnlySchema(), task),
+
+            new("apply_task_source",
+                "Validate raw task C# source, create or update the task only when valid, and persist conversation steering with diagnostics or save details.",
+                BuildApplyTaskSourceSchema(), workflow),
         ];
     }
 
@@ -366,12 +394,17 @@ public sealed class ModuleDevModule : ISharpClawModule
             "inspect_process"           => await InspectProcessAsync(parameters, sp, ct),
             "discover_com_interfaces"   => await DiscoverComInterfacesAsync(parameters, sp, ct),
             "enumerate_dev_environment" => await EnumerateDevEnvironmentAsync(sp, ct),
+            "get_sdk_reference"          => GetSdkReference(parameters, sp),
+            "apply_module_files"         => await ApplyModuleFilesAsync(parameters, job, sp, ct),
+            "record_conversation_steering" => await RecordConversationSteeringAsync(parameters, job, sp, ct),
+            "list_conversation_steering" => await ListConversationSteeringAsync(parameters, job, sp, ct),
             "list_tasks"                => await ListTasksAsync(sp, ct),
             "get_task"                  => await GetTaskAsync(parameters, sp, ct),
             "validate_task"             => ValidateTask(parameters, sp),
             "create_task"               => await CreateTaskAsync(parameters, sp, ct),
             "update_task"               => await UpdateTaskAsync(parameters, sp, ct),
             "delete_task"               => await DeleteTaskAsync(parameters, sp, ct),
+            "apply_task_source"          => await ApplyTaskSourceAsync(parameters, job, sp, ct),
             _ => throw new NotSupportedException($"Unknown MDK tool: {toolName}"),
         };
     }
@@ -386,7 +419,7 @@ public sealed class ModuleDevModule : ISharpClawModule
     {
         return toolName switch
         {
-            "describe_module_system" => Task.FromResult(DescribeModuleSystem()),
+            "describe_module_system" => Task.FromResult(DescribeModuleSystem(sp)),
             "list_loaded_modules"    => Task.FromResult(ListLoadedModules(sp)),
             _ => throw new NotSupportedException($"Unknown MDK inline tool: {toolName}"),
         };
@@ -565,6 +598,236 @@ public sealed class ModuleDevModule : ISharpClawModule
         return devEnv.ToJson(info);
     }
 
+    private static string GetSdkReference(JsonElement p, IServiceProvider sp)
+    {
+        var topic = Str(p, "topic") ?? "agent_workflow";
+        return sp.GetRequiredService<SharpClawSdkReferenceService>().GetReference(topic);
+    }
+
+    private static async Task<string> RecordConversationSteeringAsync(
+        JsonElement p,
+        AgentJobContext job,
+        IServiceProvider sp,
+        CancellationToken ct)
+    {
+        var target = ReadSteeringTarget(p, job);
+        var summary = Str(p, "summary") ?? throw new InvalidOperationException("summary is required.");
+        var category = Str(p, "category") ?? "manual";
+        var details = Str(p, "details");
+        var response = await AddSteeringAsync(sp, target, category, summary, details, ct);
+        return JsonSerializer.Serialize(response, ToolJsonOpts);
+    }
+
+    private static async Task<string> ListConversationSteeringAsync(
+        JsonElement p,
+        AgentJobContext job,
+        IServiceProvider sp,
+        CancellationToken ct)
+    {
+        var target = ReadSteeringTarget(p, job);
+        var limit = Int(p, "limit") ?? 20;
+        var rows = await ResolveConversationSteering(sp)
+            .ListAsync(target.ChannelId, target.ThreadId, limit, ct);
+        return JsonSerializer.Serialize(rows, ToolJsonOpts);
+    }
+
+    private static async Task<string> ApplyModuleFilesAsync(
+        JsonElement p,
+        AgentJobContext job,
+        IServiceProvider sp,
+        CancellationToken ct)
+    {
+        var target = ReadWorkflowSteeringTarget(p, job);
+        var workspace = sp.GetRequiredService<ModuleWorkspaceService>();
+        var build = sp.GetRequiredService<ModuleBuildService>();
+        var lifecycle = sp.GetRequiredService<IModuleLifecycleManager>();
+        var moduleId = Str(p, "module_id") ?? throw new InvalidOperationException("module_id is required.");
+        var configuration = Str(p, "configuration") ?? "Debug";
+        var written = new List<object>();
+
+        try
+        {
+            if (!p.TryGetProperty("files", out var filesEl) || filesEl.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("files is required and must be an array.");
+
+            foreach (var file in filesEl.EnumerateArray())
+            {
+                var relativePath = Str(file, "relative_path")
+                    ?? throw new InvalidOperationException("files[].relative_path is required.");
+                var content = Str(file, "content")
+                    ?? throw new InvalidOperationException($"content is required for '{relativePath}'.");
+                var write = await workspace.WriteFileAsync(moduleId, relativePath, content, ct);
+                written.Add(new
+                {
+                    relative_path = relativePath,
+                    path = write.Path,
+                    bytes_written = write.BytesWritten,
+                });
+            }
+
+            var moduleDir = workspace.ResolveModuleDir(moduleId);
+            var runtime = DetectRuntime(moduleDir, p);
+            var buildRequested = Bool(p, "build") ?? runtime == ModuleScaffoldService.DotNetRuntime;
+            ModuleBuildService.BuildResult? buildResult = null;
+
+            if (buildRequested)
+            {
+                buildResult = await build.BuildAsync(moduleId, configuration, ct);
+                if (!buildResult.Success)
+                {
+                    var steering = await AddSteeringAsync(
+                        sp,
+                        target,
+                        "module_build",
+                        $"Module '{moduleId}' build failed.",
+                        FormatBuildDiagnostics(buildResult),
+                        ct);
+                    return JsonSerializer.Serialize(new
+                    {
+                        success = false,
+                        module_id = moduleId,
+                        runtime,
+                        files = written,
+                        build = buildResult,
+                        steering,
+                    }, ToolJsonOpts);
+                }
+            }
+
+            ModuleStateResponse? state = null;
+            if (Bool(p, "load") ?? true)
+            {
+                state = lifecycle.IsModuleRegistered(moduleId)
+                    ? await lifecycle.ReloadExternalAsync(moduleId, sp, ct)
+                    : await lifecycle.LoadExternalAsync(moduleDir, sp, ct);
+            }
+
+            var testResults = await RunWorkflowToolTestsAsync(p, lifecycle, sp, job, ct);
+            var workflowSuccess = testResults.All(test => test.Success);
+            var steeringResponse = await AddSteeringAsync(
+                sp,
+                target,
+                "module_workflow",
+                BuildModuleWorkflowSummary(moduleId, runtime, buildResult, state, testResults),
+                BuildModuleWorkflowDetails(moduleId, written, buildResult, state, testResults),
+                ct);
+
+            return JsonSerializer.Serialize(new
+            {
+                success = workflowSuccess,
+                module_id = moduleId,
+                runtime,
+                files = written,
+                build = buildResult,
+                load = state,
+                tests = testResults,
+                steering = steeringResponse,
+            }, ToolJsonOpts);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var steering = await AddSteeringAsync(
+                sp,
+                target,
+                "module_workflow_error",
+                $"Module '{moduleId}' workflow failed before completion.",
+                TruncateForSteering(ex.ToString()),
+                ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                module_id = moduleId,
+                files = written,
+                error = ex.Message,
+                steering,
+            }, ToolJsonOpts);
+        }
+    }
+
+    private static async Task<string> ApplyTaskSourceAsync(
+        JsonElement p,
+        AgentJobContext job,
+        IServiceProvider sp,
+        CancellationToken ct)
+    {
+        var target = ReadWorkflowSteeringTarget(p, job);
+        var authoring = ResolveTaskAuthoring(sp);
+        var source = Str(p, "source_text") ?? throw new InvalidOperationException("source_text is required.");
+        var taskId = TryParseGuid(Str(p, "task_id"));
+
+        try
+        {
+            var validation = authoring.ValidateDefinition(source);
+            if (!validation.IsValid)
+            {
+                var steering = await AddSteeringAsync(
+                    sp,
+                    target,
+                    "task_validation",
+                    "Task source validation failed. Do not save it yet.",
+                    FormatTaskDiagnostics(validation),
+                    ct);
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    action = "validate",
+                    validation,
+                    steering,
+                }, ToolJsonOpts);
+            }
+
+            TaskDefinitionResponse saved;
+            var action = taskId is { } ? "update" : "create";
+            if (taskId is { } updateId)
+            {
+                saved = await authoring.UpdateDefinitionAsync(
+                    updateId,
+                    new UpdateTaskDefinitionRequest(source, Bool(p, "is_active")),
+                    ct)
+                    ?? throw new InvalidOperationException($"Task definition '{updateId}' not found.");
+            }
+            else
+            {
+                saved = await authoring.CreateDefinitionAsync(
+                    new CreateTaskDefinitionRequest(source),
+                    ct);
+            }
+
+            var steeringResponse = await AddSteeringAsync(
+                sp,
+                target,
+                "task_workflow",
+                $"Task '{saved.Name}' {action}d successfully.",
+                $"Task id: {saved.Id}{Environment.NewLine}Active: {saved.IsActive}",
+                ct);
+
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                action,
+                validation,
+                task = saved,
+                steering = steeringResponse,
+            }, ToolJsonOpts);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var steering = await AddSteeringAsync(
+                sp,
+                target,
+                "task_workflow_error",
+                "Task source workflow failed before save completed.",
+                TruncateForSteering(ex.ToString()),
+                ct);
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                error = ex.Message,
+                steering,
+            }, ToolJsonOpts);
+        }
+    }
+
     // ── Task management handlers ─────────────────────────────────
 
     private static ITaskAuthoring ResolveTaskAuthoring(IServiceProvider sp) =>
@@ -634,9 +897,10 @@ public sealed class ModuleDevModule : ISharpClawModule
 
     // ── Inline tool handlers ─────────────────────────────────────
 
-    private static string DescribeModuleSystem()
+    private static string DescribeModuleSystem(IServiceProvider sp)
     {
-        return """
+        return sp.GetRequiredService<SharpClawSdkReferenceService>().GetReference("all") + Environment.NewLine + """
+
             # SharpClaw Module System Reference
 
             ## ISharpClawModule Interface
@@ -820,6 +1084,119 @@ public sealed class ModuleDevModule : ISharpClawModule
         { "type": "object", "properties": {} }
         """);
 
+    private static JsonElement BuildSdkReferenceSchema() => ParseSchema("""
+        {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": ["agent_workflow", "dotnet", "javascript", "python", "storage", "conversation_steering", "tasks", "manifest", "all"],
+                    "description": "Reference topic. Defaults to agent_workflow."
+                }
+            }
+        }
+        """);
+
+    private static JsonElement BuildRecordConversationSteeringSchema() => ParseSchema("""
+        {
+            "type": "object",
+            "properties": {
+                "channel_id":  { "type": "string", "description": "Target channel GUID. Optional only when the current job supplies a channel." },
+                "thread_id":   { "type": "string", "description": "Optional target thread GUID." },
+                "summary":     { "type": "string", "description": "Short steering summary for the next model turn." },
+                "details":     { "type": "string", "description": "Optional detailed diagnostics or next action context." },
+                "source":      { "type": "string", "description": "Source label. Defaults to module_dev." },
+                "category":    { "type": "string", "description": "Steering category. Defaults to manual." },
+                "client_type": { "type": "string", "description": "Client type stored on the chat row. Defaults to module-dev." }
+            },
+            "required": ["summary"]
+        }
+        """);
+
+    private static JsonElement BuildListConversationSteeringSchema() => ParseSchema("""
+        {
+            "type": "object",
+            "properties": {
+                "channel_id":  { "type": "string", "description": "Target channel GUID. Optional only when the current job supplies a channel." },
+                "thread_id":   { "type": "string", "description": "Optional target thread GUID." },
+                "limit":       { "type": "integer", "description": "Maximum rows to return. Defaults to 20." },
+                "source":      { "type": "string", "description": "Source label. Defaults to module_dev." },
+                "client_type": { "type": "string", "description": "Client type. Defaults to module-dev." }
+            }
+        }
+        """);
+
+    private static JsonElement BuildApplyModuleFilesSchema() => ParseSchema("""
+        {
+            "type": "object",
+            "properties": {
+                "module_id":     { "type": "string", "description": "Target module ID." },
+                "runtime":       { "type": "string", "enum": ["dotnet", "node", "python"], "description": "Optional runtime override. Otherwise read from module.json or inferred from a csproj." },
+                "configuration": { "type": "string", "description": "Debug or Release for dotnet builds. Defaults to Debug." },
+                "build":         { "type": "boolean", "description": "Override whether to run dotnet build. Defaults to true for dotnet and false for node/python." },
+                "load":          { "type": "boolean", "description": "Hot-load or reload the module after build/write. Defaults to true." },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "relative_path": { "type": "string", "description": "File path relative to module root." },
+                            "content":       { "type": "string", "description": "Full file content." }
+                        },
+                        "required": ["relative_path", "content"]
+                    }
+                },
+                "test_tools": {
+                    "type": "array",
+                    "description": "Optional loaded tools to invoke after load.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool_name":       { "type": "string" },
+                            "parameters":      { "type": "object" },
+                            "timeout_seconds": { "type": "integer" }
+                        },
+                        "required": ["tool_name"]
+                    }
+                },
+                "conversation": { "$ref": "#/$defs/conversation" }
+            },
+            "required": ["module_id", "files", "conversation"],
+            "$defs": {
+                "conversation": {
+                    "type": "object",
+                    "properties": {
+                        "channel_id":  { "type": "string", "description": "Target channel GUID. Optional only when the current job supplies a channel." },
+                        "thread_id":   { "type": "string", "description": "Optional target thread GUID." },
+                        "source":      { "type": "string", "description": "Source label. Defaults to module_dev." },
+                        "client_type": { "type": "string", "description": "Client type stored on steering messages. Defaults to module-dev." }
+                    }
+                }
+            }
+        }
+        """);
+
+    private static JsonElement BuildApplyTaskSourceSchema() => ParseSchema("""
+        {
+            "type": "object",
+            "properties": {
+                "task_id":     { "type": "string", "description": "Existing task GUID. Omit to create a new task." },
+                "source_text": { "type": "string", "description": "Raw C# task source. It is validated before save." },
+                "is_active":   { "type": "boolean", "description": "Optional active flag when updating an existing task." },
+                "conversation": {
+                    "type": "object",
+                    "properties": {
+                        "channel_id":  { "type": "string", "description": "Target channel GUID. Optional only when the current job supplies a channel." },
+                        "thread_id":   { "type": "string", "description": "Optional target thread GUID." },
+                        "source":      { "type": "string", "description": "Source label. Defaults to module_dev." },
+                        "client_type": { "type": "string", "description": "Client type stored on steering messages. Defaults to module-dev." }
+                    }
+                }
+            },
+            "required": ["source_text", "conversation"]
+        }
+        """);
+
     private static JsonElement BuildTaskIdOnlySchema() => ParseSchema("""
         {
             "type": "object",
@@ -863,6 +1240,215 @@ public sealed class ModuleDevModule : ISharpClawModule
         """);
 
     // ── Helpers ───────────────────────────────────────────────────
+
+    private static IConversationSteering ResolveConversationSteering(IServiceProvider sp) =>
+        sp.GetService<IConversationSteering>()
+            ?? throw new InvalidOperationException(
+                "IConversationSteering is not registered. The host must provide conversation steering for MDK workflows.");
+
+    private static SteeringTarget ReadWorkflowSteeringTarget(JsonElement p, AgentJobContext job)
+    {
+        if (!p.TryGetProperty("conversation", out var conversation)
+            || conversation.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "conversation is required so the workflow can steer the next chat turn.");
+        }
+
+        return ReadSteeringTarget(conversation, job);
+    }
+
+    private static SteeringTarget ReadSteeringTarget(JsonElement p, AgentJobContext job)
+    {
+        var channelId = TryParseGuid(Str(p, "channel_id"))
+            ?? (job.ChannelId != Guid.Empty
+                ? job.ChannelId
+                : throw new InvalidOperationException("channel_id is required when the current job has no channel."));
+        var threadId = TryParseGuid(Str(p, "thread_id"));
+        return new SteeringTarget(
+            channelId,
+            threadId,
+            Str(p, "source") ?? "module_dev",
+            Str(p, "client_type") ?? "module-dev");
+    }
+
+    private static async Task<ConversationSteeringResponse> AddSteeringAsync(
+        IServiceProvider sp,
+        SteeringTarget target,
+        string category,
+        string summary,
+        string? details,
+        CancellationToken ct)
+    {
+        return await ResolveConversationSteering(sp).AddAsync(
+            new ConversationSteeringRequest(
+                target.ChannelId,
+                target.ThreadId,
+                summary,
+                target.Source,
+                category,
+                details is null ? null : TruncateForSteering(details),
+                target.ClientType),
+            ct);
+    }
+
+    private static async Task<IReadOnlyList<WorkflowToolTestResult>> RunWorkflowToolTestsAsync(
+        JsonElement p,
+        IModuleLifecycleManager lifecycle,
+        IServiceProvider sp,
+        AgentJobContext job,
+        CancellationToken ct)
+    {
+        if (!p.TryGetProperty("test_tools", out var testsEl) || testsEl.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var results = new List<WorkflowToolTestResult>();
+        foreach (var test in testsEl.EnumerateArray())
+        {
+            var toolName = Str(test, "tool_name")
+                ?? throw new InvalidOperationException("test_tools[].tool_name is required.");
+            var toolEntry = lifecycle.FindToolByName(toolName)
+                ?? throw new InvalidOperationException($"Tool '{toolName}' not found in any loaded module.");
+            var timeoutSeconds = Int(test, "timeout_seconds") ?? 30;
+
+            using var emptyParams = JsonDocument.Parse("{}");
+            var parameters = test.TryGetProperty("parameters", out var parametersEl)
+                ? parametersEl
+                : emptyParams.RootElement;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+            try
+            {
+                var result = await toolEntry.Module.ExecuteToolAsync(
+                    toolEntry.ToolName,
+                    parameters,
+                    job with { JobId = Guid.NewGuid(), ActionKey = toolName },
+                    sp,
+                    timeout.Token);
+                results.Add(new WorkflowToolTestResult(toolName, true, result, null));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                results.Add(new WorkflowToolTestResult(toolName, false, null, ex.Message));
+            }
+        }
+
+        return results;
+    }
+
+    private static string DetectRuntime(string moduleDir, JsonElement p)
+    {
+        if (Str(p, "runtime") is { } runtime)
+            return runtime.Trim().ToLowerInvariant();
+
+        var manifestPath = Path.Combine(moduleDir, "module.json");
+        if (File.Exists(manifestPath))
+        {
+            using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (manifest.RootElement.TryGetProperty("runtime", out var runtimeEl)
+                && runtimeEl.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(runtimeEl.GetString()))
+            {
+                return runtimeEl.GetString()!.Trim().ToLowerInvariant();
+            }
+        }
+
+        return Directory.GetFiles(moduleDir, "*.csproj").Length > 0
+            ? ModuleScaffoldService.DotNetRuntime
+            : "unknown";
+    }
+
+    private static string BuildModuleWorkflowSummary(
+        string moduleId,
+        string runtime,
+        ModuleBuildService.BuildResult? build,
+        ModuleStateResponse? state,
+        IReadOnlyList<WorkflowToolTestResult> tests)
+    {
+        var failedTests = tests.Count(test => !test.Success);
+        if (failedTests > 0)
+            return $"Module '{moduleId}' loaded but {failedTests} workflow test(s) failed.";
+
+        if (state is not null)
+            return $"Module '{moduleId}' ({runtime}) was applied and hot-loaded successfully.";
+
+        if (build is not null)
+            return $"Module '{moduleId}' ({runtime}) was applied and built successfully.";
+
+        return $"Module '{moduleId}' ({runtime}) files were applied successfully.";
+    }
+
+    private static string BuildModuleWorkflowDetails(
+        string moduleId,
+        IReadOnlyList<object> files,
+        ModuleBuildService.BuildResult? build,
+        ModuleStateResponse? state,
+        IReadOnlyList<WorkflowToolTestResult> tests)
+    {
+        return TruncateForSteering(JsonSerializer.Serialize(new
+        {
+            module_id = moduleId,
+            files,
+            build,
+            load = state,
+            tests,
+        }, ToolJsonOpts));
+    }
+
+    private static string FormatBuildDiagnostics(ModuleBuildService.BuildResult build)
+    {
+        var diagnostics = build.Errors.Count > 0
+            ? build.Errors
+            : build.Warnings;
+        if (diagnostics.Count == 0)
+            return TruncateForSteering(build.RawOutput);
+
+        return string.Join(
+            Environment.NewLine,
+            diagnostics.Select(diagnostic =>
+                $"{diagnostic.File}({diagnostic.Line},{diagnostic.Column}) {diagnostic.Code}: {diagnostic.Message}"));
+    }
+
+    private static string FormatTaskDiagnostics(TaskValidationResponse validation)
+    {
+        return validation.Diagnostics.Count == 0
+            ? "Validation failed without diagnostics."
+            : string.Join(
+                Environment.NewLine,
+                validation.Diagnostics.Select(diagnostic =>
+                    $"{diagnostic.Severity} {diagnostic.Code} at {diagnostic.Line}:{diagnostic.Column}: {diagnostic.Message}"));
+    }
+
+    private static string TruncateForSteering(string value)
+    {
+        const int max = 15000;
+        return value.Length <= max
+            ? value
+            : value[..max] + $"{Environment.NewLine}... truncated ...";
+    }
+
+    private static Guid? TryParseGuid(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return Guid.TryParse(raw, out var value)
+            ? value
+            : throw new InvalidOperationException($"'{raw}' is not a valid GUID.");
+    }
+
+    private sealed record SteeringTarget(
+        Guid ChannelId,
+        Guid? ThreadId,
+        string Source,
+        string ClientType);
+
+    private sealed record WorkflowToolTestResult(
+        string ToolName,
+        bool Success,
+        string? Result,
+        string? Error);
 
     private static JsonElement ParseSchema(string json)
     {
