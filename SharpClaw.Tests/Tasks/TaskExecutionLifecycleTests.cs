@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.DTOs.Tasks;
@@ -18,6 +18,7 @@ using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.AgentOrchestration.Models;
 using SharpClaw.Modules.AgentOrchestration.ScheduledJobs;
 using SharpClaw.Modules.AgentOrchestration.Services;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Tasks;
 

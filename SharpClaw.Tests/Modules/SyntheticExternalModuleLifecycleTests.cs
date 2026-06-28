@@ -2,7 +2,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Application.Core.Services.Triggers;
@@ -13,6 +13,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Tests.ExternalModule;
 using SharpClaw.Tests.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Modules;
 

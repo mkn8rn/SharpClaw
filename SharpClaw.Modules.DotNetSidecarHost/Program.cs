@@ -13,6 +13,7 @@ using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.Hosting;
 using SharpClaw.Utils.Security;
+using SharpClaw.Core.Modules.Foreign;
 
 var process = await DotNetSidecarHost.CreateAsync(args);
 await process.RunAsync();

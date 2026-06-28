@@ -20,6 +20,8 @@ using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.Modules;
 using SharpClaw.Modules.Hosting;
 using SharpClaw.Utils.Security;
+using SharpClaw.Core.Modules;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules;
 

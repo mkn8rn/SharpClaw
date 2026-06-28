@@ -19,6 +19,8 @@ using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Core.Modules;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules;
 

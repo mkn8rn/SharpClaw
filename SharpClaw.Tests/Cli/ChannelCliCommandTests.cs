@@ -12,6 +12,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Providers.Common;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Cli;
 

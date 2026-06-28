@@ -9,6 +9,7 @@ using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Modules;
 

@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using LLama.Sampling;
 using SharpClaw.Modules.Providers.LlamaSharp.Clients;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Modules.Providers.LlamaSharp.LocalInference;
 using SharpClaw.Contracts.Providers;
 

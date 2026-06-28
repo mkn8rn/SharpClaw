@@ -1,3 +1,4 @@
+using SharpClaw.Core.Modules;
 namespace SharpClaw.Application.Core.Modules.Foreign;
 
 public interface IForeignModuleRuntimeHost : IModuleRuntimeHost

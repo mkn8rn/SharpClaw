@@ -1,8 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.Entities.Core.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks.Models;
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks.Models;
+using SharpClaw.Core.Tasks;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Enums;

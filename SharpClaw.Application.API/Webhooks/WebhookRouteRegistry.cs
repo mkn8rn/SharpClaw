@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks;
 using SharpClaw.Contracts.Tasks;
 
 namespace SharpClaw.Application.API.Webhooks;

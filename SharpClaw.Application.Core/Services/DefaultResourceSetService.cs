@@ -3,6 +3,7 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.DTOs.DefaultResources;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Services;
 

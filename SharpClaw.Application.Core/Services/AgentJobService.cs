@@ -24,6 +24,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Services;
 

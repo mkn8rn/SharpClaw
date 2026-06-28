@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Services;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Core.Modules;
 

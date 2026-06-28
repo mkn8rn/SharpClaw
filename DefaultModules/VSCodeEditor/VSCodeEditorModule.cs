@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.DTOs.Editor;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Modules.VSCodeEditor;
 

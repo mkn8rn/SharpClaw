@@ -13,16 +13,16 @@ using SharpClaw.Application.API.Cli;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.API.Routing;
 using SharpClaw.Application.API.Webhooks;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Application.Core.Services;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Infrastructure.Logging;
-using SharpClaw.Application.Infrastructure.Tasks.Parsing;
-using SharpClaw.Application.Infrastructure.Tasks.Registry;
+using SharpClaw.Core.Tasks.Parsing;
+using SharpClaw.Core.Tasks.Registry;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.Chat;
 using SharpClaw.Contracts.Modules;
@@ -38,6 +38,8 @@ using SharpClaw.Utils.Security;
 using Serilog.Events;
 using SharpClaw.Contracts.Permissions;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules;
+using SharpClaw.Core.Modules.Foreign;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  SharpClaw API host — composition root

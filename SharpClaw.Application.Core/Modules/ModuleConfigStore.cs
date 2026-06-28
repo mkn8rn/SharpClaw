@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Core.Modules;
 

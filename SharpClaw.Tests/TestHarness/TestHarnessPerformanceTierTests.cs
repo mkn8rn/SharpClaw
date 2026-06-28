@@ -25,6 +25,7 @@ using SharpClaw.Contracts.Providers;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
 
@@ -1204,7 +1205,7 @@ public sealed class TestHarnessPerformanceTierTests
     private static async Task<long> MeasureProviderResolutionAsync()
     {
         await using var host = ChatHarnessHost.Create();
-        var factory = host.Services.GetRequiredService<SharpClaw.Application.Core.Clients.ProviderApiClientFactory>();
+        var factory = host.Services.GetRequiredService<SharpClaw.Core.Clients.ProviderApiClientFactory>();
         factory.GetClient(TestHarnessConstants.PlainProviderKey);
 
         var sw = Stopwatch.StartNew();

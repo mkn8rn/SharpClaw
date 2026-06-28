@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Core.Services.Triggers;
 

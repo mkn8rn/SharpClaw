@@ -1,6 +1,6 @@
 using FluentAssertions;
 using NUnit.Framework;
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
 

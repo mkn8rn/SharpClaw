@@ -13,6 +13,7 @@ using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules.Foreign;
 

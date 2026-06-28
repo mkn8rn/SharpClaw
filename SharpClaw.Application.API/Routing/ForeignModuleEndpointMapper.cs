@@ -8,6 +8,7 @@ using Microsoft.Net.Http.Headers;
 using System.Net.WebSockets;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.API.Routing;
 

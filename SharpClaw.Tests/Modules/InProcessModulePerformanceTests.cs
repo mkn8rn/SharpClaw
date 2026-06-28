@@ -11,6 +11,7 @@ using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Tests.ExternalModule;
 using SharpClaw.Tests.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Modules;
 

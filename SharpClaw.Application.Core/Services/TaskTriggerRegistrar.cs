@@ -1,4 +1,4 @@
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Entities.Core.Jobs;

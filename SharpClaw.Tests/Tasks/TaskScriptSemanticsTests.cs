@@ -1,6 +1,6 @@
 using System.Text.Json;
-using SharpClaw.Application.Infrastructure.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Core.Tasks;
+using SharpClaw.Core.Tasks.Models;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
 

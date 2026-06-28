@@ -1,12 +1,13 @@
 using System.Runtime.InteropServices;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Infrastructure.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Core.Tasks;
+using SharpClaw.Core.Tasks.Models;
 using SharpClaw.Contracts.Enums;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Services;
 

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.API;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Application.Services;
@@ -17,6 +17,7 @@ using SharpClaw.Infrastructure.Persistence.Modules;
 using SharpClaw.Tests.ExternalModule;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Utils.Instances;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Modules;
 

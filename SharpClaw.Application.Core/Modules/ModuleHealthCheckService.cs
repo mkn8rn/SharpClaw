@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Core.Modules;
 

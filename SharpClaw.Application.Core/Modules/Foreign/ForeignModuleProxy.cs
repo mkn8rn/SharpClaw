@@ -1,12 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Application.Infrastructure.Tasks.Models;
-using SharpClaw.Application.Infrastructure.Tasks.Parsing;
+using SharpClaw.Core.Tasks.Models;
+using SharpClaw.Core.Tasks.Parsing;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules.Foreign;
 

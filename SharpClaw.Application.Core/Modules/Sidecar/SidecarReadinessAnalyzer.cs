@@ -4,6 +4,7 @@ using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules.Sidecar;
 

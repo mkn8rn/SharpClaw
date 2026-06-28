@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Modules.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
 
@@ -21,7 +22,7 @@ public sealed class TestHarnessModuleTests
         factory.IsAvailable(TestHarnessConstants.CostProviderKey).Should().BeTrue();
         factory.IsAvailable(TestHarnessConstants.EdenStyleProviderKey).Should().BeTrue();
 
-        var registry = host.Services.GetRequiredService<SharpClaw.Application.Core.Modules.ModuleRegistry>();
+        var registry = host.Services.GetRequiredService<ModuleRegistry>();
         registry.GetHeaderTag(TestHarnessConstants.HeaderTagName).Should().NotBeNull();
         registry.IsInlineTool(TestHarnessConstants.InlinePermissionedTool).Should().BeTrue();
         registry.IsInlineTool(TestHarnessConstants.InlinePermissionedToolAlias).Should().BeTrue();

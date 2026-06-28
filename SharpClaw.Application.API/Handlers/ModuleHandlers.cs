@@ -9,6 +9,7 @@ using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Application.Services;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.API.Handlers;
 

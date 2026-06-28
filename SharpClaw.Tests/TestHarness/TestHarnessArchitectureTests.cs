@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Modules.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
 

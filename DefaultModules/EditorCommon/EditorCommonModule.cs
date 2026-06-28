@@ -7,6 +7,7 @@ using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Modules.EditorCommon.Handlers;
 using SharpClaw.Modules.EditorCommon.Services;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Modules.EditorCommon;
 

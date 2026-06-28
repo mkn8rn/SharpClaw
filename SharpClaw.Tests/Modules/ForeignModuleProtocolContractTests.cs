@@ -3,12 +3,14 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules;
-using SharpClaw.Application.Core.Clients;
+using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Tests.Modules;
 

@@ -9,8 +9,8 @@ using Serilog;
 using SharpClaw.Application.API.Handlers;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
-using SharpClaw.Application.Infrastructure.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks.Models;
+using SharpClaw.Core.Tasks;
+using SharpClaw.Core.Tasks.Models;
 using SharpClaw.Application.Services;
 using SharpClaw.Application.Services.Auth;
 using SharpClaw.Contracts.DTOs.AgentActions;
@@ -35,6 +35,7 @@ using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Chat;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.API.Cli;
 

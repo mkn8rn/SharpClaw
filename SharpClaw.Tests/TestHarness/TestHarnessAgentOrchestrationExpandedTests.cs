@@ -14,6 +14,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.AgentOrchestration;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
 

@@ -9,6 +9,7 @@ using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Modules.TestHarness;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
 

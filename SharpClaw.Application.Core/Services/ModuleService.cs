@@ -8,8 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Tasks;
-using SharpClaw.Application.Infrastructure.Tasks.Parsing;
-using SharpClaw.Application.Infrastructure.Tasks.Registry;
+using SharpClaw.Core.Tasks.Parsing;
+using SharpClaw.Core.Tasks.Registry;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Application.Core.Modules.Sidecar;
@@ -20,6 +20,8 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
+using SharpClaw.Core.Modules.Foreign;
 // Infrastructure-facing: ModuleJsonPersistenceService coordinates module persistence
 // registration for JSON/InMemory mode.  This import does not introduce cold-entity
 // query coupling and is acceptable per the cold-storage-ef-query-integration-plan.

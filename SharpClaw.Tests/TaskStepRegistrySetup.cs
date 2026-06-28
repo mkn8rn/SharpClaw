@@ -1,7 +1,7 @@
 using NUnit.Framework;
 
-using SharpClaw.Application.Infrastructure.Tasks.Parsing;
-using SharpClaw.Application.Infrastructure.Tasks.Registry;
+using SharpClaw.Core.Tasks.Parsing;
+using SharpClaw.Core.Tasks.Registry;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Modules.AgentOrchestration;
 using SharpClaw.Modules.Metrics;

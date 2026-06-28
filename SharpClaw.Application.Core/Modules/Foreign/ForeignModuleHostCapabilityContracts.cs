@@ -5,6 +5,7 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Modules.Foreign;
 
 namespace SharpClaw.Application.Core.Modules.Foreign;
 

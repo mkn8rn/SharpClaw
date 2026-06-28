@@ -1,4 +1,4 @@
-using SharpClaw.Application.Infrastructure.Tasks;
+using SharpClaw.Core.Tasks;
 
 namespace SharpClaw.Application.Services;
 

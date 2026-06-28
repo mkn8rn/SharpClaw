@@ -7,6 +7,7 @@ using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Services;
 
