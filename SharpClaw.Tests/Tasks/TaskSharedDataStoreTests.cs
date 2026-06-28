@@ -1,5 +1,5 @@
 using System.Text.Json;
-using SharpClaw.Application.Services;
+using SharpClaw.Core.Tasks.Runtime;
 
 namespace SharpClaw.Tests.Tasks;
 
