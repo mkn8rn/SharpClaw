@@ -47,6 +47,7 @@ public sealed class AgentJobService(
     IConfiguration configuration,
     ChatCache chatCache,
     AgentJobLifecycleEngine lifecycle,
+    AgentJobAdministrationEngine jobAdministration,
     DefaultResourceEngine defaultResources,
     ILogger<AgentJobService> logger)
 {
@@ -83,25 +84,10 @@ public sealed class AgentJobService(
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new InvalidOperationException($"Channel {channelId} not found.");
 
-        var agentId = ch.AgentId ?? ch.AgentContext?.AgentId
-            ?? throw new InvalidOperationException(
-                $"Channel {channelId} has no agent and no context agent.");
-
-        // Allow overriding the agent if the requested agent is the
-        // channel default or is in the allowed-agents set (channel-level
-        // first, falling back to context-level).
-        if (request.AgentId is { } requestedAgent && requestedAgent != agentId)
-        {
-            var effectiveAllowed = ch.AllowedAgents.Count > 0
-                ? ch.AllowedAgents
-                : (IEnumerable<AgentDB>)(ch.AgentContext?.AllowedAgents ?? []);
-
-            if (!effectiveAllowed.Any(a => a.Id == requestedAgent))
-                throw new InvalidOperationException(
-                    $"Agent {requestedAgent} is not allowed on channel {channelId}. " +
-                    "Add it to the channel's or context's allowed agents first.");
-            agentId = requestedAgent;
-        }
+        var agentId = jobAdministration.ResolveSubmissionAgent(
+            ch,
+            channelId,
+            request.AgentId);
 
         var effectiveResourceId = request.ResourceId;
 
@@ -114,17 +100,12 @@ public sealed class AgentJobService(
                 request.ActionKey, channelId, agentId, ct);
         }
 
-        var job = new AgentJobDB
-        {
-            AgentId = agentId,
-            ChannelId = channelId,
-            CallerUserId = session.UserId,
-            CallerAgentId = request.CallerAgentId,
-            ActionKey = request.ActionKey,
-            ResourceId = effectiveResourceId,
-            ScriptJson = request.ScriptJson,
-            WorkingDirectory = request.WorkingDirectory,
-        };
+        var job = jobAdministration.CreateSubmissionJob(
+            channelId,
+            agentId,
+            request,
+            session.UserId,
+            effectiveResourceId);
 
         db.AgentJobs.Add(job);
         ApplyLifecycleDecision(job, lifecycle.Queue(request.ActionKey));
@@ -848,14 +829,12 @@ public sealed class AgentJobService(
         string? actionKey = null)
     {
         // Level 3 is agent-only — no user/channel pre-auth applies.
-        if (agentClearance is not (PermissionClearance.ApprovedBySameLevelUser
-                                or PermissionClearance.ApprovedByWhitelistedUser
-                                or PermissionClearance.ApprovedByWhitelistedAgent))
+        if (!jobAdministration.CanUseChannelPreauthorization(agentClearance))
             return false;
 
         // Level 1: the session user must personally hold the permission.
         // Verify via the user's own role PS before checking the channel PS.
-        if (agentClearance == PermissionClearance.ApprovedBySameLevelUser)
+        if (jobAdministration.RequiresCallerGrantForChannelPreauthorization(agentClearance))
         {
             if (callerUserId is null)
                 return false;
@@ -953,32 +932,13 @@ public sealed class AgentJobService(
         AgentJobDB job,
         AgentJobLifecycleDecision decision)
     {
-        if (decision.Status is { } status)
-            job.Status = status;
-        if (decision.UpdateStartedAt)
-            job.StartedAt = decision.StartedAt;
-        if (decision.UpdateCompletedAt)
-            job.CompletedAt = decision.CompletedAt;
-        if (decision.UpdateResultData)
-            job.ResultData = decision.ResultData;
-        if (decision.UpdateErrorLog)
-            job.ErrorLog = decision.ErrorLog;
-
-        foreach (var log in decision.Logs)
-            AddLog(job, log.Message, log.Level);
+        _pendingCacheLogs.AddRange(
+            jobAdministration.ApplyLifecycleDecision(job, decision));
     }
 
     private void AddLog(AgentJobDB job, string message, string level = JobLogLevels.Info)
     {
-        var entry = new AgentJobLogEntryDB
-        {
-            AgentJobId = job.Id,
-            Message = message,
-            Level = level
-        };
-
-        job.LogEntries.Add(entry);
-        _pendingCacheLogs.Add(entry);
+        _pendingCacheLogs.Add(jobAdministration.AddLog(job, message, level));
     }
 
     private async Task SaveChangesAndCacheLogsAsync(CancellationToken ct)
@@ -1022,54 +982,23 @@ public sealed class AgentJobService(
         return logs ?? [];
     }
 
-    private static AgentJobResponse ToResponse(AgentJobDB job)
-        => ToResponse(job, ToLogResponses(job.LogEntries));
+    private AgentJobResponse ToResponse(AgentJobDB job)
+        => jobAdministration.ToResponse(job);
 
-    private static AgentJobResponse ToResponse(
+    private AgentJobResponse ToResponse(
         AgentJobDB job,
         IReadOnlyList<AgentJobLogResponse> logs)
-    {
-        var jobCost = job.PromptTokens is not null || job.CompletionTokens is not null
-            ? new TokenUsageResponse(
-                job.PromptTokens ?? 0,
-                job.CompletionTokens ?? 0,
-                (job.PromptTokens ?? 0) + (job.CompletionTokens ?? 0))
-            : null;
+        => jobAdministration.ToResponse(job, logs);
 
-        return new(
-            Id: job.Id,
-            ChannelId: job.ChannelId,
-            AgentId: job.AgentId,
-            ActionKey: job.ActionKey,
-            ResourceId: job.ResourceId,
-            Status: job.Status,
-            EffectiveClearance: job.EffectiveClearance,
-            ResultData: job.ResultData,
-            ErrorLog: job.ErrorLog,
-            Logs: logs,
-            CreatedAt: job.CreatedAt,
-            StartedAt: job.StartedAt,
-            CompletedAt: job.CompletedAt,
-            ScriptJson: job.ScriptJson,
-            WorkingDirectory: job.WorkingDirectory,
-            JobCost: jobCost);
-    }
-
-    private static IReadOnlyList<AgentJobLogResponse> ToLogResponses(
+    private IReadOnlyList<AgentJobLogResponse> ToLogResponses(
         IEnumerable<AgentJobLogEntryDB> logs)
-        => logs
-            .OrderBy(static log => log.CreatedAt)
-            .Select(ToLogResponse)
-            .ToArray();
+        => jobAdministration.ToLogResponses(logs);
 
-    private static AgentJobLogResponse ToLogResponse(AgentJobLogEntryDB log)
-        => new(log.Message, log.Level, log.CreatedAt);
+    private AgentJobLogResponse ToLogResponse(AgentJobLogEntryDB log)
+        => jobAdministration.ToLogResponse(log);
 
-    private static AgentJobSummaryResponse ToSummaryResponse(AgentJobDB job)
-        => new(
-            job.Id, job.ChannelId, job.AgentId,
-            job.ActionKey, job.ResourceId, job.Status,
-            job.CreatedAt, job.StartedAt, job.CompletedAt);
+    private AgentJobSummaryResponse ToSummaryResponse(AgentJobDB job)
+        => jobAdministration.ToSummaryResponse(job);
 
     /// <summary>
     /// Records prompt/completion tokens on a set of jobs that were
@@ -1081,12 +1010,6 @@ public sealed class AgentJobService(
         CancellationToken ct = default)
     {
         if (jobIds.Count == 0) return;
-        if (promptTokens < 0)
-            throw new ArgumentOutOfRangeException(nameof(promptTokens), promptTokens,
-                "Prompt tokens cannot be negative.");
-        if (completionTokens < 0)
-            throw new ArgumentOutOfRangeException(nameof(completionTokens), completionTokens,
-                "Completion tokens cannot be negative.");
 
         // Jobs being recorded are from the current session (just executed),
         // so they should be in EF. Fall back to cold store + re-attach if
@@ -1116,16 +1039,7 @@ public sealed class AgentJobService(
 
         if (jobs.Count == 0) return;
 
-        var promptPer = promptTokens / jobs.Count;
-        var completionPer = completionTokens / jobs.Count;
-        var promptRemainder = promptTokens % jobs.Count;
-        var completionRemainder = completionTokens % jobs.Count;
-
-        for (var i = 0; i < jobs.Count; i++)
-        {
-            jobs[i].PromptTokens = (jobs[i].PromptTokens ?? 0) + promptPer + (i == 0 ? promptRemainder : 0);
-            jobs[i].CompletionTokens = (jobs[i].CompletionTokens ?? 0) + completionPer + (i == 0 ? completionRemainder : 0);
-        }
+        jobAdministration.ApplyTokenUsage(jobs, promptTokens, completionTokens);
 
         await SaveChangesAndCacheLogsAsync(ct);
     }

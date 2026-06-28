@@ -143,6 +143,7 @@ public sealed class AgentJobTokenAccountingTests
             configuration,
             new ChatCache(configuration),
             new AgentJobLifecycleEngine(),
+            new AgentJobAdministrationEngine(),
             new DefaultResourceEngine(),
             NullLogger<AgentJobService>.Instance);
     }
@@ -164,6 +165,7 @@ public sealed class AgentJobTokenAccountingTests
         services.AddSingleton<ChatCache>();
         services.AddSingleton<PermissionEvaluationEngine>();
         services.AddSingleton<AgentJobLifecycleEngine>();
+        services.AddSingleton<AgentJobAdministrationEngine>();
         services.AddSingleton<DefaultResourceEngine>();
         services.AddSingleton<ModuleEventDispatcher>(sp =>
             new ModuleEventDispatcher(
