@@ -5,6 +5,9 @@
 # Internal specs & docs
 docs/internal/
 
+# Nested standalone repository
+SharpClaw.Core/
+
 # Copilot
 .github/upgrades
 .github/copilot-instructions.md
