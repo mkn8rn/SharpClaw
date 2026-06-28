@@ -112,6 +112,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<DefaultResourceEngine>();
         services.AddSingleton<ConversationTopologyEngine>();
         services.AddSingleton<ProviderCatalogEngine>();
+        services.AddSingleton<ProviderCostEngine>();
         services.AddSingleton<ModelCatalogEngine>();
         services.AddSingleton<ChatCostEngine>();
         services.AddSingleton<ChatPromptEngine>();
