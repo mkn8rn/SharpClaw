@@ -43,6 +43,7 @@ public sealed class ChatService(
     ModuleRegistry moduleRegistry,
     ModuleMetricsCollector metricsCollector,
     ChatCache chatCache,
+    ChatCostEngine chatCosts,
     ILogger<ChatService> logger,
     IServiceScopeFactory serviceScopeFactory,
     IServiceProvider serviceProvider,
@@ -410,7 +411,7 @@ public sealed class ChatService(
             hint: new PersistenceQueryHint("ChannelId", channelId),
             ct: ct);
 
-        return BuildChannelCost(channelId, messages);
+        return chatCosts.BuildChannelCost(channelId, messages);
     }
 
     public async Task<ThreadCostResponse?> GetThreadCostAsync(
@@ -434,7 +435,7 @@ public sealed class ChatService(
             hint: new PersistenceQueryHint("ThreadId", threadId),
             ct: ct);
 
-        return BuildThreadCost(channelId, threadId, rows);
+        return chatCosts.BuildThreadCost(channelId, threadId, rows);
     }
 
     /// <summary>
@@ -466,7 +467,7 @@ public sealed class ChatService(
             hint: new PersistenceQueryHint("SenderAgentId", agentId),
             ct: ct);
 
-        return BuildAgentCost(agentId, agentName, messages);
+        return chatCosts.BuildAgentCost(agentId, agentName, messages);
     }
 
     private async Task<(ChannelCostResponse ChannelCost, ThreadCostResponse? ThreadCost, AgentCostResponse? AgentCost)> GetResponseCostsAsync(
@@ -478,69 +479,6 @@ public sealed class ChatService(
             : null;
         var agentCost = await GetAgentCostForKnownAgentAsync(agentId, agentName, ct);
         return (channelCost, threadCost, agentCost);
-    }
-
-    private static ChannelCostResponse BuildChannelCost(
-        Guid channelId, IEnumerable<ChatMessageDB> messages)
-    {
-        var breakdown = BuildAgentBreakdown(messages);
-        var totalPrompt = breakdown.Sum(b => b.PromptTokens);
-        var totalCompletion = breakdown.Sum(b => b.CompletionTokens);
-
-        return new ChannelCostResponse(
-            channelId, totalPrompt, totalCompletion,
-            totalPrompt + totalCompletion, breakdown);
-    }
-
-    private static ThreadCostResponse BuildThreadCost(
-        Guid channelId, Guid threadId, IEnumerable<ChatMessageDB> messages)
-    {
-        var breakdown = BuildAgentBreakdown(messages);
-        var totalPrompt = breakdown.Sum(b => b.PromptTokens);
-        var totalCompletion = breakdown.Sum(b => b.CompletionTokens);
-
-        return new ThreadCostResponse(
-            threadId, channelId, totalPrompt, totalCompletion,
-            totalPrompt + totalCompletion, breakdown);
-    }
-
-    private static AgentCostResponse BuildAgentCost(
-        Guid agentId, string agentName, IEnumerable<ChatMessageDB> messages)
-    {
-        var channelBreakdown = messages
-            .Where(m => m.PromptTokens is not null)
-            .GroupBy(m => m.ChannelId)
-            .Select(g => new AgentChannelTokenBreakdown(
-                g.Key,
-                g.Sum(m => m.PromptTokens!.Value),
-                g.Sum(m => m.CompletionTokens ?? 0),
-                g.Sum(m => m.PromptTokens!.Value) + g.Sum(m => m.CompletionTokens ?? 0)))
-            .OrderByDescending(b => b.TotalTokens)
-            .ToList();
-
-        var totalPrompt = channelBreakdown.Sum(b => b.PromptTokens);
-        var totalCompletion = channelBreakdown.Sum(b => b.CompletionTokens);
-
-        return new AgentCostResponse(
-            agentId, agentName,
-            totalPrompt, totalCompletion,
-            totalPrompt + totalCompletion, channelBreakdown);
-    }
-
-    private static List<AgentTokenBreakdown> BuildAgentBreakdown(
-        IEnumerable<ChatMessageDB> messages)
-    {
-        return messages
-            .Where(m => m.PromptTokens is not null && m.SenderAgentId.HasValue)
-            .GroupBy(m => new { m.SenderAgentId, m.SenderAgentName })
-            .Select(g => new AgentTokenBreakdown(
-                g.Key.SenderAgentId!.Value,
-                g.Key.SenderAgentName ?? "Unknown",
-                g.Sum(m => m.PromptTokens!.Value),
-                g.Sum(m => m.CompletionTokens ?? 0),
-                g.Sum(m => m.PromptTokens!.Value) + g.Sum(m => m.CompletionTokens ?? 0)))
-            .OrderByDescending(b => b.TotalTokens)
-            .ToList();
     }
 
     // ═══════════════════════════════════════════════════════════════

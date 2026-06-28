@@ -346,6 +346,7 @@ try
     builder.Services.AddSingleton<ConversationTopologyEngine>();
     builder.Services.AddSingleton<ProviderCatalogEngine>();
     builder.Services.AddSingleton<ModelCatalogEngine>();
+    builder.Services.AddSingleton<ChatCostEngine>();
     builder.Services.AddSingleton<ToolAwarenessSetEngine>();
 
     builder.Services.AddScoped<ProviderService>();
