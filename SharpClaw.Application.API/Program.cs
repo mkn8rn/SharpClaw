@@ -41,6 +41,7 @@ using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Modules.Foreign;
 using SharpClaw.Core.Permissions;
+using SharpClaw.Core.Jobs;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  SharpClaw API host — composition root
@@ -330,6 +331,7 @@ try
     // The factory resolves over IEnumerable<IProviderPlugin>.
     builder.Services.AddSingleton<ProviderApiClientFactory>();
     builder.Services.AddSingleton<PermissionEvaluationEngine>();
+    builder.Services.AddSingleton<AgentJobLifecycleEngine>();
 
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ProviderCostService>();

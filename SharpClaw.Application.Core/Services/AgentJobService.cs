@@ -24,6 +24,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
+using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Application.Services;
@@ -43,6 +44,7 @@ public sealed class AgentJobService(
     IServiceScopeFactory serviceScopeFactory,
     IConfiguration configuration,
     ChatCache chatCache,
+    AgentJobLifecycleEngine lifecycle,
     ILogger<AgentJobService> logger)
 {
     private readonly ModuleEventDispatcher _eventDispatcher = eventDispatcher;
@@ -117,13 +119,12 @@ public sealed class AgentJobService(
             CallerAgentId = request.CallerAgentId,
             ActionKey = request.ActionKey,
             ResourceId = effectiveResourceId,
-            Status = AgentJobStatus.Queued,
             ScriptJson = request.ScriptJson,
             WorkingDirectory = request.WorkingDirectory,
         };
 
         db.AgentJobs.Add(job);
-        AddLog(job, $"Job queued: {request.ActionKey ?? "unknown"}.");
+        ApplyLifecycleDecision(job, lifecycle.Queue(request.ActionKey));
         await SaveChangesAndCacheLogsAsync(ct);
 
         var caller = new ActionCaller(session.UserId, request.CallerAgentId);
@@ -133,42 +134,23 @@ public sealed class AgentJobService(
 
         job.EffectiveClearance = result.EffectiveClearance;
 
-        switch (result.Verdict)
-        {
-            case ClearanceVerdict.Approved:
-                AddLog(job, $"Permission granted: {result.Reason}");
-                await ExecuteJobAsync(job, ct);
-                break;
+        var channelPreauthorized = result.Verdict == ClearanceVerdict.PendingApproval
+            && await HasChannelAuthorizationAsync(
+                channelId,
+                job.ResourceId,
+                result.EffectiveClearance,
+                session.UserId,
+                ct,
+                job.ActionKey);
+        var submissionDecision = lifecycle.ResolveSubmissionPermission(
+            result,
+            channelPreauthorized);
+        ApplyLifecycleDecision(job, submissionDecision);
 
-            case ClearanceVerdict.PendingApproval:
-                // Channel pre-auth counts as ApprovedByWhitelistedUser-
-                // level authority for levels 2 and 4.  For level 1
-                // (ApprovedBySameLevelUser), the session user must also
-                // personally hold the same permission via their own role.
-                // Level 3 (agent-only) is never pre-authorised.
-                if (await HasChannelAuthorizationAsync(
-                        channelId,
-                        job.ResourceId, result.EffectiveClearance,
-                        session.UserId, ct, job.ActionKey))
-                {
-                    AddLog(job, "Pre-authorized by channel/context permission set.");
-                    await ExecuteJobAsync(job, ct);
-                }
-                else
-                {
-                    job.Status = AgentJobStatus.AwaitingApproval;
-                    AddLog(job, $"Awaiting approval: {result.Reason}");
-                    await SaveChangesAndCacheLogsAsync(ct);
-                }
-                break;
-
-            case ClearanceVerdict.Denied:
-            default:
-                job.Status = AgentJobStatus.Denied;
-                AddLog(job, $"Denied: {result.Reason}", JobLogLevels.Warning);
-                await SaveChangesAndCacheLogsAsync(ct);
-                break;
-        }
+        if (submissionDecision.ShouldExecute)
+            await ExecuteJobAsync(job, ct);
+        else
+            await SaveChangesAndCacheLogsAsync(ct);
 
         chatCache.SetJobLogs(job.Id, ToLogResponses(job.LogEntries));
         return ToResponse(job);
@@ -187,7 +169,7 @@ public sealed class AgentJobService(
 
         if (job.Status != AgentJobStatus.AwaitingApproval)
         {
-            AddLog(job, $"Approve rejected: job is {job.Status}, not AwaitingApproval.", JobLogLevels.Warning);
+            ApplyLifecycleDecision(job, lifecycle.RejectApprovalForStatus(job.Status));
             await SaveChangesAndCacheLogsAsync(ct);
             return await ToResponseAsync(job, ct);
         }
@@ -203,28 +185,22 @@ public sealed class AgentJobService(
             channelPsId: approvalCh?.PermissionSetId,
             contextPsId: approvalCh?.AgentContext?.PermissionSetId);
 
-        switch (result.Verdict)
+        var approvalDecision = lifecycle.ResolveApproval(
+            result,
+            approver,
+            DateTimeOffset.UtcNow);
+        if (approvalDecision.ShouldExecute)
         {
-            case ClearanceVerdict.Approved:
-                job.ApprovedByUserId = session.UserId;
-                job.ApprovedByAgentId = request.ApproverAgentId;
-                AddLog(job, $"Approved by {FormatCaller(approver)}: {result.Reason}");
-                await ExecuteJobAsync(job, ct);
-                break;
-
-            case ClearanceVerdict.PendingApproval:
-                AddLog(job, $"Approval attempt by {FormatCaller(approver)} insufficient: {result.Reason}", JobLogLevels.Warning);
-                await SaveChangesAndCacheLogsAsync(ct);
-                break;
-
-            case ClearanceVerdict.Denied:
-            default:
-                job.Status = AgentJobStatus.Denied;
-                job.CompletedAt = DateTimeOffset.UtcNow;
-                AddLog(job, $"Denied: agent permission revoked. Attempt by {FormatCaller(approver)}: {result.Reason}", JobLogLevels.Warning);
-                await SaveChangesAndCacheLogsAsync(ct);
-                break;
+            job.ApprovedByUserId = session.UserId;
+            job.ApprovedByAgentId = request.ApproverAgentId;
         }
+
+        ApplyLifecycleDecision(job, approvalDecision);
+
+        if (approvalDecision.ShouldExecute)
+            await ExecuteJobAsync(job, ct);
+        else
+            await SaveChangesAndCacheLogsAsync(ct);
 
         return await ToResponseAsync(job, ct);
     }
@@ -236,17 +212,7 @@ public sealed class AgentJobService(
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (job.Status is AgentJobStatus.Completed or AgentJobStatus.Failed
-                       or AgentJobStatus.Denied or AgentJobStatus.Cancelled)
-        {
-            AddLog(job, $"Cancel rejected: job is already {job.Status}.", JobLogLevels.Warning);
-            await SaveChangesAndCacheLogsAsync(ct);
-            return await ToResponseAsync(job, ct);
-        }
-
-        job.Status = AgentJobStatus.Cancelled;
-        job.CompletedAt = DateTimeOffset.UtcNow;
-        AddLog(job, "Job cancelled.");
+        ApplyLifecycleDecision(job, lifecycle.Cancel(job.Status, DateTimeOffset.UtcNow));
         await SaveChangesAndCacheLogsAsync(ct);
 
         return await ToResponseAsync(job, ct);
@@ -259,24 +225,13 @@ public sealed class AgentJobService(
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (!string.IsNullOrWhiteSpace(requiredActionPrefix)
-            && job.ActionKey?.StartsWith(requiredActionPrefix, StringComparison.OrdinalIgnoreCase) != true)
-        {
-            AddLog(job, "Stop rejected: job action does not match the requested action prefix.", JobLogLevels.Warning);
-            await SaveChangesAndCacheLogsAsync(ct);
-            return await ToResponseAsync(job, ct);
-        }
-
-        if (job.Status is not AgentJobStatus.Executing and not AgentJobStatus.Paused)
-        {
-            AddLog(job, $"Stop rejected: job is {job.Status}, not Executing or Paused.", JobLogLevels.Warning);
-            await SaveChangesAndCacheLogsAsync(ct);
-            return await ToResponseAsync(job, ct);
-        }
-
-        job.Status = AgentJobStatus.Completed;
-        job.CompletedAt = DateTimeOffset.UtcNow;
-        AddLog(job, "Job stopped.");
+        ApplyLifecycleDecision(
+            job,
+            lifecycle.Stop(
+                job.Status,
+                job.ActionKey,
+                requiredActionPrefix,
+                DateTimeOffset.UtcNow));
         await SaveChangesAndCacheLogsAsync(ct);
 
         return await ToResponseAsync(job, ct);
@@ -292,15 +247,7 @@ public sealed class AgentJobService(
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (job.Status != AgentJobStatus.Executing)
-        {
-            AddLog(job, $"Pause rejected: job is {job.Status}, not Executing.", JobLogLevels.Warning);
-            await SaveChangesAndCacheLogsAsync(ct);
-            return await ToResponseAsync(job, ct);
-        }
-
-        job.Status = AgentJobStatus.Paused;
-        AddLog(job, "Job paused.");
+        ApplyLifecycleDecision(job, lifecycle.Pause(job.Status));
         await SaveChangesAndCacheLogsAsync(ct);
 
         return await ToResponseAsync(job, ct);
@@ -317,15 +264,7 @@ public sealed class AgentJobService(
         var job = await LoadJobAsync(jobId, ct);
         if (job is null) return null;
 
-        if (job.Status != AgentJobStatus.Paused)
-        {
-            AddLog(job, $"Resume rejected: job is {job.Status}, not Paused.", JobLogLevels.Warning);
-            await SaveChangesAndCacheLogsAsync(ct);
-            return await ToResponseAsync(job, ct);
-        }
-
-        job.Status = AgentJobStatus.Executing;
-        AddLog(job, "Job resumed.");
+        ApplyLifecycleDecision(job, lifecycle.Resume(job.Status));
         await SaveChangesAndCacheLogsAsync(ct);
 
         return await ToResponseAsync(job, ct);
@@ -450,39 +389,33 @@ public sealed class AgentJobService(
     {
         using var executionScope = BeginExecutionScope(job.Id);
 
-        job.Status = AgentJobStatus.Executing;
-        job.StartedAt = DateTimeOffset.UtcNow;
-        AddLog(job, "Execution started.");
+        ApplyLifecycleDecision(job, lifecycle.BeginExecution(DateTimeOffset.UtcNow));
         await SaveChangesAndCacheLogsAsync(ct);
 
         try
         {
             var execution = await DispatchExecutionAsync(job, ct);
-            job.ResultData = execution.ResultData;
+            var completionDecision = lifecycle.CompleteExecution(
+                execution.ResultData,
+                execution.CompletionBehavior,
+                DateTimeOffset.UtcNow);
+            ApplyLifecycleDecision(job, completionDecision);
 
             if (execution.CompletionBehavior == ModuleJobCompletionBehavior.RemainExecuting)
             {
-                job.Status = AgentJobStatus.Executing;
-                job.CompletedAt = null;
-                AddLog(job,
-                    "Module reported long-running work started; job remains Executing until the module or host lifecycle transitions it.");
                 _logger.LogInformation(
                     "Long-running module job {JobId} for action {ActionKey} started and remains Executing.",
                     job.Id, job.ActionKey);
             }
-            else
-            {
-                job.Status = AgentJobStatus.Completed;
-                job.CompletedAt = DateTimeOffset.UtcNow;
-                AddLog(job, "Job completed successfully.");
-            }
         }
         catch (Exception ex)
         {
-            job.Status = AgentJobStatus.Failed;
-            job.CompletedAt = DateTimeOffset.UtcNow;
-            job.ErrorLog = ex.ToString();
-            AddLog(job, $"Job failed: {ex.Message}", JobLogLevels.Error);
+            ApplyLifecycleDecision(
+                job,
+                lifecycle.FailExecution(
+                    ex.Message,
+                    ex.ToString(),
+                    DateTimeOffset.UtcNow));
             _logger.LogError(ex,
                 "Agent job {JobId} for action {ActionKey} failed during execution.",
                 job.Id, job.ActionKey);
@@ -1044,6 +977,25 @@ public sealed class AgentJobService(
     private async Task<AgentJobDB?> LoadJobAsync(Guid jobId, CancellationToken ct)
         => await entities.FindAsync<AgentJobDB>(db, jobId, ct);
 
+    private void ApplyLifecycleDecision(
+        AgentJobDB job,
+        AgentJobLifecycleDecision decision)
+    {
+        if (decision.Status is { } status)
+            job.Status = status;
+        if (decision.UpdateStartedAt)
+            job.StartedAt = decision.StartedAt;
+        if (decision.UpdateCompletedAt)
+            job.CompletedAt = decision.CompletedAt;
+        if (decision.UpdateResultData)
+            job.ResultData = decision.ResultData;
+        if (decision.UpdateErrorLog)
+            job.ErrorLog = decision.ErrorLog;
+
+        foreach (var log in decision.Logs)
+            AddLog(job, log.Message, log.Level);
+    }
+
     private void AddLog(AgentJobDB job, string message, string level = JobLogLevels.Info)
     {
         var entry = new AgentJobLogEntryDB
@@ -1066,11 +1018,6 @@ public sealed class AgentJobService(
         foreach (var log in pendingLogs)
             chatCache.AppendJobLogIfCached(log.AgentJobId, ToLogResponse(log));
     }
-
-    private static string FormatCaller(ActionCaller caller) =>
-        caller.UserId is not null ? $"user {caller.UserId}"
-        : caller.AgentId is not null ? $"agent {caller.AgentId}"
-        : "unknown";
 
     private sealed record AgentJobExecutionOutcome(
         string? ResultData,
