@@ -1,6 +1,7 @@
 global using FluentAssertions;
 global using NUnit.Framework;
 global using SharpClaw.Core.Chat;
+global using SharpClaw.Core.Providers;
 global using SharpClaw.Core.Threads;
 global using SharpClaw.Core.Tools;
 global using SharpClaw.Models;

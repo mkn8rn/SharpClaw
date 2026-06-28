@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Core.Clients;
+using SharpClaw.Core.Providers;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
 using SharpClaw.Contracts.Providers;
@@ -15,42 +16,29 @@ public sealed class ProviderService(
     SharpClawDbContext db,
     EncryptionOptions encryptionOptions,
     ProviderApiClientFactory clientFactory,
+    ProviderCatalogEngine providerCatalog,
+    ModelCatalogEngine modelCatalog,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration)
 {
     public async Task<ProviderResponse> CreateAsync(CreateProviderRequest request, CancellationToken ct = default)
     {
-        var plugin = clientFactory.GetPlugin(request.ProviderKey)
-            ?? throw new ProviderUnavailableException(request.ProviderKey);
-
-        if (plugin.RequiresEndpoint
-            && !plugin.SupportsAutomaticEndpointDiscovery
-            && string.IsNullOrWhiteSpace(request.ApiEndpoint))
-        {
-            throw new ArgumentException(
-                $"ApiEndpoint is required for provider '{request.ProviderKey}'.");
-        }
-
-        if (IsUniqueProviderNamesEnforced())
-            await EnsureProviderNameUniqueAsync(request.Name, excludeId: null, ct);
-
-        // Persist the endpoint whenever the plugin can use one (either it is
-        // mandatory, or the plugin supports automatic discovery and the user
-        // chose to override the default). For plugins that have no endpoint
-        // concept at all, drop the value to avoid leaking unused state.
-        var storeEndpoint = plugin.RequiresEndpoint || plugin.SupportsAutomaticEndpointDiscovery
-                ? request.ApiEndpoint
-                : null;
+        var plugin = clientFactory.GetPlugin(request.ProviderKey);
+        var plan = providerCatalog.PlanCreate(
+            request,
+            plugin,
+            IsUniqueProviderNamesEnforced(),
+            await LoadProviderNamesAsync(excludeId: null, ct));
 
         var provider = new ProviderDB
         {
-            Name = request.Name,
-            ProviderKey = request.ProviderKey,
-            ApiEndpoint = storeEndpoint,
-            EncryptedApiKey = request.ApiKey is not null
+            Name = plan.Name,
+            ProviderKey = plan.ProviderKey,
+            ApiEndpoint = plan.ApiEndpointToStore,
+            EncryptedApiKey = plan.ApiKey is not null
                 ? encryptionOptions.EncryptProviderKeys
-                    ? ApiKeyEncryptor.Encrypt(request.ApiKey, encryptionOptions.Key)
-                    : request.ApiKey
+                    ? ApiKeyEncryptor.Encrypt(plan.ApiKey, encryptionOptions.Key)
+                    : plan.ApiKey
                 : null
         };
 
@@ -61,16 +49,7 @@ public sealed class ProviderService(
     }
 
     public IReadOnlyList<ProviderTypeResponse> ListAvailableTypes()
-        => clientFactory.Plugins
-            .OrderBy(p => p.DisplayName)
-            .Select(p => new ProviderTypeResponse(
-                p.ProviderKey,
-                p.DisplayName,
-                p.RequiresEndpoint,
-                p.SupportsAutomaticEndpointDiscovery,
-                p.RequiresApiKey,
-                p.DeviceCodeFlow is not null))
-            .ToList();
+        => providerCatalog.ListAvailableTypes(clientFactory.Plugins);
 
     public async Task<IReadOnlyList<ProviderResponse>> ListAsync(CancellationToken ct = default)
     {
@@ -90,13 +69,15 @@ public sealed class ProviderService(
         var provider = await db.Providers.FindAsync([id], ct);
         if (provider is null) return null;
 
-        if (request.Name is not null)
-        {
-            if (IsUniqueProviderNamesEnforced() && !request.Name.Trim().Equals(provider.Name.Trim(), StringComparison.OrdinalIgnoreCase))
-                await EnsureProviderNameUniqueAsync(request.Name, excludeId: id, ct);
-            provider.Name = request.Name;
-        }
-        if (request.ApiEndpoint is not null) provider.ApiEndpoint = request.ApiEndpoint;
+        var plan = providerCatalog.PlanUpdate(
+            provider.Name,
+            request,
+            IsUniqueProviderNamesEnforced(),
+            await LoadProviderNamesAsync(excludeId: id, ct));
+
+        provider.Name = plan.Name;
+        if (plan.UpdateApiEndpoint)
+            provider.ApiEndpoint = plan.ApiEndpoint;
 
         await db.SaveChangesAsync(ct);
         return new ProviderResponse(provider.Id, provider.Name, provider.ProviderKey, provider.ApiEndpoint, provider.EncryptedApiKey is not null);
@@ -145,19 +126,18 @@ public sealed class ProviderService(
 
     private bool IsUniqueProviderNamesEnforced()
     {
-        var value = configuration["UniqueNames:Providers"];
-        return value is null || !bool.TryParse(value, out var enforced) || enforced;
+        return ProviderCatalogEngine.IsUniqueNameEnforced(
+            configuration["UniqueNames:Providers"]);
     }
 
-    private async Task EnsureProviderNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)
+    private async Task<IReadOnlyList<string>> LoadProviderNamesAsync(
+        Guid? excludeId,
+        CancellationToken ct)
     {
-        var normalized = name.Trim();
-        var names = await db.Providers
+        return await db.Providers
             .Where(p => excludeId == null || p.Id != excludeId)
             .Select(p => p.Name)
             .ToListAsync(ct);
-        if (names.Any(n => n.Trim().Equals(normalized, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException($"A provider named '{name}' already exists.");
     }
 
     /// <summary>
@@ -211,7 +191,7 @@ public sealed class ProviderService(
         foreach (var model in models)
         {
             var tags = resolver.Resolve(model.Name);
-            var tagsRaw = tags.Count > 0 ? string.Join(',', tags) : null;
+            var tagsRaw = modelCatalog.SerializeCapabilityTags(tags);
             if (model.CapabilityTagsRaw != tagsRaw)
             {
                 model.CapabilityTagsRaw = tagsRaw;
@@ -235,11 +215,13 @@ public sealed class ProviderService(
             .FirstOrDefaultAsync(p => p.Id == providerId, ct)
             ?? throw new ArgumentException($"Provider {providerId} not found.");
 
-        var plugin = clientFactory.GetPlugin(provider.ProviderKey)
-            ?? throw new ProviderUnavailableException(provider.ProviderKey);
-
-        if (plugin.RequiresApiKey && string.IsNullOrEmpty(provider.EncryptedApiKey))
-            throw new InvalidOperationException("Provider does not have an API key configured.");
+        var plugin = clientFactory.GetPlugin(provider.ProviderKey);
+        providerCatalog.EnsureCanSyncModels(
+            provider.ProviderKey,
+            !string.IsNullOrEmpty(provider.EncryptedApiKey),
+            plugin);
+        if (plugin is null)
+            throw new ProviderUnavailableException(provider.ProviderKey);
 
         var apiKey = string.IsNullOrEmpty(provider.EncryptedApiKey)
             ? string.Empty
@@ -259,7 +241,7 @@ public sealed class ProviderService(
                 {
                     Name = id,
                     ProviderId = provider.Id,
-                    CapabilityTagsRaw = tags.Count > 0 ? string.Join(',', tags) : null
+                    CapabilityTagsRaw = modelCatalog.SerializeCapabilityTags(tags)
                 };
             })
             .ToList();

@@ -1,12 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using SharpClaw.Core.Providers;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
-public sealed class ModelService(SharpClawDbContext db, IConfiguration configuration)
+public sealed class ModelService(
+    SharpClawDbContext db,
+    ModelCatalogEngine modelCatalog,
+    IConfiguration configuration)
 {
     public async Task<ModelResponse> CreateAsync(CreateModelRequest request, CancellationToken ct = default)
     {
@@ -21,9 +25,7 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
             Name = request.Name,
             ProviderId = provider.Id,
             CustomId = request.CustomId,
-            CapabilityTagsRaw = request.CapabilityTags is { Count: > 0 }
-                ? string.Join(',', request.CapabilityTags)
-                : null
+            CapabilityTagsRaw = modelCatalog.SerializeCapabilityTags(request.CapabilityTags)
         };
 
         db.Models.Add(model);
@@ -68,9 +70,7 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
         }
         if (request.CustomId is not null) model.CustomId = request.CustomId;
         if (request.CapabilityTags is not null)
-            model.CapabilityTagsRaw = request.CapabilityTags.Count > 0
-                ? string.Join(',', request.CapabilityTags)
-                : null;
+            model.CapabilityTagsRaw = modelCatalog.SerializeCapabilityTags(request.CapabilityTags);
 
         await db.SaveChangesAsync(ct);
         return new ModelResponse(model.Id, model.Name, model.ProviderId, model.Provider.Name,
@@ -89,15 +89,14 @@ public sealed class ModelService(SharpClawDbContext db, IConfiguration configura
 
     private bool IsUniqueModelNamesEnforced()
     {
-        var value = configuration["UniqueNames:Models"];
-        return value is null || !bool.TryParse(value, out var enforced) || enforced;
+        return ModelCatalogEngine.IsUniqueNameEnforced(
+            configuration["UniqueNames:Models"]);
     }
 
     private async Task EnsureModelNameUniqueAsync(string name, Guid? excludeId, CancellationToken ct)
     {
         var exists = await db.Models.AnyAsync(
             m => m.Name == name && (excludeId == null || m.Id != excludeId), ct);
-        if (exists)
-            throw new InvalidOperationException($"A model named '{name}' already exists.");
+        modelCatalog.EnsureModelNameAvailable(name, exists);
     }
 }

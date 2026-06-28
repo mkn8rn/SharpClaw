@@ -43,6 +43,7 @@ using SharpClaw.Core.Modules.Foreign;
 using SharpClaw.Core.Chat;
 using SharpClaw.Core.Permissions;
 using SharpClaw.Core.Jobs;
+using SharpClaw.Core.Providers;
 using SharpClaw.Core.Resources;
 using SharpClaw.Core.Threads;
 
@@ -336,6 +337,8 @@ try
     builder.Services.AddSingleton<PermissionEvaluationEngine>();
     builder.Services.AddSingleton<AgentJobLifecycleEngine>();
     builder.Services.AddSingleton<DefaultResourceEngine>();
+    builder.Services.AddSingleton<ProviderCatalogEngine>();
+    builder.Services.AddSingleton<ModelCatalogEngine>();
 
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ProviderCostService>();

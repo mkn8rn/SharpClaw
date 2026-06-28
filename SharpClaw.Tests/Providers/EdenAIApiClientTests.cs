@@ -116,7 +116,14 @@ public sealed class EdenAIApiClientTests
 
         using var serviceProvider = services.BuildServiceProvider();
         var factory = new ProviderApiClientFactory(serviceProvider.GetServices<IProviderPlugin>());
-        var svc = new ProviderService(null!, null!, factory, null!, null!);
+        var svc = new ProviderService(
+            null!,
+            null!,
+            factory,
+            new ProviderCatalogEngine(),
+            new ModelCatalogEngine(),
+            null!,
+            null!);
 
         var types = svc.ListAvailableTypes();
 
