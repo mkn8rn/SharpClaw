@@ -218,4 +218,74 @@ public sealed class AgentJobAdministrationEngineTests
                 PermissionClearance.ApprovedByWhitelistedUser)
             .Should().BeFalse();
     }
+
+    [Test]
+    public void EvaluateChannelPreauthorization_WhenClearanceIsAgentOnly_IsNotApplicable()
+    {
+        var decision = _engine.EvaluateChannelPreauthorization(
+            PermissionClearance.ApprovedByPermittedAgent,
+            callerHasGrant: true,
+            channelHasGrant: true,
+            contextHasGrant: true);
+
+        decision.IsPreauthorized.Should().BeFalse();
+        decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.NotApplicable);
+        decision.RequiresCallerGrant.Should().BeFalse();
+    }
+
+    [Test]
+    public void EvaluateChannelPreauthorization_WhenSameLevelUserCallerLacksGrant_RejectsBeforeChannel()
+    {
+        var decision = _engine.EvaluateChannelPreauthorization(
+            PermissionClearance.ApprovedBySameLevelUser,
+            callerHasGrant: false,
+            channelHasGrant: true,
+            contextHasGrant: true);
+
+        decision.IsPreauthorized.Should().BeFalse();
+        decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.CallerGrantMissing);
+        decision.RequiresCallerGrant.Should().BeTrue();
+    }
+
+    [Test]
+    public void EvaluateChannelPreauthorization_WhenChannelMatches_UsesChannelBeforeContext()
+    {
+        var decision = _engine.EvaluateChannelPreauthorization(
+            PermissionClearance.ApprovedBySameLevelUser,
+            callerHasGrant: true,
+            channelHasGrant: true,
+            contextHasGrant: true);
+
+        decision.IsPreauthorized.Should().BeTrue();
+        decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.Channel);
+        decision.RequiresCallerGrant.Should().BeTrue();
+    }
+
+    [Test]
+    public void EvaluateChannelPreauthorization_WhenOnlyContextMatches_UsesContext()
+    {
+        var decision = _engine.EvaluateChannelPreauthorization(
+            PermissionClearance.ApprovedByWhitelistedUser,
+            callerHasGrant: false,
+            channelHasGrant: false,
+            contextHasGrant: true);
+
+        decision.IsPreauthorized.Should().BeTrue();
+        decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.Context);
+        decision.RequiresCallerGrant.Should().BeFalse();
+    }
+
+    [Test]
+    public void EvaluateChannelPreauthorization_WhenNoChannelOrContextGrant_ReturnsNoGrant()
+    {
+        var decision = _engine.EvaluateChannelPreauthorization(
+            PermissionClearance.ApprovedByWhitelistedAgent,
+            callerHasGrant: false,
+            channelHasGrant: false,
+            contextHasGrant: false);
+
+        decision.IsPreauthorized.Should().BeFalse();
+        decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.NoGrant);
+        decision.RequiresCallerGrant.Should().BeFalse();
+    }
 }

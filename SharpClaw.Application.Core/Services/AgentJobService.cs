@@ -828,51 +828,60 @@ public sealed class AgentJobService(
         CancellationToken ct,
         string? actionKey = null)
     {
-        // Level 3 is agent-only — no user/channel pre-auth applies.
-        if (!jobAdministration.CanUseChannelPreauthorization(agentClearance))
-            return false;
+        var requiresCallerGrant =
+            jobAdministration.RequiresCallerGrantForChannelPreauthorization(agentClearance);
+        var callerHasGrant = !requiresCallerGrant;
 
-        // Level 1: the session user must personally hold the permission.
-        // Verify via the user's own role PS before checking the channel PS.
-        if (jobAdministration.RequiresCallerGrantForChannelPreauthorization(agentClearance))
+        if (requiresCallerGrant && callerUserId is { } userId)
         {
-            if (callerUserId is null)
-                return false;
-
             var user = await db.Users
                 .Include(u => u.Role)
-                .FirstOrDefaultAsync(u => u.Id == callerUserId, ct);
+                .FirstOrDefaultAsync(u => u.Id == userId, ct);
 
-            if (user?.Role?.PermissionSetId is not { } userPsId)
-                return false;
-
-            var userPs = await actions.LoadPermissionSetAsync(userPsId, ct);
-            if (userPs is null || !HasMatchingGrant(userPs, resourceId, actionKey))
-                return false;
+            if (user?.Role?.PermissionSetId is { } userPsId)
+            {
+                var userPs = await actions.LoadPermissionSetAsync(userPsId, ct);
+                callerHasGrant = userPs is not null
+                    && HasMatchingGrant(userPs, resourceId, actionKey);
+            }
         }
+
+        var terminalDecision = jobAdministration.EvaluateChannelPreauthorization(
+            agentClearance,
+            callerHasGrant,
+            channelHasGrant: false,
+            contextHasGrant: false);
+        if (terminalDecision.Source is AgentJobChannelPreauthorizationSource.NotApplicable
+            or AgentJobChannelPreauthorizationSource.CallerGrantMissing)
+            return false;
 
         var ch = await db.Channels
             .Include(c => c.AgentContext)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct);
-        if (ch is null) return false;
 
-        // Channel PS first.
-        if (ch.PermissionSetId is { } chPsId)
+        var channelHasGrant = false;
+        var contextHasGrant = false;
+
+        if (ch?.PermissionSetId is { } chPsId)
         {
             var chPs = await actions.LoadPermissionSetAsync(chPsId, ct);
-            if (chPs is not null && HasMatchingGrant(chPs, resourceId, actionKey))
-                return true;
+            channelHasGrant = chPs is not null
+                && HasMatchingGrant(chPs, resourceId, actionKey);
         }
 
-        // Channel didn't have it — fall through to context.
-        if (ch.AgentContext?.PermissionSetId is { } ctxPsId)
+        if (ch?.AgentContext?.PermissionSetId is { } ctxPsId)
         {
             var ctxPs = await actions.LoadPermissionSetAsync(ctxPsId, ct);
-            if (ctxPs is not null && HasMatchingGrant(ctxPs, resourceId, actionKey))
-                return true;
+            contextHasGrant = ctxPs is not null
+                && HasMatchingGrant(ctxPs, resourceId, actionKey);
         }
 
-        return false;
+        return jobAdministration.EvaluateChannelPreauthorization(
+                agentClearance,
+                callerHasGrant,
+                channelHasGrant,
+                contextHasGrant)
+            .IsPreauthorized;
     }
 
     /// <summary>
