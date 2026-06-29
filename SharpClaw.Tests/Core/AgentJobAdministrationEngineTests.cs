@@ -1,10 +1,16 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.Entities.Core;
+using SharpClaw.Contracts.Entities.Core.Access;
+using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Jobs;
+using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Core;
 
@@ -287,5 +293,175 @@ public sealed class AgentJobAdministrationEngineTests
         decision.IsPreauthorized.Should().BeFalse();
         decision.Source.Should().Be(AgentJobChannelPreauthorizationSource.NoGrant);
         decision.RequiresCallerGrant.Should().BeFalse();
+    }
+
+    [Test]
+    public void IsPerResourceAction_WhenRegisteredDescriptorIsPerResource_ReturnsTrue()
+    {
+        var registry = CreateRegistry();
+
+        _engine.IsPerResourceAction(registry, "docs_open")
+            .Should().BeTrue();
+    }
+
+    [Test]
+    public void ResolveDelegateTo_WhenActionIsRegistered_ReturnsDescriptorDelegate()
+    {
+        var registry = CreateRegistry();
+
+        _engine.ResolveDelegateTo(registry, "docs_open")
+            .Should().Be("UseDocumentAsync");
+    }
+
+    [Test]
+    public void HasMatchingGrant_WhenResourceGrantMatchesDelegate_ReturnsTrue()
+    {
+        var registry = CreateRegistry();
+        var resourceId = Guid.NewGuid();
+        var permissionSet = new PermissionSetDB
+        {
+            ResourceAccesses =
+            [
+                new ResourceAccessDB
+                {
+                    ResourceType = "documents",
+                    ResourceId = resourceId,
+                    Clearance = PermissionClearance.Independent
+                }
+            ]
+        };
+
+        _engine.HasMatchingGrant(
+                registry,
+                permissionSet,
+                resourceId,
+                "docs_open")
+            .Should().BeTrue();
+    }
+
+    [Test]
+    public void HasGrantByDelegateName_WhenGlobalFlagMatches_ReturnsTrue()
+    {
+        var registry = CreateRegistry();
+        var permissionSet = new PermissionSetDB
+        {
+            GlobalFlags =
+            [
+                new GlobalFlagDB
+                {
+                    FlagKey = "CanAuditJobs",
+                    Clearance = PermissionClearance.Independent
+                }
+            ]
+        };
+
+        _engine.HasGrantByDelegateName(
+                registry,
+                permissionSet,
+                "AuditJobsAsync",
+                resourceId: null)
+            .Should().BeTrue();
+    }
+
+    [Test]
+    public void BuildActionPrefixPredicate_WhenResourceIsProvided_FiltersByPrefixAndResource()
+    {
+        var matchingResourceId = Guid.NewGuid();
+        var otherResourceId = Guid.NewGuid();
+        var predicate = _engine.BuildActionPrefixPredicate(
+                "docs_",
+                matchingResourceId)
+            .Compile();
+
+        predicate(new AgentJobDB
+        {
+            ActionKey = "docs_open",
+            ResourceId = matchingResourceId
+        }).Should().BeTrue();
+        predicate(new AgentJobDB
+        {
+            ActionKey = "DOCS_OPEN",
+            ResourceId = matchingResourceId
+        }).Should().BeTrue();
+        predicate(new AgentJobDB
+        {
+            ActionKey = "docs_open",
+            ResourceId = otherResourceId
+        }).Should().BeFalse();
+    }
+
+    [Test]
+    public void OrderMostRecent_SortsJobsByCreatedAtDescending()
+    {
+        var older = new AgentJobDB
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.Parse("2026-06-28T18:00:00Z")
+        };
+        var newer = new AgentJobDB
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.Parse("2026-06-28T19:00:00Z")
+        };
+
+        var ordered = _engine.OrderMostRecent([older, newer]);
+
+        ordered.Select(job => job.Id).Should().Equal(newer.Id, older.Id);
+    }
+
+    private static ModuleRegistry CreateRegistry()
+    {
+        var registry = new ModuleRegistry();
+        registry.Register(new JobRulesModule());
+        return registry;
+    }
+
+    private sealed class JobRulesModule : ISharpClawCoreModule
+    {
+        private static readonly JsonElement EmptySchema =
+            JsonDocument.Parse("{}").RootElement.Clone();
+
+        public string Id => "job_rules";
+        public string DisplayName => "Job Rules";
+        public string ToolPrefix => "jobrules";
+        public void ConfigureServices(IServiceCollection services) { }
+
+        public IReadOnlyList<ModuleToolDefinition> GetToolDefinitions() =>
+        [
+            new(
+                "docs_open",
+                "Open a document.",
+                EmptySchema,
+                new ModuleToolPermission(
+                    IsPerResource: true,
+                    Check: null,
+                    DelegateTo: "UseDocumentAsync"))
+        ];
+
+        public IReadOnlyList<ModuleResourceTypeDescriptor> GetResourceTypeDescriptors() =>
+        [
+            new(
+                "documents",
+                "Documents",
+                "UseDocumentAsync",
+                (_, _) => Task.FromResult(new List<Guid>()))
+        ];
+
+        public IReadOnlyList<ModuleGlobalFlagDescriptor> GetGlobalFlagDescriptors() =>
+        [
+            new(
+                "CanAuditJobs",
+                "Audit Jobs",
+                "Audit job execution.",
+                "AuditJobsAsync")
+        ];
+
+        public Task<string> ExecuteToolAsync(
+            string toolName,
+            JsonElement parameters,
+            AgentJobContext job,
+            IServiceProvider scopedServices,
+            CancellationToken ct) =>
+            Task.FromResult("");
     }
 }

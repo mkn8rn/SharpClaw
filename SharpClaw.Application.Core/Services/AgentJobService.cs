@@ -94,7 +94,8 @@ public sealed class AgentJobService(
         // When no resource is specified for a per-resource action, resolve
         // the default from: channel DefaultResourceSet → context DefaultResourceSet
         // → channel/context/role PermissionSet defaults.
-        if (!effectiveResourceId.HasValue && IsPerResourceAction(request.ActionKey))
+        if (!effectiveResourceId.HasValue
+            && jobAdministration.IsPerResourceAction(moduleRegistry, request.ActionKey))
         {
             effectiveResourceId = await ResolveDefaultResourceIdAsync(
                 request.ActionKey, channelId, agentId, ct);
@@ -281,7 +282,7 @@ public sealed class AgentJobService(
             ct: ct);
 
         var responses = new List<AgentJobResponse>(jobs.Count);
-        foreach (var job in jobs.OrderByDescending(j => j.CreatedAt))
+        foreach (var job in jobAdministration.OrderMostRecent(jobs))
             responses.Add(await ToResponseAsync(job, ct));
 
         return responses;
@@ -301,8 +302,8 @@ public sealed class AgentJobService(
             hint: new PersistenceQueryHint("ChannelId", channelId),
             ct: ct);
 
-        return jobs
-            .OrderByDescending(j => j.CreatedAt)
+        return jobAdministration
+            .OrderMostRecent(jobs)
             .Select(ToSummaryResponse)
             .ToList();
     }
@@ -314,13 +315,11 @@ public sealed class AgentJobService(
     {
         var jobs = await entities.QueryAsync<AgentJobDB>(
             db,
-            j => j.ActionKey != null
-                 && j.ActionKey.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase)
-                 && (resourceId == null || j.ResourceId == resourceId),
+            jobAdministration.BuildActionPrefixPredicate(actionKeyPrefix, resourceId),
             ct: ct);
 
         var responses = new List<AgentJobResponse>(jobs.Count);
-        foreach (var job in jobs.OrderByDescending(j => j.CreatedAt))
+        foreach (var job in jobAdministration.OrderMostRecent(jobs))
             responses.Add(await ToResponseAsync(job, ct));
 
         return responses;
@@ -333,13 +332,11 @@ public sealed class AgentJobService(
     {
         var jobs = await entities.QueryAsync<AgentJobDB>(
             db,
-            j => j.ActionKey != null
-                 && j.ActionKey.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase)
-                 && (resourceId == null || j.ResourceId == resourceId),
+            jobAdministration.BuildActionPrefixPredicate(actionKeyPrefix, resourceId),
             ct: ct);
 
-        return jobs
-            .OrderByDescending(j => j.CreatedAt)
+        return jobAdministration
+            .OrderMostRecent(jobs)
             .Select(ToSummaryResponse)
             .ToList();
     }
@@ -348,7 +345,7 @@ public sealed class AgentJobService(
         Guid jobId, string actionKeyPrefix, CancellationToken ct = default)
     {
         var job = await LoadJobAsync(jobId, ct);
-        return job?.ActionKey?.StartsWith(actionKeyPrefix, StringComparison.OrdinalIgnoreCase) == true;
+        return jobAdministration.JobMatchesActionPrefix(job, actionKeyPrefix);
     }
 
     /// <summary>Returns the session user ID, or <c>null</c> if not authenticated.</summary>
@@ -689,21 +686,6 @@ public sealed class AgentJobService(
             channelPsId, contextPsId);
     }
 
-    /// <summary>
-    /// Determines whether the given action key requires a per-resource grant.
-    /// Resolves via the module registry's permission descriptor.
-    /// </summary>
-    private bool IsPerResourceAction(string? actionKey)
-    {
-        if (string.IsNullOrWhiteSpace(actionKey)) return false;
-
-        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
-            return false;
-
-        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
-        return descriptor?.IsPerResource ?? false;
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Default resource resolution
     // ═══════════════════════════════════════════════════════════════
@@ -732,7 +714,7 @@ public sealed class AgentJobService(
         string? actionKey, Guid channelId, Guid agentId,
         CancellationToken ct)
     {
-        var delegateTo = ResolveDelegateTo(actionKey);
+        var delegateTo = jobAdministration.ResolveDelegateTo(moduleRegistry, actionKey);
         var defaultResourceKey = delegateTo is null
             ? null
             : moduleRegistry.GetDefaultResourceKeyForDelegate(delegateTo);
@@ -842,7 +824,11 @@ public sealed class AgentJobService(
             {
                 var userPs = await actions.LoadPermissionSetAsync(userPsId, ct);
                 callerHasGrant = userPs is not null
-                    && HasMatchingGrant(userPs, resourceId, actionKey);
+                    && jobAdministration.HasMatchingGrant(
+                        moduleRegistry,
+                        userPs,
+                        resourceId,
+                        actionKey);
             }
         }
 
@@ -866,14 +852,22 @@ public sealed class AgentJobService(
         {
             var chPs = await actions.LoadPermissionSetAsync(chPsId, ct);
             channelHasGrant = chPs is not null
-                && HasMatchingGrant(chPs, resourceId, actionKey);
+                && jobAdministration.HasMatchingGrant(
+                    moduleRegistry,
+                    chPs,
+                    resourceId,
+                    actionKey);
         }
 
         if (ch?.AgentContext?.PermissionSetId is { } ctxPsId)
         {
             var ctxPs = await actions.LoadPermissionSetAsync(ctxPsId, ct);
             contextHasGrant = ctxPs is not null
-                && HasMatchingGrant(ctxPs, resourceId, actionKey);
+                && jobAdministration.HasMatchingGrant(
+                    moduleRegistry,
+                    ctxPs,
+                    resourceId,
+                    actionKey);
         }
 
         return jobAdministration.EvaluateChannelPreauthorization(
@@ -884,53 +878,9 @@ public sealed class AgentJobService(
             .IsPreauthorized;
     }
 
-    /// <summary>
-    /// Returns <c>true</c> when the permission set contains a grant
-    /// that covers the given action key (and resource, for per-resource
-    /// actions).  Resolves the tool's <see cref="ModuleToolPermission.DelegateTo"/>
-    /// and checks the corresponding grant collection via
-    /// <see cref="AgentActionService.HasGrantByDelegateName"/>.
-    /// </summary>
-    private bool HasMatchingGrant(
-        PermissionSetDB ps, Guid? resourceId,
-        string? actionKey = null)
-    {
-        if (string.IsNullOrWhiteSpace(actionKey))
-            return false;
-        return ResolveModuleGrantCheck(ps, actionKey, resourceId);
-    }
-
-    /// <summary>
-    /// Resolves a module tool's <see cref="ModuleToolPermission.DelegateTo"/>
-    /// and checks whether the permission set contains the corresponding grant.
-    /// </summary>
-    private bool ResolveModuleGrantCheck(PermissionSetDB ps, string actionKey, Guid? resourceId)
-    {
-        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName))
-            return false;
-
-        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
-        if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.DelegateTo))
-            return false;
-
-        return actions.HasGrantByDelegateName(ps, descriptor.DelegateTo, resourceId);
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Resolves the <see cref="ModuleToolPermission.DelegateTo"/> string
-    /// for the given action key via the module registry.
-    /// </summary>
-    private string? ResolveDelegateTo(string? actionKey)
-    {
-        if (string.IsNullOrWhiteSpace(actionKey)) return null;
-        if (!moduleRegistry.TryResolve(actionKey, out var moduleId, out var toolName)) return null;
-        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, toolName);
-        return descriptor?.DelegateTo;
-    }
 
     private sealed record ResolvedDefaultResourceId(Guid? ResourceId);
 
