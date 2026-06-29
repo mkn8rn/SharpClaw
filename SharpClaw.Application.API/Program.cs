@@ -385,6 +385,7 @@ try
     builder.Services.AddSingleton<IForeignModuleProtocolContractResolver, HostModuleProtocolContractResolver>();
     builder.Services.AddScoped<IModuleStorageGateway, BundledModuleStorageGateway>();
 
+    builder.Services.AddScoped<ChatHeaderTemplateEngine>();
     builder.Services.AddScoped<HeaderTagProcessor>();
     builder.Services.AddScoped<ChatService>();
     builder.Services.AddSingleton<ThreadActivitySignal>();

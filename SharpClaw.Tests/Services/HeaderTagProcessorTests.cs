@@ -80,11 +80,12 @@ public sealed class HeaderTagProcessorTests
             Array.Empty<IProviderPlugin>(),
             registry);
 
+        var engine = new ChatHeaderTemplateEngine(registry, clientFactory);
+
         return new HeaderTagProcessor(
             db,
-            registry,
+            engine,
             services,
-            clientFactory,
             configuration);
     }
 }
