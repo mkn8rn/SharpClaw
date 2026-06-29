@@ -48,6 +48,7 @@ public sealed class ChatService(
     ChatCostEngine chatCosts,
     ChatPromptEngine chatPrompts,
     ChatHistoryEngine chatHistory,
+    ChatHeaderGrantFormatter headerGrantFormatter,
     ChatToolResultEngine chatToolResults,
     ConversationTopologyEngine conversation,
     ILogger<ChatService> logger,
@@ -721,7 +722,12 @@ public sealed class ChatService(
                 .FirstOrDefaultAsync(p => p.Id == psId, ct);
 
             if (ps is not null)
-                grants = await CollectGrantsWithResourcesAsync(ps, ct);
+            {
+                grants = [.. await headerGrantFormatter.FormatGrantNamesWithResourcesAsync(
+                    ps,
+                    serviceProvider,
+                    ct)];
+            }
         }
 
         return new UserHeaderState(
@@ -792,7 +798,10 @@ public sealed class ChatService(
             sb.Append(" | agent-role: ").Append(agentRole.Name);
             if (agentPs is not null)
             {
-                var agentGrants = await CollectGrantsWithResourcesAsync(agentPs, ct);
+                var agentGrants = await headerGrantFormatter.FormatGrantNamesWithResourcesAsync(
+                    agentPs,
+                    serviceProvider,
+                    ct);
                 if (agentGrants.Count > 0)
                     sb.Append(" (").Append(string.Join(", ", agentGrants)).Append(')');
             }
@@ -820,74 +829,6 @@ public sealed class ChatService(
 
         sb.AppendLine("]");
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Collects grant names with enumerated resource IDs for the chat
-    /// header (both user and agent sections). When a wildcard grant
-    /// (<see cref="WellKnownIds.AllResources"/>) is present, all resource
-    /// IDs of that type are resolved from the database so the reader
-    /// knows exactly which resources the permission set covers.
-    /// </summary>
-    /// <summary>
-    /// Collects grant names with enumerated resource IDs for the chat
-    /// header (both user and agent sections). Uses the unified
-    /// <see cref="ResourceAccessDB"/> collection and the same expander
-    /// table as <see cref="HeaderTagProcessor"/>.
-    /// </summary>
-    private async Task<List<string>> CollectGrantsWithResourcesAsync(
-        PermissionSetDB ps, CancellationToken ct)
-    {
-        var grants = new List<string>();
-
-        // Global flags — generic iteration over the GlobalFlags collection.
-        foreach (var flag in ps.GlobalFlags)
-            grants.Add(flag.FlagKey.StartsWith("Can", StringComparison.Ordinal)
-                ? flag.FlagKey[3..]
-                : flag.FlagKey);
-
-        foreach (var desc in moduleRegistry.GetAllResourceTypeDescriptors())
-        {
-            var grantedIds = ps.ResourceAccesses
-                .Where(a => a.ResourceType == desc.ResourceType)
-                .Select(a => a.ResourceId)
-                .ToList();
-
-            await AppendResourceGrantAsync(grants, desc.GrantLabel, grantedIds,
-                () => desc.LoadAllIds(serviceProvider, ct));
-        }
-
-        return grants;
-    }
-
-    /// <summary>
-    /// Appends a grant entry with resource IDs. If any grant entry
-    /// matches <see cref="WellKnownIds.AllResources"/>, all IDs of that
-    /// type are loaded from the database so the agent sees the resolved
-    /// list instead of the wildcard.
-    /// </summary>
-    private static async Task AppendResourceGrantAsync(
-        List<string> grants, string grantName,
-        IEnumerable<Guid> grantedIds, Func<Task<List<Guid>>> loadAllIdsAsync)
-    {
-        var ids = grantedIds.ToList();
-        if (ids.Count == 0)
-            return;
-
-        List<Guid> resolved;
-        if (ids.Any(id => id == WellKnownIds.AllResources))
-            resolved = await loadAllIdsAsync();
-        else
-            resolved = ids;
-
-        if (resolved.Count == 0)
-        {
-            grants.Add(grantName);
-            return;
-        }
-
-        var idList = string.Join(",", resolved.Select(id => id.ToString("D")));
-        grants.Add($"{grantName}[{idList}]");
     }
 
     // ═══════════════════════════════════════════════════════════════
