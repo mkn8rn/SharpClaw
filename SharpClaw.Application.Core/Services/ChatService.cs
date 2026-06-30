@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -52,6 +51,7 @@ public sealed class ChatService(
     ChatHeaderGrantFormatter headerGrantFormatter,
     ChatToolResultEngine chatToolResults,
     ChatMessageEngine chatMessages,
+    ChatToolSelectionEngine chatToolSelection,
     ConversationTopologyEngine conversation,
     ILogger<ChatService> logger,
     IServiceScopeFactory serviceScopeFactory,
@@ -1113,7 +1113,11 @@ public sealed class ChatService(
             if (roundJobIds.Count > 0 && roundResult.Usage is { } ru)
             {
                 await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
-                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
+                chatToolResults.ApplyRoundTokenUsageToJobResponses(
+                    jobResults,
+                    roundJobIds,
+                    ru.PromptTokens,
+                    ru.CompletionTokens);
             }
         }
 
@@ -1392,9 +1396,12 @@ public sealed class ChatService(
         if (taskContext is null && agentId.HasValue)
         {
             return await chatCache.GetOrCreateAsync(
-                ChatCache.KeyEffectiveTools(agentId.Value, BuildToolAwarenessFingerprint(toolAwareness)),
-                _ => BuildEffectiveToolsAsync(null, toolAwareness),
-                EstimateToolDefinitions,
+                ChatCache.KeyEffectiveTools(
+                    agentId.Value,
+                    chatToolSelection.BuildAwarenessFingerprint(toolAwareness)),
+                async _ => (IReadOnlyList<ChatToolDefinition>?)
+                    await BuildEffectiveToolsAsync(null, toolAwareness),
+                chatToolSelection.EstimateToolDefinitions,
                 ct)
                 ?? [];
         }
@@ -1416,36 +1423,9 @@ public sealed class ChatService(
                 baseTools.AddRange(store.GetToolDefinitions());
         }
 
-        if (toolAwareness is null or { Count: 0 })
-            return Task.FromResult<IReadOnlyList<ChatToolDefinition>>(baseTools);
-
-        // Filter: include only tools whose key is true or absent in the set.
-        var filtered = baseTools
-            .Where(t => !toolAwareness.TryGetValue(t.Name, out var enabled) || enabled)
-            .ToList();
-        return Task.FromResult<IReadOnlyList<ChatToolDefinition>>(filtered);
+        return Task.FromResult(
+            chatToolSelection.ApplyAwareness(baseTools, toolAwareness));
     }
-
-    private static string BuildToolAwarenessFingerprint(Dictionary<string, bool>? toolAwareness)
-    {
-        if (toolAwareness is null or { Count: 0 })
-            return "all";
-
-        var sb = new StringBuilder();
-        foreach (var (key, enabled) in toolAwareness.OrderBy(static kvp => kvp.Key, StringComparer.Ordinal))
-        {
-            sb.Append(key).Append('=').Append(enabled ? '1' : '0').Append(';');
-        }
-
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
-    }
-
-    private static long EstimateToolDefinitions(IReadOnlyList<ChatToolDefinition> tools)
-        => 64 + tools.Sum(static tool =>
-            64
-            + ChatCache.EstimateString(tool.Name)
-            + ChatCache.EstimateString(tool.Description)
-            + ChatCache.EstimateString(tool.ParametersSchema.GetRawText()));
 
     /// <summary>
     /// Try to handle a native tool call as a task-specific tool.
@@ -1589,51 +1569,6 @@ public sealed class ChatService(
         finally
         {
             runtimeHost?.ReleaseExecution();
-        }
-    }
-
-    /// <summary>
-    /// Patches <paramref name="jobResults"/> entries whose IDs appear in
-    /// <paramref name="roundJobIds"/> with the correct <see cref="TokenUsageResponse"/>
-    /// computed from the same even-split logic used by
-    /// <see cref="AgentJobService.RecordTokensAsync"/>.
-    /// This fixes the timing gap where job snapshots are captured at submit
-    /// time, before the tokens have been written to the database.
-    /// </summary>
-    private static void PatchJobCosts(
-        List<AgentJobResponse> jobResults, IReadOnlyList<Guid> roundJobIds,
-        int promptTokens, int completionTokens)
-    {
-        if (roundJobIds.Count == 0) return;
-
-        var count = roundJobIds.Count;
-        var promptPer = promptTokens / count;
-        var completionPer = completionTokens / count;
-        var promptRemainder = promptTokens % count;
-        var completionRemainder = completionTokens % count;
-
-        // Walk the round IDs in order; the first gets the remainder (mirrors RecordTokensAsync).
-        for (var ri = 0; ri < roundJobIds.Count; ri++)
-        {
-            var id = roundJobIds[ri];
-            var p = promptPer + (ri == 0 ? promptRemainder : 0);
-            var c = completionPer + (ri == 0 ? completionRemainder : 0);
-
-            for (var ji = jobResults.Count - 1; ji >= 0; ji--)
-            {
-                if (jobResults[ji].Id != id) continue;
-
-                // Accumulate: the snapshot may already carry tokens from a previous round.
-                var existing = jobResults[ji].JobCost;
-                var newP = (existing?.TotalPromptTokens ?? 0) + p;
-                var newC = (existing?.TotalCompletionTokens ?? 0) + c;
-
-                jobResults[ji] = jobResults[ji] with
-                {
-                    JobCost = new TokenUsageResponse(newP, newC, newP + newC)
-                };
-                break;
-            }
         }
     }
 
@@ -1852,7 +1787,11 @@ public sealed class ChatService(
             if (roundJobIds.Count > 0 && result.Usage is { } ru)
             {
                 await jobService.RecordTokensAsync(roundJobIds, ru.PromptTokens, ru.CompletionTokens, ct);
-                PatchJobCosts(jobResults, roundJobIds, ru.PromptTokens, ru.CompletionTokens);
+                chatToolResults.ApplyRoundTokenUsageToJobResponses(
+                    jobResults,
+                    roundJobIds,
+                    ru.PromptTokens,
+                    ru.CompletionTokens);
             }
 
             if (anyUnresolvableApproval)

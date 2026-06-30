@@ -1,4 +1,5 @@
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Tests.Core;
@@ -105,6 +106,41 @@ public sealed class ChatToolResultEngineTests
         message.Content.Should().Be(
             "status=Completed result=saw it (screenshot captured successfully)");
         message.HasImage.Should().BeFalse();
+    }
+
+    [Test]
+    public void ApplyRoundTokenUsageToJobResponses_SplitsRemainderIntoFirstRoundJob()
+    {
+        var first = Job(AgentJobStatus.Completed, "first");
+        var second = Job(AgentJobStatus.Completed, "second");
+        var jobs = new List<AgentJobResponse> { first, second };
+
+        _engine.ApplyRoundTokenUsageToJobResponses(
+            jobs,
+            [first.Id, second.Id],
+            promptTokens: 5,
+            completionTokens: 3);
+
+        jobs[0].JobCost.Should().Be(new TokenUsageResponse(3, 2, 5));
+        jobs[1].JobCost.Should().Be(new TokenUsageResponse(2, 1, 3));
+    }
+
+    [Test]
+    public void ApplyRoundTokenUsageToJobResponses_AccumulatesExistingSnapshotCost()
+    {
+        var job = Job(AgentJobStatus.Completed, "result") with
+        {
+            JobCost = new TokenUsageResponse(1, 2, 3)
+        };
+        var jobs = new List<AgentJobResponse> { job };
+
+        _engine.ApplyRoundTokenUsageToJobResponses(
+            jobs,
+            [job.Id],
+            promptTokens: 4,
+            completionTokens: 5);
+
+        jobs[0].JobCost.Should().Be(new TokenUsageResponse(5, 7, 12));
     }
 
     private static AgentJobResponse Job(
