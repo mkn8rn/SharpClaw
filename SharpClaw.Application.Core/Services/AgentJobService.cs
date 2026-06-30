@@ -462,7 +462,9 @@ public sealed class AgentJobService(
             var execCtx = scope.ServiceProvider.GetService<ModuleExecutionContext>();
             if (execCtx is not null) execCtx.ModuleId = module.Id;
 
-            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, module.Id);
+            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
+                scope.ServiceProvider,
+                module.Id);
             var completionBehavior = module.GetJobCompletionBehavior(
                 plan.ToolName, plan.Parameters, jobContext);
 

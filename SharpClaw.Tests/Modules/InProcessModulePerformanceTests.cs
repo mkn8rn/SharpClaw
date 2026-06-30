@@ -241,7 +241,9 @@ public sealed class InProcessModulePerformanceTests
         private async Task RunDirectToolDispatchAsync(int variant)
         {
             using var scope = RuntimeHost.CreateScope();
-            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, Module.Id);
+            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
+                scope.ServiceProvider,
+                Module.Id);
             var job = CreateJobContext(Guid.NewGuid());
 
             for (var i = 0; i < 25; i++)
@@ -262,7 +264,9 @@ public sealed class InProcessModulePerformanceTests
         private async Task ExecuteDirectToolAsync(string toolName, int variant)
         {
             using var scope = RuntimeHost.CreateScope();
-            var restrictedScope = new ModuleServiceScope(scope.ServiceProvider, Module.Id);
+            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
+                scope.ServiceProvider,
+                Module.Id);
             using var parameters = JsonDocument.Parse(
                 JsonSerializer.Serialize(new { variant }, JsonOptions));
             var result = await Module.ExecuteToolAsync(

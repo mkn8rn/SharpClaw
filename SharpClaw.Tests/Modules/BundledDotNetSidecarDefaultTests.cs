@@ -243,7 +243,9 @@ public sealed class BundledDotNetSidecarDefaultTests
         scope.ServiceProvider.GetService<SharpClawDbContext>().Should().BeNull(
             "in-process modules must not receive the raw host DbContext");
 
-        var restricted = new ModuleServiceScope(scope.ServiceProvider, InProcessStorageFixtureModule.ModuleId);
+        var restricted = ModuleHostServiceAccess.CreateRestrictedScope(
+            scope.ServiceProvider,
+            InProcessStorageFixtureModule.ModuleId);
         var blockedRawDb = () => restricted.GetRequiredService<SharpClawDbContext>();
         blockedRawDb.Should().Throw<InvalidOperationException>()
             .WithMessage("*blocked service*SharpClawDbContext*");

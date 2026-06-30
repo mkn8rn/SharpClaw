@@ -1536,7 +1536,9 @@ public sealed class ChatService(
             var execCtx = scopedProvider.GetService<ModuleExecutionContext>();
             if (execCtx is not null) execCtx.ModuleId = module.Id;
 
-            var restrictedScope = new ModuleServiceScope(scopedProvider, module.Id);
+            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
+                scopedProvider,
+                module.Id);
 
             var result = await module.ExecuteInlineToolAsync(
                 canonicalName, parameters, context, restrictedScope, ct);
