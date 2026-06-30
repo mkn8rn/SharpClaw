@@ -38,6 +38,7 @@ public sealed class HostAgentBridge(
     ChatCache chatCache) : IHostAgentBridge
 {
     private readonly TaskStructuredResponseParser _structuredResponses = new();
+    private readonly TaskHostBridgeProvisioningEngine _provisioning = new();
 
     public async Task<string?> ChatAsync(
         Guid instanceId, string taskName, string message, Guid? agentId, CancellationToken ct)
@@ -124,42 +125,36 @@ public sealed class HostAgentBridge(
                 .FirstOrDefaultAsync(ct);
         }
 
-        if (agentEntity is not null)
-        {
-            agentEntity.Name = name;
-            agentEntity.ModelId = modelId;
-            agentEntity.SystemPrompt = systemPrompt;
-            await db.SaveChangesAsync(ct);
-            InvalidateAgentRuntimeState();
-        }
-        else
-        {
-            agentEntity = new SharpClaw.Contracts.Entities.Core.AgentDB
-            {
-                Name = name,
-                ModelId = modelId,
-                SystemPrompt = systemPrompt,
-                CustomId = customId,
-            };
+        var provisioning = _provisioning.ApplyAgentProvisioning(
+            agentEntity,
+            name,
+            modelId,
+            systemPrompt,
+            customId);
+        agentEntity = provisioning.Agent;
+        if (provisioning.Created)
             db.Agents.Add(agentEntity);
-            await db.SaveChangesAsync(ct);
-            InvalidateAgentRuntimeState();
-        }
+
+        await db.SaveChangesAsync(ct);
+        InvalidateAgentRuntimeState();
 
         if (await TryGetInstanceChannelIdAsync(instanceId, ct) is { } channelId)
         {
             var channel = await db.Channels
                 .Include(c => c.AllowedAgents)
                 .FirstOrDefaultAsync(c => c.Id == channelId, ct);
-            if (channel is not null && !channel.AllowedAgents.Any(a => a.Id == agentEntity.Id))
+            if (channel is not null
+                && _provisioning.AddChannelAllowedAgent(channel, agentEntity))
             {
-                channel.AllowedAgents.Add(agentEntity);
                 await db.SaveChangesAsync(ct);
                 InvalidateChannelRuntimeState();
             }
         }
 
-        await taskService.AppendLogAsync(instanceId, $"CreateAgent '{name}' → {agentEntity.Id}", ct: ct);
+        await taskService.AppendLogAsync(
+            instanceId,
+            TaskHostBridgeProvisioningEngine.BuildCreateAgentLog(name, agentEntity.Id),
+            ct: ct);
         return agentEntity.Id;
     }
 
@@ -169,15 +164,17 @@ public sealed class HostAgentBridge(
         var resolvedChannelId = channelId
             ?? await GetInstanceChannelIdAsync(instanceId, ct);
 
-        var thread = new ChatThreadDB
-        {
-            Name = threadName ?? $"Task Thread {DateTimeOffset.UtcNow:HH:mm}",
-            ChannelId = resolvedChannelId,
-        };
+        var thread = _provisioning.CreateThread(
+            resolvedChannelId,
+            threadName,
+            DateTimeOffset.UtcNow);
         db.ChatThreads.Add(thread);
         await db.SaveChangesAsync(ct);
         InvalidateThreadRuntimeState(thread.Id);
-        await taskService.AppendLogAsync(instanceId, $"CreateThread '{thread.Name}' → {thread.Id}", ct: ct);
+        await taskService.AppendLogAsync(
+            instanceId,
+            TaskHostBridgeProvisioningEngine.BuildCreateThreadLog(thread.Name, thread.Id),
+            ct: ct);
         return thread.Id;
     }
 
@@ -255,12 +252,12 @@ public sealed class HostAgentBridge(
         Guid channelId;
         if (existing is not null)
         {
-            existing.Title = title;
-            existing.AgentId = agentId;
-            if (!string.IsNullOrEmpty(customId))
-                existing.CustomId = customId;
-            if (instanceContextId.HasValue)
-                existing.AgentContextId = instanceContextId;
+            _provisioning.ApplyExistingChannelProvisioning(
+                existing,
+                title,
+                agentId,
+                customId,
+                instanceContextId);
             await db.SaveChangesAsync(ct);
             InvalidateChannelRuntimeState();
             channelId = existing.Id;
@@ -279,15 +276,17 @@ public sealed class HostAgentBridge(
             channelId = resp.Id;
         }
 
-        // Adopt as instance channel when none is set yet
         var inst = await db.TaskInstances.FindAsync([instanceId], ct);
-        if (inst is not null && inst.ChannelId is null)
+        if (inst is not null
+            && _provisioning.AdoptInstanceChannel(inst, channelId))
         {
-            inst.ChannelId = channelId;
             await db.SaveChangesAsync(ct);
         }
 
-        await taskService.AppendLogAsync(instanceId, $"CreateChannel '{title}' → {channelId}", ct: ct);
+        await taskService.AppendLogAsync(
+            instanceId,
+            TaskHostBridgeProvisioningEngine.BuildCreateChannelLog(title, channelId),
+            ct: ct);
         return channelId;
     }
 
@@ -305,24 +304,24 @@ public sealed class HostAgentBridge(
             .FirstOrDefaultAsync(c => c.Id == targetChannelId, ct)
             ?? throw new InvalidOperationException($"AddAllowedAgent: channel '{targetChannelId}' not found.");
 
-        if (!channel.AllowedAgents.Any(a => a.Id == agentEntity.Id))
+        if (_provisioning.AddChannelAllowedAgent(channel, agentEntity))
         {
-            channel.AllowedAgents.Add(agentEntity);
             await db.SaveChangesAsync(ct);
             InvalidateChannelRuntimeState();
         }
 
         await taskService.AppendLogAsync(
-            instanceId, $"AddAllowedAgent agent={agentId} → channel={targetChannelId}", ct: ct);
+            instanceId,
+            TaskHostBridgeProvisioningEngine.BuildAddAllowedAgentLog(agentId, targetChannelId),
+            ct: ct);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
 
     private async Task<Guid> GetInstanceChannelIdAsync(Guid instanceId, CancellationToken ct)
-        => await TryGetInstanceChannelIdAsync(instanceId, ct)
-           ?? throw new InvalidOperationException(
-               $"Task instance {instanceId} has no channel yet. " +
-               "Call CreateChannel before using Chat, CreateThread, or other channel-dependent steps.");
+        => _provisioning.RequireInstanceChannel(
+            instanceId,
+            await TryGetInstanceChannelIdAsync(instanceId, ct));
 
     private async Task<Guid?> TryGetInstanceChannelIdAsync(Guid instanceId, CancellationToken ct)
         => await db.TaskInstances
