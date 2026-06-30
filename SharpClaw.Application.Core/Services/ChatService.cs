@@ -42,7 +42,6 @@ public sealed class ChatService(
     ThreadActivitySignal threadActivity,
     ModuleRegistry moduleRegistry,
     ModuleToolExecutionPlanner moduleExecutionPlanner,
-    ModuleMetricsCollector metricsCollector,
     ChatCache chatCache,
     ChatCostEngine chatCosts,
     ChatRequestPlanningEngine chatPlanner,
@@ -53,6 +52,7 @@ public sealed class ChatService(
     ChatMessageEngine chatMessages,
     ChatToolSelectionEngine chatToolSelection,
     ChatNativeToolCallParser chatToolCallParser,
+    ChatInlineToolExecutor chatInlineToolExecutor,
     ConversationTopologyEngine conversation,
     ILogger<ChatService> logger,
     IServiceScopeFactory serviceScopeFactory,
@@ -941,7 +941,7 @@ public sealed class ChatService(
         var roundJobIds = new List<Guid>();
         string? finalProviderMetadataJson = null;
         var providerRound = 0;
-        var inlinePermissionCache = new Dictionary<InlineToolPermissionCacheKey, AgentActionResult>();
+        var inlinePermissionCache = new Dictionary<ChatInlineToolPermissionCacheKey, AgentActionResult>();
 
         while (true)
         {
@@ -1477,103 +1477,62 @@ public sealed class ChatService(
         Guid agentId,
         Guid channelId,
         Guid? threadId,
-        Dictionary<InlineToolPermissionCacheKey, AgentActionResult> permissionCache,
+        Dictionary<ChatInlineToolPermissionCacheKey, AgentActionResult> permissionCache,
         CancellationToken ct)
     {
-        if (!moduleRegistry.TryResolve(toolCall.Name, out var moduleId, out var canonicalName))
-            return $"Error: inline tool '{toolCall.Name}' not found in any module.";
+        var result = await chatInlineToolExecutor.ExecuteAsync(
+            new ChatInlineToolExecutionRequest(
+                toolCall,
+                agentId,
+                channelId,
+                threadId,
+                moduleRegistry,
+                permissionCache,
+                CheckInlineToolPermissionAsync,
+                serviceProvider,
+                ModuleHostServiceAccess.BlockedServiceTypes),
+            ct);
 
-        var module = moduleRegistry.GetModule(moduleId)
-            ?? throw new InvalidOperationException(
-                $"Module '{moduleId}' resolved by registry but not loaded.");
-
-        var prefixedToolName = $"{module.ToolPrefix}_{canonicalName}";
-
-        var context = new InlineToolContext(agentId, channelId, threadId, toolCall.Id);
-
-        JsonElement parameters;
-        try
+        if (result.ModuleInvoked
+            && result.PrefixedToolName is { } prefixedToolName
+            && logger.IsEnabled(LogLevel.Debug))
         {
-            using var doc = JsonDocument.Parse(toolCall.ArgumentsJson ?? "{}");
-            parameters = doc.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            return "Error: malformed tool arguments JSON.";
-        }
-
-        var descriptor = moduleRegistry.GetPermissionDescriptor(moduleId, canonicalName);
-        if (descriptor is not null)
-        {
-            var permissionKey = new InlineToolPermissionCacheKey(agentId, moduleId, canonicalName);
-            if (!permissionCache.TryGetValue(permissionKey, out var verdict))
-            {
-                verdict = await jobService.CheckPermissionAsync(
-                    agentId,
-                    resourceId: null,
-                    new ActionCaller(AgentId: agentId),
-                    ct,
-                    actionKey: toolCall.Name);
-                permissionCache[permissionKey] = verdict;
-            }
-
-            if (verdict.Verdict != ClearanceVerdict.Approved)
-                return $"Error: permission denied for inline tool '{toolCall.Name}': {verdict.Reason}";
-        }
-
-        // Runtime-hosted modules use their own DI container.
-        var runtimeHost = moduleRegistry.GetRuntimeHost(moduleId);
-        if (runtimeHost is not null && !runtimeHost.TryAcquireExecution())
-            return $"Error: module '{moduleId}' is unloading.";
-
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            using var externalScope = runtimeHost?.CreateScope();
-            var scopedProvider = externalScope?.ServiceProvider ?? serviceProvider;
-
-            // Set ModuleExecutionContext so IModuleConfigStore resolves correctly.
-            var execCtx = scopedProvider.GetService<ModuleExecutionContext>();
-            if (execCtx is not null) execCtx.ModuleId = module.Id;
-
-            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
-                scopedProvider,
-                module.Id);
-
-            var result = await module.ExecuteInlineToolAsync(
-                canonicalName, parameters, context, restrictedScope, ct);
-
-            sw.Stop();
-            metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
-            if (logger.IsEnabled(LogLevel.Debug))
+            var sanitizedToolName = PathGuard.SanitizeForLog(prefixedToolName);
+            if (result.Succeeded)
             {
                 logger.LogDebug(
                     "Inline module tool {ToolName} completed in {ElapsedMs}ms. AgentId={AgentId} ChannelId={ChannelId} ThreadId={ThreadId}",
-                    PathGuard.SanitizeForLog(prefixedToolName),
-                    sw.ElapsedMilliseconds, agentId, channelId, threadId);
+                    sanitizedToolName,
+                    result.Elapsed.TotalMilliseconds,
+                    agentId,
+                    channelId,
+                    threadId);
             }
-            return result;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            metricsCollector.RecordFailure(prefixedToolName);
-            if (logger.IsEnabled(LogLevel.Debug))
+            else
             {
                 logger.LogDebug(
-                    ex,
+                    result.Exception,
                     "Inline module tool {ToolName} failed in {ElapsedMs}ms. AgentId={AgentId} ChannelId={ChannelId} ThreadId={ThreadId}",
-                    PathGuard.SanitizeForLog(prefixedToolName),
-                    sw.ElapsedMilliseconds, agentId, channelId, threadId);
+                    sanitizedToolName,
+                    result.Elapsed.TotalMilliseconds,
+                    agentId,
+                    channelId,
+                    threadId);
             }
-            return $"Error executing inline tool '{toolCall.Name}': {ex.Message}";
         }
-        finally
-        {
-            runtimeHost?.ReleaseExecution();
-        }
+
+        return result.ToolResult;
     }
+
+    private Task<AgentActionResult> CheckInlineToolPermissionAsync(
+        ChatInlineToolPermissionCheck check,
+        CancellationToken ct) =>
+        jobService.CheckPermissionAsync(
+            check.AgentId,
+            resourceId: null,
+            new ActionCaller(AgentId: check.AgentId),
+            ct,
+            actionKey: check.ActionKey);
 
     // ═══════════════════════════════════════════════════════════════
     // Tool-call loop implementations
@@ -1626,7 +1585,7 @@ public sealed class ChatService(
         var roundJobIds = new List<Guid>();
         var logTiming = timingRequestId is not null && logger.IsEnabled(LogLevel.Debug);
         var providerRound = 0;
-        var inlinePermissionCache = new Dictionary<InlineToolPermissionCacheKey, AgentActionResult>();
+        var inlinePermissionCache = new Dictionary<ChatInlineToolPermissionCacheKey, AgentActionResult>();
 
         if (logTiming)
         {
@@ -1959,11 +1918,6 @@ public sealed class ChatService(
     // ═══════════════════════════════════════════════════════════════
     // Internal types
     // ═══════════════════════════════════════════════════════════════
-
-    private readonly record struct InlineToolPermissionCacheKey(
-        Guid AgentId,
-        string ModuleId,
-        string ToolName);
 
     private readonly record struct ToolLoopResult(
         string AssistantContent,
