@@ -359,6 +359,7 @@ try
     builder.Services.AddSingleton<ChatToolSelectionEngine>();
     builder.Services.AddSingleton<ChatNativeToolCallParser>();
     builder.Services.AddSingleton<ChatInlineToolExecutor>();
+    builder.Services.AddSingleton<ModuleJobToolExecutor>();
     builder.Services.AddSingleton<TaskPreflightEngine>();
     builder.Services.AddSingleton<ToolAwarenessSetEngine>();
 

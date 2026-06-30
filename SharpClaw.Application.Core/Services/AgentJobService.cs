@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http;
-using System.Text;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -21,7 +19,6 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
-using SharpClaw.Utils.Security;
 using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Permissions;
@@ -41,7 +38,7 @@ public sealed class AgentJobService(
     ModuleRegistry moduleRegistry,
     ModuleToolExecutionPlanner moduleExecutionPlanner,
     ModuleToolPermissionPlanner modulePermissionPlanner,
-    ModuleMetricsCollector metricsCollector,
+    ModuleJobToolExecutor moduleJobToolExecutor,
     ModuleEventDispatcher eventDispatcher,
     IServiceScopeFactory serviceScopeFactory,
     IConfiguration configuration,
@@ -431,127 +428,24 @@ public sealed class AgentJobService(
         ModuleToolExecutionPlan plan,
         CancellationToken ct)
     {
-        var module = moduleRegistry.GetModule(plan.ModuleId)
-            ?? throw new InvalidOperationException(
-                $"Module '{plan.ModuleId}' is not loaded.");
+        var result = await moduleJobToolExecutor.ExecuteAsync(
+            new ModuleJobToolExecutionRequest(
+                job,
+                plan,
+                moduleRegistry,
+                serviceScopeFactory.CreateScope,
+                ModuleHostServiceAccess.BlockedServiceTypes,
+                message => AddLog(job, message),
+                IsStreamingNotSupportedException),
+            ct);
 
-        var prefixedToolName = $"{module.ToolPrefix}_{plan.ToolName}";
-
-        var jobContext = new AgentJobContext(
-            JobId: job.Id,
-            AgentId: job.AgentId,
-            ChannelId: job.ChannelId,
-            ResourceId: job.ResourceId,
-            ActionKey: job.ActionKey);
-
-        // Runtime-hosted modules use their own per-module DI container;
-        // bundled modules use the host's scope.
-        var runtimeHost = moduleRegistry.GetRuntimeHost(plan.ModuleId);
-        if (runtimeHost is not null && !runtimeHost.TryAcquireExecution())
-            throw new InvalidOperationException(
-                $"Module '{plan.ModuleId}' is unloading - cannot execute tools.");
-
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            using var scope = runtimeHost is not null
-                ? runtimeHost.CreateScope()
-                : serviceScopeFactory.CreateScope();
-
-            // Set ModuleExecutionContext so IModuleConfigStore resolves correctly.
-            var execCtx = scope.ServiceProvider.GetService<ModuleExecutionContext>();
-            if (execCtx is not null) execCtx.ModuleId = module.Id;
-
-            var restrictedScope = ModuleHostServiceAccess.CreateRestrictedScope(
-                scope.ServiceProvider,
-                module.Id);
-            var completionBehavior = module.GetJobCompletionBehavior(
-                plan.ToolName, plan.Parameters, jobContext);
-
-            // Timeout: per-tool override → manifest default → 30s.
-            var manifest = moduleRegistry.GetManifest(plan.ModuleId);
-            var toolTimeout = moduleRegistry.GetToolTimeout(plan.ModuleId, plan.ToolName);
-            var timeoutSeconds = toolTimeout ?? manifest?.ExecutionTimeoutSeconds ?? 30;
-            AddLog(job,
-                $"Module dispatch resolved: {job.ActionKey ?? plan.ToolName} -> {plan.ModuleId}.{plan.ToolName} (timeout {timeoutSeconds}s).");
-            _logger.LogInformation(
-                "Dispatching agent job {JobId}: action {ActionKey} -> module {ModuleId}.{ToolName} with timeout {TimeoutSeconds}s.",
-                job.Id, job.ActionKey, plan.ModuleId, plan.ToolName, timeoutSeconds);
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-
-            try
-            {
-                // Try streaming variant first; fall back to non-streaming.
-                var stream = module.ExecuteToolStreamingAsync(
-                    plan.ToolName, plan.Parameters, jobContext, restrictedScope, cts.Token);
-
-                string? result;
-                if (stream is not null)
-                {
-                    var sb = new StringBuilder();
-                    try
-                    {
-                        await foreach (var chunk in stream.WithCancellation(cts.Token))
-                            sb.Append(chunk);
-                        result = sb.ToString();
-                    }
-                    catch (ForeignModuleProtocolException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-                    {
-                        _logger.LogDebug(
-                            "Module tool {ModuleId}.{ToolName} is not streaming; falling back to normal execution for job {JobId}.",
-                            plan.ModuleId,
-                            plan.ToolName,
-                            job.Id);
-                        result = await module.ExecuteToolAsync(
-                            plan.ToolName, plan.Parameters, jobContext, restrictedScope, cts.Token);
-                    }
-                }
-                else
-                {
-                    result = await module.ExecuteToolAsync(
-                        plan.ToolName, plan.Parameters, jobContext, restrictedScope, cts.Token);
-                }
-
-                sw.Stop();
-                metricsCollector.RecordSuccess(prefixedToolName, sw.Elapsed);
-                _logger.LogDebug(
-                    "Module tool {ModuleId}.{ToolName} completed in {ElapsedMs}ms for job {JobId}. CompletionBehavior={CompletionBehavior}",
-                    PathGuard.SanitizeForLog(plan.ModuleId),
-                    PathGuard.SanitizeForLog(plan.ToolName),
-                    sw.ElapsedMilliseconds,
-                    job.Id, completionBehavior);
-                return new AgentJobExecutionOutcome(result, completionBehavior);
-            }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
-            {
-                sw.Stop();
-                metricsCollector.RecordTimeout(prefixedToolName);
-                _logger.LogWarning(
-                    "Module tool {ModuleId}.{ToolName} timed out after {TimeoutSeconds}s for job {JobId}.",
-                    plan.ModuleId, plan.ToolName, timeoutSeconds, job.Id);
-                throw new InvalidOperationException(
-                    $"Module tool '{plan.ModuleId}.{plan.ToolName}' " +
-                    $"exceeded timeout ({timeoutSeconds}s).");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
-            {
-                sw.Stop();
-                metricsCollector.RecordFailure(prefixedToolName);
-                _logger.LogError(ex,
-                    "Module tool {ModuleId}.{ToolName} failed for job {JobId}.",
-                    plan.ModuleId, plan.ToolName, job.Id);
-                throw new InvalidOperationException(
-                    $"[{ex.GetType().Name}] " +
-                    ExceptionSanitizer.Sanitize(plan.ModuleId, plan.ToolName, ex.Message),
-                    ex);
-            }
-        }
-        finally
-        {
-            runtimeHost?.ReleaseExecution();
-        }
+        return new AgentJobExecutionOutcome(
+            result.ResultData,
+            result.CompletionBehavior);
     }
+
+    private static bool IsStreamingNotSupportedException(Exception ex) =>
+        ex is ForeignModuleProtocolException { StatusCode: HttpStatusCode.NotFound };
 
     /// <summary>
     /// Permission check for module-provided tool calls.

@@ -104,6 +104,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<IModuleStorageContractProvider>(
             sp => sp.GetRequiredService<ModuleRegistry>());
         services.AddSingleton<ModuleMetricsCollector>();
+        services.AddSingleton<ModuleJobToolExecutor>();
         services.AddSingleton<ThreadActivitySignal>();
         services.AddSingleton<ChatCache>();
         services.AddSingleton<ProviderApiClientFactory>();
