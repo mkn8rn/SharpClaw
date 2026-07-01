@@ -345,6 +345,7 @@ try
     builder.Services.AddSingleton<AgentRuntimeAdministrationEngine>();
     builder.Services.AddSingleton<PermissionEvaluationEngine>();
     builder.Services.AddSingleton<PermissionDelegateEvaluationEngine>();
+    builder.Services.AddSingleton<AgentActionWorkflowEngine>();
     builder.Services.AddSingleton<RolePermissionAdministrationEngine>();
     builder.Services.AddSingleton<RoleAdministrationEngine>();
     builder.Services.AddSingleton<AgentJobAdministrationEngine>();
@@ -395,6 +396,7 @@ try
     builder.Services.AddScoped<EfDefaultResourceAdministrationHost>();
     builder.Services.AddScoped<ToolAwarenessSetService>();
     builder.Services.AddScoped<EfToolAwarenessAdministrationHost>();
+    builder.Services.AddScoped<EfAgentActionHost>();
     builder.Services.AddScoped<AgentActionService>();
     builder.Services.AddScoped<EfAgentJobAdministrationHost>();
     builder.Services.AddScoped<AgentJobService>();

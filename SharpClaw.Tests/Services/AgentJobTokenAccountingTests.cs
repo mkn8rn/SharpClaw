@@ -130,16 +130,18 @@ public sealed class AgentJobTokenAccountingTests
         var jobLifecycle = new AgentJobLifecycleEngine();
         var defaultResources = new DefaultResourceEngine();
         var permissionEvaluator = new PermissionEvaluationEngine();
+        var actionHost = new EfAgentActionHost(db);
         var chatCache = new ChatCache(configuration);
 
         return new AgentJobService(
             db,
             new AgentActionService(
-                db,
                 registry,
-                permissionEvaluator,
-                new PermissionDelegateEvaluationEngine(
-                    permissionEvaluator)),
+                new AgentActionWorkflowEngine(
+                    permissionEvaluator,
+                    new PermissionDelegateEvaluationEngine(
+                        permissionEvaluator)),
+                actionHost),
             new SessionService(),
             registry,
             new ModuleToolExecutionPlanner(),
@@ -187,6 +189,7 @@ public sealed class AgentJobTokenAccountingTests
         services.AddSingleton<ChatCache>();
         services.AddSingleton<PermissionEvaluationEngine>();
         services.AddSingleton<PermissionDelegateEvaluationEngine>();
+        services.AddSingleton<AgentActionWorkflowEngine>();
         services.AddSingleton<AgentJobLifecycleEngine>();
         services.AddSingleton<AgentJobAdministrationEngine>();
         services.AddSingleton<AgentJobAdministrationWorkflowEngine>();
@@ -201,6 +204,7 @@ public sealed class AgentJobTokenAccountingTests
         services.AddScoped<AgentActionService>();
         services.AddScoped<SessionService>();
         services.AddScoped<EfAgentJobAdministrationHost>();
+        services.AddScoped<EfAgentActionHost>();
         services.AddScoped<AgentJobService>();
         services.AddSingleton<IAgentJobCostTracker, HostAgentJobCostTracker>();
 
