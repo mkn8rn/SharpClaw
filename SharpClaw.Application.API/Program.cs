@@ -341,6 +341,7 @@ try
     // The factory resolves over IEnumerable<IProviderPlugin>.
     builder.Services.AddSingleton<ProviderApiClientFactory>();
     builder.Services.AddSingleton<AgentAdministrationEngine>();
+    builder.Services.AddSingleton<AgentRuntimeAdministrationEngine>();
     builder.Services.AddSingleton<PermissionEvaluationEngine>();
     builder.Services.AddSingleton<PermissionDelegateEvaluationEngine>();
     builder.Services.AddSingleton<RolePermissionAdministrationEngine>();
@@ -375,6 +376,7 @@ try
     builder.Services.AddScoped<ProviderService>();
     builder.Services.AddScoped<ProviderCostService>();
     builder.Services.AddScoped<ModelService>();
+    builder.Services.AddScoped<EfAgentAdministrationHost>();
     builder.Services.AddScoped<AgentService>();
     builder.Services.AddScoped<EfConversationAdministrationHost>();
     builder.Services.AddScoped<ChannelService>();

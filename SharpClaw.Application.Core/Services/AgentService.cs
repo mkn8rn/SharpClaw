@@ -1,50 +1,25 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using SharpClaw.Core.Agents;
-using SharpClaw.Core.Chat;
-using SharpClaw.Core.Clients;
-using SharpClaw.Core.Modules;
-using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Auth;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts.Models;
+using SharpClaw.Core.Agents;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
 public sealed class AgentService(
     SharpClawDbContext db,
-    SessionService session,
-    ModuleRegistry moduleRegistry,
-    IConfiguration configuration,
-    ProviderApiClientFactory clientFactory,
-    ChatRuntimeInvalidationPlanner invalidations,
-    ChatCache chatCache,
-    AgentAdministrationEngine agentAdministration)
+    AgentAdministrationEngine agentAdministration,
+    AgentRuntimeAdministrationEngine runtimeAdministration,
+    EfAgentAdministrationHost administrationHost)
 {
     public async Task<AgentResponse> CreateAsync(
         CreateAgentRequest request,
         CancellationToken ct = default)
     {
-        if (IsUniqueAgentNamesEnforced())
-            await EnsureAgentNameUniqueAsync(request.Name, excludeId: null, ct);
-
-        var model = await db.Models
-            .Include(m => m.Provider)
-            .FirstOrDefaultAsync(m => m.Id == request.ModelId, ct)
-            ?? throw new ArgumentException($"Model {request.ModelId} not found.");
-
-        var agent = agentAdministration.Create(
+        return await runtimeAdministration.CreateAsync(
             request,
-            model,
-            clientFactory.GetParameterSpec(model.Provider.ProviderKey));
-
-        db.Agents.Add(agent);
-        await db.SaveChangesAsync(ct);
-
-        return agentAdministration.ToResponse(agent, model);
+            administrationHost,
+            ct);
     }
 
     public async Task<AgentResponse?> GetByNameAsync(
@@ -88,39 +63,11 @@ public sealed class AgentService(
         UpdateAgentRequest request,
         CancellationToken ct = default)
     {
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(a => a.Role)
-            .FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (agent is null)
-            return null;
-
-        ModelDB? replacementModel = null;
-        if (request.ModelId is { } modelId)
-        {
-            replacementModel = await db.Models
-                .Include(m => m.Provider)
-                .FirstOrDefaultAsync(m => m.Id == modelId, ct)
-                ?? throw new ArgumentException($"Model {modelId} not found.");
-        }
-
-        var effectiveModel = replacementModel ?? agent.Model;
-        var enforceUniqueNames = IsUniqueAgentNamesEnforced();
-        IReadOnlyList<string> existingNames = enforceUniqueNames
-            ? await LoadAgentNamesAsync(excludeId: id, ct)
-            : Array.Empty<string>();
-
-        agentAdministration.ApplyUpdate(
-            agent,
+        return await runtimeAdministration.UpdateAsync(
+            id,
             request,
-            replacementModel,
-            clientFactory.GetParameterSpec(effectiveModel.Provider.ProviderKey),
-            enforceUniqueNames,
-            existingNames);
-
-        await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState(id);
-        return agentAdministration.ToResponse(agent, agent.Model);
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -134,56 +81,11 @@ public sealed class AgentService(
         Guid roleId,
         CancellationToken ct = default)
     {
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(a => a.Role)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-        if (agent is null)
-            return null;
-
-        RoleDB? role = null;
-        Guid? callerRoleId = null;
-        PermissionSetDB? callerPermissions = null;
-        PermissionSetDB? targetPermissions = null;
-
-        if (roleId != Guid.Empty)
-        {
-            role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct)
-                ?? throw new ArgumentException($"Role {roleId} not found.");
-
-            var callerUserId = session.UserId
-                ?? throw new UnauthorizedAccessException(
-                    "A logged-in user is required to assign roles.");
-
-            var caller = await db.Users
-                .Include(u => u.Role)
-                .FirstOrDefaultAsync(u => u.Id == callerUserId, ct);
-
-            callerRoleId = caller?.RoleId;
-            if (callerRoleId != role.Id)
-            {
-                targetPermissions = role.PermissionSetId.HasValue
-                    ? await LoadFullPermissionSetAsync(role.PermissionSetId.Value, ct)
-                    : null;
-
-                callerPermissions = caller?.Role?.PermissionSetId is { } cpId
-                    ? await LoadFullPermissionSetAsync(cpId, ct)
-                    : null;
-            }
-        }
-
-        agentAdministration.AssignRole(
-            agent,
+        return await runtimeAdministration.AssignRoleAsync(
+            agentId,
             roleId,
-            role,
-            callerRoleId,
-            callerPermissions,
-            targetPermissions,
-            moduleRegistry.GetAllRegisteredResourceTypes());
-
-        await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState(agentId);
-        return agentAdministration.ToResponse(agent, agent.Model);
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -193,61 +95,17 @@ public sealed class AgentService(
     public async Task<IReadOnlyList<AgentResponse>> SyncWithModelsAsync(
         CancellationToken ct = default)
     {
-        var models = await db.Models
-            .Include(m => m.Provider)
-            .Where(m => m.CapabilityTagsRaw != null
-                && m.CapabilityTagsRaw.Contains(WellKnownCapabilityKeys.Chat))
-            .ToListAsync(ct);
-
-        var existingNames = await db.Agents
-            .Select(a => a.Name)
-            .ToListAsync(ct);
-
-        var nameSet = new HashSet<string>(
-            existingNames,
-            StringComparer.OrdinalIgnoreCase);
-        var created = new List<AgentResponse>();
-
-        foreach (var model in models)
-        {
-            var plugin = clientFactory.GetPlugin(model.Provider.ProviderKey)
-                ?? throw new InvalidOperationException(
-                    $"Cannot synthesise default agent for model '{model.Name}' "
-                    + $"(provider '{model.Provider.Name}', key '{model.Provider.ProviderKey}'): "
-                    + "no provider plugin is registered. Ensure the owning module is "
-                    + "loaded and enabled before running agent sync.");
-
-            var providerSuffix = await plugin.GetAgentIdentifierSuffixAsync(
-                model.Provider.Name,
-                model.Id,
-                ct);
-
-            var agent = agentAdministration.CreateDefaultAgentIfMissing(
-                model,
-                providerSuffix,
-                nameSet);
-            if (agent is null)
-                continue;
-
-            db.Agents.Add(agent);
-            await db.SaveChangesAsync(ct);
-
-            created.Add(agentAdministration.ToResponse(agent, model));
-        }
-
-        return created;
+        return await runtimeAdministration.SyncWithModelsAsync(
+            administrationHost,
+            ct);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
     {
-        var agent = await db.Agents.FindAsync([id], ct);
-        if (agent is null)
-            return false;
-
-        db.Agents.Remove(agent);
-        await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState(id);
-        return true;
+        return await runtimeAdministration.DeleteAsync(
+            id,
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -259,90 +117,9 @@ public sealed class AgentService(
         Guid roleId,
         CancellationToken ct = default)
     {
-        var userId = session.UserId
-            ?? throw new UnauthorizedAccessException("A logged-in user is required.");
-
-        var user = await db.Users
-            .Include(u => u.Role)
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
-        if (user is null)
-            return null;
-
-        RoleDB? role = null;
-        PermissionSetDB? callerPermissions = null;
-        PermissionSetDB? targetPermissions = null;
-
-        if (roleId != Guid.Empty)
-        {
-            role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct)
-                ?? throw new ArgumentException($"Role {roleId} not found.");
-
-            if (user.RoleId != role.Id)
-            {
-                targetPermissions = role.PermissionSetId.HasValue
-                    ? await LoadFullPermissionSetAsync(role.PermissionSetId.Value, ct)
-                    : null;
-
-                callerPermissions = user.Role?.PermissionSetId is { } cpId
-                    ? await LoadFullPermissionSetAsync(cpId, ct)
-                    : null;
-            }
-        }
-
-        agentAdministration.AssignUserRole(
-            user,
+        return await runtimeAdministration.AssignUserRoleAsync(
             roleId,
-            role,
-            callerPermissions,
-            targetPermissions,
-            moduleRegistry.GetAllRegisteredResourceTypes());
-
-        await db.SaveChangesAsync(ct);
-        invalidations.UserHeaderChanged(userId).ApplyTo(chatCache);
-        return new MeResponse(
-            user.Id,
-            user.Username,
-            user.Bio,
-            user.RoleId,
-            user.Role?.Name);
-    }
-
-    private async Task<PermissionSetDB?> LoadFullPermissionSetAsync(
-        Guid psId,
-        CancellationToken ct) =>
-        await db.PermissionSets
-            .Include(p => p.GlobalFlags)
-            .Include(p => p.ResourceAccesses)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(p => p.Id == psId, ct);
-
-    private bool IsUniqueAgentNamesEnforced()
-    {
-        return AgentAdministrationEngine.IsUniqueAgentNameEnforced(
-            configuration["UniqueNames:Agents"]);
-    }
-
-    private void InvalidateAgentRuntimeState(Guid agentId)
-    {
-        invalidations.AgentChanged(agentId).ApplyTo(chatCache);
-    }
-
-    private async Task EnsureAgentNameUniqueAsync(
-        string name,
-        Guid? excludeId,
-        CancellationToken ct)
-    {
-        var names = await LoadAgentNamesAsync(excludeId, ct);
-        agentAdministration.EnsureAgentNameAvailable(name, names);
-    }
-
-    private async Task<IReadOnlyList<string>> LoadAgentNamesAsync(
-        Guid? excludeId,
-        CancellationToken ct)
-    {
-        return await db.Agents
-            .Where(a => excludeId == null || a.Id != excludeId)
-            .Select(a => a.Name)
-            .ToListAsync(ct);
+            administrationHost,
+            ct);
     }
 }

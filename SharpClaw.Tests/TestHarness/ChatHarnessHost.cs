@@ -113,6 +113,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<ChatRuntimeInvalidationPlanner>();
         services.AddSingleton<ProviderApiClientFactory>();
         services.AddSingleton<AgentAdministrationEngine>();
+        services.AddSingleton<AgentRuntimeAdministrationEngine>();
         services.AddSingleton<PermissionEvaluationEngine>();
         services.AddSingleton<PermissionDelegateEvaluationEngine>();
         services.AddSingleton<RolePermissionAdministrationEngine>();
@@ -169,6 +170,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddScoped<AgentJobService>();
         services.AddScoped<IAgentJobController, HostAgentJobController>();
         services.AddScoped<IAgentJobReader, HostAgentJobReader>();
+        services.AddScoped<EfAgentAdministrationHost>();
         services.AddScoped<AgentService>();
         services.AddScoped<EfConversationAdministrationHost>();
         services.AddScoped<ChannelService>();
