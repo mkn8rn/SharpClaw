@@ -103,6 +103,59 @@ public sealed class TaskRuntimeCoreEngineTests
     }
 
     [Test]
+    public async Task RuntimeRegistry_RegistersStreamsPausesCancelsAndUnregistersEntry()
+    {
+        var now = new DateTimeOffset(2026, 7, 1, 8, 0, 0, TimeSpan.Zero);
+        var registry = new TaskRuntimeRegistry(new FixedTimeProvider(now));
+        var instanceId = Guid.NewGuid();
+
+        var runtime = registry.Register(instanceId);
+        var reader = registry.GetOutputReader(instanceId);
+
+        registry.ActiveCount.Should().Be(1);
+        registry.ActiveInstanceIds.Should().Contain(instanceId);
+        registry.IsRunning(instanceId).Should().BeTrue();
+        reader.Should().NotBeNull();
+
+        await runtime.WriteEventAsync(TaskOutputEventType.Log, "hello");
+        reader!.TryRead(out var evt).Should().BeTrue();
+        evt.Should().Be(new TaskOutputEvent(
+            TaskOutputEventType.Log,
+            1,
+            now,
+            "hello"));
+
+        registry.TryPause(instanceId).Should().BeTrue();
+        var pauseWait = runtime.WaitIfPausedAsync(CancellationToken.None);
+        pauseWait.IsCompleted.Should().BeFalse();
+
+        registry.TryResume(instanceId).Should().BeTrue();
+        await pauseWait.WaitAsync(TimeSpan.FromSeconds(1));
+
+        (await registry.CancelAsync(instanceId)).Should().BeTrue();
+        runtime.CancellationToken.IsCancellationRequested.Should().BeTrue();
+
+        registry.Unregister(instanceId).Should().BeTrue();
+        registry.ActiveCount.Should().Be(0);
+        await reader.Completion.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Test]
+    public async Task RuntimeRegistry_CancelAllCancelsEntriesActiveAtCallTime()
+    {
+        var registry = new TaskRuntimeRegistry();
+        var first = registry.Register(Guid.NewGuid());
+        var second = registry.Register(Guid.NewGuid());
+
+        var cancelled = await registry.CancelAllAsync();
+
+        cancelled.Should().Be(2);
+        first.CancellationToken.IsCancellationRequested.Should().BeTrue();
+        second.CancellationToken.IsCancellationRequested.Should().BeTrue();
+        registry.ActiveCount.Should().Be(2);
+    }
+
+    [Test]
     public void ApplyRestartRecovery_MarksStaleInstanceFailedWithCanonicalMessage()
     {
         var now = new DateTimeOffset(2026, 6, 30, 12, 0, 0, TimeSpan.Zero);
