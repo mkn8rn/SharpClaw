@@ -17,6 +17,7 @@ using SharpClaw.Core.Clients;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Core.Tasks;
+using SharpClaw.Core.Tasks.Triggers;
 using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Application.Core.Services;
 using SharpClaw.Application.Services;
@@ -364,6 +365,7 @@ try
     builder.Services.AddSingleton<ChatInlineToolExecutor>();
     builder.Services.AddSingleton<ModuleJobToolExecutor>();
     builder.Services.AddSingleton<TaskPreflightEngine>();
+    builder.Services.AddSingleton<TaskTriggerBindingPlanner>();
     builder.Services.AddSingleton<ToolAwarenessSetEngine>();
 
     builder.Services.AddScoped<ProviderService>();

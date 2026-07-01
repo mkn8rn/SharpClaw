@@ -18,6 +18,7 @@ using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Permissions;
 using SharpClaw.Core.Providers;
 using SharpClaw.Core.Resources;
+using SharpClaw.Core.Tasks.Triggers;
 using SharpClaw.Core.Tools;
 using SharpClaw.Contracts.Entities;
 using SharpClaw.Contracts.Entities.Core;
@@ -136,6 +137,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<ChatNativeJobToolExecutor>();
         services.AddSingleton<ChatInlineToolExecutor>();
         services.AddSingleton<TaskPreflightEngine>();
+        services.AddSingleton<TaskTriggerBindingPlanner>();
         services.AddSingleton<ToolAwarenessSetEngine>();
         services.AddSingleton<RuntimeModuleDbContextRegistry>();
         services.AddSingleton<ModulePersistenceRegistrationFactory>();
