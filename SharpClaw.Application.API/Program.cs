@@ -434,6 +434,7 @@ try
     builder.Services.AddScoped<RoleService>();
 
     // ──────── PHASE 9 ──── Task runtime + trigger host + host metric probes
+    builder.Services.AddScoped<EfTaskPreflightHost>();
     builder.Services.AddScoped<TaskPreflightChecker>();
     builder.Services.AddScoped<TaskTriggerRegistrar>();
     builder.Services.AddScoped<EfTaskAdministrationHost>();

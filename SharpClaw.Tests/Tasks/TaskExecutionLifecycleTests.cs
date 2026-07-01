@@ -346,6 +346,7 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         services.AddSingleton<TaskPreflightEngine>();
         services.AddSingleton<TaskAdministrationWorkflowEngine>();
         services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
+        services.AddScoped<EfTaskPreflightHost>();
         services.AddScoped<TaskPreflightChecker>();
         services.AddScoped<EfTaskAdministrationHost>();
         services.AddScoped<TaskService>();

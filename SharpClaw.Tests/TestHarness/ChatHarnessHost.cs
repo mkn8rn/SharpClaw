@@ -198,6 +198,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddScoped<RoleService>();
         services.AddScoped<EfToolAwarenessAdministrationHost>();
         services.AddScoped<ToolAwarenessSetService>();
+        services.AddScoped<EfTaskPreflightHost>();
         services.AddScoped<TaskPreflightChecker>();
         services.AddScoped<TaskTriggerRegistrar>();
         services.AddScoped<EfTaskAdministrationHost>();
