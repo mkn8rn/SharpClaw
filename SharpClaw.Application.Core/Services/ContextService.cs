@@ -1,15 +1,9 @@
-using Microsoft.EntityFrameworkCore;
 using SharpClaw.Core.Conversation;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.DTOs.Contexts;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
 public sealed class ContextService(
-    SharpClawDbContext db,
-    ConversationTopologyEngine conversation,
     ConversationAdministrationEngine administration,
     EfConversationAdministrationHost administrationHost)
 {
@@ -25,28 +19,19 @@ public sealed class ContextService(
     public async Task<ContextResponse?> GetByIdAsync(
         Guid id, CancellationToken ct = default)
     {
-        var context = await LoadContextAsync(id, ct);
-        return context is null ? null : conversation.ToContextResponse(context);
+        return await administration.GetContextAsync(
+            id,
+            administrationHost,
+            ct);
     }
 
     public async Task<IReadOnlyList<ContextResponse>> ListAsync(
         Guid? agentId = null, CancellationToken ct = default)
     {
-        var query = db.AgentContexts
-            .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.Agent).ThenInclude(a => a.Role)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
-            .AsQueryable();
-
-        if (agentId is not null)
-            query = query.Where(c => c.AgentId == agentId);
-
-        var contexts = await query
-            .OrderByDescending(c => c.UpdatedAt)
-            .ToListAsync(ct);
-
-        return contexts.Select(conversation.ToContextResponse).ToList();
+        return await administration.ListContextsAsync(
+            agentId,
+            administrationHost,
+            ct);
     }
 
     public async Task<ContextResponse?> UpdateAsync(
@@ -67,25 +52,15 @@ public sealed class ContextService(
             ct);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Granular operations
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Lists the allowed agents for a context.
-    /// </summary>
     public async Task<ContextAllowedAgentsResponse?> ListAllowedAgentsAsync(
         Guid contextId, CancellationToken ct = default)
     {
-        var context = await LoadContextAsync(contextId, ct);
-        if (context is null) return null;
-
-        return conversation.ToContextAllowedAgentsResponse(context);
+        return await administration.GetContextAllowedAgentsAsync(
+            contextId,
+            administrationHost,
+            ct);
     }
 
-    /// <summary>
-    /// Adds an agent to the context's allowed agents.
-    /// </summary>
     public async Task<ContextAllowedAgentsResponse?> AddAllowedAgentAsync(
         Guid contextId, Guid agentId, CancellationToken ct = default)
     {
@@ -96,9 +71,6 @@ public sealed class ContextService(
             ct);
     }
 
-    /// <summary>
-    /// Removes an agent from the context's allowed agents.
-    /// </summary>
     public async Task<ContextAllowedAgentsResponse?> RemoveAllowedAgentAsync(
         Guid contextId, Guid agentId, CancellationToken ct = default)
     {
@@ -108,13 +80,4 @@ public sealed class ContextService(
             administrationHost,
             ct);
     }
-
-    private async Task<ChannelContextDB?> LoadContextAsync(Guid id, CancellationToken ct) =>
-        await db.AgentContexts
-            .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.Agent).ThenInclude(a => a.Role)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
-            .FirstOrDefaultAsync(c => c.Id == id, ct);
-
 }

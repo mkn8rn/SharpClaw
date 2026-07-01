@@ -45,15 +45,7 @@ public sealed class EfConversationAdministrationHost(
         Guid channelId,
         CancellationToken ct)
     {
-        return await db.Channels
-            .Include(c => c.Agent).ThenInclude(a => a!.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.Agent).ThenInclude(a => a!.Role)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
+        return await ChannelsWithDetails()
             .FirstOrDefaultAsync(c => c.Id == channelId, ct);
     }
 
@@ -61,11 +53,7 @@ public sealed class EfConversationAdministrationHost(
         Guid contextId,
         CancellationToken ct)
     {
-        return await db.AgentContexts
-            .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.Agent).ThenInclude(a => a.Role)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
+        return await ContextsWithDetails()
             .FirstOrDefaultAsync(c => c.Id == contextId, ct);
     }
 
@@ -81,6 +69,59 @@ public sealed class EfConversationAdministrationHost(
         CancellationToken ct)
     {
         return await db.Channels.AnyAsync(c => c.Id == channelId, ct);
+    }
+
+    public async Task<IReadOnlyList<ChannelDB>> ListChannelsAsync(
+        Guid? agentId,
+        Guid? contextId,
+        CancellationToken ct)
+    {
+        var query = ChannelsWithDetails();
+
+        if (agentId is not null)
+            query = query.Where(c => c.AgentId == agentId);
+
+        if (contextId is not null)
+            query = query.Where(c => c.AgentContextId == contextId);
+
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<Guid?> LoadLatestMessageChannelIdAsync(CancellationToken ct)
+    {
+        return await db.ChatMessages
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => (Guid?)m.ChannelId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<ChannelDB?> LoadMostRecentlyCreatedChannelAsync(
+        CancellationToken ct)
+    {
+        return await ChannelsWithDetails()
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ChannelContextDB>> ListContextsAsync(
+        Guid? agentId,
+        CancellationToken ct)
+    {
+        var query = ContextsWithDetails();
+
+        if (agentId is not null)
+            query = query.Where(c => c.AgentId == agentId);
+
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ChatThreadDB>> ListThreadsAsync(
+        Guid channelId,
+        CancellationToken ct)
+    {
+        return await db.ChatThreads
+            .Where(t => t.ChannelId == channelId)
+            .ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<string>> ListChannelTitlesAsync(
@@ -149,5 +190,27 @@ public sealed class EfConversationAdministrationHost(
     {
         await db.SaveChangesAsync(ct);
         buildInvalidationPlan?.Invoke()?.ApplyTo(chatCache);
+    }
+
+    private IQueryable<ChannelDB> ChannelsWithDetails()
+    {
+        return db.Channels
+            .Include(c => c.Agent).ThenInclude(a => a!.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.Agent).ThenInclude(a => a!.Role)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.Agent).ThenInclude(a => a.Role)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents).ThenInclude(a => a.Role)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role);
+    }
+
+    private IQueryable<ChannelContextDB> ContextsWithDetails()
+    {
+        return db.AgentContexts
+            .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.Agent).ThenInclude(a => a.Role)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
+            .Include(c => c.AllowedAgents).ThenInclude(a => a.Role);
     }
 }
