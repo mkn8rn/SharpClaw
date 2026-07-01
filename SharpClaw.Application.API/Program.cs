@@ -51,6 +51,7 @@ using SharpClaw.Core.Resources;
 using SharpClaw.Core.Threads;
 using SharpClaw.Core.Tools;
 using SharpClaw.Core.Tasks.Preflight;
+using SharpClaw.Core.Tasks.Runtime;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  SharpClaw API host — composition root
@@ -417,6 +418,7 @@ try
     builder.Services.AddScoped<ITaskInstanceLauncher, TaskInstanceLauncher>();
     builder.Services.AddScoped<IGlobalFlagEvaluator, GlobalFlagEvaluator>();
     builder.Services.AddScoped<EnvFileService>();
+    builder.Services.AddScoped<TaskPlanExecutionEngine>();
     builder.Services.AddScoped<TaskOrchestrator>();
     builder.Services.AddScoped<IHostAgentBridge, HostAgentBridge>();
     builder.Services.AddSingleton<ForeignModuleTaskContextRegistry>();
