@@ -9,25 +9,17 @@ namespace SharpClaw.Application.Services;
 public sealed class ThreadService(
     SharpClawDbContext db,
     ConversationTopologyEngine conversation,
-    ChatRuntimeInvalidationPlanner invalidations,
-    ChatCache chatCache)
+    ConversationAdministrationEngine administration,
+    EfConversationAdministrationHost administrationHost)
 {
     public async Task<ThreadResponse> CreateAsync(
         Guid channelId, CreateThreadRequest request, CancellationToken ct = default)
     {
-        var channel = await db.Channels.FindAsync([channelId], ct)
-            ?? throw new ArgumentException($"Channel {channelId} not found.");
-
-        var thread = conversation.CreateThread(
-            channel.Id,
+        return await administration.CreateThreadAsync(
+            channelId,
             request,
-            DateTimeOffset.UtcNow);
-
-        db.ChatThreads.Add(thread);
-        await db.SaveChangesAsync(ct);
-        InvalidateThreadRuntimeState(thread.Id);
-
-        return conversation.ToThreadResponse(thread);
+            administrationHost,
+            ct);
     }
 
     public async Task<ThreadResponse?> GetByIdAsync(
@@ -51,30 +43,19 @@ public sealed class ThreadService(
     public async Task<ThreadResponse?> UpdateAsync(
         Guid threadId, UpdateThreadRequest request, CancellationToken ct = default)
     {
-        var thread = await db.ChatThreads.FindAsync([threadId], ct);
-        if (thread is null) return null;
-
-        conversation.ApplyThreadUpdate(thread, request);
-
-        await db.SaveChangesAsync(ct);
-        InvalidateThreadRuntimeState(threadId);
-        return conversation.ToThreadResponse(thread);
+        return await administration.UpdateThreadAsync(
+            threadId,
+            request,
+            administrationHost,
+            ct);
     }
 
     public async Task<bool> DeleteAsync(Guid threadId, CancellationToken ct = default)
     {
-        var thread = await db.ChatThreads.FindAsync([threadId], ct);
-        if (thread is null) return false;
-
-        db.ChatThreads.Remove(thread);
-        await db.SaveChangesAsync(ct);
-        InvalidateThreadRuntimeState(threadId);
-        return true;
-    }
-
-    private void InvalidateThreadRuntimeState(Guid threadId)
-    {
-        invalidations.ThreadChanged(threadId).ApplyTo(chatCache);
+        return await administration.DeleteThreadAsync(
+            threadId,
+            administrationHost,
+            ct);
     }
 
 }

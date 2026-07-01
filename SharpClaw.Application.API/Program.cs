@@ -350,6 +350,7 @@ try
     builder.Services.AddSingleton<AgentJobDefaultResourceResolver>();
     builder.Services.AddSingleton<DefaultResourceEngine>();
     builder.Services.AddSingleton<ConversationTopologyEngine>();
+    builder.Services.AddSingleton<ConversationAdministrationEngine>();
     builder.Services.AddSingleton<ProviderCatalogEngine>();
     builder.Services.AddSingleton<ProviderCostEngine>();
     builder.Services.AddSingleton<ModelCatalogEngine>();
@@ -375,6 +376,7 @@ try
     builder.Services.AddScoped<ProviderCostService>();
     builder.Services.AddScoped<ModelService>();
     builder.Services.AddScoped<AgentService>();
+    builder.Services.AddScoped<EfConversationAdministrationHost>();
     builder.Services.AddScoped<ChannelService>();
     builder.Services.AddScoped<ThreadService>();
     builder.Services.AddScoped<ContextService>();

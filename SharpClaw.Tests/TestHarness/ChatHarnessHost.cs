@@ -122,6 +122,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<AgentJobDefaultResourceResolver>();
         services.AddSingleton<DefaultResourceEngine>();
         services.AddSingleton<ConversationTopologyEngine>();
+        services.AddSingleton<ConversationAdministrationEngine>();
         services.AddSingleton<ProviderCatalogEngine>();
         services.AddSingleton<ProviderCostEngine>();
         services.AddSingleton<ModelCatalogEngine>();
@@ -169,6 +170,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddScoped<IAgentJobController, HostAgentJobController>();
         services.AddScoped<IAgentJobReader, HostAgentJobReader>();
         services.AddScoped<AgentService>();
+        services.AddScoped<EfConversationAdministrationHost>();
         services.AddScoped<ChannelService>();
         services.AddScoped<ContextService>();
         services.AddScoped<DefaultResourceSetService>();

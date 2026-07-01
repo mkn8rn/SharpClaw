@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using SharpClaw.Core.Conversation;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.DTOs.Channels;
@@ -10,10 +9,9 @@ namespace SharpClaw.Application.Services;
 
 public sealed class ChannelService(
     SharpClawDbContext db,
-    IConfiguration configuration,
     ConversationTopologyEngine conversation,
-    ChatRuntimeInvalidationPlanner invalidations,
-    ChatCache chatCache)
+    ConversationAdministrationEngine administration,
+    EfConversationAdministrationHost administrationHost)
 {
     /// <summary>
     /// Creates a new channel.  Either <see cref="CreateChannelRequest.AgentId"/>
@@ -23,57 +21,10 @@ public sealed class ChannelService(
     public async Task<ChannelResponse> CreateAsync(
         CreateChannelRequest request, CancellationToken ct = default)
     {
-        AgentDB? agent = null;
-        if (request.AgentId is { } agentId)
-        {
-            agent = await db.Agents
-                .Include(a => a.Model).ThenInclude(m => m.Provider)
-                .Include(a => a.Role)
-                .FirstOrDefaultAsync(a => a.Id == agentId, ct)
-                ?? throw new ArgumentException($"Agent {agentId} not found.");
-        }
-
-        ChannelContextDB? context = null;
-        if (request.ContextId is { } ctxId)
-        {
-            context = await db.AgentContexts
-                .Include(c => c.Agent).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-                .Include(c => c.Agent).ThenInclude(a => a.Role)
-                .Include(c => c.AllowedAgents).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
-                .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
-                .FirstOrDefaultAsync(c => c.Id == ctxId, ct)
-                ?? throw new ArgumentException($"Context {ctxId} not found.");
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        var title = request.Title
-            ?? ConversationTopologyEngine.BuildDefaultChannelTitle(now);
-
-        if (IsUniqueChannelNamesEnforced())
-            await EnsureChannelTitleUniqueAsync(title, excludeId: null, ct);
-
-        IReadOnlyList<AgentDB>? allowed = null;
-
-        if (request.AllowedAgentIds is { Count: > 0 } agentIds)
-        {
-            allowed = await db.Agents
-                .Include(a => a.Model).ThenInclude(m => m.Provider)
-                .Include(a => a.Role)
-                .Where(a => agentIds.Contains(a.Id))
-                .ToListAsync(ct);
-        }
-
-        var channel = conversation.CreateChannel(
-            request with { Title = title },
-            agent,
-            context,
-            allowed,
-            now);
-
-        db.Channels.Add(channel);
-        await db.SaveChangesAsync(ct);
-
-        return conversation.ToChannelResponse(channel);
+        return await administration.CreateChannelAsync(
+            request,
+            administrationHost,
+            ct);
     }
 
     public async Task<ChannelResponse?> GetByIdAsync(
@@ -120,41 +71,11 @@ public sealed class ChannelService(
     public async Task<ChannelResponse?> UpdateAsync(
         Guid id, UpdateChannelRequest request, CancellationToken ct = default)
     {
-        var channel = await LoadChannelAsync(id, ct);
-        if (channel is null) return null;
-
-        if (request.Title is not null)
-        {
-            if (IsUniqueChannelNamesEnforced() && !request.Title.Trim().Equals(channel.Title.Trim(), StringComparison.OrdinalIgnoreCase))
-                await EnsureChannelTitleUniqueAsync(request.Title, excludeId: id, ct);
-        }
-
-        ChannelContextDB? context = null;
-        if (request.ContextId is not null)
-        {
-            if (request.ContextId != Guid.Empty)
-            {
-                context = await db.AgentContexts
-                    .FirstOrDefaultAsync(c => c.Id == request.ContextId, ct)
-                    ?? throw new ArgumentException($"Context {request.ContextId} not found.");
-            }
-        }
-
-        IReadOnlyList<AgentDB>? allowed = null;
-        if (request.AllowedAgentIds is not null)
-        {
-            allowed = request.AllowedAgentIds.Count > 0
-                ? await db.Agents
-                    .Where(a => request.AllowedAgentIds.Contains(a.Id))
-                    .ToListAsync(ct)
-                : [];
-        }
-
-        conversation.ApplyChannelUpdate(channel, request, context, allowed);
-
-        await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState(id);
-        return conversation.ToChannelResponse(channel);
+        return await administration.UpdateChannelAsync(
+            id,
+            request,
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -198,13 +119,10 @@ public sealed class ChannelService(
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct = default)
     {
-        var channel = await db.Channels.FindAsync([id], ct);
-        if (channel is null) return false;
-
-        db.Channels.Remove(channel);
-        await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState(id);
-        return true;
+        return await administration.DeleteChannelAsync(
+            id,
+            administrationHost,
+            ct);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -217,19 +135,11 @@ public sealed class ChannelService(
     public async Task<ChannelResponse?> SetAgentAsync(
         Guid channelId, Guid agentId, CancellationToken ct = default)
     {
-        var channel = await LoadChannelAsync(channelId, ct);
-        if (channel is null) return null;
-
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(a => a.Role)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct)
-            ?? throw new ArgumentException($"Agent {agentId} not found.");
-
-        conversation.SetChannelAgent(channel, agent);
-        await db.SaveChangesAsync(ct);
-        InvalidateChannelRuntimeState(channelId);
-        return conversation.ToChannelResponse(channel);
+        return await administration.SetChannelAgentAsync(
+            channelId,
+            agentId,
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -251,22 +161,11 @@ public sealed class ChannelService(
     public async Task<ChannelAllowedAgentsResponse?> AddAllowedAgentAsync(
         Guid channelId, Guid agentId, CancellationToken ct = default)
     {
-        var channel = await LoadChannelAsync(channelId, ct);
-        if (channel is null) return null;
-
-        var agent = await db.Agents
-            .Include(a => a.Model).ThenInclude(m => m.Provider)
-            .Include(a => a.Role)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct)
-            ?? throw new ArgumentException($"Agent {agentId} not found.");
-
-        if (conversation.AddChannelAllowedAgent(channel, agent))
-        {
-            await db.SaveChangesAsync(ct);
-            InvalidateChannelRuntimeState(channelId);
-        }
-
-        return conversation.ToChannelAllowedAgentsResponse(channel);
+        return await administration.AddChannelAllowedAgentAsync(
+            channelId,
+            agentId,
+            administrationHost,
+            ct);
     }
 
     /// <summary>
@@ -275,16 +174,11 @@ public sealed class ChannelService(
     public async Task<ChannelAllowedAgentsResponse?> RemoveAllowedAgentAsync(
         Guid channelId, Guid agentId, CancellationToken ct = default)
     {
-        var channel = await LoadChannelAsync(channelId, ct);
-        if (channel is null) return null;
-
-        if (conversation.RemoveChannelAllowedAgent(channel, agentId))
-        {
-            await db.SaveChangesAsync(ct);
-            InvalidateChannelRuntimeState(channelId);
-        }
-
-        return conversation.ToChannelAllowedAgentsResponse(channel);
+        return await administration.RemoveChannelAllowedAgentAsync(
+            channelId,
+            agentId,
+            administrationHost,
+            ct);
     }
 
     // ── Private helpers ───────────────────────────────────────────
@@ -301,23 +195,4 @@ public sealed class ChannelService(
             .Include(c => c.AllowedAgents).ThenInclude(a => a.Role)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
 
-    private void InvalidateChannelRuntimeState(Guid channelId)
-    {
-        invalidations.ChannelChanged(channelId).ApplyTo(chatCache);
-    }
-
-    private bool IsUniqueChannelNamesEnforced()
-    {
-        return ConversationTopologyEngine.IsUniqueNameEnforced(
-            configuration["UniqueNames:Channels"]);
-    }
-
-    private async Task EnsureChannelTitleUniqueAsync(string title, Guid? excludeId, CancellationToken ct)
-    {
-        var titles = await db.Channels
-            .Where(c => excludeId == null || c.Id != excludeId)
-            .Select(c => c.Title)
-            .ToListAsync(ct);
-        conversation.EnsureChannelTitleAvailable(title, titles);
-    }
 }

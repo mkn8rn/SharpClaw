@@ -260,7 +260,10 @@ public sealed class ChannelCliCommandTests
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddSingleton<ChatCache>();
         services.AddSingleton<ConversationTopologyEngine>();
+        services.AddSingleton<ChatRuntimeInvalidationPlanner>();
+        services.AddSingleton<ConversationAdministrationEngine>();
         services.AddScoped<SessionService>();
+        services.AddScoped<EfConversationAdministrationHost>();
         services.AddScoped<ChannelService>();
         services.AddScoped<ContextService>();
         services.AddScoped<DefaultResourceSetService>();
