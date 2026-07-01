@@ -378,6 +378,7 @@ try
     builder.Services.AddSingleton<ModuleJobToolExecutor>();
     builder.Services.AddSingleton<TaskPreflightEngine>();
     builder.Services.AddSingleton<TaskAdministrationWorkflowEngine>();
+    builder.Services.AddSingleton<TaskHostBridgeWorkflowEngine>();
     builder.Services.AddSingleton<TaskTriggerBindingPlanner>();
     builder.Services.AddSingleton<ToolAwarenessSetEngine>();
     builder.Services.AddSingleton<ToolAwarenessAdministrationEngine>();

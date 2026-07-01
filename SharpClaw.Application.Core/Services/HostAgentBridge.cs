@@ -1,337 +1,460 @@
-using System.Text;
-using System.Text.Json;
-
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-
+using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Contracts.DTOs.Channels;
+using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Entities.Core.Tasks;
-using SharpClaw.Core.Permissions;
-using SharpClaw.Core.Tasks;
-using SharpClaw.Core.Tasks.Runtime;
-using SharpClaw.Contracts;
-using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.DTOs.Roles;
-using SharpClaw.Contracts.DTOs.Tasks;
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Tasks;
+using SharpClaw.Core.Tasks.Runtime;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
 
 /// <summary>
-/// Default <see cref="IHostAgentBridge"/> implementation. Owns the chat,
-/// parsing, and provisioning flows that previously lived in
-/// <see cref="TaskOrchestrator"/>. Any module (currently the Agent
-/// Orchestration module) calls these methods through the contracts
-/// interface so it stays free of <c>SharpClawDbContext</c> and other
-/// Core/Infrastructure types.
+/// Application adapter for task-exposed host agent bridge operations. Core owns
+/// bridge workflow sequencing; this type supplies EF, chat, role, and cache
+/// operations.
 /// </summary>
 public sealed class HostAgentBridge(
     SharpClawDbContext db,
     TaskService taskService,
     ChatService chatService,
     IServiceScopeFactory scopeFactory,
-    RolePermissionAdministrationEngine rolePermissions,
-    ChatCache chatCache) : IHostAgentBridge
+    ChatCache chatCache,
+    TaskHostBridgeWorkflowEngine workflow) :
+    IHostAgentBridge,
+    ITaskHostBridgeWorkflowHost
 {
-    private readonly TaskStructuredResponseParser _structuredResponses = new();
-    private readonly TaskHostBridgeProvisioningEngine _provisioning = new();
-
-    public async Task<string?> ChatAsync(
-        Guid instanceId, string taskName, string message, Guid? agentId, CancellationToken ct)
+    public Task<string?> ChatAsync(
+        Guid instanceId,
+        string taskName,
+        string message,
+        Guid? agentId,
+        CancellationToken ct)
     {
-        var channelId = await GetInstanceChannelIdAsync(instanceId, ct);
-        var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api,
-            TaskContext: new TaskChatContext(instanceId, taskName));
-        var response = await chatService.SendMessageAsync(channelId, request, ct: ct);
-        await taskService.AppendLogAsync(
-            instanceId, $"Chat → {response.AssistantMessage.Content?.Length ?? 0} chars", ct: ct);
-        return response.AssistantMessage.Content;
+        return workflow.ChatAsync(
+            instanceId,
+            taskName,
+            message,
+            agentId,
+            this,
+            ct);
     }
 
-    public async Task<string> ChatStreamAsync(
-        Guid instanceId, string taskName, string message, Guid? agentId, CancellationToken ct)
+    public Task<string> ChatStreamAsync(
+        Guid instanceId,
+        string taskName,
+        string message,
+        Guid? agentId,
+        CancellationToken ct)
     {
-        var channelId = await GetInstanceChannelIdAsync(instanceId, ct);
-        var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api,
-            TaskContext: new TaskChatContext(instanceId, taskName));
-        var sb = new StringBuilder();
-        await foreach (var evt in chatService.SendMessageStreamAsync(
-            channelId, request, AutoApproveAsync, ct: ct))
-        {
-            if (evt.Type == ChatStreamEventType.TextDelta && evt.Delta is not null)
-                sb.Append(evt.Delta);
-        }
-        await taskService.AppendLogAsync(instanceId, $"ChatStream → {sb.Length} chars", ct: ct);
-        return sb.ToString();
+        return workflow.ChatStreamAsync(
+            instanceId,
+            taskName,
+            message,
+            agentId,
+            this,
+            ct);
     }
 
-    public async Task<string?> ChatToThreadAsync(
-        Guid instanceId, string taskName, Guid threadId, string message, Guid? agentId, CancellationToken ct)
+    public Task<string?> ChatToThreadAsync(
+        Guid instanceId,
+        string taskName,
+        Guid threadId,
+        string message,
+        Guid? agentId,
+        CancellationToken ct)
     {
-        var channelId = await GetInstanceChannelIdAsync(instanceId, ct);
-        var request = new ChatRequest(message, agentId, WellKnownClientKeys.Api,
-            TaskContext: new TaskChatContext(instanceId, taskName));
-        var response = await chatService.SendMessageAsync(channelId, request, threadId: threadId, ct: ct);
-        await taskService.AppendLogAsync(
-            instanceId, $"ChatToThread {threadId} → {response.AssistantMessage.Content?.Length ?? 0} chars", ct: ct);
-        return response.AssistantMessage.Content;
+        return workflow.ChatToThreadAsync(
+            instanceId,
+            taskName,
+            threadId,
+            message,
+            agentId,
+            this,
+            ct);
     }
 
-    public string ParseStructuredResponse(Guid instanceId, string text, string? typeName)
+    public string ParseStructuredResponse(
+        Guid instanceId,
+        string text,
+        string? typeName)
     {
-        IReadOnlyList<SharpClaw.Core.Tasks.Models.TaskDataTypeDefinition>? dataTypes = null;
-        if (!string.IsNullOrWhiteSpace(typeName))
-        {
-            var instance = db.TaskInstances
-                .Include(i => i.TaskDefinition)
-                .FirstOrDefault(i => i.Id == instanceId);
-            if (instance?.TaskDefinition is not null)
-            {
-                var compileResult = TaskScriptEngine.ProcessScript(instance.TaskDefinition.SourceText, null);
-                dataTypes = compileResult.Plan?.Definition.DataTypes;
-            }
-        }
-
-        return _structuredResponses.Parse(text, typeName, dataTypes);
+        return workflow.ParseStructuredResponse(instanceId, text, typeName, this);
     }
-    public async Task<Guid?> FindModelAsync(string search, CancellationToken ct)
-        => (await db.Models.FirstOrDefaultAsync(m => m.CustomId == search || m.Name == search, ct))?.Id;
 
-    public async Task<Guid?> FindProviderAsync(string search, CancellationToken ct)
-        => (await db.Providers.FirstOrDefaultAsync(p => p.CustomId == search || p.Name == search, ct))?.Id;
+    public Task<Guid?> FindModelAsync(string search, CancellationToken ct)
+        => workflow.FindModelAsync(search, this, ct);
 
-    public async Task<Guid?> FindAgentAsync(string search, CancellationToken ct)
-        => (await db.Agents.FirstOrDefaultAsync(a => a.CustomId == search || a.Name == search, ct))?.Id;
+    public Task<Guid?> FindProviderAsync(string search, CancellationToken ct)
+        => workflow.FindProviderAsync(search, this, ct);
 
-    public async Task<Guid?> FindRoleAsync(string search, CancellationToken ct)
-        => (await db.Roles.FirstOrDefaultAsync(r => r.Name == search, ct))?.Id;
+    public Task<Guid?> FindAgentAsync(string search, CancellationToken ct)
+        => workflow.FindAgentAsync(search, this, ct);
 
-    public async Task<Guid?> FindChannelAsync(string search, CancellationToken ct)
-        => (await db.Channels.FirstOrDefaultAsync(c => c.CustomId == search || c.Title == search, ct))?.Id;
+    public Task<Guid?> FindRoleAsync(string search, CancellationToken ct)
+        => workflow.FindRoleAsync(search, this, ct);
 
-    public async Task<Guid> CreateAgentAsync(
-        Guid instanceId, string name, Guid modelId, string? systemPrompt, string? customId, CancellationToken ct)
+    public Task<Guid?> FindChannelAsync(string search, CancellationToken ct)
+        => workflow.FindChannelAsync(search, this, ct);
+
+    public Task<Guid> CreateAgentAsync(
+        Guid instanceId,
+        string name,
+        Guid modelId,
+        string? systemPrompt,
+        string? customId,
+        CancellationToken ct)
     {
-        SharpClaw.Contracts.Entities.Core.AgentDB? agentEntity = null;
-        if (!string.IsNullOrEmpty(customId))
-        {
-            agentEntity = await db.Agents
-                .Where(a => a.CustomId == customId)
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-        }
-
-        var provisioning = _provisioning.ApplyAgentProvisioning(
-            agentEntity,
+        return workflow.CreateAgentAsync(
+            instanceId,
             name,
             modelId,
             systemPrompt,
-            customId);
-        agentEntity = provisioning.Agent;
-        if (provisioning.Created)
-            db.Agents.Add(agentEntity);
-
-        await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState();
-
-        if (await TryGetInstanceChannelIdAsync(instanceId, ct) is { } channelId)
-        {
-            var channel = await db.Channels
-                .Include(c => c.AllowedAgents)
-                .FirstOrDefaultAsync(c => c.Id == channelId, ct);
-            if (channel is not null
-                && _provisioning.AddChannelAllowedAgent(channel, agentEntity))
-            {
-                await db.SaveChangesAsync(ct);
-                InvalidateChannelRuntimeState();
-            }
-        }
-
-        await taskService.AppendLogAsync(
-            instanceId,
-            TaskHostBridgeProvisioningEngine.BuildCreateAgentLog(name, agentEntity.Id),
-            ct: ct);
-        return agentEntity.Id;
+            customId,
+            this,
+            ct);
     }
 
-    public async Task<Guid> CreateThreadAsync(
-        Guid instanceId, Guid? channelId, string? threadName, CancellationToken ct)
+    public Task<Guid> CreateThreadAsync(
+        Guid instanceId,
+        Guid? channelId,
+        string? threadName,
+        CancellationToken ct)
     {
-        var resolvedChannelId = channelId
-            ?? await GetInstanceChannelIdAsync(instanceId, ct);
-
-        var thread = _provisioning.CreateThread(
-            resolvedChannelId,
+        return workflow.CreateThreadAsync(
+            instanceId,
+            channelId,
             threadName,
-            DateTimeOffset.UtcNow);
-        db.ChatThreads.Add(thread);
-        await db.SaveChangesAsync(ct);
-        InvalidateThreadRuntimeState(thread.Id);
-        await taskService.AppendLogAsync(
-            instanceId,
-            TaskHostBridgeProvisioningEngine.BuildCreateThreadLog(thread.Name, thread.Id),
-            ct: ct);
-        return thread.Id;
+            this,
+            ct);
     }
 
-    public async Task<Guid> CreateRoleAsync(string roleName, CancellationToken ct)
+    public Task<Guid> CreateRoleAsync(string roleName, CancellationToken ct)
     {
-        var existing = await db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, ct);
-        if (existing is not null)
-            return existing.Id;
+        return workflow.CreateRoleAsync(roleName, this, ct);
+    }
 
+    public Task SetRolePermissionsAsync(
+        Guid roleId,
+        string requestJson,
+        CancellationToken ct)
+    {
+        return workflow.SetRolePermissionsAsync(roleId, requestJson, this, ct);
+    }
+
+    public Task AssignRoleAsync(Guid agentId, Guid roleId, CancellationToken ct)
+    {
+        return workflow.AssignRoleAsync(agentId, roleId, this, ct);
+    }
+
+    public Task<Guid> CreateChannelAsync(
+        Guid instanceId,
+        string title,
+        Guid agentId,
+        string? customId,
+        CancellationToken ct)
+    {
+        return workflow.CreateChannelAsync(
+            instanceId,
+            title,
+            agentId,
+            customId,
+            this,
+            ct);
+    }
+
+    public Task AddAllowedAgentAsync(
+        Guid instanceId,
+        Guid agentId,
+        Guid? channelId,
+        CancellationToken ct)
+    {
+        return workflow.AddAllowedAgentAsync(
+            instanceId,
+            agentId,
+            channelId,
+            this,
+            ct);
+    }
+
+    public async Task<Guid?> LoadInstanceChannelIdAsync(
+        Guid instanceId,
+        CancellationToken ct)
+    {
+        return await db.TaskInstances
+            .Where(instance => instance.Id == instanceId)
+            .Select(instance => instance.ChannelId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<Guid?> LoadInstanceContextIdAsync(
+        Guid instanceId,
+        CancellationToken ct)
+    {
+        return await db.TaskInstances
+            .Where(instance => instance.Id == instanceId)
+            .Select(instance => instance.ContextId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public string? LoadTaskDefinitionSourceText(Guid instanceId)
+    {
+        return db.TaskInstances
+            .Include(instance => instance.TaskDefinition)
+            .Where(instance => instance.Id == instanceId)
+            .Select(instance => instance.TaskDefinition == null
+                ? null
+                : instance.TaskDefinition.SourceText)
+            .FirstOrDefault();
+    }
+
+    public async Task<ChatResponse> SendChatAsync(
+        Guid channelId,
+        ChatRequest request,
+        Guid? threadId,
+        CancellationToken ct)
+    {
+        return await chatService.SendMessageAsync(
+            channelId,
+            request,
+            threadId: threadId,
+            ct: ct);
+    }
+
+    public async IAsyncEnumerable<ChatStreamEvent> SendChatStreamAsync(
+        Guid channelId,
+        ChatRequest request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var evt in chatService.SendMessageStreamAsync(
+                           channelId,
+                           request,
+                           AutoApproveAsync,
+                           ct: ct))
+        {
+            yield return evt;
+        }
+    }
+
+    public Task AppendTaskLogAsync(
+        Guid instanceId,
+        string message,
+        CancellationToken ct)
+    {
+        return taskService.AppendLogAsync(instanceId, message, ct: ct);
+    }
+
+    public async Task<Guid?> FindIdAsync(
+        TaskHostBridgeLookupKind kind,
+        string search,
+        CancellationToken ct)
+    {
+        return kind switch
+        {
+            TaskHostBridgeLookupKind.Model => await db.Models
+                .Where(model => model.CustomId == search || model.Name == search)
+                .Select(model => (Guid?)model.Id)
+                .FirstOrDefaultAsync(ct),
+            TaskHostBridgeLookupKind.Provider => await db.Providers
+                .Where(provider => provider.CustomId == search
+                    || provider.Name == search)
+                .Select(provider => (Guid?)provider.Id)
+                .FirstOrDefaultAsync(ct),
+            TaskHostBridgeLookupKind.Agent => await db.Agents
+                .Where(agent => agent.CustomId == search || agent.Name == search)
+                .Select(agent => (Guid?)agent.Id)
+                .FirstOrDefaultAsync(ct),
+            TaskHostBridgeLookupKind.Role => await db.Roles
+                .Where(role => role.Name == search)
+                .Select(role => (Guid?)role.Id)
+                .FirstOrDefaultAsync(ct),
+            TaskHostBridgeLookupKind.Channel => await db.Channels
+                .Where(channel => channel.CustomId == search
+                    || channel.Title == search)
+                .Select(channel => (Guid?)channel.Id)
+                .FirstOrDefaultAsync(ct),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+        };
+    }
+
+    public async Task<AgentDB?> LoadLatestAgentByCustomIdAsync(
+        string customId,
+        CancellationToken ct)
+    {
+        return await db.Agents
+            .Where(agent => agent.CustomId == customId)
+            .OrderByDescending(agent => agent.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public void TrackAgent(AgentDB agent)
+    {
+        db.Agents.Add(agent);
+    }
+
+    public async Task<ChannelDB?> LoadChannelWithAllowedAgentsAsync(
+        Guid channelId,
+        CancellationToken ct)
+    {
+        return await db.Channels
+            .Include(channel => channel.AllowedAgents)
+            .FirstOrDefaultAsync(channel => channel.Id == channelId, ct);
+    }
+
+    public void TrackThread(ChatThreadDB thread)
+    {
+        db.ChatThreads.Add(thread);
+    }
+
+    public async Task<RoleDB?> LoadRoleByNameAsync(
+        string roleName,
+        CancellationToken ct)
+    {
+        return await db.Roles.FirstOrDefaultAsync(
+            role => role.Name == roleName,
+            ct);
+    }
+
+    async Task<Guid> ITaskHostBridgeWorkflowHost.CreateRoleAsync(
+        string roleName,
+        CancellationToken ct)
+    {
         using var scope = scopeFactory.CreateScope();
         var roleService = scope.ServiceProvider.GetRequiredService<RoleService>();
         var created = await roleService.CreateAsync(roleName, ct);
         return created.Id;
     }
 
-    public async Task SetRolePermissionsAsync(Guid roleId, string requestJson, CancellationToken ct)
+    public async Task<RoleDB?> LoadRoleWithPermissionSetAsync(
+        Guid roleId,
+        CancellationToken ct)
     {
-        var permRequest = !string.IsNullOrWhiteSpace(requestJson)
-            ? JsonSerializer.Deserialize<SetRolePermissionsRequest>(
-                  requestJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-              ?? new SetRolePermissionsRequest()
-            : new SetRolePermissionsRequest();
+        return await db.Roles
+            .Include(role => role.PermissionSet)
+            .FirstOrDefaultAsync(role => role.Id == roleId, ct);
+    }
 
-        var role = await db.Roles
-            .Include(r => r.PermissionSet)
-            .FirstOrDefaultAsync(r => r.Id == roleId, ct)
-            ?? throw new InvalidOperationException($"SetRolePermissions: role '{roleId}' not found.");
+    public async Task<PermissionSetDB> EnsureRolePermissionSetAsync(
+        RoleDB role,
+        CancellationToken ct)
+    {
+        if (role.PermissionSet is { } existing)
+            return existing;
 
-        var permissionSet = role.PermissionSet;
-        if (permissionSet is null)
-        {
-            permissionSet = new PermissionSetDB();
-            db.PermissionSets.Add(permissionSet);
-            await db.SaveChangesAsync(ct);
-            role.PermissionSetId = permissionSet.Id;
-        }
+        var permissionSet = new PermissionSetDB();
+        db.PermissionSets.Add(permissionSet);
+        await db.SaveChangesAsync(ct);
+        role.PermissionSetId = permissionSet.Id;
+        role.PermissionSet = permissionSet;
+        return permissionSet;
+    }
 
+    public async Task LoadPermissionSetCollectionsAsync(
+        PermissionSetDB permissionSet,
+        CancellationToken ct)
+    {
         await db.Entry(permissionSet)
-            .Collection(ps => ps.GlobalFlags)
+            .Collection(set => set.GlobalFlags)
             .LoadAsync(ct);
         await db.Entry(permissionSet)
-            .Collection(ps => ps.ResourceAccesses)
+            .Collection(set => set.ResourceAccesses)
             .LoadAsync(ct);
-
-        rolePermissions.ReconcilePermissionSet(permissionSet, permRequest);
-
-        await db.SaveChangesAsync(ct);
-        InvalidatePermissionRuntimeState();
     }
 
-    public async Task AssignRoleAsync(Guid agentId, Guid roleId, CancellationToken ct)
+    public async Task<AgentDB?> LoadAgentAsync(Guid agentId, CancellationToken ct)
     {
-        var agentEntity = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct)
-            ?? throw new InvalidOperationException($"AssignRole: agent '{agentId}' not found.");
-        if (!await db.Roles.AnyAsync(r => r.Id == roleId, ct))
-            throw new InvalidOperationException($"AssignRole: role '{roleId}' not found.");
-
-        agentEntity.RoleId = roleId;
-        await db.SaveChangesAsync(ct);
-        InvalidateAgentRuntimeState();
+        return await db.Agents.FirstOrDefaultAsync(
+            agent => agent.Id == agentId,
+            ct);
     }
 
-    public async Task<Guid> CreateChannelAsync(
-        Guid instanceId, string title, Guid agentId, string? customId, CancellationToken ct)
+    public async Task<bool> RoleExistsAsync(Guid roleId, CancellationToken ct)
     {
-        var instanceContextId = await db.TaskInstances
-            .Where(i => i.Id == instanceId)
-            .Select(i => i.ContextId)
-            .FirstOrDefaultAsync(ct);
-
-        ChannelDB? existing = !string.IsNullOrEmpty(customId)
-            ? await db.Channels.FirstOrDefaultAsync(c => c.CustomId == customId, ct)
-            : await db.Channels.FirstOrDefaultAsync(c => c.Title == title, ct);
-
-        Guid channelId;
-        if (existing is not null)
-        {
-            _provisioning.ApplyExistingChannelProvisioning(
-                existing,
-                title,
-                agentId,
-                customId,
-                instanceContextId);
-            await db.SaveChangesAsync(ct);
-            InvalidateChannelRuntimeState();
-            channelId = existing.Id;
-        }
-        else
-        {
-            using var scope = scopeFactory.CreateScope();
-            var channelService = scope.ServiceProvider.GetRequiredService<ChannelService>();
-            var resp = await channelService.CreateAsync(
-                new SharpClaw.Contracts.DTOs.Channels.CreateChannelRequest(
-                    AgentId: agentId,
-                    Title: title,
-                    CustomId: customId,
-                    ContextId: instanceContextId),
-                ct);
-            channelId = resp.Id;
-        }
-
-        var inst = await db.TaskInstances.FindAsync([instanceId], ct);
-        if (inst is not null
-            && _provisioning.AdoptInstanceChannel(inst, channelId))
-        {
-            await db.SaveChangesAsync(ct);
-        }
-
-        await taskService.AppendLogAsync(
-            instanceId,
-            TaskHostBridgeProvisioningEngine.BuildCreateChannelLog(title, channelId),
-            ct: ct);
-        return channelId;
+        return await db.Roles.AnyAsync(role => role.Id == roleId, ct);
     }
 
-    public async Task AddAllowedAgentAsync(
-        Guid instanceId, Guid agentId, Guid? channelId, CancellationToken ct)
+    public async Task<ChannelDB?> LoadChannelByCustomIdAsync(
+        string customId,
+        CancellationToken ct)
     {
-        var agentEntity = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct)
-            ?? throw new InvalidOperationException($"AddAllowedAgent: agent '{agentId}' not found.");
-
-        var targetChannelId = channelId
-            ?? await GetInstanceChannelIdAsync(instanceId, ct);
-
-        var channel = await db.Channels
-            .Include(c => c.AllowedAgents)
-            .FirstOrDefaultAsync(c => c.Id == targetChannelId, ct)
-            ?? throw new InvalidOperationException($"AddAllowedAgent: channel '{targetChannelId}' not found.");
-
-        if (_provisioning.AddChannelAllowedAgent(channel, agentEntity))
-        {
-            await db.SaveChangesAsync(ct);
-            InvalidateChannelRuntimeState();
-        }
-
-        await taskService.AppendLogAsync(
-            instanceId,
-            TaskHostBridgeProvisioningEngine.BuildAddAllowedAgentLog(agentId, targetChannelId),
-            ct: ct);
+        return await db.Channels.FirstOrDefaultAsync(
+            channel => channel.CustomId == customId,
+            ct);
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────
+    public async Task<ChannelDB?> LoadChannelByTitleAsync(
+        string title,
+        CancellationToken ct)
+    {
+        return await db.Channels.FirstOrDefaultAsync(
+            channel => channel.Title == title,
+            ct);
+    }
 
-    private async Task<Guid> GetInstanceChannelIdAsync(Guid instanceId, CancellationToken ct)
-        => _provisioning.RequireInstanceChannel(
-            instanceId,
-            await TryGetInstanceChannelIdAsync(instanceId, ct));
+    async Task<Guid> ITaskHostBridgeWorkflowHost.CreateChannelAsync(
+        CreateChannelRequest request,
+        CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var channelService = scope.ServiceProvider
+            .GetRequiredService<ChannelService>();
+        var response = await channelService.CreateAsync(request, ct);
+        return response.Id;
+    }
 
-    private async Task<Guid?> TryGetInstanceChannelIdAsync(Guid instanceId, CancellationToken ct)
-        => await db.TaskInstances
-            .Where(i => i.Id == instanceId)
-            .Select(i => i.ChannelId)
-            .FirstOrDefaultAsync(ct);
+    public async Task<TaskInstanceDB?> LoadTaskInstanceAsync(
+        Guid instanceId,
+        CancellationToken ct)
+    {
+        return await db.TaskInstances.FindAsync([instanceId], ct);
+    }
+
+    public Task SaveAsync(CancellationToken ct)
+    {
+        return db.SaveChangesAsync(ct);
+    }
+
+    public void Invalidate(
+        TaskHostBridgeInvalidationTarget target,
+        Guid? entityId = null)
+    {
+        switch (target)
+        {
+            case TaskHostBridgeInvalidationTarget.Agent:
+                InvalidateAgentRuntimeState();
+                break;
+            case TaskHostBridgeInvalidationTarget.Channel:
+                InvalidateChannelRuntimeState();
+                break;
+            case TaskHostBridgeInvalidationTarget.Thread:
+                if (entityId is { } threadId)
+                    chatCache.Remove(ChatCache.KeyThreadHistoryLimits(threadId));
+                chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
+                break;
+            case TaskHostBridgeInvalidationTarget.Permission:
+                chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
+                InvalidateAgentRuntimeState();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(target),
+                    target,
+                    null);
+        }
+    }
 
     private static Task<bool> AutoApproveAsync(
-        SharpClaw.Contracts.DTOs.AgentActions.AgentJobResponse _, CancellationToken __) =>
-        Task.FromResult(false);
+        AgentJobResponse _,
+        CancellationToken __)
+    {
+        return Task.FromResult(false);
+    }
 
     private void InvalidateAgentRuntimeState()
     {
@@ -344,17 +467,4 @@ public sealed class HostAgentBridge(
         chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
         chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
     }
-
-    private void InvalidateThreadRuntimeState(Guid threadId)
-    {
-        chatCache.Remove(ChatCache.KeyThreadHistoryLimits(threadId));
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-    }
-
-    private void InvalidatePermissionRuntimeState()
-    {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
-        InvalidateAgentRuntimeState();
-    }
-
 }
