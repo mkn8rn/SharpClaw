@@ -1,5 +1,6 @@
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Roles;
+using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Enums;
@@ -139,5 +140,102 @@ public sealed class RolePermissionAdministrationEngineTests
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("A role named ' Admin ' already exists.");
+    }
+
+    [Test]
+    public void CreateRole_TrimsNameAndAttachesEmptyPermissionSet()
+    {
+        var role = _engine.CreateRole(" Operators ");
+
+        role.Name.Should().Be("Operators");
+        role.PermissionSet.Should().NotBeNull();
+        role.PermissionSet!.GlobalFlags.Should().BeEmpty();
+        role.PermissionSet.ResourceAccesses.Should().BeEmpty();
+    }
+
+    [Test]
+    public void CreatePermissionSetForRole_AttachesNewSet()
+    {
+        var role = new RoleDB { Name = "Operators" };
+
+        var permissionSet = _engine.CreatePermissionSetForRole(role);
+
+        role.PermissionSet.Should().BeSameAs(permissionSet);
+    }
+
+    [Test]
+    public void ToPermissionsResponse_GroupsResourceGrants()
+    {
+        var role = new RoleDB
+        {
+            Id = Guid.NewGuid(),
+            Name = "Operators"
+        };
+        var resourceId = Guid.NewGuid();
+        var permissionSet = new PermissionSetDB();
+        permissionSet.GlobalFlags.Add(new GlobalFlagDB
+        {
+            FlagKey = "CanUseShell",
+            Clearance = PermissionClearance.Independent
+        });
+        permissionSet.ResourceAccesses.Add(new ResourceAccessDB
+        {
+            ResourceType = "Module.Resource",
+            ResourceId = resourceId,
+            Clearance = PermissionClearance.Independent
+        });
+
+        var response = _engine.ToPermissionsResponse(role, permissionSet);
+
+        response.RoleId.Should().Be(role.Id);
+        response.RoleName.Should().Be("Operators");
+        response.GlobalFlags["CanUseShell"]
+            .Should().Be(PermissionClearance.Independent);
+        response.ResourceGrants["Module.Resource"].Single()
+            .Should().Be(new ResourceGrant(
+                resourceId,
+                PermissionClearance.Independent));
+    }
+
+    [Test]
+    public void PlanDeleteRole_DetachesUsersAndReturnsOwnedPermissionRows()
+    {
+        var roleId = Guid.NewGuid();
+        var user = new UserDB
+        {
+            Username = "marko",
+            PasswordHash = [],
+            PasswordSalt = [],
+            RoleId = roleId
+        };
+        var permissionSet = new PermissionSetDB();
+        var flag = new GlobalFlagDB
+        {
+            FlagKey = "CanUseShell",
+            Clearance = PermissionClearance.Independent
+        };
+        var access = new ResourceAccessDB
+        {
+            ResourceType = "Module.Resource",
+            ResourceId = Guid.NewGuid(),
+            Clearance = PermissionClearance.Independent
+        };
+        permissionSet.GlobalFlags.Add(flag);
+        permissionSet.ResourceAccesses.Add(access);
+        var role = new RoleDB
+        {
+            Id = roleId,
+            Name = "Operators",
+            PermissionSet = permissionSet,
+            Users = [user]
+        };
+
+        var plan = _engine.PlanDeleteRole(role);
+
+        user.RoleId.Should().BeNull();
+        plan.Role.Should().BeSameAs(role);
+        plan.PermissionSet.Should().BeSameAs(permissionSet);
+        plan.GlobalFlags.Should().ContainSingle().Which.Should().BeSameAs(flag);
+        plan.ResourceAccesses.Should().ContainSingle().Which.Should().BeSameAs(access);
     }
 }

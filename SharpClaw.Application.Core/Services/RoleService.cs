@@ -1,11 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Core.Permissions;
-using SharpClaw.Contracts.Entities.Core.Access;
 using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Roles;
-using SharpClaw.Contracts.Enums;
 using SharpClaw.Infrastructure.Persistence;
 
 namespace SharpClaw.Application.Services;
@@ -29,7 +26,7 @@ public sealed class RoleService(
     {
         return await db.Roles
             .OrderBy(r => r.Name)
-            .Select(r => new RoleResponse(r.Id, r.Name, r.PermissionSetId))
+            .Select(rolePermissions.ToResponseProjection())
             .ToListAsync(ct);
     }
 
@@ -42,15 +39,11 @@ public sealed class RoleService(
         if (IsUniqueRoleNamesEnforced())
             await EnsureRoleNameUniqueAsync(name, excludeId: null, ct);
 
-        var ps = new PermissionSetDB();
-        db.PermissionSets.Add(ps);
-        await db.SaveChangesAsync(ct);
-
-        var role = new RoleDB { Name = name, PermissionSetId = ps.Id };
+        var role = rolePermissions.CreateRole(name);
         db.Roles.Add(role);
         await db.SaveChangesAsync(ct);
 
-        return new RoleResponse(role.Id, role.Name, role.PermissionSetId);
+        return rolePermissions.ToResponse(role);
     }
 
     public async Task<RoleResponse?> GetByIdAsync(
@@ -58,7 +51,7 @@ public sealed class RoleService(
     {
         return await db.Roles
             .Where(r => r.Id == roleId)
-            .Select(r => new RoleResponse(r.Id, r.Name, r.PermissionSetId))
+            .Select(rolePermissions.ToResponseProjection())
             .FirstOrDefaultAsync(ct);
     }
 
@@ -76,7 +69,7 @@ public sealed class RoleService(
             ? await LoadFullPermissionSetAsync(role.PermissionSet.Id, ct)
             : null;
 
-        return ToResponse(role, ps);
+        return rolePermissions.ToPermissionsResponse(role, ps);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -120,10 +113,8 @@ public sealed class RoleService(
         }
         else
         {
-            ps = new PermissionSetDB();
+            ps = rolePermissions.CreatePermissionSetForRole(role);
             db.PermissionSets.Add(ps);
-            await db.SaveChangesAsync(ct);
-            role.PermissionSetId = ps.Id;
         }
 
         rolePermissions.ReconcilePermissionSet(ps, request);
@@ -131,7 +122,7 @@ public sealed class RoleService(
         await db.SaveChangesAsync(ct);
         InvalidatePermissionRuntimeState();
 
-        return ToResponse(role, ps);
+        return rolePermissions.ToPermissionsResponse(role, ps);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -161,23 +152,6 @@ public sealed class RoleService(
             .FirstOrDefaultAsync(p => p.Id == psId, ct);
     }
 
-    private static RolePermissionsResponse ToResponse(RoleDB role, PermissionSetDB? ps) =>
-        new(
-            RoleId: role.Id,
-            RoleName: role.Name,
-            GlobalFlags: ps?.GlobalFlags
-                .ToDictionary(f => f.FlagKey, f => f.Clearance)
-                ?? new Dictionary<string, PermissionClearance>(),
-            ResourceGrants: ps is null
-                ? new Dictionary<string, IReadOnlyList<ResourceGrant>>()
-                : ps.ResourceAccesses
-                    .GroupBy(a => a.ResourceType)
-                    .ToDictionary(
-                        g => g.Key,
-                        g => (IReadOnlyList<ResourceGrant>)g
-                            .Select(a => new ResourceGrant(a.ResourceId, a.Clearance))
-                            .ToList()));
-
     // ═══════════════════════════════════════════════════════════════
     // Mutate
     // ═══════════════════════════════════════════════════════════════
@@ -188,9 +162,6 @@ public sealed class RoleService(
     public async Task<RoleResponse?> RenameAsync(
         Guid roleId, string newName, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(newName))
-            throw new ArgumentException("Role name cannot be empty.", nameof(newName));
-
         var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct);
         if (role is null)
             return null;
@@ -198,10 +169,10 @@ public sealed class RoleService(
         if (IsUniqueRoleNamesEnforced())
             await EnsureRoleNameUniqueAsync(newName, excludeId: roleId, ct);
 
-        role.Name = newName;
+        rolePermissions.RenameRole(role, newName);
         await db.SaveChangesAsync(ct);
         InvalidatePermissionRuntimeState();
-        return new RoleResponse(role.Id, role.Name, role.PermissionSetId);
+        return rolePermissions.ToResponse(role);
     }
 
     /// <summary>
@@ -221,18 +192,15 @@ public sealed class RoleService(
         if (role is null)
             return false;
 
-        // Detach users from this role before deleting it.
-        foreach (var user in role.Users)
-            user.RoleId = null;
-
-        if (role.PermissionSet is { } ps)
+        var deletion = rolePermissions.PlanDeleteRole(role);
+        if (deletion.PermissionSet is not null)
         {
-            db.RemoveRange(ps.GlobalFlags);
-            db.RemoveRange(ps.ResourceAccesses);
-            db.PermissionSets.Remove(ps);
+            db.RemoveRange(deletion.GlobalFlags);
+            db.RemoveRange(deletion.ResourceAccesses);
+            db.PermissionSets.Remove(deletion.PermissionSet);
         }
 
-        db.Roles.Remove(role);
+        db.Roles.Remove(deletion.Role);
         await db.SaveChangesAsync(ct);
         InvalidatePermissionRuntimeState();
         return true;
