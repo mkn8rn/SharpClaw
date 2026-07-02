@@ -367,6 +367,7 @@ try
     builder.Services.AddSingleton<ChatHistoryEngine>();
     builder.Services.AddSingleton<ChatQueryWorkflowEngine>();
     builder.Services.AddSingleton<ChatDefaultHeaderEngine>();
+    builder.Services.AddSingleton<ChatHeaderWorkflowEngine>();
     builder.Services.AddSingleton<ChatHeaderGrantFormatter>();
     builder.Services.AddSingleton<ChatToolResultEngine>();
     builder.Services.AddSingleton<ChatMessageEngine>();

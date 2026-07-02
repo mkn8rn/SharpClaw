@@ -43,7 +43,7 @@ public sealed class ChatService(
     ModuleToolExecutionPlanner moduleExecutionPlanner,
     ChatCache chatCache,
     ChatRequestPlanningEngine chatPlanner,
-    ChatDefaultHeaderEngine chatHeaders,
+    ChatHeaderWorkflowEngine chatHeaderWorkflow,
     ChatHeaderGrantFormatter headerGrantFormatter,
     ChatRequestWorkflowEngine chatWorkflow,
     ChatQueryWorkflowEngine chatQueries,
@@ -71,6 +71,10 @@ public sealed class ChatService(
     private readonly ChatCache _chatCache = chatCache;
     private readonly ChatQueryWorkflowEngine _chatQueries = chatQueries;
     private readonly EfChatQueryHost _chatQueryHost = chatQueryHost;
+    private readonly HeaderTagProcessor _headerTagProcessor = headerTagProcessor;
+    private readonly ChatHeaderWorkflowEngine _chatHeaderWorkflow = chatHeaderWorkflow;
+    private readonly ChatHeaderGrantFormatter _headerGrantFormatter = headerGrantFormatter;
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
 
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
@@ -374,201 +378,20 @@ public sealed class ChatService(
         string? externalUsername = null, string? externalDisplayName = null,
         CompletionParameters? completionParameters = null,
         string providerKey = "")
-    {
-        if (chatHeaders.IsHeaderDisabled(channel))
-            return null;
-
-        // Custom headers are explicit operator configuration and remain
-        // available when the generated default header is disabled globally.
-        var customTemplate = chatHeaders.ResolveCustomTemplate(channel, agent);
-        if (customTemplate is not null)
-        {
-            var userId2 = _jobService.GetSessionUserId();
-            return await headerTagProcessor.ExpandAsync(
-                customTemplate, channel, agent, clientType, userId2, ct,
-                completionParameters, providerKey);
-        }
-
-        if (!chatHeaders.ShouldBuildDefaultHeader(_disableDefaultChatHeaders))
-            return null;
-
-        // â”€â”€ Task-sourced message: lightweight header, no user lookup â”€â”€
-        if (taskContext is not null)
-        {
-            var store = TaskSharedData.Get(taskContext.InstanceId);
-            string? lightText = null;
-            IReadOnlyList<ChatTaskBigDataReference> bigEntries = [];
-            if (store is not null)
-            {
-                lightText = store.LightData;
-                bigEntries = store.ListBig()
-                    .Select(static e => new ChatTaskBigDataReference(e.Id, e.Title))
-                    .ToArray();
-            }
-
-            var suffix = await LoadAgentSuffixAsync(agent.Id, channel.Id, ct,
-                completionParameters, providerKey);
-            return chatHeaders.BuildTaskHeader(
-                new ChatTaskHeaderFacts(
-                    taskContext.TaskName,
-                    lightText,
-                    bigEntries),
-                suffix,
-                DateTimeOffset.UtcNow);
-        }
-
-        var userId = _jobService.GetSessionUserId();
-
-        // â”€â”€ External user (bot-forwarded message): no DB session â”€â”€â”€â”€â”€
-        if (userId is null && externalUsername is not null)
-        {
-            var suffix = await LoadAgentSuffixAsync(agent.Id, channel.Id, ct,
-                completionParameters, providerKey);
-            return chatHeaders.BuildExternalUserHeader(
-                new ChatExternalUserHeaderFacts(
-                    externalUsername,
-                    externalDisplayName,
-                    clientType),
-                suffix,
-                DateTimeOffset.UtcNow);
-        }
-
-        if (userId is null)
-            return null;
-
-        var userState = await _chatCache.GetOrCreateAsync(
-            ChatCache.KeyHeaderUser(userId.Value),
-            innerCt => LoadUserHeaderStateAsync(userId.Value, innerCt),
-            EstimateUserHeaderState,
-            ct);
-
-        if (userState is null)
-            return null;
-
-        var userSuffix = await LoadAgentSuffixAsync(agent.Id, channel.Id, ct,
-            completionParameters, providerKey);
-        return chatHeaders.BuildAuthenticatedUserHeader(
-            new ChatAuthenticatedUserHeaderFacts(
-                userState.Username,
+        => await _chatHeaderWorkflow.BuildHeaderAsync(
+            new ChatHeaderWorkflowRequest(
+                channel,
+                agent,
                 clientType,
-                userState.RoleName,
-                userState.Grants,
-                userState.Bio),
-            userSuffix,
-            DateTimeOffset.UtcNow);
-    }
-
-    private async Task<UserHeaderState?> LoadUserHeaderStateAsync(
-        Guid userId, CancellationToken ct)
-    {
-        var user = await _db.Users
-            .AsNoTracking()
-            .Include(u => u.Role)
-            .ThenInclude(r => r!.PermissionSet)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
-
-        if (user is null)
-            return null;
-
-        var grants = new List<string>();
-        if (user.Role?.PermissionSetId is { } psId)
-        {
-            var ps = await _db.PermissionSets
-                .AsNoTracking()
-                .Include(p => p.GlobalFlags)
-                .Include(p => p.ResourceAccesses)
-                .AsSplitQuery()
-                .FirstOrDefaultAsync(p => p.Id == psId, ct);
-
-            if (ps is not null)
-            {
-                grants = [.. await headerGrantFormatter.FormatGrantNamesWithResourcesAsync(
-                    ps,
-                    serviceProvider,
-                    ct)];
-            }
-        }
-
-        return new UserHeaderState(
-            user.Username,
-            user.Role?.Name,
-            grants,
-            user.Bio);
-    }
-
-    private static long EstimateUserHeaderState(UserHeaderState state)
-        => 128
-           + ChatCache.EstimateString(state.Username)
-           + ChatCache.EstimateString(state.RoleName)
-           + ChatCache.EstimateString(state.Bio)
-           + ChatCache.EstimateStringCollection(state.Grants);
-
-    private async Task<string?> LoadAgentSuffixAsync(
-        Guid agentId, Guid channelId,
-        CancellationToken ct,
-        CompletionParameters? completionParameters = null,
-        string providerKey = "")
-    {
-        return await _chatCache.GetOrCreateAsync(
-            ChatCache.KeyHeaderAgentSuffix(
-                agentId,
-                channelId,
+                _disableDefaultChatHeaders,
+                taskContext,
+                externalUsername,
+                externalDisplayName,
+                completionParameters,
                 providerKey,
-                completionParameters?.ReasoningEffort),
-            async innerCt => await BuildAgentSuffixTextAsync(
-                agentId, channelId, innerCt, completionParameters, providerKey),
-            ChatCache.EstimateString,
+                DateTimeOffset.UtcNow),
+            new ChatServiceHeaderWorkflowHost(this),
             ct);
-    }
-
-    /// <summary>
-    /// Appends the shared agent-role, policy, and closing bracket to a
-    /// header being constructed.
-    /// Shared across all header paths (authenticated user, external user, task).
-    /// </summary>
-    private async Task<string> BuildAgentSuffixTextAsync(
-        Guid agentId, Guid channelId,
-        CancellationToken ct,
-        CompletionParameters? completionParameters = null,
-        string providerKey = "")
-    {
-        var agentWithRole = await _db.Agents
-            .AsNoTracking()
-            .Include(a => a.Role)
-            .ThenInclude(r => r!.PermissionSet)
-            .FirstOrDefaultAsync(a => a.Id == agentId, ct);
-
-        string? roleName = null;
-        IReadOnlyList<string> grants = [];
-        if (agentWithRole?.Role is { } agentRole)
-        {
-            PermissionSetDB? agentPs = null;
-            if (agentRole.PermissionSetId is { } agentPsId)
-            {
-                agentPs = await _db.PermissionSets
-                        .AsNoTracking()
-                        .Include(p => p.GlobalFlags)
-                        .Include(p => p.ResourceAccesses)
-                        .AsSplitQuery()
-                        .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
-            }
-
-            roleName = agentRole.Name;
-            if (agentPs is not null)
-            {
-                grants = await headerGrantFormatter.FormatGrantNamesWithResourcesAsync(
-                    agentPs,
-                    serviceProvider,
-                    ct);
-            }
-        }
-
-        return chatHeaders.BuildAgentSuffix(
-            new ChatAgentHeaderSuffixFacts(roleName, grants),
-            completionParameters,
-            providerKey);
-    }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Streaming chat
@@ -1217,6 +1040,115 @@ public sealed class ChatService(
             },
             message => Debug.WriteLine(message, "SharpClaw.CLI"));
 
+    private sealed class ChatServiceHeaderWorkflowHost(
+        ChatService service) : IChatHeaderWorkflowHost
+    {
+        public Guid? GetSessionUserId() =>
+            service._jobService.GetSessionUserId();
+
+        public async Task<string> ExpandCustomHeaderAsync(
+            string template,
+            ChannelDB channel,
+            AgentDB agent,
+            string clientType,
+            Guid? sessionUserId,
+            CompletionParameters? completionParameters,
+            string providerKey,
+            CancellationToken ct) =>
+            await service._headerTagProcessor.ExpandAsync(
+                template,
+                channel,
+                agent,
+                clientType,
+                sessionUserId,
+                ct,
+                completionParameters,
+                providerKey);
+
+        public async Task<ChatHeaderUserState?> LoadUserHeaderStateAsync(
+            Guid userId,
+            CancellationToken ct)
+        {
+            var user = await service._db.Users
+                .AsNoTracking()
+                .Include(u => u.Role)
+                .ThenInclude(r => r!.PermissionSet)
+                .AsSplitQuery()
+                .FirstOrDefaultAsync(u => u.Id == userId, ct);
+
+            if (user is null)
+                return null;
+
+            var grants = new List<string>();
+            if (user.Role?.PermissionSetId is { } psId)
+            {
+                var ps = await service._db.PermissionSets
+                    .AsNoTracking()
+                    .Include(p => p.GlobalFlags)
+                    .Include(p => p.ResourceAccesses)
+                    .AsSplitQuery()
+                    .FirstOrDefaultAsync(p => p.Id == psId, ct);
+
+                if (ps is not null)
+                {
+                    grants = [.. await service._headerGrantFormatter
+                        .FormatGrantNamesWithResourcesAsync(
+                            ps,
+                            service._serviceProvider,
+                            ct)];
+                }
+            }
+
+            return new ChatHeaderUserState(
+                user.Username,
+                user.Role?.Name,
+                grants,
+                user.Bio);
+        }
+
+        public async Task<ChatAgentHeaderSuffixFacts> LoadAgentHeaderSuffixFactsAsync(
+            Guid agentId,
+            Guid channelId,
+            CancellationToken ct)
+        {
+            _ = channelId;
+
+            var agentWithRole = await service._db.Agents
+                .AsNoTracking()
+                .Include(a => a.Role)
+                .ThenInclude(r => r!.PermissionSet)
+                .FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+            string? roleName = null;
+            IReadOnlyList<string> grants = [];
+            if (agentWithRole?.Role is { } agentRole)
+            {
+                PermissionSetDB? agentPs = null;
+                if (agentRole.PermissionSetId is { } agentPsId)
+                {
+                    agentPs = await service._db.PermissionSets
+                        .AsNoTracking()
+                        .Include(p => p.GlobalFlags)
+                        .Include(p => p.ResourceAccesses)
+                        .AsSplitQuery()
+                        .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+                }
+
+                roleName = agentRole.Name;
+                if (agentPs is not null)
+                {
+                    grants = await service._headerGrantFormatter
+                        .FormatGrantNamesWithResourcesAsync(
+                            agentPs,
+                            service._serviceProvider,
+                            ct);
+                }
+            }
+
+            return new ChatAgentHeaderSuffixFacts(roleName, grants);
+        }
+    }
+
     private sealed class ChatServiceRequestWorkflowHost(
         ChatService service) : IChatRequestWorkflowHost
     {
@@ -1413,11 +1345,4 @@ public sealed class ChatService(
         int TotalPromptTokens = 0,
         int TotalCompletionTokens = 0,
         string? ProviderMetadataJson = null);
-
-    private sealed record UserHeaderState(
-        string Username,
-        string? RoleName,
-        IReadOnlyList<string> Grants,
-        string? Bio);
-
 }
