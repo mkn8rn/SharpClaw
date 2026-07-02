@@ -26,6 +26,50 @@ public sealed class ModuleRuntimeProtocolCoreTests
     }
 
     [Test]
+    public void ForeignModuleSidecarProtocolModels_ComeFromCoreAndUsePackageContracts()
+    {
+        typeof(ForeignModuleHandshakeRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleDiscoveryResponse).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleToolDescriptor).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleProtocolContractInvocationRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleTaskTriggerAttributeHandleRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleProviderChatCompletionRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleProviderPluginDescriptor).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+
+        typeof(SharpClaw.Contracts.Modules.ModuleManifest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+        typeof(SharpClaw.Contracts.Tasks.TaskTriggerDefinition).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+        typeof(SharpClaw.Contracts.Providers.ChatCompletionMessage).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+        typeof(SharpClaw.Contracts.Providers.ProviderCostSeed).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+
+        var schema = JsonSerializer.SerializeToElement(new { type = "object" });
+        var descriptor = new ForeignModuleToolDescriptor(
+            "sample",
+            "Sample tool",
+            schema,
+            Permission: new ForeignModulePermissionDescriptor(IsPerResource: false));
+
+        descriptor.ToModuleToolDefinition().Name.Should().Be("sample");
+
+        var health = new ForeignModuleHealthResponse(true, Details: new Dictionary<string, JsonElement>
+        {
+            ["queueDepth"] = JsonSerializer.SerializeToElement(3),
+        });
+
+        health.ToModuleHealthStatus().Details.Should().ContainKey("queueDepth");
+    }
+
+    [Test]
     public void ModuleManifestRuntimeInfo_ParsesAndNormalizesInCore()
     {
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(
