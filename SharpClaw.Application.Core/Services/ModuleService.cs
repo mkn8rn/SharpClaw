@@ -52,6 +52,7 @@ public sealed class ModuleService(
     SharpClawInstancePaths? instancePaths = null)
 {
     private static readonly ModuleLifecycleProjectionEngine ModuleProjection = new();
+    private static readonly ModuleDisableDependencyEngine ModuleDisableDependencies = new();
 
     // ═══════════════════════════════════════════════════════════════
     // Queries
@@ -301,33 +302,7 @@ public sealed class ModuleService(
             ?? throw new ArgumentException($"Unknown module: {moduleId}");
         var module = registry.GetModule(moduleId) ?? bundledModule;
 
-        // Check that no other enabled module depends on this module's contracts
-        var protocolModule = module as IForeignModuleProtocolContractModule;
-        var exportedNames = module.ExportedContracts
-            .Select(e => e.ContractName)
-            .Concat(protocolModule?.ExportedProtocolContracts.Select(e => e.ContractName)
-                ?? Enumerable.Empty<string>())
-            .ToHashSet(StringComparer.Ordinal);
-        if (exportedNames.Count > 0)
-        {
-            foreach (var other in registry.GetAllModules())
-            {
-                if (other.Id == moduleId) continue;
-                var deps = other.RequiredContracts
-                    .Where(r => !r.Optional && exportedNames.Contains(r.ContractName))
-                    .Select(r => r.ContractName)
-                    .ToList();
-                if (other is IForeignModuleProtocolContractModule otherProtocolModule)
-                {
-                    deps.AddRange(otherProtocolModule.RequiredProtocolContracts
-                        .Where(r => !r.Optional && exportedNames.Contains(r.ContractName))
-                        .Select(r => r.ContractName));
-                }
-                if (deps.Count > 0)
-                    throw new InvalidOperationException(
-                        $"Cannot disable '{moduleId}': module '{other.Id}' depends on contract(s) {string.Join(", ", deps)}.");
-            }
-        }
+        ThrowIfDisableBlocked(EvaluateDisableDependencies(moduleId, module, registry));
 
         // Shutdown + unregister
         if (registry.GetModule(moduleId) is not null)
@@ -1557,5 +1532,51 @@ public sealed class ModuleService(
                 requirement.ContractName,
                 requirement.Optional,
                 moduleRegistry.ResolveProtocolContract(requirement.ContractName) is not null)))];
+    }
+
+    private static ModuleDisableDependencyFacts CollectDisableDependencyFacts(
+        string moduleId,
+        ISharpClawCoreModule module,
+        ModuleRegistry moduleRegistry) =>
+        new(
+            moduleId,
+            CollectExportedContractNames(module),
+            [.. moduleRegistry.GetAllModules()
+                .Select(other => new ModuleDisableDependencyCandidateFacts(
+                    other.Id,
+                    CollectDisableDependencyRequirements(other)))]);
+
+    private static IReadOnlyList<ModuleDisableDependencyRequirementFacts> CollectDisableDependencyRequirements(
+        ISharpClawCoreModule module)
+    {
+        var requirements = module.RequiredContracts
+            .Select(requirement => new ModuleDisableDependencyRequirementFacts(
+                requirement.ContractName,
+                requirement.Optional));
+
+        if (module is not IForeignModuleProtocolContractModule protocolModule)
+            return [.. requirements];
+
+        return [.. requirements.Concat(protocolModule.RequiredProtocolContracts
+            .Select(requirement => new ModuleDisableDependencyRequirementFacts(
+                requirement.ContractName,
+                requirement.Optional)))];
+    }
+
+    internal static ModuleDisableDependencyDecision EvaluateDisableDependencies(
+        string moduleId,
+        ISharpClawCoreModule module,
+        ModuleRegistry moduleRegistry) =>
+        ModuleDisableDependencies.Evaluate(
+            CollectDisableDependencyFacts(moduleId, module, moduleRegistry));
+
+    private static void ThrowIfDisableBlocked(
+        ModuleDisableDependencyDecision decision)
+    {
+        if (decision.CanDisable)
+            return;
+
+        throw new InvalidOperationException(
+            $"Cannot disable '{decision.ModuleId}': module '{decision.BlockerModuleId}' depends on contract(s) {string.Join(", ", decision.BlockingContracts)}.");
     }
 }
