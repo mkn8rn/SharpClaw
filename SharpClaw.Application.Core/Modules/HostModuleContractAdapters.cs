@@ -38,12 +38,6 @@ public interface IHostContextDataReader
         CancellationToken ct = default);
 }
 
-public sealed record HostContextChatMessageSummary(
-    string Role,
-    string Content,
-    string Sender,
-    DateTimeOffset Timestamp);
-
 public sealed class HostConversationSteering(
     SharpClawDbContext db,
     ThreadActivitySignal threadActivity) : IConversationSteering

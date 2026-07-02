@@ -66,4 +66,33 @@ public sealed class ModuleRuntimeProtocolCoreTests
         act.Should().Throw<ArgumentException>()
             .WithMessage("*entryAssembly*file name*");
     }
+
+    [Test]
+    public void ForeignModuleHostCapabilityDtos_ComeFromCoreAndUseContractsModuleInfo()
+    {
+        typeof(ForeignModuleConfigGetRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleTaskLaunchRequest).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleTaskStepInvocationDescriptor).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleTaskStepExecutionResponse).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(ForeignModuleInfoListResponse).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Core");
+        typeof(SharpClaw.Contracts.Modules.ModuleInfo).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+
+        var descriptor = new ForeignModuleTaskStepInvocationDescriptor(
+            "module.step",
+            Arguments: ["one"],
+            Body:
+            [
+                new ForeignModuleTaskStepInvocationDescriptor("module.child")
+            ]);
+
+        descriptor.StepKey.Should().Be("module.step");
+        descriptor.Body.Should().ContainSingle()
+            .Which.StepKey.Should().Be("module.child");
+    }
 }
