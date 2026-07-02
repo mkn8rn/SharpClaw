@@ -25,6 +25,7 @@ public sealed class ModuleHealthCheckService(
 {
     private readonly ConcurrentDictionary<string, ModuleHealthStatus> _latestStatus = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _failureCounts = new(StringComparer.Ordinal);
+    private readonly ModuleHealthPolicyEngine _healthPolicy = new();
 
     /// <summary>Get the last known health status for a module.</summary>
     public ModuleHealthStatus? GetStatus(string moduleId) =>
@@ -67,19 +68,18 @@ public sealed class ModuleHealthCheckService(
                     var status = await module.HealthCheckAsync(cts.Token);
                     _latestStatus[module.Id] = status;
 
-                    if (status.IsHealthy)
+                    var decision = ApplyHealthDecision(module.Id, status, threshold);
+                    if (decision.IsFailure)
                     {
-                        _failureCounts.TryRemove(module.Id, out _);
-                    }
-                    else
-                    {
-                        var count = _failureCounts.AddOrUpdate(module.Id, 1, (_, c) => c + 1);
                         logger.LogWarning(
                             "Module '{ModuleId}' health check failed ({Count}/{Threshold}): {Message}",
-                            module.Id, count, threshold, status.Message);
+                            module.Id,
+                            decision.ConsecutiveFailureCount,
+                            decision.EffectiveFailureThreshold,
+                            status.Message);
 
-                        if (count >= threshold)
-                            await AutoDisableAsync(module.Id, threshold);
+                        if (decision.ShouldAutoDisable)
+                            await AutoDisableAsync(module.Id, decision.EffectiveFailureThreshold);
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -92,26 +92,30 @@ public sealed class ModuleHealthCheckService(
                     var status = new ModuleHealthStatus(false, "Health check timed out");
                     _latestStatus[module.Id] = status;
 
-                    var count = _failureCounts.AddOrUpdate(module.Id, 1, (_, c) => c + 1);
+                    var decision = ApplyHealthDecision(module.Id, status, threshold);
                     logger.LogWarning(
                         "Module '{ModuleId}' health check timed out ({Count}/{Threshold})",
-                        module.Id, count, threshold);
+                        module.Id,
+                        decision.ConsecutiveFailureCount,
+                        decision.EffectiveFailureThreshold);
 
-                    if (count >= threshold)
-                        await AutoDisableAsync(module.Id, threshold);
+                    if (decision.ShouldAutoDisable)
+                        await AutoDisableAsync(module.Id, decision.EffectiveFailureThreshold);
                 }
                 catch (Exception ex)
                 {
                     var status = new ModuleHealthStatus(false, $"Health check threw: {ex.Message}");
                     _latestStatus[module.Id] = status;
 
-                    var count = _failureCounts.AddOrUpdate(module.Id, 1, (_, c) => c + 1);
+                    var decision = ApplyHealthDecision(module.Id, status, threshold);
                     logger.LogWarning(ex,
                         "Module '{ModuleId}' health check threw ({Count}/{Threshold})",
-                        module.Id, count, threshold);
+                        module.Id,
+                        decision.ConsecutiveFailureCount,
+                        decision.EffectiveFailureThreshold);
 
-                    if (count >= threshold)
-                        await AutoDisableAsync(module.Id, threshold);
+                    if (decision.ShouldAutoDisable)
+                        await AutoDisableAsync(module.Id, decision.EffectiveFailureThreshold);
                 }
             }
 
@@ -124,6 +128,31 @@ public sealed class ModuleHealthCheckService(
                 return;
             }
         }
+    }
+
+    private ModuleHealthPolicyDecision ApplyHealthDecision(
+        string moduleId,
+        ModuleHealthStatus status,
+        int threshold)
+    {
+        var previous = _failureCounts.TryGetValue(moduleId, out var count)
+            ? count
+            : 0;
+        var decision = _healthPolicy.EvaluateStatus(
+            previous,
+            threshold,
+            status);
+
+        if (decision.ShouldResetFailureCount)
+        {
+            _failureCounts.TryRemove(moduleId, out _);
+        }
+        else if (decision.IsFailure)
+        {
+            _failureCounts[moduleId] = decision.ConsecutiveFailureCount;
+        }
+
+        return decision;
     }
 
     private async Task AutoDisableAsync(string moduleId, int threshold)
