@@ -30,6 +30,9 @@ public sealed class HostAgentBridge(
     IHostAgentBridge,
     ITaskHostBridgeWorkflowHost
 {
+    private static readonly TaskHostBridgeInvalidationPlanner BridgeInvalidations =
+        new();
+
     public Task<string?> ChatAsync(
         Guid instanceId,
         string taskName,
@@ -424,29 +427,8 @@ public sealed class HostAgentBridge(
         TaskHostBridgeInvalidationTarget target,
         Guid? entityId = null)
     {
-        switch (target)
-        {
-            case TaskHostBridgeInvalidationTarget.Agent:
-                InvalidateAgentRuntimeState();
-                break;
-            case TaskHostBridgeInvalidationTarget.Channel:
-                InvalidateChannelRuntimeState();
-                break;
-            case TaskHostBridgeInvalidationTarget.Thread:
-                if (entityId is { } threadId)
-                    chatCache.Remove(ChatCache.KeyThreadHistoryLimits(threadId));
-                chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-                break;
-            case TaskHostBridgeInvalidationTarget.Permission:
-                chatCache.RemoveByPrefix(ChatCache.PrefixHeaderUser);
-                InvalidateAgentRuntimeState();
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(
-                    nameof(target),
-                    target,
-                    null);
-        }
+        ApplyBridgeInvalidationPlan(
+            BridgeInvalidations.BuildPlan(target, entityId));
     }
 
     private static Task<bool> AutoApproveAsync(
@@ -456,15 +438,52 @@ public sealed class HostAgentBridge(
         return Task.FromResult(false);
     }
 
-    private void InvalidateAgentRuntimeState()
+    private void ApplyBridgeInvalidationPlan(
+        ChatRuntimeInvalidationPlan plan)
     {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        foreach (var invalidation in plan.Invalidations)
+            ApplyBridgeInvalidation(invalidation);
     }
 
-    private void InvalidateChannelRuntimeState()
+    private void ApplyBridgeInvalidation(ChatCacheInvalidation invalidation)
     {
-        chatCache.RemoveByPrefix(ChatCache.PrefixHeaderAgentSuffix);
-        chatCache.RemoveByPrefix(ChatCache.PrefixEffectiveTools);
+        switch (invalidation.Kind)
+        {
+            case ChatCacheInvalidationKind.Key:
+                chatCache.Remove(invalidation.Value ?? throw MissingInvalidationValue());
+                break;
+            case ChatCacheInvalidationKind.Prefix:
+                chatCache.RemoveByPrefix(invalidation.Value ?? throw MissingInvalidationValue());
+                break;
+            case ChatCacheInvalidationKind.HeaderAgentSuffixesForAgent:
+                chatCache.RemoveHeaderAgentSuffixesForAgent(
+                    invalidation.Id ?? throw MissingInvalidationId());
+                break;
+            case ChatCacheInvalidationKind.HeaderAgentSuffixesForChannel:
+                chatCache.RemoveHeaderAgentSuffixesForChannel(
+                    invalidation.Id ?? throw MissingInvalidationId());
+                break;
+            case ChatCacheInvalidationKind.EffectiveToolsForAgent:
+                chatCache.RemoveEffectiveToolsForAgent(
+                    invalidation.Id ?? throw MissingInvalidationId());
+                break;
+            case ChatCacheInvalidationKind.DefaultResourceResolutionForChannel:
+                chatCache.RemoveDefaultResourceResolutionForChannel(
+                    invalidation.Id ?? throw MissingInvalidationId());
+                break;
+            case ChatCacheInvalidationKind.DefaultResourceResolutionForAgent:
+                chatCache.RemoveDefaultResourceResolutionForAgent(
+                    invalidation.Id ?? throw MissingInvalidationId());
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown cache invalidation kind '{invalidation.Kind}'.");
+        }
     }
+
+    private static InvalidOperationException MissingInvalidationValue() =>
+        new("Cache invalidation value is required.");
+
+    private static InvalidOperationException MissingInvalidationId() =>
+        new("Cache invalidation id is required.");
 }
