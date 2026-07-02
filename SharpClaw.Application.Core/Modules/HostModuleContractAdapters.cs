@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Application.Core.Modules.Foreign;
@@ -19,6 +18,7 @@ using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Utils.Security;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Core.Conversation;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Modules.Foreign;
 
@@ -40,53 +40,37 @@ public interface IHostContextDataReader
 
 public sealed class HostConversationSteering(
     SharpClawDbContext db,
-    ThreadActivitySignal threadActivity) : IConversationSteering
+    ThreadActivitySignal threadActivity,
+    ConversationSteeringEngine steering) : IConversationSteering
 {
-    private const int MaxSummaryCharacters = 8000;
-    private const int MaxDetailsCharacters = 16000;
-    private const string MetadataKind = "sharpclaw.conversation_steering";
-    private const string ContentPrefix = "[SharpClaw conversation steering]";
-
-    private static readonly JsonSerializerOptions MetadataJsonOptions = new(JsonSerializerDefaults.Web);
-
     public async Task<ConversationSteeringResponse> AddAsync(
         ConversationSteeringRequest request,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        var summary = RequireText(request.Summary, nameof(request.Summary), MaxSummaryCharacters);
-        var details = NormalizeOptionalText(request.Details, MaxDetailsCharacters);
+        var prepared = steering.PrepareAdd(request);
 
-        await ValidateTargetAsync(request.ChannelId, request.ThreadId, ct);
+        await ValidateTargetAsync(prepared.ChannelId, prepared.ThreadId, ct);
 
-        var metadata = new ConversationSteeringMetadata(
-            MetadataKind,
-            NormalizeOptionalText(request.Source, 128),
-            NormalizeOptionalText(request.Category, 128));
-
-        var content = FormatContent(summary, details, metadata);
         var message = new ChatMessageDB
         {
-            Role = ChatRoles.System,
-            Origin = MessageOrigin.System,
-            Content = content,
-            ChannelId = request.ChannelId,
-            ThreadId = request.ThreadId,
-            ClientType = string.IsNullOrWhiteSpace(request.ClientType)
-                ? WellKnownClientKeys.Api
-                : request.ClientType.Trim(),
-            ProviderMetadataJson = JsonSerializer.Serialize(metadata, MetadataJsonOptions),
+            Role = prepared.Role,
+            Origin = prepared.Origin,
+            Content = prepared.Content,
+            ChannelId = prepared.ChannelId,
+            ThreadId = prepared.ThreadId,
+            ClientType = prepared.ClientType,
+            ProviderMetadataJson = prepared.ProviderMetadataJson,
         };
 
         db.ChatMessages.Add(message);
         await db.SaveChangesAsync(ct);
 
-        if (request.ThreadId is { } threadId)
+        if (prepared.ThreadId is { } threadId)
             threadActivity.Publish(threadId, new ThreadActivityEvent(
                 ThreadActivityEventType.NewMessages,
                 message.ClientType));
 
-        return ToResponse(message, metadata);
+        return steering.ToResponse(ToStoredMessage(message));
     }
 
     public async Task<IReadOnlyList<ConversationSteeringResponse>> ListAsync(
@@ -96,26 +80,22 @@ public sealed class HostConversationSteering(
         CancellationToken ct = default)
     {
         await ValidateTargetAsync(channelId, threadId, ct);
-        limit = Math.Clamp(limit, 1, 100);
+        limit = steering.ClampListLimit(limit);
 
         var query = db.ChatMessages
             .AsNoTracking()
             .Where(message =>
                 message.ChannelId == channelId
                 && message.ThreadId == threadId
-                && message.Role == ChatRoles.System
-                && message.Content.StartsWith(ContentPrefix));
+                && message.Role == SteeringSystemRole
+                && message.Content.StartsWith(ConversationSteeringEngine.ContentPrefix));
 
         var rows = await query
             .OrderByDescending(message => message.CreatedAt)
             .Take(limit)
             .ToListAsync(ct);
 
-        return rows
-            .OrderBy(message => message.CreatedAt)
-            .ThenBy(message => message.Id)
-            .Select(message => ToResponse(message, ParseMetadata(message.ProviderMetadataJson)))
-            .ToList();
+        return steering.ToListResponse(rows.Select(ToStoredMessage));
     }
 
     private async Task ValidateTargetAsync(
@@ -124,13 +104,22 @@ public sealed class HostConversationSteering(
         CancellationToken ct)
     {
         if (channelId == Guid.Empty)
-            throw new ArgumentException("channelId is required.", nameof(channelId));
+        {
+            steering.EnsureTargetValid(
+                channelId,
+                threadId: null,
+                channelExists: true,
+                threadChannelId: null);
+        }
 
         if (threadId is null)
         {
             var channelExists = await db.Channels.AnyAsync(channel => channel.Id == channelId, ct);
-            if (!channelExists)
-                throw new InvalidOperationException($"Channel '{channelId}' was not found.");
+            steering.EnsureTargetValid(
+                channelId,
+                threadId: null,
+                channelExists,
+                threadChannelId: null);
             return;
         }
 
@@ -138,99 +127,26 @@ public sealed class HostConversationSteering(
             .AsNoTracking()
             .Where(row => row.Id == threadId.Value)
             .Select(row => new { row.Id, row.ChannelId })
-            .FirstOrDefaultAsync(ct)
-            ?? throw new InvalidOperationException($"Thread '{threadId}' was not found.");
+            .FirstOrDefaultAsync(ct);
 
-        if (thread.ChannelId != channelId)
-        {
-            throw new InvalidOperationException(
-                $"Thread '{threadId}' belongs to channel '{thread.ChannelId}', not '{channelId}'.");
-        }
+        steering.EnsureTargetValid(
+            channelId,
+            threadId,
+            channelExists: false,
+            thread?.ChannelId);
     }
 
-    private static string FormatContent(
-        string summary,
-        string? details,
-        ConversationSteeringMetadata metadata)
-    {
-        var parts = new List<string> { ContentPrefix };
-        if (!string.IsNullOrWhiteSpace(metadata.Source))
-            parts.Add($"Source: {metadata.Source}");
-        if (!string.IsNullOrWhiteSpace(metadata.Category))
-            parts.Add($"Category: {metadata.Category}");
-        parts.Add("Summary:");
-        parts.Add(summary);
+    private const string SteeringSystemRole = ChatRoles.System;
 
-        if (!string.IsNullOrWhiteSpace(details))
-        {
-            parts.Add("Details:");
-            parts.Add(details);
-        }
-
-        return string.Join(Environment.NewLine, parts);
-    }
-
-    private static ConversationSteeringResponse ToResponse(
-        ChatMessageDB message,
-        ConversationSteeringMetadata? metadata) =>
+    private static ConversationSteeringStoredMessage ToStoredMessage(
+        ChatMessageDB message) =>
         new(
             message.Id,
             message.ChannelId,
             message.ThreadId,
             message.Content,
             message.CreatedAt,
-            metadata?.Source,
-            metadata?.Category);
-
-    private static ConversationSteeringMetadata? ParseMetadata(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            var metadata = JsonSerializer.Deserialize<ConversationSteeringMetadata>(
-                json,
-                MetadataJsonOptions);
-            return string.Equals(metadata?.Kind, MetadataKind, StringComparison.Ordinal)
-                ? metadata
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string RequireText(string value, string name, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException($"{name} is required.", name);
-
-        return value.Trim().Length <= maxLength
-            ? value.Trim()
-            : throw new ArgumentException(
-                $"{name} must be {maxLength} characters or less.",
-                name);
-    }
-
-    private static string? NormalizeOptionalText(string? value, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var trimmed = value.Trim();
-        return trimmed.Length <= maxLength
-            ? trimmed
-            : throw new ArgumentException(
-                $"Value must be {maxLength} characters or less.",
-                nameof(value));
-    }
-
-    private sealed record ConversationSteeringMetadata(
-        string Kind,
-        string? Source,
-        string? Category);
+            message.ProviderMetadataJson);
 }
 
 public sealed class HostAgentManager(

@@ -357,6 +357,7 @@ try
     builder.Services.AddSingleton<DefaultResourceAdministrationEngine>();
     builder.Services.AddSingleton<ConversationTopologyEngine>();
     builder.Services.AddSingleton<ConversationAdministrationEngine>();
+    builder.Services.AddSingleton<ConversationSteeringEngine>();
     builder.Services.AddSingleton<ProviderCatalogEngine>();
     builder.Services.AddSingleton<ProviderModelAdministrationEngine>();
     builder.Services.AddSingleton<ProviderCostEngine>();
