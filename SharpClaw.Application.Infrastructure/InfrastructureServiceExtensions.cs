@@ -1,6 +1,5 @@
 using JSONColdStore;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Contracts.Modules;
@@ -17,24 +16,25 @@ public static class InfrastructureServiceExtensions
     /// </summary>
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        StorageMode mode,
-        string? connectionString = null,
-        Action<JsonColdStoreStorageOptions>? configureJsonColdStore = null)
+        DatabaseProviderOptions databaseOptions)
     {
+        ArgumentNullException.ThrowIfNull(databaseOptions);
+        databaseOptions.Validate();
+
         services.AddSingleton(new ModuleDbContextOptions
         {
-            StorageMode = mode,
-            ConnectionString = connectionString,
+            StorageMode = databaseOptions.Provider,
+            ConnectionString = databaseOptions.ConnectionString,
         });
+        services.AddSingleton(databaseOptions);
         services.AddSingleton<RuntimeModuleDbContextRegistry>();
         services.AddSingleton<ModulePersistenceRegistrationFactory>();
         services.AddSingleton<IModuleDbContextFactory, ModuleDbContextFactory>();
 
-        switch (mode)
+        switch (databaseOptions.Provider)
         {
             case StorageMode.JsonFile:
-                var jsonOptions = new JsonColdStoreStorageOptions();
-                configureJsonColdStore?.Invoke(jsonOptions);
+                var jsonOptions = databaseOptions.JsonFile;
                 services.AddSingleton(jsonOptions);
                 if (jsonOptions.EncryptAtRest)
                 {
@@ -45,7 +45,7 @@ public static class InfrastructureServiceExtensions
 
                 services.AddDbContext<SharpClawDbContext>((sp, options) =>
                 {
-                    ConfigureLogging(sp, options);
+                    ConfigureCommonOptions(sp, options, databaseOptions);
                     options.UseJsonColdStoreDatabase(
                         jsonOptions.DataDirectory,
                         store => JsonColdStoreRegistration.ConfigureStore(
@@ -59,34 +59,63 @@ public static class InfrastructureServiceExtensions
                 break;
 
             case StorageMode.Postgres:
-                RequireConnectionString(connectionString, mode);
+                RequireConnectionString(databaseOptions.ConnectionString, databaseOptions.Provider);
                 services.AddDbContext<SharpClawDbContext>((sp, options) =>
                 {
-                    ConfigureLogging(sp, options);
-                    options.UseNpgsql(connectionString, npgsql =>
-                        npgsql.MigrationsAssembly("SharpClaw.Migrations.Postgres"));
+                    ConfigureCommonOptions(sp, options, databaseOptions);
+                    var postgres = databaseOptions.Postgres;
+                    options.UseNpgsql(databaseOptions.ConnectionString, npgsql =>
+                    {
+                        npgsql.MigrationsAssembly(postgres.MigrationsAssembly);
+                        if (postgres.CommandTimeoutSeconds is { } timeout)
+                            npgsql.CommandTimeout(timeout);
+                        if (postgres.EnableRetryOnFailure)
+                        {
+                            npgsql.EnableRetryOnFailure(
+                                postgres.MaxRetryCount,
+                                TimeSpan.FromSeconds(postgres.MaxRetryDelaySeconds),
+                                errorCodesToAdd: null);
+                        }
+                    });
                 });
                 services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
                 break;
 
             case StorageMode.SqlServer:
-                RequireConnectionString(connectionString, mode);
+                RequireConnectionString(databaseOptions.ConnectionString, databaseOptions.Provider);
                 services.AddDbContext<SharpClawDbContext>((sp, options) =>
                 {
-                    ConfigureLogging(sp, options);
-                    options.UseSqlServer(connectionString, sqlServer =>
-                        sqlServer.MigrationsAssembly("SharpClaw.Migrations.SqlServer"));
+                    ConfigureCommonOptions(sp, options, databaseOptions);
+                    var sqlServer = databaseOptions.SqlServer;
+                    options.UseSqlServer(databaseOptions.ConnectionString, builder =>
+                    {
+                        builder.MigrationsAssembly(sqlServer.MigrationsAssembly);
+                        if (sqlServer.CommandTimeoutSeconds is { } timeout)
+                            builder.CommandTimeout(timeout);
+                        if (sqlServer.EnableRetryOnFailure)
+                        {
+                            builder.EnableRetryOnFailure(
+                                sqlServer.MaxRetryCount,
+                                TimeSpan.FromSeconds(sqlServer.MaxRetryDelaySeconds),
+                                errorNumbersToAdd: null);
+                        }
+                    });
                 });
                 services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
                 break;
 
             case StorageMode.SQLite:
-                RequireConnectionString(connectionString, mode);
+                RequireConnectionString(databaseOptions.ConnectionString, databaseOptions.Provider);
                 services.AddDbContext<SharpClawDbContext>((sp, options) =>
                 {
-                    ConfigureLogging(sp, options);
-                    options.UseSqlite(connectionString, sqlite =>
-                        sqlite.MigrationsAssembly("SharpClaw.Migrations.SQLite"));
+                    ConfigureCommonOptions(sp, options, databaseOptions);
+                    var sqlite = databaseOptions.SQLite;
+                    options.UseSqlite(databaseOptions.ConnectionString, builder =>
+                    {
+                        builder.MigrationsAssembly(sqlite.MigrationsAssembly);
+                        if (sqlite.CommandTimeoutSeconds is { } timeout)
+                            builder.CommandTimeout(timeout);
+                    });
                 });
                 services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
                 break;
@@ -111,6 +140,22 @@ public static class InfrastructureServiceExtensions
         return services;
     }
 
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        StorageMode mode,
+        string? connectionString = null,
+        Action<JsonColdStoreStorageOptions>? configureJsonColdStore = null)
+    {
+        var databaseOptions = new DatabaseProviderOptions
+        {
+            Provider = mode,
+            ConnectionString = mode == StorageMode.JsonFile ? null : connectionString,
+        };
+        configureJsonColdStore?.Invoke(databaseOptions.JsonFile);
+
+        return services.AddInfrastructure(databaseOptions);
+    }
+
     private static void RequireConnectionString(string? cs, StorageMode mode)
     {
         if (string.IsNullOrWhiteSpace(cs))
@@ -119,28 +164,19 @@ public static class InfrastructureServiceExtensions
                 $"Set it in the .env file or environment variables.");
     }
 
-    private static void ConfigureLogging(
+    private static void ConfigureCommonOptions(
         IServiceProvider serviceProvider,
-        DbContextOptionsBuilder options)
+        DbContextOptionsBuilder options,
+        DatabaseProviderOptions databaseOptions)
     {
         var loggerFactory = serviceProvider.GetService<ILoggerFactory>();
         if (loggerFactory is not null)
             options.UseLoggerFactory(loggerFactory);
 
-        var configuration = serviceProvider.GetService<IConfiguration>();
-
-        var enableDetailedErrors = configuration is null
-            || !bool.TryParse(configuration["Database:EnableDetailedErrors"], out var detailedErrors)
-            || detailedErrors;
-
-        var enableSensitiveDataLogging = configuration is not null
-            && bool.TryParse(configuration["Database:EnableSensitiveDataLogging"], out var sensitiveDataLogging)
-            && sensitiveDataLogging;
-
-        if (enableDetailedErrors)
+        if (databaseOptions.EnableDetailedErrors)
             options.EnableDetailedErrors();
 
-        if (enableSensitiveDataLogging)
+        if (databaseOptions.EnableSensitiveDataLogging)
             options.EnableSensitiveDataLogging();
     }
 

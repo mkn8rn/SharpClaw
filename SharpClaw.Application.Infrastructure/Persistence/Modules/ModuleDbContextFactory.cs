@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using JSONColdStore;
@@ -11,7 +10,7 @@ namespace SharpClaw.Infrastructure.Persistence.Modules;
 public sealed class ModuleDbContextFactory(
     RuntimeModuleDbContextRegistry registry,
     ModuleDbContextOptions options,
-    IConfiguration? configuration = null,
+    DatabaseProviderOptions? databaseOptions = null,
     ILoggerFactory? loggerFactory = null,
     IServiceProvider? serviceProvider = null) : IModuleDbContextFactory
 {
@@ -42,27 +41,28 @@ public sealed class ModuleDbContextFactory(
 
     private void ConfigureOptions(DbContextOptionsBuilder builder, Type dbContextType)
     {
+        var providerOptions = databaseOptions
+            ?? new DatabaseProviderOptions
+            {
+                Provider = options.StorageMode,
+                ConnectionString = options.ConnectionString,
+            };
+        providerOptions.Validate();
+
         if (loggerFactory is not null)
             builder.UseLoggerFactory(loggerFactory);
 
-        var enableDetailedErrors = configuration is null
-            || !bool.TryParse(configuration["Database:EnableDetailedErrors"], out var detailedErrors)
-            || detailedErrors;
-
-        var enableSensitiveDataLogging = configuration is not null
-            && bool.TryParse(configuration["Database:EnableSensitiveDataLogging"], out var sensitiveDataLogging)
-            && sensitiveDataLogging;
-
-        if (enableDetailedErrors)
+        if (providerOptions.EnableDetailedErrors)
             builder.EnableDetailedErrors();
 
-        if (enableSensitiveDataLogging)
+        if (providerOptions.EnableSensitiveDataLogging)
             builder.EnableSensitiveDataLogging();
 
-        switch (options.StorageMode)
+        switch (providerOptions.Provider)
         {
             case StorageMode.JsonFile:
                 var jsonOptions = serviceProvider?.GetRequiredService<JsonColdStoreStorageOptions>()
+                    ?? databaseOptions?.JsonFile
                     ?? throw new InvalidOperationException(
                         "JSONColdStore options are not registered for module persistence.");
                 builder.UseJsonColdStoreDatabase(
@@ -71,20 +71,51 @@ public sealed class ModuleDbContextFactory(
                         store,
                         jsonOptions,
                         jsonOptions.EncryptAtRest
-                            ? serviceProvider.GetRequiredService<JsonColdStoreEncryptionKey>()
+                            ? serviceProvider?.GetRequiredService<JsonColdStoreEncryptionKey>()
+                                ?? throw new InvalidOperationException(
+                                    "JSONColdStore encryption is enabled, but no service provider is available for module persistence.")
                             : null));
                 break;
             case StorageMode.Postgres:
-                RequireConnectionString();
-                builder.UseNpgsql(options.ConnectionString);
+                RequireConnectionString(providerOptions);
+                var postgres = providerOptions.Postgres;
+                builder.UseNpgsql(providerOptions.ConnectionString, npgsql =>
+                {
+                    if (postgres.CommandTimeoutSeconds is { } timeout)
+                        npgsql.CommandTimeout(timeout);
+                    if (postgres.EnableRetryOnFailure)
+                    {
+                        npgsql.EnableRetryOnFailure(
+                            postgres.MaxRetryCount,
+                            TimeSpan.FromSeconds(postgres.MaxRetryDelaySeconds),
+                            errorCodesToAdd: null);
+                    }
+                });
                 break;
             case StorageMode.SqlServer:
-                RequireConnectionString();
-                builder.UseSqlServer(options.ConnectionString);
+                RequireConnectionString(providerOptions);
+                var sqlServer = providerOptions.SqlServer;
+                builder.UseSqlServer(providerOptions.ConnectionString, builder =>
+                {
+                    if (sqlServer.CommandTimeoutSeconds is { } timeout)
+                        builder.CommandTimeout(timeout);
+                    if (sqlServer.EnableRetryOnFailure)
+                    {
+                        builder.EnableRetryOnFailure(
+                            sqlServer.MaxRetryCount,
+                            TimeSpan.FromSeconds(sqlServer.MaxRetryDelaySeconds),
+                            errorNumbersToAdd: null);
+                    }
+                });
                 break;
             case StorageMode.SQLite:
-                RequireConnectionString();
-                builder.UseSqlite(options.ConnectionString);
+                RequireConnectionString(providerOptions);
+                var sqlite = providerOptions.SQLite;
+                builder.UseSqlite(providerOptions.ConnectionString, builder =>
+                {
+                    if (sqlite.CommandTimeoutSeconds is { } timeout)
+                        builder.CommandTimeout(timeout);
+                });
                 break;
             case StorageMode.MySql:
                 throw new NotSupportedException(
@@ -93,14 +124,14 @@ public sealed class ModuleDbContextFactory(
                 throw new NotSupportedException(
                     "Oracle support requires Oracle.EntityFrameworkCore with EFC 10 compatibility. Not yet available.");
             default:
-                throw new InvalidOperationException($"Unsupported storage mode '{options.StorageMode}'.");
+                throw new InvalidOperationException($"Unsupported storage mode '{providerOptions.Provider}'.");
         }
     }
 
-    private void RequireConnectionString()
+    private static void RequireConnectionString(DatabaseProviderOptions providerOptions)
     {
-        if (string.IsNullOrWhiteSpace(options.ConnectionString))
+        if (string.IsNullOrWhiteSpace(providerOptions.ConnectionString))
             throw new InvalidOperationException(
-                $"A connection string is required for module persistence when Database:Provider is '{options.StorageMode}'.");
+                $"A connection string is required for module persistence when Database:Provider is '{providerOptions.Provider}'.");
     }
 }

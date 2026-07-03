@@ -247,44 +247,12 @@ try
 
     // ──────── PHASE 6 ──── Infrastructure persistence ──────────────────────
     // Infrastructure — resolve provider from .env
-    var storageMode = Enum.TryParse<StorageMode>(
-        builder.Configuration["Database:Provider"], ignoreCase: true, out var parsed)
-        ? parsed
-        : StorageMode.JsonFile;
+    var databaseOptions = DatabaseProviderOptions.FromConfiguration(
+        builder.Configuration,
+        string.IsNullOrEmpty(dataDir) ? backendInstancePaths.DataDirectory : dataDir);
+    var storageMode = databaseOptions.Provider;
 
-    var connectionString = storageMode != StorageMode.JsonFile
-        ? builder.Configuration[$"ConnectionStrings:{storageMode}"]
-        : null;
-
-    builder.Services.AddInfrastructure(storageMode, connectionString, opts =>
-    {
-        if (!string.IsNullOrEmpty(dataDir))
-            opts.DataDirectory = dataDir;
-        else
-            opts.DataDirectory = backendInstancePaths.DataDirectory;
-        opts.EncryptAtRest = builder.Configuration
-            .GetValue("Encryption:EncryptDatabase", defaultValue: true);
-        opts.FsyncOnWrite = builder.Configuration
-            .GetValue("Database:FsyncOnWrite", defaultValue: opts.FsyncOnWrite);
-        opts.IndexRescanIntervalMinutes = builder.Configuration
-            .GetValue("Database:IndexRescanIntervalMinutes", defaultValue: opts.IndexRescanIntervalMinutes);
-        opts.QuarantineMaxAgeDays = builder.Configuration
-            .GetValue("Database:QuarantineMaxAgeDays", defaultValue: opts.QuarantineMaxAgeDays);
-        opts.EnableChecksums = builder.Configuration
-            .GetValue("Database:EnableChecksums", defaultValue: opts.EnableChecksums);
-        opts.VerifyChecksumsOnRead = builder.Configuration
-            .GetValue("Database:VerifyChecksumsOnRead", defaultValue: opts.VerifyChecksumsOnRead);
-        opts.EnableEventLog = builder.Configuration
-            .GetValue("Database:EnableEventLog", defaultValue: opts.EnableEventLog);
-        opts.EventLogRetentionDays = builder.Configuration
-            .GetValue("Database:EventLogRetentionDays", defaultValue: opts.EventLogRetentionDays);
-        opts.EnableSnapshots = builder.Configuration
-            .GetValue("Database:EnableSnapshots", defaultValue: opts.EnableSnapshots);
-        opts.SnapshotIntervalHours = builder.Configuration
-            .GetValue("Database:SnapshotIntervalHours", defaultValue: opts.SnapshotIntervalHours);
-        opts.SnapshotRetentionCount = builder.Configuration
-            .GetValue("Database:SnapshotRetentionCount", defaultValue: opts.SnapshotRetentionCount);
-    });
+    builder.Services.AddInfrastructure(databaseOptions);
 
     // CORS
     builder.Services.AddCors(options =>

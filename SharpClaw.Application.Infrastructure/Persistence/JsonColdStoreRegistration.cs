@@ -12,13 +12,17 @@ internal static class JsonColdStoreRegistration
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(options);
 
-        store.UseCompression(JsonColdStoreCompression.Brotli);
-        store.UseStartupMode(JsonColdStoreStartupMode.MetadataOnly);
+        store.UseCompression(options.Compression);
+        store.UseStartupMode(options.StartupMode);
         store.UseFullScanPolicy(options.FullScanPolicy);
         store.UseFsyncOnWrite(options.FsyncOnWrite);
-        store.UseFlushRetry(maxRetries: 3, baseDelay: TimeSpan.FromMilliseconds(200));
-        store.UseTransactionReplay(maxRetries: 3);
-        store.UseReadRetry(maxRetries: 3, baseDelay: TimeSpan.FromMilliseconds(25));
+        store.UseFlushRetry(
+            options.FlushRetryMaxRetries,
+            TimeSpan.FromMilliseconds(options.FlushRetryBaseDelayMilliseconds));
+        store.UseTransactionReplay(options.TransactionReplayMaxRetries);
+        store.UseReadRetry(
+            options.ReadRetryMaxRetries,
+            TimeSpan.FromMilliseconds(options.ReadRetryBaseDelayMilliseconds));
         store.UseQuarantine(TimeSpan.FromDays(Math.Max(0, options.QuarantineMaxAgeDays)));
         store.UseIndexMaintenance(TimeSpan.FromMinutes(Math.Max(0, options.IndexRescanIntervalMinutes)));
         store.UseEventLog(options.EnableEventLog, TimeSpan.FromDays(Math.Max(0, options.EventLogRetentionDays)));

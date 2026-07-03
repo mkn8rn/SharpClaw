@@ -54,8 +54,19 @@ selected via a single `.env` key â€” no code changes required.
 
 ## Provider configuration
 
-All configuration lives in the Core `.env` file (JSON-with-comments
-format).
+All configuration lives in the Core `.env` file, which uses
+JSON-with-comments format. The same settings can also be supplied as process
+environment variables by replacing `:` with double underscores. For example,
+`Database:JsonFile:Compression` in JSON becomes
+`Database__JsonFile__Compression` in a systemd environment file.
+
+Provider behavior belongs in this section, but process placement does not.
+The `JsonFile` data directory is resolved from `SHARPCLAW_DATA_DIR` or the
+SharpClaw instance root, and API binding remains controlled by
+`ASPNETCORE_URLS`. Migration assemblies are also not env knobs: they are
+part of the application package layout and stay fixed as
+`SharpClaw.Migrations.Postgres`, `SharpClaw.Migrations.SqlServer`, and
+`SharpClaw.Migrations.SQLite`.
 
 ### EF Core logging and diagnostics
 
@@ -70,6 +81,17 @@ The following `.env` keys control EF Core diagnostics:
 | `Database:EnableDetailedErrors` | `true` | Enables EF Core detailed error messages. This is generally safe and useful even outside development. |
 | `Database:EnableSensitiveDataLogging` | `false` | Includes parameter values and entity data in EF Core logs. This can expose secrets or personal data in logs, so it should remain off unless you are doing local debugging. |
 | `Logging:Serilog:EntityFrameworkCoreMinimumLevel` | `Warning` | Controls how noisy EF Core logging is once it reaches Serilog. Lower it to `Information` or `Debug` when investigating query and change-tracking behavior. |
+
+`Database:Relational:CommandTimeoutSeconds` sets a shared relational command
+timeout for PostgreSQL, SQL Server, and SQLite. Provider-specific
+`Database:Postgres:CommandTimeoutSeconds`,
+`Database:SqlServer:CommandTimeoutSeconds`, and
+`Database:SQLite:CommandTimeoutSeconds` override that shared value. PostgreSQL
+and SQL Server also expose provider-level retry through
+`EnableRetryOnFailure`, `MaxRetryCount`, and `MaxRetryDelaySeconds` under
+their provider section. SQLite does not expose provider retry because the EF
+SQLite provider has no matching retry strategy option in this registration
+path.
 
 Example:
 
@@ -102,17 +124,49 @@ needed, belongs in the provider package rather than in SharpClaw.
 ```jsonc
 {
   "Database": {
-    "Provider": "JsonFile"
+    "Provider": "JsonFile",
+    "JsonFile": {
+      "Compression": "Brotli",
+      "StartupMode": "MetadataOnly",
+      "FullScanPolicy": "AllowSilentScans",
+      "FsyncOnWrite": "true",
+      "FlushRetryMaxRetries": "3",
+      "FlushRetryBaseDelayMilliseconds": "200",
+      "TransactionReplayMaxRetries": "3",
+      "ReadRetryMaxRetries": "3",
+      "ReadRetryBaseDelayMilliseconds": "25",
+      "IndexRescanIntervalMinutes": "60",
+      "QuarantineMaxAgeDays": "30",
+      "EnableChecksums": "true",
+      "VerifyChecksumsOnRead": "false",
+      "EnableEventLog": "false",
+      "EventLogRetentionDays": "7",
+      "EnableSnapshots": "false",
+      "SnapshotIntervalHours": "24",
+      "SnapshotRetentionCount": "3"
+    }
   }
 }
 ```
+
+`Compression` accepts `None`, `Auto`, or `Brotli`. `StartupMode` accepts
+`MetadataOnly` or `FullHydration`. `FullScanPolicy` accepts
+`FailUnlessExplicit`, `AllowExplicitScans`, or `AllowSilentScans`. The old
+`Database:AsyncFlush` key is no longer present because the provider publishes
+saves synchronously in the current package version.
 
 ### PostgreSQL
 
 ```jsonc
 {
   "Database": {
-    "Provider": "Postgres"
+    "Provider": "Postgres",
+    "Postgres": {
+      "CommandTimeoutSeconds": "30",
+      "EnableRetryOnFailure": "false",
+      "MaxRetryCount": "6",
+      "MaxRetryDelaySeconds": "30"
+    }
   },
   "ConnectionStrings": {
     "Postgres": "Host=localhost;Database=sharpclaw;Username=sharpclaw;Password=YOUR_PASSWORD"
@@ -127,7 +181,13 @@ needed, belongs in the provider package rather than in SharpClaw.
 ```jsonc
 {
   "Database": {
-    "Provider": "SqlServer"
+    "Provider": "SqlServer",
+    "SqlServer": {
+      "CommandTimeoutSeconds": "30",
+      "EnableRetryOnFailure": "false",
+      "MaxRetryCount": "6",
+      "MaxRetryDelaySeconds": "30"
+    }
   },
   "ConnectionStrings": {
     "SqlServer": "Server=.;Database=SharpClaw;Trusted_Connection=True;TrustServerCertificate=True"
@@ -142,7 +202,10 @@ needed, belongs in the provider package rather than in SharpClaw.
 ```jsonc
 {
   "Database": {
-    "Provider": "SQLite"
+    "Provider": "SQLite",
+    "SQLite": {
+      "CommandTimeoutSeconds": "30"
+    }
   },
   "ConnectionStrings": {
     "SQLite": "Data Source=sharpclaw.db"

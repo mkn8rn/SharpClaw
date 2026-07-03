@@ -477,6 +477,10 @@ DATABASE ADMINISTRATION
 Multi-provider EF Core support. Provider selected via Database:Provider in Core .env.
 Supported: JsonFile (default, JSONColdStore EF provider), Postgres, SqlServer, SQLite.
 Stubbed (blocked on EFC 10 packages): MySql, Oracle.
+Provider behavior settings live under Database:JsonFile, Database:Relational,
+Database:Postgres, Database:SqlServer, and Database:SQLite. Systemd/process
+environment variables use double underscores, such as
+Database__JsonFile__Compression.
 See docs/Database-Configuration.md for full setup.
 
 Admin endpoints (require authenticated user admin):
