@@ -80,16 +80,12 @@ jobs:
             filter: 'FullyQualifiedName~SharpClaw.Tests.Frontend.GatewayProcessManagerTests'
           - domain: Frontend Uno Client State
             filter: 'FullyQualifiedName~SharpClaw.Tests.Frontend.UnoClientStateTests'
-          - domain: Persistence Files
-            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.ApiKeyEncryptorBytesTests|FullyQualifiedName~SharpClaw.Tests.Persistence.AtomicFileWriterTests|FullyQualifiedName~SharpClaw.Tests.Persistence.DirectoryLockManagerTests|FullyQualifiedName~SharpClaw.Tests.Persistence.JsonFileEncryptionTests|FullyQualifiedName~SharpClaw.Tests.Persistence.JsonFilePersistenceServiceTests'
-          - domain: Persistence Cold Store
-            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.ColdEntityIndexTests|FullyQualifiedName~SharpClaw.Tests.Persistence.ColdEntityStoreTests|FullyQualifiedName~SharpClaw.Tests.Persistence.ColdIndexMaintenanceServiceTests|FullyQualifiedName~SharpClaw.Tests.Persistence.PersistenceEntityResolverTests'
-          - domain: Persistence Integrity
-            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.ChecksumManifestTests|FullyQualifiedName~SharpClaw.Tests.Persistence.EntityMigrationRegistryTests|FullyQualifiedName~SharpClaw.Tests.Persistence.JsonPersistenceHealthCheckTests|FullyQualifiedName~SharpClaw.Tests.Persistence.JsonSchemaVersionTests|FullyQualifiedName~SharpClaw.Tests.Persistence.QuarantineServiceTests'
-          - domain: Persistence Transactions
-            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.EventLogTests|FullyQualifiedName~SharpClaw.Tests.Persistence.FlushQueueTests|FullyQualifiedName~SharpClaw.Tests.Persistence.SnapshotServiceTests|FullyQualifiedName~SharpClaw.Tests.Persistence.TransactionQueueTests|FullyQualifiedName~SharpClaw.Tests.Persistence.TwoPhaseCommitTests'
+          - domain: Persistence Provider Configuration
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.ApiKeyEncryptorBytesTests|FullyQualifiedName~SharpClaw.Tests.Persistence.DatabaseProviderOptionsTests'
+          - domain: JSONColdStore Provider Paths
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Services.AuthServiceJsonColdStoreTests|FullyQualifiedName~SharpClaw.Tests.Modules.BundledModuleStorageGatewayTests|FullyQualifiedName~SharpClaw.Tests.Modules.InProcessModuleJsonColdStoreTests|FullyQualifiedName~SharpClaw.Tests.Tasks.TaskExecutionLifecycleTests.ScheduledJobWorker'
           - domain: Persistence Instances
-            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.ModuleJsonPersistenceServiceTests|FullyQualifiedName~SharpClaw.Tests.Persistence.SharpClawInstanceLifecycleTests|FullyQualifiedName~SharpClaw.Tests.Persistence.SharpClawInstancePathsTests'
+            filter: 'FullyQualifiedName~SharpClaw.Tests.Persistence.SharpClawInstanceLifecycleTests|FullyQualifiedName~SharpClaw.Tests.Persistence.SharpClawInstancePathsTests'
           - domain: Providers Capabilities
             filter: 'FullyQualifiedName~SharpClaw.Tests.Providers.CapabilityResolverTests'
           - domain: Providers Hosted OpenAI Compatible
