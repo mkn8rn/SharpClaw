@@ -4,6 +4,7 @@ using SharpClaw.Core.Clients;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Core.Modules;
+using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Tests.TestHarness;
 
@@ -39,10 +40,13 @@ public sealed class TestHarnessModuleTests
     public async Task ProviderCaptureRedactsSecretsButKeepsAssertablePromptShape()
     {
         await using var host = ChatHarnessHost.Create();
-        var factory = host.Services.GetRequiredService<ProviderApiClientFactory>();
-        var client = factory.GetClient(
-            TestHarnessConstants.PlainProviderKey,
-            new ProviderClientOptions(null, "sk-real-secret123456789"));
+        var plugin = host.Services.GetRequiredService<ProviderApiClientFactory>()
+            .GetPlugin(TestHarnessConstants.PlainProviderKey)
+            .Should().BeAssignableTo<IProviderCredentialBoundPlugin>()
+            .Subject;
+        var client = plugin.CreateClient(
+            new ProviderClientOptions(null),
+            "sk-real-secret123456789");
 
         using var providerParams = JsonDocument.Parse("""{"api_key":"sk-secret123456789","safe":"visible"}""");
         await client.ChatCompletionAsync(
@@ -81,7 +85,7 @@ public sealed class TestHarnessModuleTests
             .GetPlugin(TestHarnessConstants.CostProviderKey);
 
         plugin!.SupportsCostFeed.Should().BeTrue();
-        var costFeed = plugin.CreateCostFeed(new ProviderClientOptions(null, "local"));
+        var costFeed = plugin.CreateCostFeed(new ProviderClientOptions(null));
         costFeed.Should().NotBeNull();
         var result = await costFeed!.GetCostsAsync(
             DateTimeOffset.UnixEpoch,
@@ -98,7 +102,7 @@ public sealed class TestHarnessModuleTests
         var client = host.Services.GetRequiredService<ProviderApiClientFactory>()
             .GetClient(
                 TestHarnessConstants.PlainProviderKey,
-                new ProviderClientOptions(null, "local"));
+                new ProviderClientOptions(null));
 
         for (var i = start; i < start + count; i++)
         {

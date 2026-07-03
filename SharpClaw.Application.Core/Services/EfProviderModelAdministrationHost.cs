@@ -134,8 +134,10 @@ public sealed class EfProviderModelAdministrationHost(
         var apiKey = string.IsNullOrEmpty(provider.EncryptedApiKey)
             ? string.Empty
             : UnprotectProviderSecret(provider.EncryptedApiKey);
-        var client = plugin.CreateClient(
-            new ProviderClientOptions(provider.ApiEndpoint, apiKey));
+        var client = ProviderCredentialBinder.CreateClient(
+            plugin,
+            new ProviderClientOptions(provider.ApiEndpoint),
+            apiKey);
         return await client.ListModelIdsAsync(ct);
     }
 

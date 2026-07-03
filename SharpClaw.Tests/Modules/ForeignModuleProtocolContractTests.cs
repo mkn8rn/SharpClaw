@@ -11,6 +11,7 @@ using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Modules.Foreign;
+using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Tests.Modules;
 
@@ -255,8 +256,10 @@ public sealed class ForeignModuleProtocolContractTests
         registryProviderFactory.IsAvailable("sample-foreign-provider").Should().BeTrue();
         registryProviderFactory.GetPlugin("sample-foreign-provider")!.DisplayName.Should().Be("Sample Foreign Provider");
 
-        var providerClient = providerPlugin.CreateClient(
-            new ProviderClientOptions("http://127.0.0.1:9999", "api-key"));
+        var providerClient = ProviderCredentialBinding.CreateClient(
+            providerPlugin,
+            new ProviderClientOptions("http://127.0.0.1:9999"),
+            "api-key");
         providerClient.ProviderKey.Should().Be("sample-foreign-provider");
         providerClient.SupportsNativeToolCalling.Should().BeTrue();
 
@@ -310,7 +313,10 @@ public sealed class ForeignModuleProtocolContractTests
             .Should()
             .Be("device-access-token");
 
-        var costFeed = providerPlugin.CreateCostFeed(new ProviderClientOptions(null, "api-key"));
+        var costFeed = ProviderCredentialBinding.CreateCostFeed(
+            providerPlugin,
+            new ProviderClientOptions(null),
+            "api-key");
         costFeed.Should().NotBeNull();
         var costs = await costFeed!.GetCostsAsync(
             DateTimeOffset.Parse("2026-05-01T00:00:00Z"),

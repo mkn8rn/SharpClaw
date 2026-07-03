@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 
 using SharpClaw.Contracts.Providers;
+using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Modules.TestHarness;
 
@@ -231,7 +232,7 @@ internal sealed class TestHarnessProviderPlugin(
     string providerKey,
     string displayName,
     bool supportsNativeToolCalling,
-    TestHarnessState state) : IProviderPlugin
+    TestHarnessState state) : IProviderPlugin, IProviderCredentialBoundPlugin
 {
     private readonly TestHarnessCapabilityResolver _capabilities = new();
 
@@ -252,9 +253,19 @@ internal sealed class TestHarnessProviderPlugin(
         "The test harness cost reporter was configured to simulate a permission denial.";
 
     public IProviderApiClient CreateClient(ProviderClientOptions options) =>
-        new TestHarnessProviderClient(providerKey, supportsNativeToolCalling, state, options.ApiKey);
+        new TestHarnessProviderClient(providerKey, supportsNativeToolCalling, state, string.Empty);
+
+    public IProviderApiClient CreateClient(
+        ProviderClientOptions options,
+        string credential) =>
+        new TestHarnessProviderClient(providerKey, supportsNativeToolCalling, state, credential);
 
     public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options) =>
+        new TestHarnessCostFeed(providerKey, state);
+
+    public IProviderCostFeed? CreateCostFeed(
+        ProviderClientOptions options,
+        string credential) =>
         new TestHarnessCostFeed(providerKey, state);
 }
 

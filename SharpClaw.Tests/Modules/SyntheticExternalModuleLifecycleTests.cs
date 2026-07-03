@@ -210,7 +210,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
             var providerPlugin = factory.GetPlugin(SyntheticExternalLifecycleModule.ProviderKey);
             providerPlugin.Should().NotBeNull();
             providerPlugin!.SupportsCostFeed.Should().BeTrue();
-            providerPlugin.CreateCostFeed(new ProviderClientOptions(null, "local")).Should().NotBeNull();
+        providerPlugin.CreateCostFeed(new ProviderClientOptions(null)).Should().NotBeNull();
             triggerRegistry.ResolveByKey(SyntheticExternalLifecycleModule.TriggerKey).Should().NotBeNull();
 
             var seeded = await host.SeedChatAsync(

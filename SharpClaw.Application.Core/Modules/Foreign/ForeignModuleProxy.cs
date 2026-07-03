@@ -692,15 +692,25 @@ internal sealed class ForeignModuleProxy(
             ?? IProviderPlugin.DefaultCostFeedPermissionDeniedNote;
 
         public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options) =>
+            CreateCostFeed(options, string.Empty);
+
+        public IProviderCostFeed? CreateCostFeed(
+            ProviderClientOptions options,
+            string credential) =>
             descriptor.SupportsCostFeed
                 ? new ForeignModuleProviderCostFeed(
                     manifest,
                     client,
                     descriptor.ProviderKey,
-                    options.ApiKey)
+                    credential)
                 : null;
 
-        public IProviderApiClient CreateClient(ProviderClientOptions options)
+        public IProviderApiClient CreateClient(ProviderClientOptions options) =>
+            CreateClient(options, string.Empty);
+
+        public IProviderApiClient CreateClient(
+            ProviderClientOptions options,
+            string credential)
         {
             ArgumentNullException.ThrowIfNull(options);
 
@@ -718,7 +728,7 @@ internal sealed class ForeignModuleProxy(
                 client,
                 descriptor.ProviderKey,
                 options.Endpoint,
-                options.ApiKey,
+                credential,
                 descriptor.SupportsNativeToolCalling);
         }
 

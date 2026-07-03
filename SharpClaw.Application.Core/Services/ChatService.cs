@@ -903,7 +903,7 @@ public sealed class ChatService(
             throw new ProviderUnavailableException(provider.ProviderKey);
 
         var metadataClient = plugin.CreateClient(
-            new ProviderClientOptions(provider.ApiEndpoint, string.Empty));
+            new ProviderClientOptions(provider.ApiEndpoint));
 
         return new ChatProviderExecutionSelection(
             plugin,
@@ -925,8 +925,10 @@ public sealed class ChatService(
                 "Provider plugin was not resolved for a valid chat request plan.");
         }
 
-        return providerExecution.Plugin.CreateClient(
-            new ProviderClientOptions(provider.ApiEndpoint, apiKey));
+        return ProviderCredentialBinder.CreateClient(
+            providerExecution.Plugin,
+            new ProviderClientOptions(provider.ApiEndpoint),
+            apiKey);
     }
 
     private sealed record ChatProviderExecutionSelection(

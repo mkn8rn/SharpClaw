@@ -86,7 +86,7 @@ public sealed class EdenAIApiClientTests
         plugin.DisplayName.Should().Be("Eden AI");
         plugin.OwnerModuleId.Should().Be("sharpclaw_providers_openai_compat");
         plugin.ParameterSpec.Should().BeSameAs(ProviderParameterSpecs.EdenAI);
-        plugin.CreateClient(new ProviderClientOptions(null, "test-key"))
+        ProviderCredentialBinding.CreateClient(plugin, new ProviderClientOptions(null), "test-key")
             .Should().BeOfType<EdenAIApiClient>();
         plugin.Capabilities.Resolve("openai/gpt-4o-mini")
             .Should().BeEquivalentTo([WellKnownCapabilityKeys.Chat, WellKnownCapabilityKeys.Vision]);

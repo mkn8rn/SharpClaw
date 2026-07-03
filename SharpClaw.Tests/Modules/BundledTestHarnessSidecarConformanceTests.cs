@@ -116,7 +116,7 @@ public sealed class BundledTestHarnessSidecarConformanceTests
         var providerPlugin = providers.Single(provider =>
             provider.ProviderKey == TestHarnessConstants.PlainProviderKey);
         var providerResult = await providerPlugin
-            .CreateClient(new ProviderClientOptions(null, "local"))
+            .CreateClient(new ProviderClientOptions(null))
             .ChatCompletionAsync(
             model: TestHarnessConstants.ModelId,
             systemPrompt: "system",
@@ -127,7 +127,7 @@ public sealed class BundledTestHarnessSidecarConformanceTests
         var costPlugin = providers.Single(provider =>
             provider.ProviderKey == TestHarnessConstants.CostProviderKey);
         costPlugin.SupportsCostFeed.Should().BeTrue();
-        var costFeed = costPlugin.CreateCostFeed(new ProviderClientOptions(null, "local"));
+        var costFeed = costPlugin.CreateCostFeed(new ProviderClientOptions(null));
         costFeed.Should().NotBeNull();
         var cost = await costFeed!.GetCostsAsync(
             startTime: DateTimeOffset.UnixEpoch,

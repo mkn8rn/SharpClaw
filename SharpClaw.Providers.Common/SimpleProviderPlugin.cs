@@ -12,18 +12,18 @@ public sealed class SimpleProviderPlugin(
     string providerKey,
     string displayName,
     bool requiresEndpoint,
-    Func<ProviderClientOptions, IProviderApiClient> clientFactory,
+    Func<ProviderClientOptions, string, IProviderApiClient> clientFactory,
     IModelCapabilityResolver capabilities,
     IReadOnlyList<ProviderCostSeed>? costSeeds = null,
     ICompletionParameterSpec? parameterSpec = null,
     IDeviceCodeFlow? deviceCodeFlow = null,
-    Func<ProviderClientOptions, IProviderCostFeed?>? costFeedFactory = null,
+    Func<ProviderClientOptions, string, IProviderCostFeed?>? costFeedFactory = null,
     string? costFeedPermissionDeniedNote = null,
     Func<string, Guid, CancellationToken, Task<string>>? agentIdentifierSuffix = null,
     bool supportsAutomaticEndpointDiscovery = false,
     bool isSeedable = true,
     bool requiresApiKey = true,
-    string? ownerModuleId = null) : IProviderPlugin
+    string? ownerModuleId = null) : IProviderPlugin, IProviderCredentialBoundPlugin
 {
     public string ProviderKey { get; } = providerKey;
     public string DisplayName { get; } = displayName;
@@ -43,6 +43,40 @@ public sealed class SimpleProviderPlugin(
 
     public IProviderApiClient CreateClient(ProviderClientOptions options)
     {
+        ValidateOptions(options);
+        return clientFactory(options, string.Empty);
+    }
+
+    public IProviderApiClient CreateClient(
+        ProviderClientOptions options,
+        string credential)
+    {
+        ValidateOptions(options);
+        return clientFactory(options, credential);
+    }
+
+    public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options)
+    {
+        ValidateOptions(options);
+        return costFeedFactory?.Invoke(options, string.Empty);
+    }
+
+    public IProviderCostFeed? CreateCostFeed(
+        ProviderClientOptions options,
+        string credential)
+    {
+        ValidateOptions(options);
+        return costFeedFactory?.Invoke(options, credential);
+    }
+
+    public Task<string> GetAgentIdentifierSuffixAsync(
+        string providerName, Guid modelId, CancellationToken ct = default)
+        => agentIdentifierSuffix is not null
+            ? agentIdentifierSuffix(providerName, modelId, ct)
+            : Task.FromResult(providerName.Replace(" ", "-").ToLowerInvariant());
+
+    private void ValidateOptions(ProviderClientOptions options)
+    {
         ArgumentNullException.ThrowIfNull(options);
 
         if (RequiresEndpoint
@@ -53,19 +87,5 @@ public sealed class SimpleProviderPlugin(
                 $"Provider '{ProviderKey}' requires a non-empty endpoint URL.",
                 nameof(options));
         }
-
-        return clientFactory(options);
     }
-
-    public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        return costFeedFactory?.Invoke(options);
-    }
-
-    public Task<string> GetAgentIdentifierSuffixAsync(
-        string providerName, Guid modelId, CancellationToken ct = default)
-        => agentIdentifierSuffix is not null
-            ? agentIdentifierSuffix(providerName, modelId, ct)
-            : Task.FromResult(providerName.Replace(" ", "-").ToLowerInvariant());
 }

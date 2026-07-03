@@ -13,6 +13,7 @@ using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Modules;
 using SharpClaw.Modules.Hosting;
+using SharpClaw.Providers.Common;
 using SharpClaw.Utils.Security;
 using SharpClaw.Core.Modules.Foreign;
 
@@ -344,8 +345,11 @@ internal sealed class DotNetSidecarHost
             ForeignModuleProviderModelListRequest request,
             CancellationToken ct) =>
         {
-            var client = FindProvider(request.ProviderKey).CreateClient(
-                new ProviderClientOptions(request.Endpoint, request.ApiKey));
+            var plugin = FindProvider(request.ProviderKey);
+            var client = ProviderCredentialBinding.CreateClient(
+                plugin,
+                new ProviderClientOptions(request.Endpoint),
+                request.ApiKey);
             return Json(new ForeignModuleProviderModelListResponse(
                 await client.ListModelIdsAsync(ct)));
         });
@@ -359,8 +363,11 @@ internal sealed class DotNetSidecarHost
             ForeignModuleProviderChatCompletionRequest request,
             CancellationToken ct) =>
         {
-            var client = FindProvider(request.ProviderKey).CreateClient(
-                new ProviderClientOptions(request.Endpoint, request.ApiKey));
+            var plugin = FindProvider(request.ProviderKey);
+            var client = ProviderCredentialBinding.CreateClient(
+                plugin,
+                new ProviderClientOptions(request.Endpoint),
+                request.ApiKey);
             return Json(new ForeignModuleProviderChatCompletionResponse(
                 await client.ChatCompletionAsync(
                     request.Model,
@@ -376,8 +383,11 @@ internal sealed class DotNetSidecarHost
             ForeignModuleProviderChatCompletionWithToolsRequest request,
             CancellationToken ct) =>
         {
-            var client = FindProvider(request.ProviderKey).CreateClient(
-                new ProviderClientOptions(request.Endpoint, request.ApiKey));
+            var plugin = FindProvider(request.ProviderKey);
+            var client = ProviderCredentialBinding.CreateClient(
+                plugin,
+                new ProviderClientOptions(request.Endpoint),
+                request.ApiKey);
             return Json(new ForeignModuleProviderChatCompletionResponse(
                 await client.ChatCompletionWithToolsAsync(
                     request.Model,
@@ -395,8 +405,11 @@ internal sealed class DotNetSidecarHost
             ForeignModuleProviderChatCompletionWithToolsRequest request,
             CancellationToken ct) =>
         {
-            var client = FindProvider(request.ProviderKey).CreateClient(
-                new ProviderClientOptions(request.Endpoint, request.ApiKey));
+            var plugin = FindProvider(request.ProviderKey);
+            var client = ProviderCredentialBinding.CreateClient(
+                plugin,
+                new ProviderClientOptions(request.Endpoint),
+                request.ApiKey);
             context.Response.ContentType = "application/x-ndjson; charset=utf-8";
             await foreach (var chunk in client.StreamChatCompletionWithToolsAsync(
                                request.Model,
@@ -437,8 +450,10 @@ internal sealed class DotNetSidecarHost
             CancellationToken ct) =>
         {
             var plugin = FindProvider(request.ProviderKey);
-            var costFeed = plugin.CreateCostFeed(
-                new ProviderClientOptions(null, request.ApiKey))
+            var costFeed = ProviderCredentialBinding.CreateCostFeed(
+                plugin,
+                new ProviderClientOptions(null),
+                request.ApiKey)
                 ?? throw new NotSupportedException($"Provider '{request.ProviderKey}' does not support costs.");
             return Json(new ForeignModuleProviderCostFeedResponse(
                 await costFeed.GetCostsAsync(

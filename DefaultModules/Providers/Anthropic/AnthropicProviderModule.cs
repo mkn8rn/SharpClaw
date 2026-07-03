@@ -22,7 +22,7 @@ public sealed class AnthropicProviderModule : ISharpClawCoreModule
         var caps = new HeuristicCapabilityResolver(ProviderCapabilityHeuristics.ForAnthropic);
         services.AddSingleton<IProviderPlugin>(new SimpleProviderPlugin(
             "anthropic", "Anthropic", false,
-            options => new AnthropicApiClient(options.ApiKey), caps,
+            (_, credential) => new AnthropicApiClient(credential), caps,
             parameterSpec: ProviderParameterSpecs.Anthropic,
             ownerModuleId: "sharpclaw_providers_anthropic"));
     }

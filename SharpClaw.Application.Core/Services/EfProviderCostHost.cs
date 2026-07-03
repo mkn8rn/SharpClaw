@@ -73,8 +73,10 @@ public sealed class EfProviderCostHost(
         var apiKey = string.IsNullOrEmpty(provider.ProtectedApiKey)
             ? string.Empty
             : UnprotectProviderSecret(provider.ProtectedApiKey);
-        var costFeed = plugin.CreateCostFeed(
-            new ProviderClientOptions(provider.ApiEndpoint, apiKey));
+        var costFeed = ProviderCredentialBinder.CreateCostFeed(
+            plugin,
+            new ProviderClientOptions(provider.ApiEndpoint),
+            apiKey);
         if (costFeed is null)
             return null;
 
