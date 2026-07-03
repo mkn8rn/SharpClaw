@@ -178,8 +178,6 @@ public sealed class ChatRequestWorkflowEngineTests
 
     private static ChatRequestPlan CreatePlan() =>
         new(
-            new ApiClient(),
-            RequiresApiKey: false,
             UseNativeTools: true,
             DisableTools: false,
             EnableTools: true,
@@ -314,29 +312,5 @@ public sealed class ChatRequestWorkflowEngineTests
     {
         public bool Disposed { get; private set; }
         public void Dispose() => Disposed = true;
-    }
-
-    private sealed record ApiClient : IProviderApiClient
-    {
-        public string ProviderKey => "test";
-        public bool SupportsNativeToolCalling => true;
-
-        public Task<IReadOnlyList<string>> ListModelIdsAsync(
-            HttpClient httpClient,
-            string apiKey,
-            CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<string>>(["model"]);
-
-        public Task<ChatCompletionResult> ChatCompletionAsync(
-            HttpClient httpClient,
-            string apiKey,
-            string model,
-            string? systemPrompt,
-            IReadOnlyList<ChatCompletionMessage> messages,
-            int? maxCompletionTokens = null,
-            Dictionary<string, JsonElement>? providerParameters = null,
-            CompletionParameters? completionParameters = null,
-            CancellationToken ct = default) =>
-            throw new NotSupportedException();
     }
 }

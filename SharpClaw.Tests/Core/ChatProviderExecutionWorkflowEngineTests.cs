@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Tasks;
+using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Chat;
@@ -18,7 +19,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
     [Test]
     public async Task RunBufferedAsync_WhenToolsAreDisabled_CallsPlainCompletion()
     {
-        var client = new RecordingProviderClient
+        var provider = new RecordingProviderRoundExecutor
         {
             PlainResult = new ChatCompletionResult
             {
@@ -32,7 +33,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
 
         var result = await engine.RunBufferedAsync(
             CreateRequest(
-                client,
+                provider,
                 host,
                 enableTools: false));
 
@@ -41,8 +42,8 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         result.TotalPromptTokens.Should().Be(3);
         result.TotalCompletionTokens.Should().Be(5);
         result.ProviderMetadataJson.Should().Be("""{"id":"plain"}""");
-        client.PlainCalls.Should().Be(1);
-        client.NativeCalls.Should().Be(0);
+        provider.PlainCalls.Should().Be(1);
+        provider.NativeCalls.Should().Be(0);
         host.TaskToolCalls.Should().Be(0);
         host.NativeJobToolCalls.Should().Be(0);
     }
@@ -51,7 +52,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
     public async Task RunBufferedAsync_WhenToolsAreEnabled_UsesNativeLoopWithEffectiveTools()
     {
         var registry = CreateRegistry();
-        var client = new RecordingProviderClient
+        var provider = new RecordingProviderRoundExecutor
         {
             NativeResult = new ChatCompletionResult
             {
@@ -70,7 +71,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         {
             var result = await engine.RunBufferedAsync(
                 CreateRequest(
-                    client,
+                    provider,
                     host,
                     enableTools: true,
                     taskContext: new TaskChatContext(instanceId, "Task")));
@@ -80,9 +81,9 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
             result.TotalPromptTokens.Should().Be(7);
             result.TotalCompletionTokens.Should().Be(11);
             result.ProviderMetadataJson.Should().Be("""{"id":"native"}""");
-            client.PlainCalls.Should().Be(0);
-            client.NativeCalls.Should().Be(1);
-            client.LastNativeToolNames.Should().Contain(["alpha", "beta", "task_read_light_data"]);
+            provider.PlainCalls.Should().Be(0);
+            provider.NativeCalls.Should().Be(1);
+            provider.LastNativeToolNames.Should().Contain(["alpha", "beta", "task_read_light_data"]);
             host.TaskToolCalls.Should().Be(0);
             host.NativeJobToolCalls.Should().Be(0);
         }
@@ -96,7 +97,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
     public async Task StreamAsync_WhenToolsAreEnabled_StreamsWithEffectiveTools()
     {
         var registry = CreateRegistry();
-        var client = new RecordingProviderClient
+        var provider = new RecordingProviderRoundExecutor
         {
             StreamingDeltas = ["stream ", "answer"],
             StreamingResult = new ChatCompletionResult
@@ -117,7 +118,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
             var events = new List<ChatNativeToolStreamingLoopEvent>();
             await foreach (var loopEvent in engine.StreamAsync(
                 CreateStreamingRequest(
-                    client,
+                    provider,
                     host,
                     enableTools: true,
                     taskContext: new TaskChatContext(instanceId, "Task"))))
@@ -137,8 +138,8 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
             result.TotalCompletionTokens.Should().Be(17);
             result.ProviderMetadataJson.Should().Be("""{"id":"stream"}""");
             result.ProviderRounds.Should().Be(1);
-            client.StreamingCalls.Should().Be(1);
-            client.LastStreamingToolNames.Should().Contain(["alpha", "beta", "task_read_light_data"]);
+            provider.StreamingCalls.Should().Be(1);
+            provider.LastStreamingToolNames.Should().Contain(["alpha", "beta", "task_read_light_data"]);
             host.TaskToolCalls.Should().Be(0);
             host.NativeJobToolCalls.Should().Be(0);
         }
@@ -151,7 +152,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
     [Test]
     public async Task StreamAsync_WhenToolsAreDisabled_StreamsWithEmptyToolSet()
     {
-        var client = new RecordingProviderClient
+        var provider = new RecordingProviderRoundExecutor
         {
             StreamingResult = new ChatCompletionResult
             {
@@ -165,7 +166,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         var events = new List<ChatNativeToolStreamingLoopEvent>();
         await foreach (var loopEvent in engine.StreamAsync(
             CreateStreamingRequest(
-                client,
+                provider,
                 host,
                 enableTools: false)))
         {
@@ -177,21 +178,91 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         result.AssistantContent.Should().Be("plain stream");
         result.TotalPromptTokens.Should().Be(19);
         result.TotalCompletionTokens.Should().Be(23);
-        client.StreamingCalls.Should().Be(1);
-        client.LastStreamingToolNames.Should().BeEmpty();
+        provider.StreamingCalls.Should().Be(1);
+        provider.LastStreamingToolNames.Should().BeEmpty();
         host.TaskToolCalls.Should().Be(0);
         host.NativeJobToolCalls.Should().Be(0);
     }
 
+    [Test]
+    public async Task RunBufferedAsync_WhenApprovalCannotResolve_RunsFinalProviderRound()
+    {
+        var provider = new RecordingProviderRoundExecutor();
+        provider.NativeResults.Enqueue(
+            new ChatCompletionResult
+            {
+                ToolCalls =
+                [
+                    new ChatToolCall(
+                        "call-1",
+                        "job.run",
+                        """{"x":1}""")
+                ],
+                Usage = new TokenUsage(2, 3)
+            });
+        provider.NativeResults.Enqueue(
+            new ChatCompletionResult
+            {
+                Content = "final after approval",
+                Usage = new TokenUsage(5, 7),
+                ProviderMetadataJson = """{"id":"final"}"""
+            });
+        var submittedJobId = Guid.NewGuid();
+        var host = new RecordingNativeToolLoopHost();
+        host.NativeJobResults.Enqueue(
+            new ChatNativeJobToolExecutionResult(
+                Parsed: true,
+                ToolResultMessage: ToolAwareMessage.ToolResult(
+                    "call-1",
+                    "approval pending"),
+                JobResponse: new AgentJobResponse(
+                    submittedJobId,
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    ActionKey: "job.run",
+                    ResourceId: null,
+                    Status: AgentJobStatus.AwaitingApproval,
+                    EffectiveClearance: PermissionClearance.Independent,
+                    ResultData: null,
+                    ErrorLog: null,
+                    Logs: [],
+                    CreatedAt: DateTimeOffset.UtcNow,
+                    StartedAt: null,
+                    CompletedAt: null),
+                SubmittedJobId: submittedJobId,
+                ToolNotation: "[job submitted]",
+                AwaitingUnresolvableApproval: true,
+                StreamEvents: []));
+        var engine = CreateEngine();
+
+        var result = await engine.RunBufferedAsync(
+            CreateRequest(
+                provider,
+                host,
+                enableTools: true));
+
+        result.AssistantContent.Should().Be(
+            "[job submitted]\nfinal after approval");
+        result.JobResults.Should().ContainSingle(job =>
+            job.Id == submittedJobId);
+        result.TotalPromptTokens.Should().Be(7);
+        result.TotalCompletionTokens.Should().Be(10);
+        result.ProviderMetadataJson.Should().Be("""{"id":"final"}""");
+        provider.NativeCalls.Should().Be(2);
+        host.NativeJobToolCalls.Should().Be(1);
+        host.RecordedTokenUsage.Should().Be((
+            submittedJobId,
+            PromptTokens: 2,
+            CompletionTokens: 3));
+    }
+
     private static ChatBufferedProviderExecutionRequest CreateRequest(
-        RecordingProviderClient client,
+        RecordingProviderRoundExecutor provider,
         RecordingNativeToolLoopHost host,
         bool enableTools,
         TaskChatContext? taskContext = null)
         => new(
-            client,
-            new HttpClient(),
-            "api-key",
+            provider,
             "model",
             "system",
             [new ChatCompletionMessage("user", "hello")],
@@ -207,14 +278,12 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
             TaskContext: taskContext);
 
     private static ChatStreamingProviderExecutionRequest CreateStreamingRequest(
-        RecordingProviderClient client,
+        RecordingProviderRoundExecutor provider,
         RecordingNativeToolLoopHost host,
         bool enableTools,
         TaskChatContext? taskContext = null)
         => new(
-            client,
-            new HttpClient(),
-            "api-key",
+            provider,
             "model",
             "system",
             [new ChatCompletionMessage("user", "hello")],
@@ -263,10 +332,8 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         return doc.RootElement.Clone();
     }
 
-    private sealed class RecordingProviderClient : IProviderApiClient
+    private sealed class RecordingProviderRoundExecutor : IChatProviderRoundExecutor
     {
-        public string ProviderKey => "test";
-        public bool SupportsNativeToolCalling => true;
         public ChatCompletionResult PlainResult { get; init; } = new()
         {
             Content = "plain answer"
@@ -276,6 +343,7 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         {
             Content = "native answer"
         };
+        public Queue<ChatCompletionResult> NativeResults { get; } = new();
 
         public IReadOnlyList<string> StreamingDeltas { get; init; } = [];
         public ChatCompletionResult StreamingResult { get; init; } = new()
@@ -289,58 +357,32 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
         public IReadOnlyList<string> LastNativeToolNames { get; private set; } = [];
         public IReadOnlyList<string> LastStreamingToolNames { get; private set; } = [];
 
-        public Task<IReadOnlyList<string>> ListModelIdsAsync(
-            HttpClient httpClient,
-            string apiKey,
-            CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<string>>(["model"]);
-
-        public Task<ChatCompletionResult> ChatCompletionAsync(
-            HttpClient httpClient,
-            string apiKey,
-            string model,
-            string? systemPrompt,
-            IReadOnlyList<ChatCompletionMessage> messages,
-            int? maxCompletionTokens = null,
-            Dictionary<string, JsonElement>? providerParameters = null,
-            CompletionParameters? completionParameters = null,
-            CancellationToken ct = default)
+        public Task<ChatCompletionResult> CompleteAsync(
+            ChatProviderCompletionRequest request,
+            CancellationToken ct)
         {
             PlainCalls++;
             return Task.FromResult(PlainResult);
         }
 
-        public Task<ChatCompletionResult> ChatCompletionWithToolsAsync(
-            HttpClient httpClient,
-            string apiKey,
-            string model,
-            string? systemPrompt,
-            IReadOnlyList<ToolAwareMessage> messages,
-            IReadOnlyList<ChatToolDefinition> tools,
-            int? maxCompletionTokens = null,
-            Dictionary<string, JsonElement>? providerParameters = null,
-            CompletionParameters? completionParameters = null,
-            CancellationToken ct = default)
+        public Task<ChatCompletionResult> CompleteWithToolsAsync(
+            ChatProviderToolCompletionRequest request,
+            CancellationToken ct)
         {
             NativeCalls++;
-            LastNativeToolNames = [.. tools.Select(tool => tool.Name)];
-            return Task.FromResult(NativeResult);
+            LastNativeToolNames = [.. request.Tools.Select(tool => tool.Name)];
+            return Task.FromResult(
+                NativeResults.Count > 0
+                    ? NativeResults.Dequeue()
+                    : NativeResult);
         }
 
-        public async IAsyncEnumerable<ChatStreamChunk> StreamChatCompletionWithToolsAsync(
-            HttpClient httpClient,
-            string apiKey,
-            string model,
-            string? systemPrompt,
-            IReadOnlyList<ToolAwareMessage> messages,
-            IReadOnlyList<ChatToolDefinition> tools,
-            int? maxCompletionTokens = null,
-            Dictionary<string, JsonElement>? providerParameters = null,
-            CompletionParameters? completionParameters = null,
-            [EnumeratorCancellation] CancellationToken ct = default)
+        public async IAsyncEnumerable<ChatStreamChunk> StreamWithToolsAsync(
+            ChatProviderToolCompletionRequest request,
+            [EnumeratorCancellation] CancellationToken ct)
         {
             StreamingCalls++;
-            LastStreamingToolNames = [.. tools.Select(tool => tool.Name)];
+            LastStreamingToolNames = [.. request.Tools.Select(tool => tool.Name)];
             await Task.CompletedTask;
 
             foreach (var delta in StreamingDeltas)
@@ -358,6 +400,8 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
     {
         public int TaskToolCalls { get; private set; }
         public int NativeJobToolCalls { get; private set; }
+        public Queue<ChatNativeJobToolExecutionResult> NativeJobResults { get; } = new();
+        public (Guid JobId, int PromptTokens, int CompletionTokens)? RecordedTokenUsage { get; private set; }
 
         public bool IsInlineTool(string toolName) => false;
 
@@ -389,15 +433,24 @@ public sealed class ChatProviderExecutionWorkflowEngineTests
             CancellationToken ct)
         {
             NativeJobToolCalls++;
-            throw new NotSupportedException();
+            if (NativeJobResults.Count == 0)
+                throw new NotSupportedException();
+
+            return Task.FromResult(NativeJobResults.Dequeue());
         }
 
         public Task RecordRoundTokenUsageAsync(
             IReadOnlyList<Guid> jobIds,
             int promptTokens,
             int completionTokens,
-            CancellationToken ct) =>
-            Task.CompletedTask;
+            CancellationToken ct)
+        {
+            RecordedTokenUsage = (
+                jobIds.Single(),
+                promptTokens,
+                completionTokens);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class ToolModule : ISharpClawCoreModule

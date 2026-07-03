@@ -4,7 +4,6 @@ using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Chat;
-using SharpClaw.Core.Clients;
 
 namespace SharpClaw.Tests.Core;
 
@@ -44,9 +43,9 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: false);
+            disableCustomProviderParameters: false,
+            providerFacts: CreateProviderFacts(agent));
 
-        plan.RequiresApiKey.Should().BeFalse();
         plan.UseNativeTools.Should().BeTrue();
         plan.EnableTools.Should().BeTrue();
         plan.DisableTools.Should().BeFalse();
@@ -71,7 +70,8 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: false);
+            disableCustomProviderParameters: false,
+            providerFacts: CreateProviderFacts(agent));
 
         plan.UseNativeTools.Should().BeFalse();
         plan.EnableTools.Should().BeFalse();
@@ -93,7 +93,8 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: false);
+            disableCustomProviderParameters: false,
+            providerFacts: CreateProviderFacts(agent));
 
         plan.UseNativeTools.Should().BeFalse();
         plan.EnableTools.Should().BeTrue();
@@ -123,7 +124,8 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: false);
+            disableCustomProviderParameters: false,
+            providerFacts: CreateProviderFacts(agent));
 
         plan.DisableTools.Should().BeTrue();
         plan.EnableTools.Should().BeFalse();
@@ -148,7 +150,8 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: true);
+            disableCustomProviderParameters: true,
+            providerFacts: CreateProviderFacts(agent));
 
         plan.ProviderParameters.Should().BeNull();
     }
@@ -167,7 +170,8 @@ public sealed class ChatRequestPlanningEngineTests
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
-            disableCustomProviderParameters: false);
+            disableCustomProviderParameters: false,
+            providerFacts: CreateProviderFacts(agent));
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("Provider does not have an API key configured.");
@@ -175,23 +179,23 @@ public sealed class ChatRequestPlanningEngineTests
 
     private static ChatRequestPlanningEngine CreatePlanner(AgentDB agent)
     {
+        _ = agent;
+        return new ChatRequestPlanningEngine(new ChatPromptEngine());
+    }
+
+    private static ChatProviderPlanningFacts CreateProviderFacts(AgentDB agent)
+    {
         var provider = agent.Model.Provider;
-        return new ChatRequestPlanningEngine(
-            new ChatPromptEngine(),
-            new ProviderApiClientFactory(
-            [
-                new Plugin(
-                    provider.ProviderKey,
-                    provider.Name,
-                    new ApiClient(
-                        provider.ProviderKey,
-                        SupportsNativeToolCalling: provider.ProviderKey.Contains(
-                            "native",
-                            StringComparison.Ordinal)),
-                    RequiresApiKey: provider.ProviderKey.Contains(
-                        "requires-key",
-                        StringComparison.Ordinal))
-            ]));
+        var requiresApiKey = provider.ProviderKey.Contains(
+            "requires-key",
+            StringComparison.Ordinal);
+        return new ChatProviderPlanningFacts(
+            ProviderAccessSatisfied: !requiresApiKey
+                || !string.IsNullOrEmpty(provider.EncryptedApiKey),
+            SupportsNativeToolCalling: provider.ProviderKey.Contains(
+                "native",
+                StringComparison.Ordinal),
+            ICompletionParameterSpec.Passthrough);
     }
 
     private static AgentDB CreateAgent(
@@ -229,46 +233,5 @@ public sealed class ChatRequestPlanningEngineTests
             Temperature = 0.3f,
             MaxCompletionTokens = 512
         };
-    }
-
-    private sealed record Plugin(
-        string ProviderKey,
-        string DisplayName,
-        IProviderApiClient Client,
-        bool RequiresApiKey) : IProviderPlugin
-    {
-        public bool RequiresEndpoint => false;
-        public IProviderApiClient CreateClient(string? endpoint) => Client;
-        public IModelCapabilityResolver Capabilities { get; } = new Capabilities();
-        public IReadOnlyList<ProviderCostSeed> CostSeeds => [];
-        public IDeviceCodeFlow? DeviceCodeFlow => null;
-    }
-
-    private sealed class Capabilities : IModelCapabilityResolver
-    {
-        public HashSet<string> Resolve(string modelName) => [];
-    }
-
-    private sealed record ApiClient(
-        string ProviderKey,
-        bool SupportsNativeToolCalling) : IProviderApiClient
-    {
-        public Task<IReadOnlyList<string>> ListModelIdsAsync(
-            HttpClient httpClient,
-            string apiKey,
-            CancellationToken ct = default) =>
-            throw new NotSupportedException();
-
-        public Task<ChatCompletionResult> ChatCompletionAsync(
-            HttpClient httpClient,
-            string apiKey,
-            string model,
-            string? systemPrompt,
-            IReadOnlyList<ChatCompletionMessage> messages,
-            int? maxCompletionTokens = null,
-            Dictionary<string, JsonElement>? providerParameters = null,
-            CompletionParameters? completionParameters = null,
-            CancellationToken ct = default) =>
-            throw new NotSupportedException();
     }
 }

@@ -10,6 +10,7 @@ using SharpClaw.Contracts.Chat;
 using SharpClaw.Contracts.Modules;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Core.Chat;
+using SharpClaw.Core.Clients;
 using SharpClaw.Core.Conversation;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Entities.Core.Messages;
@@ -33,6 +34,7 @@ public sealed class ChatService(
     SharpClawDbContext db,
     EncryptionOptions encryptionOptions,
     IHttpClientFactory httpClientFactory,
+    ProviderApiClientFactory providerClientFactory,
     AgentJobService jobService,
     HeaderTagProcessor headerTagProcessor,
     ThreadActivitySignal threadActivity,
@@ -77,6 +79,7 @@ public sealed class ChatService(
     private readonly ChatStreamingResponseEngine _chatStreaming = chatStreaming;
     private readonly ChatHeaderGrantFormatter _headerGrantFormatter = headerGrantFormatter;
     private readonly IServiceProvider _serviceProvider = serviceProvider;
+    private readonly ProviderApiClientFactory _providerClientFactory = providerClientFactory;
 
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
@@ -129,14 +132,17 @@ public sealed class ChatService(
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
         var agent = conversation.ResolveRequestedAgent(channel, request.AgentId);
+        var providerExecution = ResolveProviderExecution(agent.Model?.Provider);
         var plan = chatPlanner.BuildBufferedPlan(
             channel,
             agent,
             threadId,
             _disableDefaultSystemPrompt,
-            _disableCustomProviderParameters);
+            _disableCustomProviderParameters,
+            providerExecution?.PlanningFacts);
         var model = agent.Model!;
         var provider = model.Provider!;
+        providerExecution ??= ResolveProviderExecution(provider);
         var workflowHost = new ChatServiceRequestWorkflowHost(this);
         ChatPreparedRequestState? prepared = null;
 
@@ -167,16 +173,22 @@ public sealed class ChatService(
                     totalTiming.ElapsedMilliseconds);
             }
 
-            var apiKey = plan.RequiresApiKey
+            var apiKey = providerExecution!.RequiresApiKey
                 ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key)
                 : "local";
-            var client = plan.Client;
+            var client = providerExecution.Client
+                ?? throw new InvalidOperationException(
+                    "Provider client was not resolved for a valid chat request plan.");
             var useNativeTools = plan.UseNativeTools;
             var enableTools = plan.EnableTools;
             var systemPrompt = plan.SystemPrompt;
             var completionParams = plan.CompletionParameters;
 
             using var httpClient = httpClientFactory.CreateClient();
+            var providerRoundExecutor = new ChatProviderRoundExecutor(
+                client,
+                httpClient,
+                apiKey);
 
             var modelCapabilityTags = plan.ModelCapabilityTags;
             var maxTokens = plan.MaxCompletionTokens;
@@ -200,9 +212,7 @@ public sealed class ChatService(
             var providerTiming = Stopwatch.StartNew();
             var loopResult = await _chatProviderExecution.RunBufferedAsync(
                 new ChatBufferedProviderExecutionRequest(
-                    client,
-                    httpClient,
-                    apiKey,
+                    providerRoundExecutor,
                     model.Name,
                     systemPrompt,
                     history,
@@ -468,14 +478,17 @@ public sealed class ChatService(
             ?? throw new ArgumentException($"Channel {channelId} not found.");
 
         var agent = conversation.ResolveRequestedAgent(channel, request.AgentId);
+        var providerExecution = ResolveProviderExecution(agent.Model?.Provider);
         var plan = chatPlanner.BuildStreamingPlan(
             channel,
             agent,
             threadId,
             _disableDefaultSystemPrompt,
-            _disableCustomProviderParameters);
+            _disableCustomProviderParameters,
+            providerExecution?.PlanningFacts);
         var model = agent.Model!;
         var provider = model.Provider!;
+        providerExecution ??= ResolveProviderExecution(provider);
         var workflowHost = new ChatServiceRequestWorkflowHost(this);
         ChatPreparedRequestState? prepared = null;
 
@@ -506,14 +519,20 @@ public sealed class ChatService(
                 totalTiming.ElapsedMilliseconds);
         }
 
-        var apiKey = plan.RequiresApiKey
+        var apiKey = providerExecution!.RequiresApiKey
             ? ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey!, encryptionOptions.Key)
             : "local";
-        var client = plan.Client;
+        var client = providerExecution.Client
+            ?? throw new InvalidOperationException(
+                "Provider client was not resolved for a valid chat request plan.");
         var systemPrompt = plan.SystemPrompt;
         var completionParams = plan.CompletionParameters;
 
         using var httpClient = httpClientFactory.CreateClient();
+        var providerRoundExecutor = new ChatProviderRoundExecutor(
+            client,
+            httpClient,
+            apiKey);
 
         var maxTokens = plan.MaxCompletionTokens;
         var providerParams = plan.ProviderParameters;
@@ -535,9 +554,7 @@ public sealed class ChatService(
         ChatNativeToolStreamingLoopResult? streamingResult = null;
         var loopEvents = _chatProviderExecution.StreamAsync(
             new ChatStreamingProviderExecutionRequest(
-                client,
-                httpClient,
-                apiKey,
+                providerRoundExecutor,
                 model.Name,
                 systemPrompt,
                 history,
@@ -870,6 +887,47 @@ public sealed class ChatService(
                     innerCt);
             },
             message => Debug.WriteLine(message, "SharpClaw.CLI"));
+
+    private ChatProviderExecutionSelection? ResolveProviderExecution(
+        ProviderDB? provider)
+    {
+        if (provider is null)
+            return null;
+
+        var plugin = _providerClientFactory.GetPlugin(provider.ProviderKey);
+        var requiresApiKey = plugin?.RequiresApiKey ?? true;
+        var providerAccessSatisfied =
+            !requiresApiKey || !string.IsNullOrEmpty(provider.EncryptedApiKey);
+        var parameterSpec =
+            _providerClientFactory.GetParameterSpec(provider.ProviderKey);
+
+        if (!providerAccessSatisfied)
+        {
+            return new ChatProviderExecutionSelection(
+                Client: null,
+                RequiresApiKey: requiresApiKey,
+                new ChatProviderPlanningFacts(
+                    ProviderAccessSatisfied: false,
+                    SupportsNativeToolCalling: false,
+                    parameterSpec));
+        }
+
+        var client = _providerClientFactory.GetClient(
+            provider.ProviderKey,
+            provider.ApiEndpoint);
+        return new ChatProviderExecutionSelection(
+            client,
+            requiresApiKey,
+            new ChatProviderPlanningFacts(
+                ProviderAccessSatisfied: true,
+                client.SupportsNativeToolCalling,
+                parameterSpec));
+    }
+
+    private sealed record ChatProviderExecutionSelection(
+        IProviderApiClient? Client,
+        bool RequiresApiKey,
+        ChatProviderPlanningFacts PlanningFacts);
 
     private sealed class ChatServiceHeaderWorkflowHost(
         ChatService service) : IChatHeaderWorkflowHost
