@@ -109,7 +109,7 @@ ITaskParserModuleExtension
     StepKeyMappings: name -> (runtime dispatch key, ModuleId) for context-API methods.
     EventTriggerMappings: name → (TriggerKey, ModuleId) for OnXxx handlers.
     SingleArgExpressionMethods: methods whose first arg is captured as Expression.
-    Core owns ordinary C# statement parsing. Do not add module primitive keys
+    Core owns ordinary C# statement parsing. Do not add module language keys
     for declarations, assignment, control flow, return, logging, delay,
     structured response parsing, or cancellation waits.
     TriggerAttributeHandlers: name → ITaskTriggerAttributeHandler.

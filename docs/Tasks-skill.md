@@ -6,7 +6,7 @@ All bodies JSON. Enums as strings. Timestamps ISO 8601.
 
 Ordinary C# task syntax is built into the task host: declarations, assignment,
 control flow, return, logging, delay, structured response parsing, and
-cancellation waits are not module primitives. Modules contribute callable
+cancellation waits are not module-defined syntax. Modules contribute callable
 operations and trigger attributes at startup. The exact set of module methods
 callable inside RunAsync, and the exact set of trigger attributes recognised on
 a task class, depend on which modules are loaded. For per-installation

@@ -74,8 +74,8 @@ at launch time.
 
 The parser owns ordinary C# task-language syntax directly. Variable
 declarations, assignment, conditionals, loops, return, `Log`, `Task.Delay`,
-`WaitUntilStopped`, and structured response parsing are not module
-compatibility primitives. Modules extend the surface by registering callable
+`WaitUntilStopped`, and structured response parsing are not module-defined
+syntax. Modules extend the surface by registering callable
 operations such as `Chat`, `Emit`, `CreateAgent`, or domain-specific tools, and
 by registering trigger attributes. A script that calls a module operation or
 declares a trigger whose owning module is not loaded will still parse, but
