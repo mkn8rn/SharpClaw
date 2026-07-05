@@ -168,6 +168,68 @@ public class ModuleDependencyGuardrailTests
         }
     }
 
+    [TestCaseSource(nameof(ProjectDirectories))]
+    public void Module_facing_package_graph_must_not_depend_on_sharpclaw_core(string projectDirectory)
+    {
+        var projectPath = FindFileFromTestAssembly(projectDirectory, $"{projectDirectory}.csproj");
+        var project = XDocument.Load(projectPath);
+        var packageIds = GetModuleFacingPackageIds(project).ToList();
+        var assetsPath = Path.Combine(Path.GetDirectoryName(projectPath)!, "obj", "project.assets.json");
+
+        File.Exists(assetsPath).Should().BeTrue("restore must produce project.assets.json before architecture tests run");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(assetsPath));
+        var libraries = document.RootElement
+            .GetProperty("libraries")
+            .EnumerateObject()
+            .ToDictionary(
+                property => GetPackageId(property.Name),
+                property => property.Value,
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var packageId in packageIds)
+        {
+            var dependencyPath = FindSharpClawCoreDependencyPath(packageId, libraries);
+
+            dependencyPath.Should().BeNull(
+                $"{packageId} is module-facing and must rely on SharpClaw.Contracts, not SharpClaw.Core. Dependency path: {dependencyPath}");
+        }
+    }
+
+    [Test]
+    public void In_repo_module_projects_must_not_reference_sharpclaw_core()
+    {
+        var solutionPath = FindFileFromTestAssembly(".", "SharpClaw.slnx");
+        var solutionRoot = Path.GetDirectoryName(solutionPath)!;
+        var solution = XDocument.Load(solutionPath);
+        var moduleProjectPaths = solution.Descendants("Project")
+            .Select(project => (string?)project.Attribute("Path"))
+            .Where(path => path is not null
+                && path.Contains("SharpClaw.Modules.", StringComparison.OrdinalIgnoreCase))
+            .Select(path => Path.Combine(solutionRoot, path!))
+            .ToList();
+
+        moduleProjectPaths.Should().NotBeEmpty("the in-repo TestHarness modules are module payload fixtures");
+
+        foreach (var projectPath in moduleProjectPaths)
+        {
+            var project = XDocument.Load(projectPath);
+            var sharpClawCorePackageReferences = project.Descendants("PackageReference")
+                .Where(reference => string.Equals(
+                    (string?)reference.Attribute("Include"),
+                    "SharpClaw.Core",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var sharpClawCoreProjectReferences = project.Descendants("ProjectReference")
+                .Where(reference => (((string?)reference.Attribute("Include")) ?? "")
+                    .Contains("SharpClaw.Core", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            sharpClawCorePackageReferences.Should().BeEmpty($"{projectPath} must use SharpClaw.Contracts instead of SharpClaw.Core");
+            sharpClawCoreProjectReferences.Should().BeEmpty($"{projectPath} must not project-reference SharpClaw.Core");
+        }
+    }
+
     private static string FindFileFromTestAssembly(string projectDirectory, string fileName)
     {
         var directory = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
@@ -194,6 +256,59 @@ public class ModuleDependencyGuardrailTests
                 && id.StartsWith("SharpClaw.Modules.", StringComparison.Ordinal))
             .Select(id => id!)
             .OrderBy(id => id, StringComparer.Ordinal);
+    }
+
+    private static IEnumerable<string> GetModuleFacingPackageIds(XDocument project)
+    {
+        return project.Descendants("PackageReference")
+            .Select(reference => (string?)reference.Attribute("Include"))
+            .Where(id => id is not null
+                && (id.StartsWith("SharpClaw.Modules.", StringComparison.Ordinal)
+                    || string.Equals(id, "SharpClaw.ModuleHost.OutOfProcess", StringComparison.Ordinal)))
+            .Select(id => id!)
+            .OrderBy(id => id, StringComparer.Ordinal);
+    }
+
+    private static string? FindSharpClawCoreDependencyPath(
+        string rootPackageId,
+        IReadOnlyDictionary<string, JsonElement> libraries)
+    {
+        var queue = new Queue<(string PackageId, string Path)>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        queue.Enqueue((rootPackageId, rootPackageId));
+
+        while (queue.Count > 0)
+        {
+            var (packageId, path) = queue.Dequeue();
+            if (!visited.Add(packageId))
+            {
+                continue;
+            }
+
+            if (string.Equals(packageId, "SharpClaw.Core", StringComparison.OrdinalIgnoreCase))
+            {
+                return path;
+            }
+
+            if (!libraries.TryGetValue(packageId, out var library)
+                || !library.TryGetProperty("dependencies", out var dependencies))
+            {
+                continue;
+            }
+
+            foreach (var dependency in dependencies.EnumerateObject())
+            {
+                queue.Enqueue((dependency.Name, path + " -> " + dependency.Name));
+            }
+        }
+
+        return null;
+    }
+
+    private static string GetPackageId(string libraryKey)
+    {
+        var slashIndex = libraryKey.IndexOf('/');
+        return slashIndex < 0 ? libraryKey : libraryKey[..slashIndex];
     }
 
     private static void AssertPlaceholderOnly(JsonElement assets, string packageId, string assetKind)

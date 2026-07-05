@@ -88,7 +88,7 @@ internal sealed class ForeignModuleProtocolClient
                 manifest.Id,
                 toolName,
                 parameters,
-                ForeignModuleAgentJobContext.From(job)),
+                ForeignModuleProtocolModelMapper.ToForeignModuleAgentJobContext(job)),
             ct);
 
     public Task<ForeignModuleToolCompletionBehaviorResponse> GetToolCompletionBehaviorAsync(
@@ -104,7 +104,7 @@ internal sealed class ForeignModuleProtocolClient
                 manifest.Id,
                 toolName,
                 parameters,
-                ForeignModuleAgentJobContext.From(job)),
+                ForeignModuleProtocolModelMapper.ToForeignModuleAgentJobContext(job)),
             ct);
 
     public Task<ForeignModuleToolExecutionResponse> ExecuteInlineToolAsync(
@@ -120,7 +120,7 @@ internal sealed class ForeignModuleProtocolClient
                 manifest.Id,
                 toolName,
                 parameters,
-                ForeignModuleInlineToolContext.From(context)),
+                ForeignModuleProtocolModelMapper.ToForeignModuleInlineToolContext(context)),
             ct);
 
     public Task<ForeignModuleProtocolContractInvocationResponse> InvokeProtocolContractAsync(
@@ -663,7 +663,7 @@ internal sealed class ForeignModuleProtocolClient
                     manifest.Id,
                     toolName,
                     parameters,
-                    ForeignModuleAgentJobContext.From(job)),
+                    ForeignModuleProtocolModelMapper.ToForeignModuleAgentJobContext(job)),
                 JsonOptions),
             Encoding.UTF8,
             "application/json");

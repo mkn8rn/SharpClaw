@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Modules.Sidecar;
 
 namespace SharpClaw.Tests.Core;
@@ -7,16 +8,16 @@ namespace SharpClaw.Tests.Core;
 public sealed class ModuleRuntimeProtocolCoreTests
 {
     [Test]
-    public void ForeignModuleProtocolSurface_ComesFromCoreAssembly()
+    public void ForeignModuleProtocolSurface_ComesFromContractsAssembly()
     {
         typeof(ForeignModuleProtocol).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleHostCapabilityProtocol).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleEndpointResponseMode).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleCapability).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
 
         ForeignModuleProtocol.Version.Should().Be(1);
         ForeignModuleProtocol.HandshakePath.Should().Be("/.sharpclaw/handshake");
@@ -27,21 +28,23 @@ public sealed class ModuleRuntimeProtocolCoreTests
     }
 
     [Test]
-    public void ForeignModuleSidecarProtocolModels_ComeFromCoreAndUsePackageContracts()
+    public void ForeignModuleSidecarProtocolModels_ComeFromContractsAndUseCoreMappers()
     {
         typeof(ForeignModuleHandshakeRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleDiscoveryResponse).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleToolDescriptor).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleProtocolContractInvocationRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleTaskTriggerAttributeHandleRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleProviderChatCompletionRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleProviderPluginDescriptor).Assembly.GetName().Name
+            .Should().Be("SharpClaw.Contracts");
+        typeof(ForeignModuleProtocolModelMapper).Assembly.GetName().Name
             .Should().Be("SharpClaw.Core");
 
         typeof(SharpClaw.Contracts.Modules.ModuleManifest).Assembly.GetName().Name
@@ -71,7 +74,7 @@ public sealed class ModuleRuntimeProtocolCoreTests
     }
 
     [Test]
-    public void ModuleManifestRuntimeInfo_ParsesAndNormalizesInCore()
+    public void ModuleManifestRuntimeInfo_ParsesAndNormalizesInContracts()
     {
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(
             """
@@ -84,7 +87,7 @@ public sealed class ModuleRuntimeProtocolCoreTests
             """);
 
         typeof(ModuleManifestRuntimeInfo).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         runtimeInfo.Runtime.Should().Be(ModuleManifestRuntimeInfo.DotNet);
         runtimeInfo.ModuleType.Should().Be("SharpClaw.Tests.FakeModule");
         runtimeInfo.HostMode.Should().Be(ModuleManifestRuntimeInfo.HostModeInProcess);
@@ -113,18 +116,18 @@ public sealed class ModuleRuntimeProtocolCoreTests
     }
 
     [Test]
-    public void ForeignModuleHostCapabilityDtos_ComeFromCoreAndUseContractsModuleInfo()
+    public void ForeignModuleHostCapabilityDtos_ComeFromContracts()
     {
         typeof(ForeignModuleConfigGetRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleTaskLaunchRequest).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleTaskStatementInvocationDescriptor).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleTaskOperationExecutionResponse).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(ForeignModuleInfoListResponse).Assembly.GetName().Name
-            .Should().Be("SharpClaw.Core");
+            .Should().Be("SharpClaw.Contracts");
         typeof(SharpClaw.Contracts.Modules.ModuleInfo).Assembly.GetName().Name
             .Should().Be("SharpClaw.Contracts");
 
