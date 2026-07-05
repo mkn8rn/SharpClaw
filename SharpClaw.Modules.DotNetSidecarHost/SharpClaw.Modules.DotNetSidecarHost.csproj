@@ -9,8 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="SharpClaw.Modules.Hosting" />
+    <PackageReference Include="SharpClaw.Providers.Common" />
     <ProjectReference Include="..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
-    <ProjectReference Include="..\SharpClaw.Providers.Common\SharpClaw.Providers.Common.csproj" />
   </ItemGroup>
 
 </Project>

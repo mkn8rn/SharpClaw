@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="..\build\PackagedEditorModulePayload.targets" />
+  <Import Project="..\build\PackagedModulePayload.targets" />
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -24,6 +24,8 @@
     <PackageReference Include="SharpClaw.Modules.EditorCommon" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
     <PackageReference Include="SharpClaw.Modules.VS2026Editor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
     <PackageReference Include="SharpClaw.Modules.VSCodeEditor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.OpenAICompatible" GeneratePathProperty="true" />
+    <PackageReference Include="SharpClaw.Providers.Common" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,10 +35,8 @@
     <ProjectReference Include="..\SharpClaw.Application.Infrastructure\SharpClaw.Application.Infrastructure.csproj" />
     <ProjectReference Include="..\SharpClaw.Gateway\SharpClaw.Gateway.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
-    <ProjectReference Include="..\SharpClaw.Providers.Common\SharpClaw.Providers.Common.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\Anthropic\SharpClaw.Modules.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\Google\SharpClaw.Modules.Providers.Google.csproj" />
-    <ProjectReference Include="..\DefaultModules\Providers\OpenAICompatible\SharpClaw.Modules.Providers.OpenAICompatible.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\LlamaSharp\SharpClaw.Modules.Providers.LlamaSharp.csproj" />
     <ProjectReference Include="..\DefaultModules\Providers\Ollama\SharpClaw.Modules.Providers.Ollama.csproj" />
     <ProjectReference Include="..\DefaultModules\AgentOrchestration\SharpClaw.Modules.AgentOrchestration.csproj" />
@@ -48,16 +48,16 @@
     <ProjectReference Include="..\SharpClaw.Modules.DotNetSidecarHost\SharpClaw.Modules.DotNetSidecarHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <Target Name="CopyPackagedEditorModulesToTestOutput"
+  <Target Name="CopyPackagedModulesToTestOutput"
           AfterTargets="Build"
-          DependsOnTargets="_ResolvePackagedEditorModulePayloadFiles">
-    <Copy SourceFiles="@(_PackagedEditorPayloadDll)"
+          DependsOnTargets="_ResolvePackagedModulePayloadFiles">
+    <Copy SourceFiles="@(_PackagedModulePayloadDll)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true"
-          Condition="'@(_PackagedEditorPayloadDll)' != ''" />
-    <Copy SourceFiles="@(_PackagedEditorModuleManifest)"
-          DestinationFiles="@(_PackagedEditorModuleManifest->'$(OutDir)modules\%(ModuleId)\module.json')"
+          Condition="'@(_PackagedModulePayloadDll)' != ''" />
+    <Copy SourceFiles="@(_PackagedModuleManifest)"
+          DestinationFiles="@(_PackagedModuleManifest->'$(OutDir)modules\%(ModuleId)\module.json')"
           SkipUnchangedFiles="true"
-          Condition="'@(_PackagedEditorModuleManifest)' != ''" />
+          Condition="'@(_PackagedModuleManifest)' != ''" />
   </Target>
 </Project>

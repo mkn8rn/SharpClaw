@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="..\build\PackagedEditorModulePayload.targets" />
+  <Import Project="..\build\PackagedModulePayload.targets" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -31,7 +31,8 @@
     <PackageReference Include="SharpClaw.Modules.EditorCommon" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
     <PackageReference Include="SharpClaw.Modules.VS2026Editor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
     <PackageReference Include="SharpClaw.Modules.VSCodeEditor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <ProjectReference Include="..\SharpClaw.Providers.Common\SharpClaw.Providers.Common.csproj" />
+    <PackageReference Include="SharpClaw.Modules.Providers.OpenAICompatible" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Providers.Common" />
     <ProjectReference Include="..\SharpClaw.Application.Infrastructure\SharpClaw.Application.Infrastructure.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
     <ProjectReference Include="..\SharpClaw.Migrations.Postgres\SharpClaw.Migrations.Postgres.csproj" />
@@ -82,9 +83,6 @@
     <ProjectReference Include="..\DefaultModules\Providers\Ollama\SharpClaw.Modules.Providers.Ollama.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\DefaultModules\Providers\OpenAICompatible\SharpClaw.Modules.Providers.OpenAICompatible.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-    </ProjectReference>
     <ProjectReference Include="..\DefaultModules\TestHarness\SharpClaw.Modules.TestHarness.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
@@ -106,7 +104,7 @@
     (DefaultModules\Foo\) and nested (DefaultModules\Providers\Foo\) module layouts are matched.
   -->
   <Target Name="_ResolveBundledModuleOutputFiles"
-          DependsOnTargets="_ResolvePackagedEditorModulePayloadFiles">
+          DependsOnTargets="_ResolvePackagedModulePayloadFiles">
     <ItemGroup>
       <_BundledModuleOutputFile Remove="@(_BundledModuleOutputFile)" />
       <_BundledModuleDll Include="$(MSBuildProjectDirectory)\..\DefaultModules\*\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.*.dll" />
@@ -119,7 +117,7 @@
       <_DotNetSidecarHostFile Include="$(MSBuildProjectDirectory)\..\SharpClaw.Modules.DotNetSidecarHost\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DotNetSidecarHost"
                               Condition="Exists('$(MSBuildProjectDirectory)\..\SharpClaw.Modules.DotNetSidecarHost\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DotNetSidecarHost')" />
       <_DotNetSidecarHostFile Include="$(MSBuildProjectDirectory)\..\SharpClaw.Modules.DotNetSidecarHost\bin\$(Configuration)\$(TargetFramework)\SharpClaw.Modules.DotNetSidecarHost.*" />
-      <_BundledModuleOutputFile Include="@(_BundledModuleDll);@(_NonHostDll);@(_BundledHostDll);@(_DotNetSidecarHostFile);@(_PackagedEditorPayloadDll)" />
+      <_BundledModuleOutputFile Include="@(_BundledModuleDll);@(_NonHostDll);@(_BundledHostDll);@(_DotNetSidecarHostFile);@(_PackagedModulePayloadDll)" />
     </ItemGroup>
   </Target>
 
@@ -127,20 +125,20 @@
           AfterTargets="Build"
           DependsOnTargets="_ResolveBundledModuleOutputFiles">
     <Copy SourceFiles="@(_BundledModuleOutputFile)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_PackagedEditorModuleManifest)"
-          DestinationFiles="@(_PackagedEditorModuleManifest->'$(OutputPath)modules\%(ModuleId)\module.json')"
+    <Copy SourceFiles="@(_PackagedModuleManifest)"
+          DestinationFiles="@(_PackagedModuleManifest->'$(OutputPath)modules\%(ModuleId)\module.json')"
           SkipUnchangedFiles="true"
-          Condition="'@(_PackagedEditorModuleManifest)' != ''" />
+          Condition="'@(_PackagedModuleManifest)' != ''" />
   </Target>
 
   <Target Name="CopyBundledModulesToPublish"
           AfterTargets="Publish"
           DependsOnTargets="_ResolveBundledModuleOutputFiles">
     <Copy SourceFiles="@(_BundledModuleOutputFile)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_PackagedEditorModuleManifest)"
-          DestinationFiles="@(_PackagedEditorModuleManifest->'$(PublishDir)modules\%(ModuleId)\module.json')"
+    <Copy SourceFiles="@(_PackagedModuleManifest)"
+          DestinationFiles="@(_PackagedModuleManifest->'$(PublishDir)modules\%(ModuleId)\module.json')"
           SkipUnchangedFiles="true"
-          Condition="'@(_PackagedEditorModuleManifest)' != ''" />
+          Condition="'@(_PackagedModuleManifest)' != ''" />
   </Target>
 
   <Target Name="CleanBundledModules" AfterTargets="Clean">

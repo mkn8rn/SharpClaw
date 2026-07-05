@@ -1,0 +1,48 @@
+<Project>
+  <Target Name="_ResolvePackagedModulePayloadFiles">
+    <ItemGroup>
+      <_PackagedModuleDll Remove="@(_PackagedModuleDll)" />
+      <_PackagedModuleDependencyDll Remove="@(_PackagedModuleDependencyDll)" />
+      <_PackagedModulePayloadDll Remove="@(_PackagedModulePayloadDll)" />
+      <_PackagedModuleManifest Remove="@(_PackagedModuleManifest)" />
+
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\SharpClaw.Modules.*.dll"
+                          Condition="'$(PkgSharpClaw_Modules_EditorCommon)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_VS2026Editor)\sharpclaw\SharpClaw.Modules.*.dll"
+                          Condition="'$(PkgSharpClaw_Modules_VS2026Editor)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\SharpClaw.Modules.*.dll"
+                          Condition="'$(PkgSharpClaw_Modules_VSCodeEditor)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.OpenAICompatible.dll"
+                          Condition="'$(PkgSharpClaw_Modules_Providers_OpenAICompatible)' != ''" />
+
+      <_PackagedModuleDependencyDll Include="$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\*.dll"
+                                    Exclude="$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\SharpClaw.*.dll"
+                                    Condition="'$(PkgSharpClaw_Modules_EditorCommon)' != ''" />
+      <_PackagedModuleDependencyDll Include="$(PkgSharpClaw_Modules_VS2026Editor)\sharpclaw\*.dll"
+                                    Exclude="$(PkgSharpClaw_Modules_VS2026Editor)\sharpclaw\SharpClaw.*.dll"
+                                    Condition="'$(PkgSharpClaw_Modules_VS2026Editor)' != ''" />
+      <_PackagedModuleDependencyDll Include="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\*.dll"
+                                    Exclude="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\SharpClaw.*.dll"
+                                    Condition="'$(PkgSharpClaw_Modules_VSCodeEditor)' != ''" />
+
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\module.json')">
+        <ModuleId>sharpclaw_editor_common</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_VS2026Editor)\sharpclaw\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_VS2026Editor)\sharpclaw\module.json')">
+        <ModuleId>sharpclaw_vs2026_editor</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\module.json')">
+        <ModuleId>sharpclaw_vscode_editor</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_openai_compat\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_openai_compat\module.json')">
+        <ModuleId>sharpclaw_providers_openai_compat</ModuleId>
+      </_PackagedModuleManifest>
+
+      <_PackagedModulePayloadDll Include="@(_PackagedModuleDll);@(_PackagedModuleDependencyDll)" />
+    </ItemGroup>
+  </Target>
+</Project>

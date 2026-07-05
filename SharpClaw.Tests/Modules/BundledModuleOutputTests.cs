@@ -20,13 +20,15 @@ public class BundledModuleOutputTests
             string runtime,
             string hostMode,
             string entryAssembly,
-            string manifestPath)
+            string manifestPath,
+            string? packageEntryAssemblyPath = null)
         {
             Id = id;
             Runtime = runtime;
             HostMode = hostMode;
             EntryAssembly = entryAssembly;
             ManifestPath = manifestPath;
+            PackageEntryAssemblyPath = packageEntryAssemblyPath;
         }
 
         public string Id { get; }
@@ -38,6 +40,8 @@ public class BundledModuleOutputTests
         public string EntryAssembly { get; }
 
         public string ManifestPath { get; }
+
+        public string? PackageEntryAssemblyPath { get; }
     }
 
     private static IEnumerable<string> ExpectedModuleDlls()
@@ -166,43 +170,78 @@ public class BundledModuleOutputTests
             .Where(path => !IsBuildOutputPath(path))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .Select(ReadBundledModuleExpectation);
-        var packagedEditorModules = ReadPackagedEditorModuleExpectations();
+        var packagedModules = ReadPackagedModuleExpectations();
 
         return sourceModules
-            .Concat(packagedEditorModules)
+            .Concat(packagedModules)
             .OrderBy(module => module.Id, StringComparer.Ordinal)
             .ToArray();
     }
 
     [Test]
-    public void PackagedEditorModulePayloadsArePresentInNuGetCache()
+    public void PackagedModulePayloadsArePresentInNuGetCache()
     {
-        foreach (var module in ReadPackagedEditorModuleExpectations())
+        foreach (var module in ReadPackagedModuleExpectations())
         {
             File.Exists(module.ManifestPath).Should().BeTrue(
-                $"packaged editor module '{module.Id}' must expose sharpclaw/module.json");
-            File.Exists(Path.Combine(Path.GetDirectoryName(module.ManifestPath)!, module.EntryAssembly))
+                $"packaged module '{module.Id}' must expose a module manifest at '{module.ManifestPath}'");
+            File.Exists(module.PackageEntryAssemblyPath)
                 .Should()
-                .BeTrue($"packaged editor module '{module.Id}' must expose its entry assembly beside module.json");
+                .BeTrue($"packaged module '{module.Id}' must expose its entry assembly at '{module.PackageEntryAssemblyPath}'");
         }
     }
 
-    private static IReadOnlyList<BundledModuleExpectation> ReadPackagedEditorModuleExpectations()
+    private static IReadOnlyList<BundledModuleExpectation> ReadPackagedModuleExpectations()
     {
-        var packageIds = new[]
+        var packages = new[]
         {
-            "SharpClaw.Modules.EditorCommon",
-            "SharpClaw.Modules.VS2026Editor",
-            "SharpClaw.Modules.VSCodeEditor",
+            (
+                PackageId: "SharpClaw.Modules.EditorCommon",
+                ManifestPath: Path.Combine("sharpclaw", "module.json"),
+                EntryAssemblyDirectory: "sharpclaw"),
+            (
+                PackageId: "SharpClaw.Modules.VS2026Editor",
+                ManifestPath: Path.Combine("sharpclaw", "module.json"),
+                EntryAssemblyDirectory: "sharpclaw"),
+            (
+                PackageId: "SharpClaw.Modules.VSCodeEditor",
+                ManifestPath: Path.Combine("sharpclaw", "module.json"),
+                EntryAssemblyDirectory: "sharpclaw"),
+            (
+                PackageId: "SharpClaw.Modules.Providers.OpenAICompatible",
+                ManifestPath: Path.Combine(
+                    "contentFiles",
+                    "any",
+                    "net10.0",
+                    "modules",
+                    "sharpclaw_providers_openai_compat",
+                    "module.json"),
+                EntryAssemblyDirectory: Path.Combine("lib", "net10.0")),
         };
 
-        return packageIds
-            .Select(packageId => ReadBundledModuleExpectation(
-                Path.Combine(
-                    ResolveNuGetPackageRoot(packageId),
-                    "sharpclaw",
-                    "module.json")))
+        return packages
+            .Select(packageInfo => ReadPackagedModuleExpectation(
+                packageInfo.PackageId,
+                packageInfo.ManifestPath,
+                packageInfo.EntryAssemblyDirectory))
             .ToArray();
+    }
+
+    private static BundledModuleExpectation ReadPackagedModuleExpectation(
+        string packageId,
+        string manifestRelativePath,
+        string entryAssemblyDirectory)
+    {
+        var packageRoot = ResolveNuGetPackageRoot(packageId);
+        var expectation = ReadBundledModuleExpectation(Path.Combine(packageRoot, manifestRelativePath));
+
+        return new BundledModuleExpectation(
+            expectation.Id,
+            expectation.Runtime,
+            expectation.HostMode,
+            expectation.EntryAssembly,
+            expectation.ManifestPath,
+            Path.Combine(packageRoot, entryAssemblyDirectory, expectation.EntryAssembly));
     }
 
     private static string ResolveNuGetPackageRoot(string packageId)

@@ -18,7 +18,7 @@
   <ItemGroup>
     <PackageReference Include="SharpClaw.Contracts" />
     <ProjectReference Include="..\..\..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
-    <ProjectReference Include="..\..\..\SharpClaw.Providers.Common\SharpClaw.Providers.Common.csproj" />
+    <PackageReference Include="SharpClaw.Providers.Common" />
     <ProjectReference Include="..\..\..\SharpClaw.Providers.LocalCommon\SharpClaw.Providers.LocalCommon.csproj" />
   </ItemGroup>
 
