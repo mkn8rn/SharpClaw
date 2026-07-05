@@ -179,9 +179,12 @@ public class BundledModuleOutputTests
     private static IReadOnlyList<BundledModuleExpectation> ReadBundledModuleExpectations()
     {
         var solutionRoot = ResolveSolutionRoot();
-        var testHarnessManifest = Path.Combine(solutionRoot, "SharpClaw.Modules.TestHarness", "module.json");
+        var testHarnessManifests = new[]
+        {
+            Path.Combine(solutionRoot, "SharpClaw.Modules.TestHarness.OutOfProcess", "module.json"),
+        };
 
-        var sourceModules = new[] { testHarnessManifest }
+        var sourceModules = testHarnessManifests
             .Where(path => File.Exists(path) && !IsBuildOutputPath(path))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .Select(ReadBundledModuleExpectation);
@@ -204,6 +207,28 @@ public class BundledModuleOutputTests
                 .Should()
                 .BeTrue($"packaged module '{module.Id}' must expose its entry assembly at '{module.PackageEntryAssemblyPath}'");
         }
+    }
+
+    [Test]
+    public void InProcessTestHarnessPayloadIsBuiltAsSeparateModule()
+    {
+        var solutionRoot = ResolveSolutionRoot();
+        var config = ResolveConfiguration();
+        var testBinDir = ResolveTestOutputDirectory();
+        var tfm = new DirectoryInfo(testBinDir).Name;
+        var outputDir = Path.Combine(
+            solutionRoot,
+            "SharpClaw.Modules.TestHarness.InProcess",
+            "bin",
+            config,
+            tfm);
+
+        File.Exists(Path.Combine(outputDir, "SharpClaw.Modules.TestHarness.InProcess.dll"))
+            .Should()
+            .BeTrue("the in-process harness module project must build its own payload assembly");
+        File.Exists(Path.Combine(outputDir, "modules", "sharpclaw_test_harness_in_process", "module.json"))
+            .Should()
+            .BeTrue("the in-process harness module project must produce its own module manifest");
     }
 
     private static IReadOnlyList<BundledModuleExpectation> ReadPackagedModuleExpectations()

@@ -23,7 +23,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Runtime.INF.Persistence;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;

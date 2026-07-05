@@ -8,12 +8,53 @@ using SharpClaw.Contracts.Providers;
 
 namespace SharpClaw.Modules.TestHarness;
 
-public sealed class TestHarnessModule : ISharpClawRuntimeModule
+#if TEST_HARNESS_OUT_OF_PROCESS
+public sealed class TestHarnessOutOfProcessModule()
+    : TestHarnessModuleBase(TestHarnessConstants.OutOfProcessModuleId, "Test Harness Out Of Process")
 {
+    public override IAsyncEnumerable<string>? ExecuteToolStreamingAsync(
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job,
+        IServiceProvider scopedServices,
+        CancellationToken ct) =>
+        base.ExecuteToolStreamingAsync(toolName, parameters, job, scopedServices, ct);
+
+    public override ModuleJobCompletionBehavior GetJobCompletionBehavior(
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job) =>
+        base.GetJobCompletionBehavior(toolName, parameters, job);
+}
+#endif
+
+#if TEST_HARNESS_IN_PROCESS
+public sealed class TestHarnessInProcessModule()
+    : TestHarnessModuleBase(TestHarnessConstants.InProcessModuleId, "Test Harness In Process")
+{
+    public override IAsyncEnumerable<string>? ExecuteToolStreamingAsync(
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job,
+        IServiceProvider scopedServices,
+        CancellationToken ct) =>
+        base.ExecuteToolStreamingAsync(toolName, parameters, job, scopedServices, ct);
+
+    public override ModuleJobCompletionBehavior GetJobCompletionBehavior(
+        string toolName,
+        JsonElement parameters,
+        AgentJobContext job) =>
+        base.GetJobCompletionBehavior(toolName, parameters, job);
+}
+#endif
+
+public abstract class TestHarnessModuleBase(string moduleId, string displayName) : ISharpClawRuntimeModule
+{
+    private static readonly JsonSerializerOptions TestHarnessJsonOptions = new(JsonSerializerDefaults.Web);
     private int _permissionDescriptorBuilds;
 
-    public string Id => TestHarnessConstants.ModuleId;
-    public string DisplayName => "Test Harness";
+    public string Id => moduleId;
+    public string DisplayName => displayName;
     public string ToolPrefix => TestHarnessConstants.ToolPrefix;
     public int PermissionDescriptorBuilds => Volatile.Read(ref _permissionDescriptorBuilds);
 
@@ -24,31 +65,37 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
     {
         services.AddSingleton<TestHarnessState>();
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.PlainProviderKey,
             "SharpClaw Test Harness",
             supportsNativeToolCalling: false,
             sp.GetRequiredService<TestHarnessState>()));
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.StreamingProviderKey,
             "SharpClaw Test Harness Streaming",
             supportsNativeToolCalling: true,
             sp.GetRequiredService<TestHarnessState>()));
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.ToolProviderKey,
             "SharpClaw Test Harness Tools",
             supportsNativeToolCalling: true,
             sp.GetRequiredService<TestHarnessState>()));
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.FailingProviderKey,
             "SharpClaw Test Harness Failure",
             supportsNativeToolCalling: true,
             sp.GetRequiredService<TestHarnessState>()));
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.CostProviderKey,
             "SharpClaw Test Harness Cost",
             supportsNativeToolCalling: true,
             sp.GetRequiredService<TestHarnessState>()));
         services.AddSingleton<IProviderPlugin>(sp => new TestHarnessProviderPlugin(
+            moduleId,
             TestHarnessConstants.EdenStyleProviderKey,
             "SharpClaw Test Harness EdenAI",
             supportsNativeToolCalling: true,
@@ -91,6 +138,16 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
             new(
                 TestHarnessConstants.InlineOpenTool,
                 "Deterministic open inline tool for host pipeline tests.",
+                EmptyObjectSchema()),
+
+            new(
+                TestHarnessConstants.ControlTool,
+                "Configure deterministic test harness behavior through the module boundary.",
+                EmptyObjectSchema()),
+
+            new(
+                TestHarnessConstants.SnapshotTool,
+                "Read deterministic test harness observations through the module boundary.",
                 EmptyObjectSchema()),
 
             new(
@@ -257,6 +314,12 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
         CancellationToken ct)
     {
         var state = scopedServices.GetRequiredService<TestHarnessState>();
+        if (toolName == TestHarnessConstants.ControlTool)
+            return ExecuteControl(state, parameters);
+
+        if (toolName == TestHarnessConstants.SnapshotTool)
+            return ExecuteSnapshot(state);
+
         var behavior = toolName switch
         {
             TestHarnessConstants.InlineOpenTool => state.OpenInlineToolBehavior,
@@ -275,6 +338,110 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
             context.ThreadId,
             jobId: null,
             ct);
+    }
+
+    private string ExecuteControl(TestHarnessState state, JsonElement parameters)
+    {
+        if (parameters.ValueKind != JsonValueKind.Object
+            || !parameters.TryGetProperty("action", out var actionElement)
+            || actionElement.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidOperationException("Test harness control requires an action.");
+        }
+
+        var action = actionElement.GetString();
+        switch (action)
+        {
+            case "reset":
+                state.Reset();
+                return "ok";
+
+            case "resetDiagnostics":
+                ResetDiagnostics();
+                return "ok";
+
+            case "configureProvider":
+                state.ConfigureProvider(
+                    ReadRequiredString(parameters, "providerKey"),
+                    DeserializeRequired<TestHarnessProviderScenario>(parameters, "scenario"));
+                return "ok";
+
+            case "configureTool":
+                ConfigureTool(
+                    state,
+                    ReadRequiredString(parameters, "target"),
+                    DeserializeRequired<TestHarnessToolBehavior>(parameters, "behavior"));
+                return "ok";
+
+            case "configureHeaderTag":
+                state.ConfigureHeaderTag(DeserializeRequired<TestHarnessHeaderTagBehavior>(parameters, "behavior"));
+                return "ok";
+
+            case "configureCost":
+                state.ConfigureCost(DeserializeRequired<TestHarnessCostBehavior>(parameters, "behavior"));
+                return "ok";
+
+            default:
+                throw new InvalidOperationException($"Unknown test harness control action: '{action}'.");
+        }
+    }
+
+    private string ExecuteSnapshot(TestHarnessState state) =>
+        JsonSerializer.Serialize(
+            new
+            {
+                state.ProviderRequests,
+                state.ProviderTimings,
+                state.ToolCalls,
+                state.HeaderTagCalls,
+                state.CostCalls,
+                PermissionDescriptorBuilds,
+            },
+            TestHarnessJsonOptions);
+
+    private static void ConfigureTool(
+        TestHarnessState state,
+        string target,
+        TestHarnessToolBehavior behavior)
+    {
+        switch (target)
+        {
+            case "openInline":
+                state.ConfigureOpenInlineTool(behavior);
+                break;
+
+            case "permissionedInline":
+                state.ConfigurePermissionedInlineTool(behavior);
+                break;
+
+            case "permissionedJob":
+                state.ConfigurePermissionedJobTool(behavior);
+                break;
+
+            case "streamingJob":
+                state.ConfigureStreamingJobTool(behavior);
+                break;
+
+            default:
+                throw new InvalidOperationException($"Unknown test harness tool target: '{target}'.");
+        }
+    }
+
+    private static string ReadRequiredString(JsonElement parameters, string propertyName)
+    {
+        if (!parameters.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.String)
+            throw new InvalidOperationException($"Test harness control requires string property '{propertyName}'.");
+
+        return value.GetString() ?? "";
+    }
+
+    private static T DeserializeRequired<T>(JsonElement parameters, string propertyName)
+    {
+        if (!parameters.TryGetProperty(propertyName, out var value))
+            throw new InvalidOperationException($"Test harness control requires property '{propertyName}'.");
+
+        return value.Deserialize<T>(TestHarnessJsonOptions)
+            ?? throw new InvalidOperationException($"Test harness control property '{propertyName}' was null.");
     }
 
     public async Task<string> ExecuteToolAsync(
@@ -306,7 +473,7 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
             ct);
     }
 
-    public IAsyncEnumerable<string>? ExecuteToolStreamingAsync(
+    public virtual IAsyncEnumerable<string>? ExecuteToolStreamingAsync(
         string toolName,
         JsonElement parameters,
         AgentJobContext job,
@@ -319,7 +486,7 @@ public sealed class TestHarnessModule : ISharpClawRuntimeModule
         return StreamToolAsync(toolName, parameters, job, scopedServices, ct);
     }
 
-    public ModuleJobCompletionBehavior GetJobCompletionBehavior(
+    public virtual ModuleJobCompletionBehavior GetJobCompletionBehavior(
         string toolName,
         JsonElement parameters,
         AgentJobContext job)

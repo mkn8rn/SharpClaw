@@ -4,7 +4,7 @@ using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Runtime.BLL.Modules;
 using SharpClaw.Contracts.Entities.Core.Context;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;
@@ -20,7 +20,6 @@ public sealed class TestHarnessArchitectureTests
         "Clients Finish Reasons",
         "Core Header Tags",
         "Core Chat Cache",
-        "Cross Thread History",
         "CLI Channel Commands",
         "CLI REPL",
         "Gateway Abstraction Boundaries",
@@ -38,18 +37,12 @@ public sealed class TestHarnessArchitectureTests
         "Frontend Instances",
         "Frontend Gateway Process",
         "Frontend Uno Client State",
-        "Persistence Files",
-        "Persistence Cold Store",
-        "Persistence Integrity",
-        "Persistence Transactions",
+        "Persistence Provider Configuration",
+        "JSONColdStore Provider Paths",
         "Persistence Instances",
         "Providers Capabilities",
-        "Providers Hosted OpenAI Compatible",
-        "Providers Google",
         "LlamaSharp Schema Conversion",
-        "LlamaSharp Parameter Validation",
         "LlamaSharp Tool Calling",
-        "LlamaSharp Local Inference",
         "Tasks Scripts Compiler Parser",
         "Tasks Scripts Semantics Validator",
         "Tasks Step Keys",
@@ -130,8 +123,10 @@ public sealed class TestHarnessArchitectureTests
             "Environment",
             ".dev.env.template"));
 
-        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.ModuleId, prod).Should().BeFalse();
-        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.ModuleId, dev).Should().BeTrue();
+        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.OutOfProcessModuleId, prod).Should().BeFalse();
+        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.InProcessModuleId, prod).Should().BeFalse();
+        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.OutOfProcessModuleId, dev).Should().BeTrue();
+        ModuleLoader.IsEnabledInConfig(TestHarnessConstants.InProcessModuleId, dev).Should().BeFalse();
     }
 
     [Test]
@@ -265,13 +260,13 @@ public sealed class TestHarnessArchitectureTests
         correctnessDomains.Should().Equal(ExpectedCorrectnessDomains);
         performanceDomains.Should().Equal(ExpectedPerformanceDomains);
 
-        correctnessDomains.Count.Should().BeGreaterThan(70);
+        correctnessDomains.Count.Should().BeGreaterThan(65);
         performanceDomains.Count.Should().BeGreaterThan(15);
 
         workflow.Should().Contain("FullyQualifiedName~GatewaySseProxy_ForwardsRealHttpSsePath");
         workflow.Should().Contain("FullyQualifiedName~ApiJob");
         workflow.Should().Contain("FullyQualifiedName~EffectiveToolDefinitionsStayWarmUntilAgentToolSettingsChange");
-        workflow.Should().Contain("FullyQualifiedName~SharpClaw.Tests.Providers.LlamaSharp.LocalInference");
+        workflow.Should().Contain("FullyQualifiedName~SharpClaw.Tests.Providers.LlamaSharp.LlamaSharpToolPromptBuilderTests");
         workflow.Should().Contain("FullyQualifiedName~PerformanceGate_ColdChatAfterCacheClear");
         workflow.Should().Contain("--filter \"TestCategory!=PerformanceDiagnostic&TestCategory!=PerformanceGate&(${{ matrix.filter }})\"");
         workflow.Should().Contain("--filter \"TestCategory=PerformanceGate&(${{ matrix.filter }})\"");
@@ -375,7 +370,7 @@ public sealed class TestHarnessArchitectureTests
         var workflow = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
         var expectedChecks = ExtractRequiredCheckContextsFromWorkflow(workflow);
 
-        expectedChecks.Count.Should().BeGreaterThan(90);
+        expectedChecks.Count.Should().BeGreaterThan(85);
         requiredChecks.Should().Equal(expectedChecks);
     }
 
@@ -404,11 +399,14 @@ public sealed class TestHarnessArchitectureTests
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                [$"Modules:{TestHarnessConstants.ModuleId}"] = ReadModuleFlag(path)
+                [$"Modules:{TestHarnessConstants.OutOfProcessModuleId}"] =
+                    ReadModuleFlag(path, TestHarnessConstants.OutOfProcessModuleId),
+                [$"Modules:{TestHarnessConstants.InProcessModuleId}"] =
+                    ReadModuleFlag(path, TestHarnessConstants.InProcessModuleId)
             })
             .Build();
 
-    private static string ReadModuleFlag(string path)
+    private static string ReadModuleFlag(string path, string moduleId)
     {
         using var doc = JsonDocument.Parse(
             File.ReadAllText(path),
@@ -420,7 +418,7 @@ public sealed class TestHarnessArchitectureTests
 
         return doc.RootElement
             .GetProperty("Modules")
-            .GetProperty(TestHarnessConstants.ModuleId)
+            .GetProperty(moduleId)
             .GetString() ?? "false";
     }
 

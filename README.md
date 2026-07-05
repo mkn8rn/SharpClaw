@@ -131,7 +131,7 @@ meeting preparation, and status reporting.
 | `SharpClaw.Gateway` | Optional public proxy with endpoint toggles, queueing, rate limiting, and module-contributed routes. |
 | `SharpClaw.Client.Uno` | Modular desktop frontend that can host module-provided UI hooks and manage local processes. |
 | Packaged modules | Providers, editor bridges, agent orchestration, metrics, and module development tools restored from NuGet package payloads. |
-| `SharpClaw.Modules.TestHarness` | The only in-repo module source, kept deliberately as test infrastructure. |
+| `SharpClaw.Modules.TestHarness.OutOfProcess` and `SharpClaw.Modules.TestHarness.InProcess` | The only in-repo module sources, kept deliberately as test infrastructure for the two module host modes. |
 
 The currently bundled modules are intentionally focused: Anthropic, Google,
 LlamaSharp, Ollama, OpenAI-compatible providers, Visual Studio 2026, VS Code,

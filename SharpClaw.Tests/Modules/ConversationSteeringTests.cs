@@ -9,7 +9,6 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Conversation;
 using SharpClaw.Core.Threads;
-using SharpClaw.Modules.TestHarness;
 using SharpClaw.Tests.TestHarness;
 
 namespace SharpClaw.Tests.Modules;

@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Text.Json;
 using FluentAssertions;
 using JSONColdStore;
 using Microsoft.EntityFrameworkCore;
@@ -34,7 +35,6 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Runtime.INF.Persistence.Modules;
-using SharpClaw.Modules.TestHarness;
 using SharpClaw.Utils.Instances;
 using SharpClaw.Core.Modules;
 
@@ -54,14 +54,15 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         _root = root;
         _scope = scope;
         _instanceRoot = instanceRoot;
+        Harness = new TestHarnessControl(this);
     }
 
     public IServiceProvider RootServices => _root;
     public IServiceProvider Services => _scope.ServiceProvider;
     public SharpClawDbContext Db => Services.GetRequiredService<SharpClawDbContext>();
     public ChatService Chat => Services.GetRequiredService<ChatService>();
-    public TestHarnessState Harness => _root.GetRequiredService<TestHarnessState>();
-    public TestHarnessModule Module => (TestHarnessModule)Services
+    public TestHarnessControl Harness { get; }
+    public ISharpClawCoreModule Module => Services
         .GetRequiredService<ModuleRegistry>()
         .GetModule(TestHarnessConstants.ModuleId)!;
     public CountingPersistenceEntityResolver PersistenceCounter =>
@@ -72,9 +73,10 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         IReadOnlyDictionary<string, string?>? settings = null,
         bool useJsonColdStoreDatabase = false)
     {
-        var module = new TestHarnessModule();
+        var mergedSettings = new Dictionary<string, string?>(settings ?? new Dictionary<string, string?>());
+        mergedSettings[$"Modules:{TestHarnessConstants.ModuleId}"] = "true";
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(settings ?? new Dictionary<string, string?>())
+            .AddInMemoryCollection(mergedSettings)
             .Build();
         var instanceRoot = Path.Combine(
             TestContext.CurrentContext.WorkDirectory,
@@ -121,7 +123,7 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
                     databaseRoot);
             }
         });
-        services.AddSingleton(new ModuleLoader(module));
+        services.AddSingleton(ModuleLoader.DiscoverBundled(configuration));
         services.AddSingleton<ModuleRegistry>();
         services.AddSingleton<ModuleToolExecutionPlanner>();
         services.AddSingleton<ModuleToolPermissionPlanner>();
@@ -248,9 +250,8 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddSingleton<ISharpClawEventSinkRegistry>(
             sp => sp.GetRequiredService<ModuleEventDispatcher>());
 
-        module.ConfigureServices(services);
-
         var root = services.BuildServiceProvider();
+        root.GetRequiredService<ModuleLoader>().SetRootServices(root);
         if (useJsonColdStoreDatabase)
         {
             using var initScope = root.CreateScope();
@@ -258,10 +259,35 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
             db.Database.EnsureCreated();
         }
 
-        var registry = root.GetRequiredService<ModuleRegistry>();
-        registry.Register(module);
+        using (var enableScope = root.CreateScope())
+        {
+            enableScope.ServiceProvider
+                .GetRequiredService<ModuleService>()
+                .EnableAsync(TestHarnessConstants.ModuleId, root, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
 
         return new ChatHarnessHost(root, root.CreateAsyncScope(), instanceRoot);
+    }
+
+    public string ExecuteHarnessInlineTool(string toolName, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var document = JsonDocument.Parse(json);
+        var moduleServices = Services
+            .GetRequiredService<ModuleRegistry>()
+            .GetRuntimeHost(TestHarnessConstants.ModuleId)
+            ?.Services
+            ?? Services;
+        return Module.ExecuteInlineToolAsync(
+                toolName,
+                document.RootElement,
+                new InlineToolContext(Guid.NewGuid(), Guid.NewGuid(), null, "test-harness-control"),
+                moduleServices,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
     }
 
     public async Task<SeededChat> SeedChatAsync(

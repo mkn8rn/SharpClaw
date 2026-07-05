@@ -19,17 +19,17 @@
   <ItemGroup>
     <PackageReference Include="SharpClaw.Contracts" />
     <PackageReference Include="SharpClaw.ModuleHost.InProcess" />
-    <PackageReference Include="SharpClaw.Modules.EditorCommon" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.VS2026Editor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.VSCodeEditor" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.AgentOrchestration" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Metrics" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.ModuleDev" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Providers.Anthropic" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Providers.Google" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Providers.LlamaSharp" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Providers.Ollama" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
-    <PackageReference Include="SharpClaw.Modules.Providers.OpenAICompatible" GeneratePathProperty="true" ExcludeAssets="compile;runtime" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.EditorCommon" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.VS2026Editor" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.VSCodeEditor" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.AgentOrchestration" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Metrics" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.ModuleDev" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.Anthropic" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.Google" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.LlamaSharp" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.Ollama" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
+    <PackageReference Include="SharpClaw.Modules.Providers.OpenAICompatible" GeneratePathProperty="true" ExcludeAssets="compile" PrivateAssets="all" />
     <ProjectReference Include="..\SharpClaw.Gateway.Abstractions\SharpClaw.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\SharpClaw.Utils\SharpClaw.Utils.csproj" />
   </ItemGroup>

@@ -20,7 +20,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Gateway.Controllers;
 using SharpClaw.Gateway.Infrastructure;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 using SharpClaw.Utils.Logging;
 
 namespace SharpClaw.Tests.TestHarness;

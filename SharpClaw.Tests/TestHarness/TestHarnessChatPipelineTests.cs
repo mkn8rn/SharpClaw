@@ -12,7 +12,7 @@ using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Entities.Core.Messages;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 
 namespace SharpClaw.Tests.TestHarness;
 

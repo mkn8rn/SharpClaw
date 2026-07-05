@@ -229,6 +229,7 @@ internal sealed class TestHarnessProviderClient(
 }
 
 internal sealed class TestHarnessProviderPlugin(
+    string ownerModuleId,
     string providerKey,
     string displayName,
     bool supportsNativeToolCalling,
@@ -238,7 +239,7 @@ internal sealed class TestHarnessProviderPlugin(
 
     public string ProviderKey => providerKey;
     public string DisplayName => displayName;
-    public string OwnerModuleId => TestHarnessConstants.ModuleId;
+    public string OwnerModuleId => ownerModuleId;
     public bool RequiresEndpoint => false;
     public bool RequiresApiKey => false;
     public IModelCapabilityResolver Capabilities => _capabilities;

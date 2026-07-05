@@ -5,7 +5,7 @@ using SharpClaw.Runtime.BLL.Modules;
 using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Providers;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.TestHarness;

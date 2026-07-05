@@ -4,9 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Runtime.BLL.Modules;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Modules;
-using SharpClaw.Modules.TestHarness;
-using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Tests.TestHarness;
+using SharpClaw.TestFixtures.ExternalModule;
 
 namespace SharpClaw.Tests.Modules;
 

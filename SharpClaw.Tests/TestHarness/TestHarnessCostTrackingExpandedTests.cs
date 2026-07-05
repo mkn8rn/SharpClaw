@@ -6,7 +6,7 @@ using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 
 namespace SharpClaw.Tests.TestHarness;
 

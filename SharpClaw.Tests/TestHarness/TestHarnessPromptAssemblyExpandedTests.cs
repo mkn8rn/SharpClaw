@@ -3,7 +3,7 @@ using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.DTOs.Agents;
 using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 
 namespace SharpClaw.Tests.TestHarness;
 

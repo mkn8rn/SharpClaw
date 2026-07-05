@@ -1,13 +1,14 @@
 using System.Text.Json;
-
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 
-namespace SharpClaw.Modules.TestHarness;
+namespace SharpClaw.Tests.TestHarness;
 
-public static class TestHarnessConstants
+internal static class TestHarnessConstants
 {
-    public const string ModuleId = "sharpclaw_test_harness";
+    public const string ModuleId = OutOfProcessModuleId;
+    public const string OutOfProcessModuleId = "sharpclaw_test_harness_out_of_process";
+    public const string InProcessModuleId = "sharpclaw_test_harness_in_process";
     public const string ToolPrefix = "th";
 
     public const string PlainProviderKey = "sharpclaw-test";
@@ -29,13 +30,15 @@ public static class TestHarnessConstants
     public const string InlineOpenTool = "test_harness_inline_open";
     public const string InlinePermissionedTool = "test_harness_inline_permissioned";
     public const string InlinePermissionedToolAlias = "test_harness_inline_permissioned_alias";
+    public const string ControlTool = "test_harness_control";
+    public const string SnapshotTool = "test_harness_snapshot";
     public const string JobPermissionedTool = "test_harness_job_permissioned";
     public const string JobPermissionedToolAlias = "test_harness_job_permissioned_alias";
     public const string JobResourceTool = "test_harness_job_resource";
     public const string JobStreamingTool = "test_harness_job_streaming";
 }
 
-public sealed record TestHarnessProviderScenario
+internal sealed record TestHarnessProviderScenario
 {
     public IReadOnlyList<string> ModelIds { get; init; } = [TestHarnessConstants.ModelId];
     public IReadOnlyList<TestHarnessProviderTurn> Turns { get; init; } = [new()];
@@ -47,7 +50,7 @@ public sealed record TestHarnessProviderScenario
         [new ProviderCostDailyBucket(DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddDays(1), 0.25m)]);
 }
 
-public sealed record TestHarnessProviderTurn
+internal sealed record TestHarnessProviderTurn
 {
     public string? Content { get; init; } = "test harness response";
     public IReadOnlyList<string>? StreamingChunks { get; init; }
@@ -73,7 +76,7 @@ public sealed record TestHarnessProviderTurn
     }
 }
 
-public sealed record TestHarnessToolBehavior
+internal sealed record TestHarnessToolBehavior
 {
     public string Result { get; init; } = "test harness tool result";
     public int LatencyMs { get; init; }
@@ -82,14 +85,14 @@ public sealed record TestHarnessToolBehavior
     public bool MalformedOutput { get; init; }
 }
 
-public sealed record TestHarnessHeaderTagBehavior
+internal sealed record TestHarnessHeaderTagBehavior
 {
     public string Value { get; init; } = "test harness header tag";
     public int LatencyMs { get; init; }
     public bool ThrowFailure { get; init; }
 }
 
-public sealed record TestHarnessCostBehavior
+internal sealed record TestHarnessCostBehavior
 {
     public ProviderCostResult? Result { get; init; } = new(
         0.25m,
@@ -99,7 +102,7 @@ public sealed record TestHarnessCostBehavior
     public bool PermissionDenied { get; init; }
 }
 
-public sealed record CapturedProviderRequest(
+internal sealed record CapturedProviderRequest(
     int Sequence,
     string ProviderKey,
     string Surface,
@@ -113,18 +116,18 @@ public sealed record CapturedProviderRequest(
     string ApiKeyFingerprint,
     DateTimeOffset CapturedAt);
 
-public sealed record CapturedProviderMessage(
+internal sealed record CapturedProviderMessage(
     string Role,
     string? Content,
     string? ProviderMetadataJson,
     bool HasImage);
 
-public sealed record CapturedProviderTool(
+internal sealed record CapturedProviderTool(
     string Name,
     string Description,
     string ParametersSchemaJson);
 
-public sealed record CapturedProviderTiming(
+internal sealed record CapturedProviderTiming(
     int Sequence,
     string ProviderKey,
     string Surface,
@@ -132,7 +135,7 @@ public sealed record CapturedProviderTiming(
     long ElapsedMs,
     bool Failed);
 
-public sealed record CapturedToolCall(
+internal sealed record CapturedToolCall(
     int Sequence,
     string Kind,
     string ToolName,
@@ -148,13 +151,13 @@ public sealed record CapturedToolCall(
     public long CompletedAtTimestamp { get; init; }
 }
 
-public sealed record CapturedHeaderTagCall(
+internal sealed record CapturedHeaderTagCall(
     int Sequence,
     ModuleHeaderTagContext Context,
     long ElapsedMs,
     bool Failed);
 
-public sealed record CapturedCostCall(
+internal sealed record CapturedCostCall(
     int Sequence,
     string ProviderKey,
     DateTimeOffset StartTime,
@@ -162,12 +165,62 @@ public sealed record CapturedCostCall(
     long ElapsedMs,
     bool PermissionDenied);
 
-public sealed class TestHarnessProviderException(string message) : Exception(message);
+internal sealed record TestHarnessSnapshot(
+    IReadOnlyList<CapturedProviderRequest> ProviderRequests,
+    IReadOnlyList<CapturedProviderTiming> ProviderTimings,
+    IReadOnlyList<CapturedToolCall> ToolCalls,
+    IReadOnlyList<CapturedHeaderTagCall> HeaderTagCalls,
+    IReadOnlyList<CapturedCostCall> CostCalls,
+    int PermissionDescriptorBuilds);
 
-internal sealed class TestHarnessCapabilityResolver : IModelCapabilityResolver
+internal sealed class TestHarnessProviderException(string message) : Exception(message);
+
+internal sealed class TestHarnessControl(ChatHarnessHost host)
 {
-    public HashSet<string> Resolve(string modelName) => new(StringComparer.OrdinalIgnoreCase)
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    public IReadOnlyList<CapturedProviderRequest> ProviderRequests => Snapshot().ProviderRequests;
+    public IReadOnlyList<CapturedProviderTiming> ProviderTimings => Snapshot().ProviderTimings;
+    public IReadOnlyList<CapturedToolCall> ToolCalls => Snapshot().ToolCalls;
+    public IReadOnlyList<CapturedHeaderTagCall> HeaderTagCalls => Snapshot().HeaderTagCalls;
+    public IReadOnlyList<CapturedCostCall> CostCalls => Snapshot().CostCalls;
+    public int PermissionDescriptorBuilds => Snapshot().PermissionDescriptorBuilds;
+
+    public void Reset() => Control(new { action = "reset" });
+
+    public void ResetDiagnostics() => Control(new { action = "resetDiagnostics" });
+
+    public void ConfigureProvider(string providerKey, TestHarnessProviderScenario scenario) =>
+        Control(new { action = "configureProvider", providerKey, scenario });
+
+    public void ConfigureOpenInlineTool(TestHarnessToolBehavior behavior) =>
+        ConfigureTool("openInline", behavior);
+
+    public void ConfigurePermissionedInlineTool(TestHarnessToolBehavior behavior) =>
+        ConfigureTool("permissionedInline", behavior);
+
+    public void ConfigurePermissionedJobTool(TestHarnessToolBehavior behavior) =>
+        ConfigureTool("permissionedJob", behavior);
+
+    public void ConfigureStreamingJobTool(TestHarnessToolBehavior behavior) =>
+        ConfigureTool("streamingJob", behavior);
+
+    public void ConfigureHeaderTag(TestHarnessHeaderTagBehavior behavior) =>
+        Control(new { action = "configureHeaderTag", behavior });
+
+    public void ConfigureCost(TestHarnessCostBehavior behavior) =>
+        Control(new { action = "configureCost", behavior });
+
+    private void ConfigureTool(string target, TestHarnessToolBehavior behavior) =>
+        Control(new { action = "configureTool", target, behavior });
+
+    private void Control(object payload) =>
+        host.ExecuteHarnessInlineTool(TestHarnessConstants.ControlTool, payload);
+
+    private TestHarnessSnapshot Snapshot()
     {
-        "chat"
-    };
+        var json = host.ExecuteHarnessInlineTool(TestHarnessConstants.SnapshotTool, new { });
+        return JsonSerializer.Deserialize<TestHarnessSnapshot>(json, JsonOptions)
+            ?? throw new InvalidOperationException("Test harness snapshot was empty.");
+    }
 }

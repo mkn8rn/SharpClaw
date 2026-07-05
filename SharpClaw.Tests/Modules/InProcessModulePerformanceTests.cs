@@ -8,9 +8,8 @@ using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Runtime.INF.Persistence;
-using SharpClaw.Modules.TestHarness;
-using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Tests.TestHarness;
+using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Modules;

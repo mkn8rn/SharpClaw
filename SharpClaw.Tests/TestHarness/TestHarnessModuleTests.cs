@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Core.Clients;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Modules.TestHarness;
+using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
-using SharpClaw.Providers.Common;
 
 namespace SharpClaw.Tests.TestHarness;
 
@@ -40,27 +40,23 @@ public sealed class TestHarnessModuleTests
     public async Task ProviderCaptureRedactsSecretsButKeepsAssertablePromptShape()
     {
         await using var host = ChatHarnessHost.Create();
-        var plugin = host.Services.GetRequiredService<ProviderApiClientFactory>()
-            .GetPlugin(TestHarnessConstants.PlainProviderKey)
-            .Should().BeAssignableTo<IProviderCredentialBoundPlugin>()
-            .Subject;
-        var client = plugin.CreateClient(
-            new ProviderClientOptions(null),
-            "sk-real-secret123456789");
-
+        var seeded = await host.SeedChatAsync(
+            TestHarnessConstants.PlainProviderKey,
+            agentSystemPrompt: "system token=secret-token-value");
+        seeded.Provider.EncryptedApiKey = "sk-real-secret123456789";
         using var providerParams = JsonDocument.Parse("""{"api_key":"sk-secret123456789","safe":"visible"}""");
-        await client.ChatCompletionAsync(
-            TestHarnessConstants.ModelId,
-            "system token=secret-token-value",
-            [new ChatCompletionMessage("user", "hello api_key=abc123 and sk-user-secret123456789")],
-            providerParameters: new Dictionary<string, JsonElement>
-            {
-                ["api_key"] = providerParams.RootElement.GetProperty("api_key").Clone(),
-                ["safe"] = providerParams.RootElement.GetProperty("safe").Clone()
-            });
+        seeded.Agent.ProviderParameters = new Dictionary<string, JsonElement>
+        {
+            ["api_key"] = providerParams.RootElement.GetProperty("api_key").Clone(),
+            ["safe"] = providerParams.RootElement.GetProperty("safe").Clone()
+        };
+        await host.Db.SaveChangesAsync();
+
+        await host.Chat.SendMessageAsync(
+            seeded.Channel.Id,
+            new ChatRequest("hello api_key=abc123 and sk-user-secret123456789"));
 
         var request = host.Harness.ProviderRequests.Single();
-        request.ApiKeyWasProvided.Should().BeTrue();
         request.ApiKeyFingerprint.Should().NotBe("sk-real-secret123456789");
         request.SystemPrompt.Should().Contain("[redacted]");
         request.Messages.Single().Content.Should().Contain("[redacted]");

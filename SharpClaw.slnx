@@ -23,7 +23,8 @@
   </Folder>
   <Folder Name="/Solution Items/" />
   <Folder Name="/Tests/Infrastructure/">
-    <Project Path="SharpClaw.Modules.TestHarness/SharpClaw.Modules.TestHarness.csproj" />
+    <Project Path="SharpClaw.Modules.TestHarness.InProcess/SharpClaw.Modules.TestHarness.InProcess.csproj" />
+    <Project Path="SharpClaw.Modules.TestHarness.OutOfProcess/SharpClaw.Modules.TestHarness.OutOfProcess.csproj" />
   </Folder>
   <Folder Name="/Solution Items/Build/">
     <File Path="Directory.Build.props" />

@@ -21,7 +21,7 @@ public sealed class SidecarReadinessInventoryTests
         "SharpClaw.Modules.Providers.LlamaSharp.dll",
         "SharpClaw.Modules.Providers.Ollama.dll",
         "SharpClaw.Modules.Providers.OpenAICompatible.dll",
-        "SharpClaw.Modules.TestHarness.dll",
+        "SharpClaw.Modules.TestHarness.OutOfProcess.dll",
         "SharpClaw.Modules.VS2026Editor.dll",
         "SharpClaw.Modules.VSCodeEditor.dll",
     ];
@@ -37,7 +37,7 @@ public sealed class SidecarReadinessInventoryTests
         ["sharpclaw_providers_llamasharp"] = [],
         ["sharpclaw_providers_ollama"] = [],
         ["sharpclaw_providers_openai_compat"] = [],
-        ["sharpclaw_test_harness"] = [],
+        ["sharpclaw_test_harness_out_of_process"] = [],
         ["sharpclaw_vs2026_editor"] = [],
         ["sharpclaw_vscode_editor"] = [],
     };
@@ -83,7 +83,7 @@ public sealed class SidecarReadinessInventoryTests
                 "sharpclaw_providers_llamasharp",
                 "sharpclaw_providers_ollama",
                 "sharpclaw_providers_openai_compat",
-                "sharpclaw_test_harness",
+                "sharpclaw_test_harness_out_of_process",
                 "sharpclaw_vs2026_editor",
                 "sharpclaw_vscode_editor",
             ]);
@@ -100,7 +100,7 @@ public sealed class SidecarReadinessInventoryTests
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        sidecarModuleIds.Should().Contain("sharpclaw_test_harness");
+        sidecarModuleIds.Should().Contain("sharpclaw_test_harness_out_of_process");
         foreach (var moduleId in sidecarModuleIds)
         {
             reports.Should().ContainKey(moduleId);
@@ -138,7 +138,7 @@ public sealed class SidecarReadinessInventoryTests
             .Contain(finding => finding.Kind == SidecarReadinessFindingKind.CoveredByCurrentProtocol
                                 && finding.Key == "tools.job");
 
-        reports["sharpclaw_test_harness"].Findings
+        reports["sharpclaw_test_harness_out_of_process"].Findings
             .Should()
             .Contain(finding => finding.Kind == SidecarReadinessFindingKind.CoveredByCurrentProtocol
                                 && finding.Key == "tools.inline")
