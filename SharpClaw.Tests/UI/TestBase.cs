@@ -1,5 +1,5 @@
 
-namespace SharpClaw.UITests;
+namespace SharpClaw.Tests.UI;
 
 public class TestBase
 {
@@ -30,7 +30,7 @@ public class TestBase
         private set
         {
             _app = value;
-            Uno.UITest.Helpers.Queries.Helpers.App = value;
+            global::Uno.UITest.Helpers.Queries.Helpers.App = value;
         }
     }
 

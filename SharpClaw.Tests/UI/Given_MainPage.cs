@@ -1,4 +1,4 @@
-namespace SharpClaw.UITests;
+namespace SharpClaw.Tests.UI;
 
 // Disabled: Uno Platform frontend tests are not in scope currently.
 // public class Given_MainPage : TestBase

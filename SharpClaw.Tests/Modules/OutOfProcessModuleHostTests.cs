@@ -7,7 +7,7 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Tasks;
-using SharpClaw.Tests.ExternalModule;
+using SharpClaw.TestFixtures.ExternalModule;
 
 namespace SharpClaw.Tests.Modules;
 
@@ -17,7 +17,7 @@ public sealed class OutOfProcessModuleHostTests
     [Test]
     public void ModuleManifestRuntimeInfoReadsDotNetSidecarPackageMetadata()
     {
-        var json = SidecarManifestJson("SharpClaw.Tests.ExternalModule.dll");
+        var json = SidecarManifestJson("SharpClaw.TestFixtures.ExternalModule.dll");
         var manifest = JsonSerializer.Deserialize<ModuleManifest>(json, SecureJsonOptions.Manifest)!;
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(json);
 
@@ -56,7 +56,7 @@ public sealed class OutOfProcessModuleHostTests
         CopyFixtureModulePayload(workspace.ModuleDir);
         await File.WriteAllTextAsync(
             Path.Combine(workspace.ModuleDir, "module.json"),
-            SidecarManifestJson("SharpClaw.Tests.ExternalModule.dll"));
+            SidecarManifestJson("SharpClaw.TestFixtures.ExternalModule.dll"));
 
         var manifest = JsonSerializer.Deserialize<ModuleManifest>(
             await File.ReadAllTextAsync(Path.Combine(workspace.ModuleDir, "module.json")),
@@ -311,7 +311,7 @@ public sealed class OutOfProcessModuleHostTests
     {
         var packagePath = Path.Combine(packageSource, $"{packageId}.{version}.nupkg");
         using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
-        WriteTextEntry(archive, "module.json", SidecarManifestJson("SharpClaw.Tests.ExternalModule.dll"));
+        WriteTextEntry(archive, "module.json", SidecarManifestJson("SharpClaw.TestFixtures.ExternalModule.dll"));
         WriteTextEntry(
             archive,
             $"{packageId}.nuspec",
@@ -340,7 +340,7 @@ public sealed class OutOfProcessModuleHostTests
     private static IEnumerable<string> FixturePayloadFiles()
     {
         var sourceDir = Path.GetDirectoryName(typeof(DotNetSidecarFixtureModule).Assembly.Location)!;
-        foreach (var file in Directory.GetFiles(sourceDir, "SharpClaw.Tests.ExternalModule.*"))
+        foreach (var file in Directory.GetFiles(sourceDir, "SharpClaw.TestFixtures.ExternalModule.*"))
         {
             if (file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
                 || file.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase)

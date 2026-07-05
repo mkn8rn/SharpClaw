@@ -5,7 +5,7 @@ using SharpClaw.Application.Core.Modules;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Modules;
 using SharpClaw.Modules.TestHarness;
-using SharpClaw.Tests.ExternalModule;
+using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Tests.TestHarness;
 
 namespace SharpClaw.Tests.Modules;

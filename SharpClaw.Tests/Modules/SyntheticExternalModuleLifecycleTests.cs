@@ -12,7 +12,7 @@ using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
-using SharpClaw.Tests.ExternalModule;
+using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
 
@@ -31,7 +31,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
               "displayName": "Synthetic External Lifecycle",
               "version": "1.0.0",
               "toolPrefix": "sel",
-              "entryAssembly": "SharpClaw.Tests.ExternalModule.dll",
+              "entryAssembly": "SharpClaw.TestFixtures.ExternalModule.dll",
               "minHostVersion": "0.0.0"
             }
             """;
@@ -40,7 +40,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
             SecureJsonOptions.Manifest)!;
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(json);
 
-        manifest.EntryAssembly.Should().Be("SharpClaw.Tests.ExternalModule.dll");
+        manifest.EntryAssembly.Should().Be("SharpClaw.TestFixtures.ExternalModule.dll");
         runtimeInfo.Runtime.Should().Be(ModuleManifestRuntimeInfo.DotNet);
         runtimeInfo.IsDotNet.Should().BeTrue();
     }
@@ -55,8 +55,8 @@ public sealed class SyntheticExternalModuleLifecycleTests
               "displayName": "Synthetic External Lifecycle",
               "version": "1.0.0",
               "toolPrefix": "sel",
-              "entryAssembly": "SharpClaw.Tests.ExternalModule.dll",
-              "type": "SharpClaw.Tests.ExternalModule.SyntheticExternalLifecycleModule",
+              "entryAssembly": "SharpClaw.TestFixtures.ExternalModule.dll",
+              "type": "SharpClaw.TestFixtures.ExternalModule.SyntheticExternalLifecycleModule",
               "minHostVersion": "0.0.0"
             }
             """;
@@ -64,7 +64,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
         var runtimeInfo = ModuleManifestRuntimeInfo.FromJson(json);
 
         runtimeInfo.ModuleType.Should()
-            .Be("SharpClaw.Tests.ExternalModule.SyntheticExternalLifecycleModule");
+            .Be("SharpClaw.TestFixtures.ExternalModule.SyntheticExternalLifecycleModule");
     }
 
     [Test]
@@ -144,7 +144,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(packageSource);
 
-        const string packageId = "SharpClaw.Tests.ExternalModule.Package";
+        const string packageId = "SharpClaw.TestFixtures.ExternalModule.Package";
         const string version = "1.0.0";
         CreateSyntheticExternalModulePackage(packageSource, packageId, version);
         var registry = host.Services.GetRequiredService<ModuleRegistry>();
@@ -455,11 +455,13 @@ public sealed class SyntheticExternalModuleLifecycleTests
         var root = ResolveRepoRoot();
         var configuration = Directory.GetParent(TestContext.CurrentContext.TestDirectory)!.Name;
         var appHostName = OperatingSystem.IsWindows()
-            ? "SharpClaw.Tests.ForeignSidecar.exe"
-            : "SharpClaw.Tests.ForeignSidecar";
+            ? "SharpClaw.TestFixtures.ForeignSidecar.exe"
+            : "SharpClaw.TestFixtures.ForeignSidecar";
         var helperPath = Path.Combine(
             root,
-            "SharpClaw.Tests.ForeignSidecar",
+            "SharpClaw.Tests",
+            "Fixtures",
+            "ForeignSidecar",
             "bin",
             configuration,
             "net10.0",

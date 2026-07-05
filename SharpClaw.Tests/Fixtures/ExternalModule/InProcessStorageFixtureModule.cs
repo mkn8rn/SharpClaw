@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts.Modules;
 
-namespace SharpClaw.Tests.ExternalModule;
+namespace SharpClaw.TestFixtures.ExternalModule;
 
 public sealed class InProcessStorageFixtureModule : ISharpClawCoreModule
 {

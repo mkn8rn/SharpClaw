@@ -1,4 +1,4 @@
-namespace SharpClaw.UITests;
+namespace SharpClaw.Tests.UI;
 
 public class Constants
 {

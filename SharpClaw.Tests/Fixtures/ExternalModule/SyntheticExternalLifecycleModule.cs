@@ -6,7 +6,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
 
-namespace SharpClaw.Tests.ExternalModule;
+namespace SharpClaw.TestFixtures.ExternalModule;
 
 public sealed class SyntheticExternalLifecycleModule : ISharpClawCoreModule
 {

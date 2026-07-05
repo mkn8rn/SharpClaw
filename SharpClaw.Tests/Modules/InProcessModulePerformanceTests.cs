@@ -9,7 +9,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Modules.TestHarness;
-using SharpClaw.Tests.ExternalModule;
+using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Tests.TestHarness;
 using SharpClaw.Core.Modules;
 

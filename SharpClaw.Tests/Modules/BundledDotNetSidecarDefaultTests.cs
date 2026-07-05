@@ -13,7 +13,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Infrastructure.Persistence;
 using SharpClaw.Infrastructure.Persistence.Modules;
-using SharpClaw.Tests.ExternalModule;
+using SharpClaw.TestFixtures.ExternalModule;
 using SharpClaw.Modules.TestHarness;
 using SharpClaw.Utils.Instances;
 using SharpClaw.Core.Modules;
@@ -431,7 +431,7 @@ public sealed class BundledDotNetSidecarDefaultTests
               "displayName": "Synthetic External In Process",
               "version": "1.0.0",
               "toolPrefix": "sei",
-              "entryAssembly": "SharpClaw.Tests.ExternalModule.dll",
+              "entryAssembly": "SharpClaw.TestFixtures.ExternalModule.dll",
               "minHostVersion": "0.0.0"
             }
             """);

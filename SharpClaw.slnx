@@ -105,9 +105,6 @@
     <Project Path="SharpClaw.Tests/SharpClaw.Tests.csproj">
       <Deploy />
     </Project>
-    <Project Path="SharpClaw.UITests/SharpClaw.UITests.csproj">
-      <Deploy />
-    </Project>
   </Folder>
 </Solution>
 

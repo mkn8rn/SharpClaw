@@ -13,8 +13,11 @@
     <PackageReference Include="LlamaSharp.ToolCallEnvelopes" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="NUnit" />
     <PackageReference Include="NUnit3TestAdapter" />
+    <PackageReference Include="Uno.UITest.Helpers" />
+    <PackageReference Include="Xamarin.UITest" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="GitHubActionsTestLogger">
       <PrivateAssets>all</PrivateAssets>
@@ -35,6 +38,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Fixtures\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Application.API\SharpClaw.Application.API.csproj" />
     <ProjectReference Include="..\SharpClaw.Uno\SharpClaw.Uno.csproj" />
     <ProjectReference Include="..\SharpClaw.Application.Core\SharpClaw.Application.Core.csproj" />
@@ -45,8 +52,8 @@
     <ProjectReference Include="..\DefaultModules\ModuleDev\SharpClaw.Modules.ModuleDev.csproj" />
     <ProjectReference Include="..\DefaultModules\Metrics\SharpClaw.Modules.Metrics.csproj" />
     <ProjectReference Include="..\DefaultModules\TestHarness\SharpClaw.Modules.TestHarness.csproj" />
-    <ProjectReference Include="..\SharpClaw.Tests.ExternalModule\SharpClaw.Tests.ExternalModule.csproj" />
-    <ProjectReference Include="..\SharpClaw.Tests.ForeignSidecar\SharpClaw.Tests.ForeignSidecar.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="Fixtures\ExternalModule\SharpClaw.TestFixtures.ExternalModule.csproj" />
+    <ProjectReference Include="Fixtures\ForeignSidecar\SharpClaw.TestFixtures.ForeignSidecar.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <Target Name="CopyPackagedModulesToTestOutput"

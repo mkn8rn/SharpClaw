@@ -8,7 +8,7 @@ using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Tasks;
 
-namespace SharpClaw.Tests.ExternalModule;
+namespace SharpClaw.TestFixtures.ExternalModule;
 
 public sealed class DotNetSidecarFixtureModule : ISharpClawRuntimeModule, ITaskParserAware
 {
