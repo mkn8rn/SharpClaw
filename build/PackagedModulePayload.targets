@@ -12,6 +12,14 @@
                           Condition="'$(PkgSharpClaw_Modules_VS2026Editor)' != ''" />
       <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\SharpClaw.Modules.*.dll"
                           Condition="'$(PkgSharpClaw_Modules_VSCodeEditor)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_Anthropic)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.Anthropic.dll"
+                          Condition="'$(PkgSharpClaw_Modules_Providers_Anthropic)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_Google)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.Google.dll"
+                          Condition="'$(PkgSharpClaw_Modules_Providers_Google)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_LlamaSharp)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.LlamaSharp.dll"
+                          Condition="'$(PkgSharpClaw_Modules_Providers_LlamaSharp)' != ''" />
+      <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_Ollama)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.Ollama.dll"
+                          Condition="'$(PkgSharpClaw_Modules_Providers_Ollama)' != ''" />
       <_PackagedModuleDll Include="$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\lib\$(TargetFramework)\SharpClaw.Modules.Providers.OpenAICompatible.dll"
                           Condition="'$(PkgSharpClaw_Modules_Providers_OpenAICompatible)' != ''" />
 
@@ -36,6 +44,22 @@
       <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\module.json"
                                Condition="Exists('$(PkgSharpClaw_Modules_VSCodeEditor)\sharpclaw\module.json')">
         <ModuleId>sharpclaw_vscode_editor</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_Anthropic)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_anthropic\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_Providers_Anthropic)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_anthropic\module.json')">
+        <ModuleId>sharpclaw_providers_anthropic</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_Google)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_google\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_Providers_Google)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_google\module.json')">
+        <ModuleId>sharpclaw_providers_google</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_LlamaSharp)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_llamasharp\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_Providers_LlamaSharp)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_llamasharp\module.json')">
+        <ModuleId>sharpclaw_providers_llamasharp</ModuleId>
+      </_PackagedModuleManifest>
+      <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_Ollama)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_ollama\module.json"
+                               Condition="Exists('$(PkgSharpClaw_Modules_Providers_Ollama)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_ollama\module.json')">
+        <ModuleId>sharpclaw_providers_ollama</ModuleId>
       </_PackagedModuleManifest>
       <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_openai_compat\module.json"
                                Condition="Exists('$(PkgSharpClaw_Modules_Providers_OpenAICompatible)\contentFiles\any\$(TargetFramework)\modules\sharpclaw_providers_openai_compat\module.json')">

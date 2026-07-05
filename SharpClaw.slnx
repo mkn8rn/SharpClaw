@@ -20,7 +20,6 @@
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="SharpClaw.Modules.DotNetSidecarHost/SharpClaw.Modules.DotNetSidecarHost.csproj" />
-    <Project Path="SharpClaw.Providers.LocalCommon/SharpClaw.Providers.LocalCommon.csproj" />
     <Project Path="SharpClaw.Utils/SharpClaw.Utils.csproj" />
   </Folder>
   <Folder Name="/Solution Items/" />
@@ -28,10 +27,6 @@
     <Project Path="DefaultModules/AgentOrchestration/SharpClaw.Modules.AgentOrchestration.csproj" />
     <Project Path="DefaultModules/Metrics/SharpClaw.Modules.Metrics.csproj" />
     <Project Path="DefaultModules/ModuleDev/SharpClaw.Modules.ModuleDev.csproj" />
-    <Project Path="DefaultModules/Providers/Anthropic/SharpClaw.Modules.Providers.Anthropic.csproj" />
-    <Project Path="DefaultModules/Providers/Google/SharpClaw.Modules.Providers.Google.csproj" />
-    <Project Path="DefaultModules/Providers/LlamaSharp/SharpClaw.Modules.Providers.LlamaSharp.csproj" />
-    <Project Path="DefaultModules/Providers/Ollama/SharpClaw.Modules.Providers.Ollama.csproj" />
     <Project Path="DefaultModules/TestHarness/SharpClaw.Modules.TestHarness.csproj" />
   </Folder>
   <Folder Name="/Solution Items/Build/">

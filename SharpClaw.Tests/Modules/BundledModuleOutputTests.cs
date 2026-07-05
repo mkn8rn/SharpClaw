@@ -207,6 +207,18 @@ public class BundledModuleOutputTests
                 PackageId: "SharpClaw.Modules.VSCodeEditor",
                 ManifestPath: Path.Combine("sharpclaw", "module.json"),
                 EntryAssemblyDirectory: "sharpclaw"),
+            ProviderPackage(
+                "SharpClaw.Modules.Providers.Anthropic",
+                "sharpclaw_providers_anthropic"),
+            ProviderPackage(
+                "SharpClaw.Modules.Providers.Google",
+                "sharpclaw_providers_google"),
+            ProviderPackage(
+                "SharpClaw.Modules.Providers.LlamaSharp",
+                "sharpclaw_providers_llamasharp"),
+            ProviderPackage(
+                "SharpClaw.Modules.Providers.Ollama",
+                "sharpclaw_providers_ollama"),
             (
                 PackageId: "SharpClaw.Modules.Providers.OpenAICompatible",
                 ManifestPath: Path.Combine(
@@ -226,6 +238,17 @@ public class BundledModuleOutputTests
                 packageInfo.EntryAssemblyDirectory))
             .ToArray();
     }
+
+    private static (
+        string PackageId,
+        string ManifestPath,
+        string EntryAssemblyDirectory) ProviderPackage(
+            string packageId,
+            string moduleId) =>
+        (
+            packageId,
+            Path.Combine("contentFiles", "any", "net10.0", "modules", moduleId, "module.json"),
+            Path.Combine("lib", "net10.0"));
 
     private static BundledModuleExpectation ReadPackagedModuleExpectation(
         string packageId,
