@@ -261,6 +261,7 @@ public sealed class InProcessModuleHost : IModuleRuntimeHost
         ForwardHostScoped<IConversationSteering>(services);
         ForwardHostScoped<ICoreEntityIdProvider>(services);
         ForwardHostScoped<IModelInfoProvider>(services);
+        ForwardHostScoped<IInProcessModuleSecretReader>(services);
         ForwardHostScoped<IModelRegistrar>(services);
         ForwardHostScoped<IModuleInfoProvider>(services);
         ForwardHostScoped<IModuleLifecycleManager>(services);
@@ -290,6 +291,7 @@ public sealed class InProcessModuleHost : IModuleRuntimeHost
         services.RemoveAll<IConversationSteering>();
         services.RemoveAll<ICoreEntityIdProvider>();
         services.RemoveAll<IModelInfoProvider>();
+        services.RemoveAll<IInProcessModuleSecretReader>();
         services.RemoveAll<IModelRegistrar>();
         services.RemoveAll<IModuleInfoProvider>();
         services.RemoveAll<IModuleLifecycleManager>();

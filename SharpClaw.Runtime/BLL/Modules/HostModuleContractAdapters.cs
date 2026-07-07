@@ -245,6 +245,55 @@ public sealed class HostModelInfoProvider(
     }
 }
 
+public sealed class HostInProcessModuleSecretReader(
+    IServiceScopeFactory scopeFactory,
+    Contracts.Persistence.EncryptionOptions encryptionOptions) : IInProcessModuleSecretReader
+{
+    public async Task<string?> GetProviderApiKeyAsync(
+        string providerKey,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+        var encryptedApiKey = await db.Providers
+            .AsNoTracking()
+            .Where(provider => provider.ProviderKey == providerKey)
+            .Select(provider => provider.EncryptedApiKey)
+            .FirstOrDefaultAsync(ct);
+
+        return DecryptOrNull(encryptedApiKey);
+    }
+
+    public async Task<string?> GetModelProviderApiKeyAsync(
+        Guid modelId,
+        CancellationToken ct = default)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+        var encryptedApiKey = await db.Models
+            .AsNoTracking()
+            .Where(model => model.Id == modelId)
+            .Select(model => model.Provider.EncryptedApiKey)
+            .FirstOrDefaultAsync(ct);
+
+        return DecryptOrNull(encryptedApiKey);
+    }
+
+    private string? DecryptOrNull(string? encryptedApiKey)
+    {
+        if (string.IsNullOrEmpty(encryptedApiKey))
+            return null;
+
+        return ApiKeyEncryptor.DecryptOrPassthrough(
+            encryptedApiKey,
+            encryptionOptions.Key);
+    }
+}
+
 /// <summary>
 /// Host-side <see cref="IModelRegistrar"/> impl over the host
 /// <see cref="SharpClawDbContext"/>. Modules call into this to upsert
