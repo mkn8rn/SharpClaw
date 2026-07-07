@@ -191,7 +191,7 @@ public sealed class GoogleVertexAIApiClientTests
 
         plugin.SupportsAutomaticEndpointDiscovery.Should().BeTrue();
         plugin.ParameterSpec.Should().BeSameAs(ProviderParameterSpecs.GoogleVertexAI);
-        plugin.CreateClient("https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1")
+        plugin.CreateClient(new ProviderClientOptions("https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"))
             .Should().BeOfType<GoogleVertexAIApiClient>()
             .Which.SupportsNativeToolCalling.Should().BeTrue();
     }

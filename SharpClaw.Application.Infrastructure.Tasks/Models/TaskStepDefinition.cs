@@ -8,7 +8,7 @@ namespace SharpClaw.Application.Infrastructure.Tasks.Models;
 /// a tree: event handlers, conditionals, and loops contain nested body
 /// steps.
 /// </summary>
-public sealed record TaskStepDefinition : ITaskStepInvocation
+public sealed record TaskStepDefinition : ITaskStatementInvocation
 {
     /// <summary>
     /// Stable wire-format string key identifying this step's operation
@@ -19,6 +19,7 @@ public sealed record TaskStepDefinition : ITaskStepInvocation
     /// for backward compatibility with serialized task scripts.
     /// </summary>
     public required string StepKey { get; init; }
+    string ITaskStatementInvocation.StatementKey => StepKey;
 
     /// <summary>Source line number (1-based) for diagnostics.</summary>
     public required int Line { get; init; }
@@ -86,9 +87,9 @@ public sealed record TaskStepDefinition : ITaskStepInvocation
     /// <summary>Else branch for <c>core.conditional</c> steps.</summary>
     public IReadOnlyList<TaskStepDefinition>? ElseBody { get; init; }
 
-    // ── ITaskStepInvocation projection ────────────────────────────
+    // ── ITaskStatementInvocation projection ────────────────────────────
 
-    string? ITaskStepInvocation.RawExpression => Expression;
-    IReadOnlyList<ITaskStepInvocation>? ITaskStepInvocation.Body => Body;
-    IReadOnlyList<ITaskStepInvocation>? ITaskStepInvocation.ElseBody => ElseBody;
+    string? ITaskStatementInvocation.RawExpression => Expression;
+    IReadOnlyList<ITaskStatementInvocation>? ITaskStatementInvocation.Body => Body;
+    IReadOnlyList<ITaskStatementInvocation>? ITaskStatementInvocation.ElseBody => ElseBody;
 }

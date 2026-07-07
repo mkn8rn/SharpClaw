@@ -12,8 +12,10 @@ using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Contracts.Providers;
 using SharpClaw.Tests.ExternalModule;
 using SharpClaw.Tests.TestHarness;
+using ModuleManifestRuntimeInfo = SharpClaw.Application.Core.Modules.ModuleManifestRuntimeInfo;
 
 namespace SharpClaw.Tests.Modules;
 
@@ -183,7 +185,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
             factory.IsAvailable(SyntheticExternalLifecycleModule.ProviderKey).Should().BeTrue();
             var providerPlugin = factory.GetPlugin(SyntheticExternalLifecycleModule.ProviderKey);
             providerPlugin.Should().NotBeNull();
-            providerPlugin!.CostFeed.Should().NotBeNull();
+            providerPlugin!.CreateCostFeed(new ProviderClientOptions(null)).Should().NotBeNull();
             triggerRegistry.ResolveByKey(SyntheticExternalLifecycleModule.TriggerKey).Should().NotBeNull();
 
             var seeded = await host.SeedChatAsync(

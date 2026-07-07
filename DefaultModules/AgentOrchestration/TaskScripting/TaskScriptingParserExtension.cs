@@ -18,7 +18,7 @@ public sealed class TaskScriptingParserExtension : ITaskParserModuleExtension
     /// </summary>
     public const string TimerTriggerKey = "sharpclaw.task_scripting.timer";
 
-    public IReadOnlyDictionary<string, (string StepKey, string ModuleId)> StepKeyMappings { get; } =
+    public IReadOnlyDictionary<string, (string OperationKey, string ModuleId)> OperationKeyMappings { get; } =
         new Dictionary<string, (string, string)>(StringComparer.Ordinal);
 
     public IReadOnlyDictionary<string, (string TriggerKey, string ModuleId)> EventTriggerMappings { get; } =
@@ -46,18 +46,4 @@ public sealed class TaskScriptingParserExtension : ITaskParserModuleExtension
     /// </summary>
     public IReadOnlyDictionary<string, ITaskTriggerAttributeHandler> TriggerAttributeHandlers { get; } =
         AgentOrchestrationTriggerAttributeHandlers.All;
-
-    public TaskParserPrimitives? Primitives { get; } = new()
-    {
-        DeclareVariable = TaskScriptingStepKeys.DeclareVariable,
-        Assign          = TaskScriptingStepKeys.Assign,
-        EventHandler    = TaskScriptingStepKeys.EventHandler,
-        Conditional     = TaskScriptingStepKeys.Conditional,
-        Loop            = TaskScriptingStepKeys.Loop,
-        Return          = TaskScriptingStepKeys.Return,
-        Delay           = TaskScriptingStepKeys.Delay,
-        Evaluate        = TaskScriptingStepKeys.Evaluate,
-        Log             = TaskScriptingStepKeys.Log,
-        ParseResponse   = TaskScriptingStepKeys.ParseResponse,
-    };
 }

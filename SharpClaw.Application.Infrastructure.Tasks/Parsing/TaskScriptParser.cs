@@ -26,25 +26,25 @@ public sealed class TaskScriptParser
 {
     // ── Module extension registry ─────────────────────────────────
 
-    private static readonly Dictionary<string, (string StepKey, string ModuleId)> _moduleStepKeys = [];
+    private static readonly Dictionary<string, (string OperationKey, string ModuleId)> _operationKeys = [];
     private static readonly Dictionary<string, (string TriggerKey, string ModuleId)> _moduleEventTriggers = [];
     private static readonly HashSet<string> _moduleSingleArgMethods = [];
     private static readonly Dictionary<string, ITaskTriggerAttributeHandler> _moduleTriggerAttributeHandlers
         = new(StringComparer.Ordinal);
     private static readonly Lock _registryLock = new();
-    private static TaskParserPrimitives? _primitives;
-
-    /// <summary>
-    /// Wire-format step keys for statement-shaped primitives, supplied by
-    /// the registering scripting module. Core defines no step-name
-    /// constants; the parser refuses to emit statement steps until a
-    /// module contributes them.
-    /// </summary>
-    internal static TaskParserPrimitives Primitives =>
-        _primitives ?? throw new InvalidOperationException(
-            "Task script parser primitives have not been registered. " +
-            "A module implementing ITaskParserModuleExtension must supply " +
-            "TaskParserPrimitives via Primitives before parsing.");
+    internal static class Primitives
+    {
+        public const string DeclareVariable = "core.declare_variable";
+        public const string Assign = "core.assign";
+        public const string EventHandler = "core.event_handler";
+        public const string Conditional = "core.conditional";
+        public const string Loop = "core.loop";
+        public const string Return = "core.return";
+        public const string Delay = "core.delay";
+        public const string Evaluate = "core.evaluate";
+        public const string Log = "core.log";
+        public const string ParseResponse = "core.parse_response";
+    }
 
     /// <summary>
     /// Register a module's parser extension. Safe to call multiple times
@@ -56,17 +56,17 @@ public sealed class TaskScriptParser
         ArgumentNullException.ThrowIfNull(extension);
         lock (_registryLock)
         {
-            foreach (var (method, entry) in extension.StepKeyMappings)
+            foreach (var (method, entry) in extension.OperationKeyMappings)
             {
-                _moduleStepKeys.TryAdd(method, entry);
+                _operationKeys.TryAdd(method, entry);
 
                 // Register a descriptor in the unified step registry so that
                 // TryParseContextApiCall resolves module steps through the same
                 // path as core steps.
-                TaskStepRegistry.Default.Register(new TaskStepDescriptor
+                TaskStepRegistry.Default.Register(new TaskOperationDescriptor
                 {
                     MethodName           = method,
-                    StepKey              = entry.StepKey,
+                    OperationKey         = entry.OperationKey,
                     OwnerId              = entry.ModuleId,
                     FirstArgIsExpression = extension.SingleArgExpressionMethods.Contains(method),
                 });
@@ -84,18 +84,6 @@ public sealed class TaskScriptParser
                 RegisterTriggerAttributeHandler(attrName, handler);
                 if (!attrName.EndsWith("Attribute", StringComparison.Ordinal))
                     RegisterTriggerAttributeHandler(attrName + "Attribute", handler);
-            }
-
-            if (extension.Primitives is { } primitives)
-            {
-                if (_primitives is not null && !_primitives.Equals(primitives))
-                {
-                    throw new InvalidOperationException(
-                        "Task script parser primitives have already been registered " +
-                        "by another module. Only one module may own the scripting-language " +
-                        "statement step keys.");
-                }
-                _primitives = primitives;
             }
         }
     }
@@ -1224,7 +1212,7 @@ public sealed class TaskScriptParser
     }
 
     private static TaskStepDefinition BuildStepFromDescriptor(
-        TaskStepDescriptor descriptor,
+        TaskOperationDescriptor descriptor,
         InvocationExpressionSyntax invocation,
         int line,
         int column,
@@ -1249,7 +1237,7 @@ public sealed class TaskScriptParser
 
         var step = new TaskStepDefinition
         {
-            StepKey    = descriptor.StepKey,
+            StepKey    = descriptor.OperationKey,
             Line       = line,
             Column     = column,
             Expression = expression,

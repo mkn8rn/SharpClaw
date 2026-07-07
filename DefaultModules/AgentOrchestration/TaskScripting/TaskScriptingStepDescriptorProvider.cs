@@ -6,45 +6,45 @@ namespace SharpClaw.Modules.AgentOrchestration;
 /// Contributes the scripting-language and runtime-control step descriptors
 /// owned by the task scripting module to the central task step registry.
 /// </summary>
-public sealed class TaskScriptingStepDescriptorProvider : ITaskStepDescriptorProvider
+public sealed class TaskScriptingStepDescriptorProvider : ITaskOperationDescriptorProvider
 {
     public string ModuleId => "sharpclaw_agent_orchestration";
 
-    public IReadOnlyList<TaskStepDescriptor> Descriptors { get; } = Build();
+    public IReadOnlyList<TaskOperationDescriptor> Descriptors { get; } = Build();
 
-    private static TaskStepDescriptor[] Build()
+    private static TaskOperationDescriptor[] Build()
     {
         var owner = "sharpclaw_agent_orchestration";
         return
         [
             // ── Statement constructs (registered by key only) ────────────
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.DeclareVariable, OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.Assign,          OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.EventHandler,    OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.Conditional,     OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.Loop,            OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.Return,          OwnerId = owner },
-            new TaskStepDescriptor { StepKey = TaskScriptingStepKeys.Evaluate,        OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.DeclareVariable, OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.Assign,          OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.EventHandler,    OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.Conditional,     OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.Loop,            OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.Return,          OwnerId = owner },
+            new TaskOperationDescriptor { OperationKey = TaskScriptingStepKeys.Evaluate,        OwnerId = owner },
 
             // ── Runtime control ────────────────────────────────────────
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "Delay",
-                StepKey              = TaskScriptingStepKeys.Delay,
+                OperationKey         = TaskScriptingStepKeys.Delay,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "WaitUntilStopped",
-                StepKey              = TaskScriptingStepKeys.WaitUntilStopped,
+                OperationKey         = TaskScriptingStepKeys.WaitUntilStopped,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "Log",
-                StepKey              = TaskScriptingStepKeys.Log,
+                OperationKey         = TaskScriptingStepKeys.Log,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },

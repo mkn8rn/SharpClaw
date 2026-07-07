@@ -119,9 +119,13 @@ public sealed class SyntheticExternalLifecycleModule : ISharpClawModule
         public ICompletionParameterSpec ParameterSpec => ICompletionParameterSpec.Passthrough;
         public IDeviceCodeFlow? DeviceCodeFlow => null;
         public IProviderCostFeed? CostFeed { get; } = new SyntheticExternalCostFeed();
+        public bool SupportsCostFeed => true;
+        public string CostFeedPermissionDeniedNote => string.Empty;
 
-        public IProviderApiClient CreateClient(string? endpoint) =>
+        public IProviderApiClient CreateClient(ProviderClientOptions options) =>
             new SyntheticExternalProviderClient();
+
+        public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options) => CostFeed;
     }
 
     private sealed class SyntheticExternalCapabilities : IModelCapabilityResolver
@@ -131,6 +135,15 @@ public sealed class SyntheticExternalLifecycleModule : ISharpClawModule
 
     private sealed class SyntheticExternalCostFeed : IProviderCostFeed
     {
+        public Task<ProviderCostResult?> GetCostsAsync(
+            DateTimeOffset startTime,
+            DateTimeOffset? endTime,
+            CancellationToken ct = default) =>
+            Task.FromResult<ProviderCostResult?>(new ProviderCostResult(
+                3.21m,
+                "usd",
+                [new ProviderCostDailyBucket(startTime, endTime ?? startTime.AddDays(1), 3.21m)]));
+
         public Task<ProviderCostResult?> GetCostsAsync(
             HttpClient httpClient,
             string apiKey,
@@ -159,11 +172,29 @@ public sealed class SyntheticExternalLifecycleModule : ISharpClawModule
     {
         public string ProviderKey => SyntheticExternalLifecycleModule.ProviderKey;
 
+        public Task<IReadOnlyList<string>> ListModelIdsAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<string>>([ModelId]);
+
         public Task<IReadOnlyList<string>> ListModelIdsAsync(
             HttpClient httpClient,
             string apiKey,
             CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<string>>([ModelId]);
+
+        public Task<ChatCompletionResult> ChatCompletionAsync(
+            string model,
+            string? systemPrompt,
+            IReadOnlyList<ChatCompletionMessage> messages,
+            int? maxCompletionTokens = null,
+            Dictionary<string, JsonElement>? providerParameters = null,
+            CompletionParameters? completionParameters = null,
+            CancellationToken ct = default) =>
+            Task.FromResult(new ChatCompletionResult
+            {
+                Content = ChatText,
+                Usage = new TokenUsage(2, 3),
+                FinishReason = FinishReason.Stop
+            });
 
         public Task<ChatCompletionResult> ChatCompletionAsync(
             HttpClient httpClient,

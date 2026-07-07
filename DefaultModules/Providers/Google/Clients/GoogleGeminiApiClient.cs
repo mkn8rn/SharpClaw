@@ -28,6 +28,20 @@ public sealed class GoogleGeminiApiClient : IProviderApiClient
 
     public string ProviderKey => "google-gemini";
     public bool SupportsNativeToolCalling => true;
+    public Task<IReadOnlyList<string>> ListModelIdsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException(
+            "Google Gemini requires host-bound API credentials in this SharpClaw mainline runtime.");
+
+    public async Task<ChatCompletionResult> ChatCompletionAsync(
+        string model,
+        string? systemPrompt,
+        IReadOnlyList<ChatCompletionMessage> messages,
+        int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException(
+            "Google Gemini requires host-bound API credentials in this SharpClaw mainline runtime.");
 
     // ── Model listing ─────────────────────────────────────────────
 

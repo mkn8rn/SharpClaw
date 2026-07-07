@@ -14,6 +14,13 @@ public sealed class LocalProviderCostFeed : IProviderCostFeed
     public static readonly LocalProviderCostFeed Instance = new();
 
     public Task<ProviderCostResult?> GetCostsAsync(
+        DateTimeOffset startTime,
+        DateTimeOffset? endTime,
+        CancellationToken ct = default)
+        => Task.FromResult<ProviderCostResult?>(
+            new ProviderCostResult(0m, "usd", []));
+
+    public Task<ProviderCostResult?> GetCostsAsync(
         HttpClient httpClient,
         string apiKey,
         DateTimeOffset startTime,

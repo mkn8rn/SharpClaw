@@ -33,6 +33,20 @@ public sealed class GoogleVertexAIApiClient : IProviderApiClient
 
     public string ProviderKey => "google-vertex-ai";
     public bool SupportsNativeToolCalling => true;
+    public Task<IReadOnlyList<string>> ListModelIdsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException(
+            "Google Vertex AI requires host-bound API credentials in this SharpClaw mainline runtime.");
+
+    public async Task<ChatCompletionResult> ChatCompletionAsync(
+        string model,
+        string? systemPrompt,
+        IReadOnlyList<ChatCompletionMessage> messages,
+        int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException(
+            "Google Vertex AI requires host-bound API credentials in this SharpClaw mainline runtime.");
 
     public async Task<IReadOnlyList<string>> ListModelIdsAsync(
         HttpClient httpClient, string apiKey, CancellationToken ct = default)

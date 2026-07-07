@@ -9,9 +9,9 @@ namespace SharpClaw.Application.Infrastructure.Tasks.Registry;
 /// </summary>
 public sealed class TaskStepRegistry
 {
-    private readonly Dictionary<string, TaskStepDescriptor> _byMethod =
+    private readonly Dictionary<string, TaskOperationDescriptor> _byMethod =
         new(StringComparer.Ordinal);
-    private readonly Dictionary<string, TaskStepDescriptor> _byKey =
+    private readonly Dictionary<string, TaskOperationDescriptor> _byKey =
         new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
 
@@ -36,7 +36,7 @@ public sealed class TaskStepRegistry
     /// different owners are rejected with <see cref="InvalidOperationException"/>.
     /// Re-registering the same descriptor (same owner, same key, same method) is a no-op.
     /// </summary>
-    public void Register(TaskStepDescriptor descriptor)
+    public void Register(TaskOperationDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         lock (_lock)
@@ -45,22 +45,22 @@ public sealed class TaskStepRegistry
             {
                 if (_byMethod.TryGetValue(descriptor.MethodName, out var existing))
                 {
-                    if (existing.StepKey == descriptor.StepKey && existing.OwnerId == descriptor.OwnerId)
+                    if (existing.OperationKey == descriptor.OperationKey && existing.OwnerId == descriptor.OwnerId)
                         return; // idempotent re-registration
 
                     throw new InvalidOperationException(
                         $"Task step method '{descriptor.MethodName}' is already registered " +
-                        $"by owner '{existing.OwnerId}' with key '{existing.StepKey}'. " +
-                        $"Attempted to re-register by '{descriptor.OwnerId}' with key '{descriptor.StepKey}'.");
+                        $"by owner '{existing.OwnerId}' with key '{existing.OperationKey}'. " +
+                        $"Attempted to re-register by '{descriptor.OwnerId}' with key '{descriptor.OperationKey}'.");
                 }
                 _byMethod[descriptor.MethodName] = descriptor;
             }
 
-            if (_byKey.TryGetValue(descriptor.StepKey, out var existingKey))
+            if (_byKey.TryGetValue(descriptor.OperationKey, out var existingKey))
             {
                 if (existingKey.OwnerId != descriptor.OwnerId)
                     throw new InvalidOperationException(
-                        $"Task step key '{descriptor.StepKey}' is already registered " +
+                        $"Task step key '{descriptor.OperationKey}' is already registered " +
                         $"by owner '{existingKey.OwnerId}'. " +
                         $"Attempted to re-register by '{descriptor.OwnerId}'.");
                 // Same owner, different method sharing the same key (e.g. HTTP verbs) — allowed.
@@ -68,7 +68,7 @@ public sealed class TaskStepRegistry
             }
             else
             {
-                _byKey[descriptor.StepKey] = descriptor;
+                _byKey[descriptor.OperationKey] = descriptor;
             }
         }
     }
@@ -77,7 +77,7 @@ public sealed class TaskStepRegistry
     /// Look up a descriptor by script method name. Returns <see langword="null"/>
     /// if the method name is not registered.
     /// </summary>
-    public TaskStepDescriptor? FindByMethod(string methodName)
+    public TaskOperationDescriptor? FindByMethod(string methodName)
     {
         lock (_lock)
             return _byMethod.GetValueOrDefault(methodName);
@@ -87,7 +87,7 @@ public sealed class TaskStepRegistry
     /// Look up a descriptor by step key. Returns <see langword="null"/>
     /// if the key is not registered.
     /// </summary>
-    public TaskStepDescriptor? FindByKey(string stepKey)
+    public TaskOperationDescriptor? FindByKey(string stepKey)
     {
         lock (_lock)
             return _byKey.GetValueOrDefault(stepKey);

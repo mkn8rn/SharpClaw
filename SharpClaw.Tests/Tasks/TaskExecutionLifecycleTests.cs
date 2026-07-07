@@ -345,8 +345,8 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         services.AddScoped<TaskService>();
         services.AddScoped<TaskOrchestrator>();
         services.AddScoped<ITaskInstanceLauncher, TaskInstanceLauncher>();
-        services.AddScoped<ITaskStepExecutorExtension, TaskScriptingStepExecutor>();
-        services.AddScoped<ITaskStepExecutorExtension, AgentOrchestrationTaskStepExecutor>();
+        services.AddScoped<ITaskOperationExecutor, TaskScriptingStepExecutor>();
+        services.AddScoped<ITaskOperationExecutor, AgentOrchestrationTaskStepExecutor>();
         services.AddSingleton<TaskRuntimeHost>();
 
         var root = services.BuildServiceProvider();

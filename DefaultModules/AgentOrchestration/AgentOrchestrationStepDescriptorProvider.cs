@@ -6,140 +6,140 @@ namespace SharpClaw.Modules.AgentOrchestration;
 /// Contributes chat/output and entity provisioning step descriptors owned by
 /// the agent orchestration module to the central task step registry.
 /// </summary>
-public sealed class AgentOrchestrationStepDescriptorProvider : ITaskStepDescriptorProvider
+public sealed class AgentOrchestrationStepDescriptorProvider : ITaskOperationDescriptorProvider
 {
     public string ModuleId => "sharpclaw_agent_orchestration";
 
-    public IReadOnlyList<TaskStepDescriptor> Descriptors { get; } = Build();
+    public IReadOnlyList<TaskOperationDescriptor> Descriptors { get; } = Build();
 
-    private static TaskStepDescriptor[] Build()
+    private static TaskOperationDescriptor[] Build()
     {
         const string owner = "sharpclaw_agent_orchestration";
         return
         [
             // ── Agent interaction ────────────────────────────────────
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName         = "Chat",
-                StepKey            = AgentOrchestrationStepKeys.Chat,
+                OperationKey       = AgentOrchestrationStepKeys.Chat,
                 OwnerId            = owner,
                 ExpressionArgIndex = 1,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName         = "ChatStream",
-                StepKey            = AgentOrchestrationStepKeys.ChatStream,
+                OperationKey       = AgentOrchestrationStepKeys.ChatStream,
                 OwnerId            = owner,
                 ExpressionArgIndex = 1,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName         = "ChatToThread",
-                StepKey            = AgentOrchestrationStepKeys.ChatToThread,
+                OperationKey       = AgentOrchestrationStepKeys.ChatToThread,
                 OwnerId            = owner,
                 ExpressionArgIndex = 1,
             },
 
             // ── Output ──────────────────────────────────────────────
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "Emit",
-                StepKey              = AgentOrchestrationStepKeys.Emit,
+                OperationKey         = AgentOrchestrationStepKeys.Emit,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "ParseResponse",
-                StepKey              = AgentOrchestrationStepKeys.ParseResponse,
+                OperationKey         = AgentOrchestrationStepKeys.ParseResponse,
                 OwnerId              = owner,
                 CapturesGenericType  = true,
             },
 
             // ── Entity lookup / creation ────────────────────────────
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "FindModel",
-                StepKey              = AgentOrchestrationStepKeys.FindModel,
+                OperationKey         = AgentOrchestrationStepKeys.FindModel,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "FindProvider",
-                StepKey              = AgentOrchestrationStepKeys.FindProvider,
+                OperationKey         = AgentOrchestrationStepKeys.FindProvider,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "FindAgent",
-                StepKey              = AgentOrchestrationStepKeys.FindAgent,
+                OperationKey         = AgentOrchestrationStepKeys.FindAgent,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "CreateAgent",
-                StepKey              = AgentOrchestrationStepKeys.CreateAgent,
+                OperationKey         = AgentOrchestrationStepKeys.CreateAgent,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "CreateThread",
-                StepKey              = AgentOrchestrationStepKeys.CreateThread,
+                OperationKey         = AgentOrchestrationStepKeys.CreateThread,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
 
             // ── Roles / permissions / channels ──────────────────────
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "CreateRole",
-                StepKey              = AgentOrchestrationStepKeys.CreateRole,
+                OperationKey         = AgentOrchestrationStepKeys.CreateRole,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "FindRole",
-                StepKey              = AgentOrchestrationStepKeys.FindRole,
+                OperationKey         = AgentOrchestrationStepKeys.FindRole,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "SetRolePermissions",
-                StepKey              = AgentOrchestrationStepKeys.SetRolePermissions,
+                OperationKey         = AgentOrchestrationStepKeys.SetRolePermissions,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "AssignRole",
-                StepKey              = AgentOrchestrationStepKeys.AssignRole,
+                OperationKey         = AgentOrchestrationStepKeys.AssignRole,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "CreateChannel",
-                StepKey              = AgentOrchestrationStepKeys.CreateChannel,
+                OperationKey         = AgentOrchestrationStepKeys.CreateChannel,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "FindChannel",
-                StepKey              = AgentOrchestrationStepKeys.FindChannel,
+                OperationKey         = AgentOrchestrationStepKeys.FindChannel,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },
-            new TaskStepDescriptor
+            new TaskOperationDescriptor
             {
                 MethodName           = "AddAllowedAgent",
-                StepKey              = AgentOrchestrationStepKeys.AddAllowedAgent,
+                OperationKey         = AgentOrchestrationStepKeys.AddAllowedAgent,
                 OwnerId              = owner,
                 FirstArgIsExpression = true,
             },

@@ -37,10 +37,10 @@ public sealed class TaskOrchestrator(
     TaskService taskService,
     IServiceScopeFactory scopeFactory,
     TaskRuntimeHost runtimeHost,
-    IEnumerable<ITaskStepExecutorExtension> stepExtensions,
+    IEnumerable<ITaskOperationExecutor> stepExtensions,
     ILogger<TaskOrchestrator> logger)
 {
-    private readonly IReadOnlyList<ITaskStepExecutorExtension> _stepExtensions = [.. stepExtensions];
+    private readonly IReadOnlyList<ITaskOperationExecutor> _stepExtensions = [.. stepExtensions];
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
 
     // ═══════════════════════════════════════════════════════════════
@@ -299,7 +299,7 @@ public sealed class TaskOrchestrator(
         var stepTiming = Stopwatch.StartNew();
 
         // Invocation-aware path: raw step access for control-flow primitives.
-        if (executor is ITaskStepInvocationExecutor invocationExecutor)
+        if (executor is ITaskOperationInvocationExecutor invocationExecutor)
         {
             var result = await invocationExecutor.ExecuteInvocationAsync(step, moduleCtx);
             stepTiming.Stop();
@@ -307,7 +307,7 @@ public sealed class TaskOrchestrator(
                 "Task instance {InstanceId} step {StepKey} completed in {ElapsedMs}ms. Result={Result}",
                 context.InstanceId, PathGuard.SanitizeForLog(stepKey),
                 stepTiming.ElapsedMilliseconds, result);
-            return result == TaskStepResult.Return
+            return result == TaskStatementResult.Return
                 ? TaskStepExecutionResult.Return
                 : TaskStepExecutionResult.Continue;
         }
@@ -528,7 +528,7 @@ public sealed class TaskOrchestrator(
         /// Scoped service provider for the running execution scope.  Set by
         /// the orchestrator before stepping begins; module step executors
         /// resolve services from this provider via
-        /// <see cref="ITaskStepExecutionContext.Services"/>.
+        /// <see cref="ITaskOperationExecutionContext.Services"/>.
         /// </summary>
         public IServiceProvider Services { get; set; } = default!;
     }
@@ -536,18 +536,18 @@ public sealed class TaskOrchestrator(
     private sealed record RegisteredEventHandler(
         string ModuleTriggerKey,
         string? ParameterName,
-        IReadOnlyList<ITaskStepInvocation> Body);
+        IReadOnlyList<ITaskStatementInvocation> Body);
 
     // ── Module extension adapters ────────────────────────────────────
 
     /// <summary>
-    /// Wraps <see cref="TaskExecutionContext"/> as <see cref="ITaskStepExecutionContext"/>
+    /// Wraps <see cref="TaskExecutionContext"/> as <see cref="ITaskOperationExecutionContext"/>
     /// so module step executors never reference the internal type directly.
     /// </summary>
     private sealed class TaskStepContextAdapter(
         TaskExecutionContext ctx,
         TaskOrchestrator orchestrator,
-        TaskService taskService) : ITaskStepExecutionContext
+        TaskService taskService) : ITaskOperationExecutionContext
     {
         public Guid InstanceId => ctx.InstanceId;
         public Guid ChannelId => ctx.ChannelId;
@@ -584,14 +584,14 @@ public sealed class TaskOrchestrator(
         public void RegisterEventHandler(
             string moduleTriggerKey,
             string? parameterName,
-            IReadOnlyList<ITaskStepInvocation> body)
+            IReadOnlyList<ITaskStatementInvocation> body)
         {
             ctx.EventHandlers.Add(new RegisteredEventHandler(
                 moduleTriggerKey, parameterName, body));
         }
 
-        public async Task<TaskStepResult> ExecuteStepsAsync(
-            IReadOnlyList<ITaskStepInvocation> steps,
+        public async Task<TaskStatementResult> ExecuteStatementsAsync(
+            IReadOnlyList<ITaskStatementInvocation> steps,
             CancellationToken cancellationToken)
         {
             using var scope = orchestrator._scopeFactory.CreateScope();
@@ -608,9 +608,9 @@ public sealed class TaskOrchestrator(
                         $"Unsupported step invocation type: {step.GetType().FullName}");
                 var result = await orchestrator.ExecuteStepAsync(tsd, ctx, db, ts, chat, jobs);
                 if (result == TaskStepExecutionResult.Return)
-                    return TaskStepResult.Return;
+                    return TaskStatementResult.Return;
             }
-            return TaskStepResult.Continue;
+            return TaskStatementResult.Continue;
         }
     }
 

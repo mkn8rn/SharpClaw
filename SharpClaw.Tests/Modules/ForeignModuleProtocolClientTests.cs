@@ -4,6 +4,7 @@ using System.Text.Json;
 using SharpClaw.Application.Core.Modules;
 using SharpClaw.Application.Core.Modules.Foreign;
 using SharpClaw.Contracts.Modules;
+using ModuleManifestRuntimeInfo = SharpClaw.Application.Core.Modules.ModuleManifestRuntimeInfo;
 
 namespace SharpClaw.Tests.Modules;
 

@@ -21,7 +21,7 @@ public sealed class TaskStepRegistrySetup
     [OneTimeSetUp]
     public void SeedRegistry()
     {
-        ITaskStepDescriptorProvider[] providers =
+        ITaskOperationDescriptorProvider[] providers =
         [
             new TaskScriptingStepDescriptorProvider(),
             new AgentOrchestrationStepDescriptorProvider(),

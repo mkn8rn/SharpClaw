@@ -39,7 +39,7 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
         services.AddScoped(sp => sp.GetRequiredService<IModuleDbContextFactory>()
             .CreateDbContext<AgentOrchestrationDbContext>());
         services.TryAddScoped<AgentOrchestrationService>();
-        services.AddScoped<ITaskStepExecutorExtension, AgentOrchestrationTaskStepExecutor>();
+        services.AddScoped<ITaskOperationExecutor, AgentOrchestrationTaskStepExecutor>();
 
         // Event-bus triggers (Event / TaskCompleted / TaskFailed) — moved here
         // from core by the trigger-extraction plan. The same instance is
@@ -51,7 +51,7 @@ public sealed class AgentOrchestrationModule : ISharpClawModule, ITaskParserAwar
         // ── Merged from sharpclaw_task_scripting ───────────────────
         // Task scripting primitives (declare/assign/conditional/loop/return/
         // event_handler/evaluate) and runtime control (delay/wait_until_stopped/log).
-        services.AddScoped<ITaskStepExecutorExtension, TaskScriptingStepExecutor>();
+        services.AddScoped<ITaskOperationExecutor, TaskScriptingStepExecutor>();
 
         // Lifecycle triggers (Startup / Shutdown).
         services.AddSingleton<ITaskTriggerSource, LifecycleTriggerSource>();

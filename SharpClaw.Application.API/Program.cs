@@ -400,7 +400,7 @@ try
 
     // ──────── PHASE 11 ─── Bundled-module discovery + ConfigureServices ────
     // Discover every bundled module's assembly, give each one a chance to
-    // contribute DI services and task-step descriptors, and gather task-script
+    // contribute DI services and task operation descriptors, and gather task-script
     // parser extensions.  ⚠ This MUST happen before builder.Build() because
     // the container is sealed at that point — disabled modules still need to
     // register their DbContext factories etc. so other services can resolve
@@ -413,17 +413,17 @@ try
         if (bundledModule is ITaskParserAware parserAware)
             TaskScriptParser.RegisterModule(parserAware.ParserExtension);
 
-        // Discover and register task-step descriptor providers from the
+        // Discover and register task operation descriptor providers from the
         // module's assembly so the central registry is populated before
         // any task script is parsed.
         var providerTypes = bundledModule.GetType().Assembly.GetTypes()
             .Where(t => !t.IsAbstract
                      && !t.IsInterface
-                     && typeof(ITaskStepDescriptorProvider).IsAssignableFrom(t)
+                     && typeof(ITaskOperationDescriptorProvider).IsAssignableFrom(t)
                      && t.GetConstructor(Type.EmptyTypes) is not null);
         foreach (var providerType in providerTypes)
         {
-            var provider = (ITaskStepDescriptorProvider)Activator.CreateInstance(providerType)!;
+            var provider = (ITaskOperationDescriptorProvider)Activator.CreateInstance(providerType)!;
             foreach (var descriptor in provider.Descriptors)
                 TaskStepRegistry.Default.Register(descriptor);
         }

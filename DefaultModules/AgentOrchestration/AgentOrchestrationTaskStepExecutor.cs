@@ -8,15 +8,15 @@ namespace SharpClaw.Modules.AgentOrchestration;
 /// Module-side executor for chat / output / provisioning task steps owned by
 /// Agent Orchestration.  All real work is delegated to
 /// <see cref="IHostAgentBridge"/>, an application-host service
-/// resolved from the running task's <see cref="ITaskStepExecutionContext.Services"/>
+/// resolved from the running task's <see cref="ITaskOperationExecutionContext.Services"/>
 /// scope.  This keeps the module free of any direct dependency on Core / EF
 /// types while still owning the step semantics.
 /// </summary>
-public sealed class AgentOrchestrationTaskStepExecutor : ITaskStepExecutorExtension
+public sealed class AgentOrchestrationTaskStepExecutor : ITaskOperationExecutor
 {
     public string ModuleId => "sharpclaw_agent_orchestration";
 
-    public bool CanExecute(string moduleStepKey) => moduleStepKey switch
+    public bool CanExecute(string operationKey) => operationKey switch
     {
         AgentOrchestrationStepKeys.Emit
             or AgentOrchestrationStepKeys.Chat
@@ -39,13 +39,13 @@ public sealed class AgentOrchestrationTaskStepExecutor : ITaskStepExecutorExtens
     };
 
     public async Task<bool> ExecuteAsync(
-        string moduleStepKey,
-        ITaskStepExecutionContext context,
+        string operationKey,
+        ITaskOperationExecutionContext context,
         IReadOnlyList<string>? arguments,
         string? expression,
         string? resultVariable)
     {
-        if (moduleStepKey == AgentOrchestrationStepKeys.Emit)
+        if (operationKey == AgentOrchestrationStepKeys.Emit)
         {
             await context.WriteOutputAsync(expression);
             return true;
@@ -55,7 +55,7 @@ public sealed class AgentOrchestrationTaskStepExecutor : ITaskStepExecutorExtens
         var ct = context.CancellationToken;
         var taskName = string.Empty;
 
-        switch (moduleStepKey)
+        switch (operationKey)
         {
             case AgentOrchestrationStepKeys.Chat:
             {
@@ -199,7 +199,7 @@ public sealed class AgentOrchestrationTaskStepExecutor : ITaskStepExecutorExtens
         return Guid.TryParse(args[index], out var g) ? g : null;
     }
 
-    private static void StoreFindResult(string? resultVariable, Guid? id, ITaskStepExecutionContext context)
+    private static void StoreFindResult(string? resultVariable, Guid? id, ITaskOperationExecutionContext context)
     {
         if (resultVariable is not null)
             context.Variables[resultVariable] = id?.ToString();

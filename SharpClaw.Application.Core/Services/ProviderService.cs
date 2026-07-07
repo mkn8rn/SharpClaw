@@ -139,8 +139,7 @@ public sealed class ProviderService(
             ?? throw new InvalidOperationException(
                 $"Provider key '{provider.ProviderKey}' does not support device code authentication.");
 
-        using var httpClient = httpClientFactory.CreateClient();
-        return await deviceCodeFlow.StartAsync(httpClient, ct);
+        return await deviceCodeFlow.StartAsync(ct);
     }
 
     private bool IsUniqueProviderNamesEnforced()
@@ -173,8 +172,7 @@ public sealed class ProviderService(
             ?? throw new InvalidOperationException(
                 $"Provider key '{provider.ProviderKey}' does not support device code authentication.");
 
-        using var httpClient = httpClientFactory.CreateClient();
-        var accessToken = await deviceCodeFlow.PollAsync(httpClient, session, ct)
+        var accessToken = await deviceCodeFlow.PollAsync(session, ct)
             ?? throw new InvalidOperationException(
                 $"Device code flow for provider '{provider.ProviderKey}' did not return an access token.");
 
@@ -244,7 +242,7 @@ public sealed class ProviderService(
         var apiKey = string.IsNullOrEmpty(provider.EncryptedApiKey)
             ? string.Empty
             : ApiKeyEncryptor.DecryptOrPassthrough(provider.EncryptedApiKey, encryptionOptions.Key);
-        var client = plugin.CreateClient(provider.ApiEndpoint);
+        var client = plugin.CreateClient(new ProviderClientOptions(provider.ApiEndpoint));
 
         using var httpClient = httpClientFactory.CreateClient();
         var modelIds = await client.ListModelIdsAsync(httpClient, apiKey, ct);

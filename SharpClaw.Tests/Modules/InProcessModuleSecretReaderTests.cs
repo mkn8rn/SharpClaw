@@ -136,7 +136,7 @@ public sealed class InProcessModuleSecretReaderTests
     }
 
     [Test]
-    public void EmbeddedContracts_ExposePublishedProviderCompatibilityMembers()
+    public void ContractsPackage_ExposesOnlyPublishedProviderSurface()
     {
         var providerClientOptionsConstructors = typeof(ProviderClientOptions)
             .GetConstructors()
@@ -157,6 +157,10 @@ public sealed class InProcessModuleSecretReaderTests
             .Should()
             .NotBeNull();
         typeof(IProviderPlugin)
+            .GetMethod(nameof(IProviderPlugin.CreateClient), [typeof(string)])
+            .Should()
+            .BeNull("package-built modules must not be forced to implement host-only string endpoint overloads");
+        typeof(IProviderPlugin)
             .GetMethod(nameof(IProviderPlugin.CreateCostFeed), [typeof(ProviderClientOptions)])
             .Should()
             .NotBeNull();
@@ -167,6 +171,10 @@ public sealed class InProcessModuleSecretReaderTests
             .GetMethod(nameof(IProviderApiClient.ListModelIdsAsync), [typeof(CancellationToken)])
             .Should()
             .NotBeNull();
+        typeof(IProviderApiClient)
+            .GetMethod(nameof(IProviderApiClient.ListModelIdsAsync), [typeof(HttpClient), typeof(string), typeof(CancellationToken)])
+            .Should()
+            .BeNull("host-bound transport and API key calls are runtime internals, not package interface members");
         var stringFirstChatCompletionMethods = typeof(IProviderApiClient)
             .GetMethods()
             .Where(method =>
@@ -179,6 +187,19 @@ public sealed class InProcessModuleSecretReaderTests
             .ToArray();
 
         stringFirstChatCompletionMethods.Should().NotBeEmpty();
+        var hostBoundChatCompletionMethods = typeof(IProviderApiClient)
+            .GetMethods()
+            .Where(method => method.Name == nameof(IProviderApiClient.ChatCompletionAsync))
+            .Where(method =>
+            {
+                var parameters = method.GetParameters();
+                return parameters.Length > 1
+                    && parameters[0].ParameterType == typeof(HttpClient)
+                    && parameters[1].ParameterType == typeof(string);
+            })
+            .ToArray();
+
+        hostBoundChatCompletionMethods.Should().BeEmpty();
     }
 
     [Test]

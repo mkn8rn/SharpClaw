@@ -27,6 +27,13 @@ public sealed class OpenAiApiClient : OpenAiCompatibleApiClient, IProviderCostFe
     /// Requires an admin API key; returns <see langword="null"/> if the
     /// key lacks admin permissions (HTTP 401/403).
     /// </summary>
+    public Task<ProviderCostResult?> GetCostsAsync(
+        DateTimeOffset startTime,
+        DateTimeOffset? endTime,
+        CancellationToken ct = default)
+        => throw new NotSupportedException(
+            "OpenAI cost queries require host-bound API credentials in this SharpClaw mainline runtime.");
+
     public async Task<ProviderCostResult?> GetCostsAsync(
         HttpClient httpClient,
         string apiKey,

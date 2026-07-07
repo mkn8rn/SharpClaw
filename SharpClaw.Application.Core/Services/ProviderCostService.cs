@@ -40,7 +40,8 @@ public sealed class ProviderCostService(
         var (periodStart, periodEnd) = ResolvePeriod(days, startDate, endDate);
 
         var plugin = clientFactory.GetPlugin(provider.ProviderKey);
-        var costFeed = plugin?.CostFeed;
+        var providerOptions = new ProviderClientOptions(provider.ApiEndpoint);
+        var costFeed = plugin?.CreateCostFeed(providerOptions);
         var isLocal = plugin is { RequiresApiKey: false };
 
         if (costFeed is not null
@@ -74,7 +75,7 @@ public sealed class ProviderCostService(
                 TotalCost: 0, Currency: DefaultFallbackCurrency,
                 PeriodStart: periodStart, PeriodEnd: periodEnd,
                 DailyBreakdown: null,
-                Note: costFeed.PermissionDeniedNote);
+                Note: plugin!.CostFeedPermissionDeniedNote);
         }
 
         // Provider does not implement a cost API

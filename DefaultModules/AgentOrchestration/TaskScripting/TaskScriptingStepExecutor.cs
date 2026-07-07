@@ -9,16 +9,16 @@ namespace SharpClaw.Modules.AgentOrchestration;
 /// declare/assign, evaluate, log, delay, wait-until-stopped, return, and the
 /// control-flow constructs (conditional, loop, event handler).
 /// <para>
-/// Implements <see cref="ITaskStepInvocationExecutor"/> so it can drive
-/// nested control flow through <see cref="ITaskStepExecutionContext.ExecuteStepsAsync"/>
+/// Implements <see cref="ITaskOperationInvocationExecutor"/> so it can drive
+/// nested control flow through <see cref="ITaskOperationExecutionContext.ExecuteStatementsAsync"/>
 /// while remaining oblivious to the orchestrator's internal types.
 /// </para>
 /// </summary>
-public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
+public sealed class TaskScriptingStepExecutor : ITaskOperationInvocationExecutor
 {
     public string ModuleId => "sharpclaw_agent_orchestration";
 
-    public bool CanExecute(string moduleStepKey) => moduleStepKey switch
+    public bool CanExecute(string operationKey) => operationKey switch
     {
         TaskScriptingStepKeys.DeclareVariable
             or TaskScriptingStepKeys.Assign
@@ -39,27 +39,27 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
     /// The orchestrator routes us through <see cref="ExecuteInvocationAsync"/>.
     /// </summary>
     public Task<bool> ExecuteAsync(
-        string moduleStepKey,
-        ITaskStepExecutionContext context,
+        string operationKey,
+        ITaskOperationExecutionContext context,
         IReadOnlyList<string>? arguments,
         string? expression,
         string? resultVariable) => Task.FromResult(true);
 
-    public async Task<TaskStepResult> ExecuteInvocationAsync(
-        ITaskStepInvocation step,
-        ITaskStepExecutionContext context)
+    public async Task<TaskStatementResult> ExecuteInvocationAsync(
+        ITaskStatementInvocation step,
+        ITaskOperationExecutionContext context)
     {
-        switch (step.StepKey)
+        switch (step.StatementKey)
         {
             case TaskScriptingStepKeys.DeclareVariable:
             case TaskScriptingStepKeys.Assign:
                 context.Variables[step.VariableName ?? ""] = step.RawExpression;
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
 
             case TaskScriptingStepKeys.Evaluate:
                 if (step.ResultVariable is not null)
                     context.Variables[step.ResultVariable] = step.RawExpression;
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
 
             case TaskScriptingStepKeys.Log:
             {
@@ -67,7 +67,7 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
                     ? string.Empty
                     : context.ResolveExpression(step.RawExpression);
                 await context.AppendLogAsync(message);
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
             }
 
             case TaskScriptingStepKeys.Delay:
@@ -77,23 +77,23 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
                     : context.ResolveExpression(step.RawExpression);
                 if (int.TryParse(resolved, out var delayMs))
                     await DelayWithPauseAsync(delayMs, context);
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
             }
 
             case TaskScriptingStepKeys.WaitUntilStopped:
                 await Task.Delay(Timeout.Infinite, context.CancellationToken);
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
 
             case TaskScriptingStepKeys.Return:
-                return TaskStepResult.Return;
+                return TaskStatementResult.Return;
 
             case TaskScriptingStepKeys.Conditional:
             {
                 var branch = context.EvaluateCondition(step.RawExpression)
                     ? step.Body
                     : step.ElseBody;
-                if (branch is null) return TaskStepResult.Continue;
-                return await context.ExecuteStepsAsync(branch, context.CancellationToken);
+                if (branch is null) return TaskStatementResult.Continue;
+                return await context.ExecuteStatementsAsync(branch, context.CancellationToken);
             }
 
             case TaskScriptingStepKeys.Loop:
@@ -110,17 +110,17 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
                     step.Body ?? []);
                 await context.AppendLogAsync(
                     $"Registered event handler: {step.ModuleTriggerKey}");
-                return TaskStepResult.Continue;
+                return TaskStatementResult.Continue;
             }
         }
 
-        return TaskStepResult.Continue;
+        return TaskStatementResult.Continue;
     }
 
     // ── Loop helpers ─────────────────────────────────────────────────
 
-    private static async Task<TaskStepResult> ExecuteLoopAsync(
-        ITaskStepInvocation step, ITaskStepExecutionContext context)
+    private static async Task<TaskStatementResult> ExecuteLoopAsync(
+        ITaskStatementInvocation step, ITaskOperationExecutionContext context)
     {
         var ct = context.CancellationToken;
         var isForEach = step.VariableName is not null;
@@ -134,10 +134,10 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
                 if (step.VariableName is not null)
                     context.Variables[step.VariableName] = item;
                 if (step.Body is null) continue;
-                var result = await context.ExecuteStepsAsync(step.Body, ct);
-                if (result == TaskStepResult.Return) return TaskStepResult.Return;
+                var result = await context.ExecuteStatementsAsync(step.Body, ct);
+                if (result == TaskStatementResult.Return) return TaskStatementResult.Return;
             }
-            return TaskStepResult.Continue;
+            return TaskStatementResult.Continue;
         }
 
         while (context.EvaluateCondition(step.RawExpression))
@@ -145,14 +145,14 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
             ct.ThrowIfCancellationRequested();
             await context.WaitIfPausedAsync();
             if (step.Body is null) continue;
-            var result = await context.ExecuteStepsAsync(step.Body, ct);
-            if (result == TaskStepResult.Return) return TaskStepResult.Return;
+            var result = await context.ExecuteStatementsAsync(step.Body, ct);
+            if (result == TaskStatementResult.Return) return TaskStatementResult.Return;
         }
-        return TaskStepResult.Continue;
+        return TaskStatementResult.Continue;
     }
 
     private static IEnumerable<object?> EnumerateLoopValues(
-        ITaskStepInvocation step, ITaskStepExecutionContext context)
+        ITaskStatementInvocation step, ITaskOperationExecutionContext context)
     {
         if (string.IsNullOrWhiteSpace(step.RawExpression))
             yield break;
@@ -224,7 +224,7 @@ public sealed class TaskScriptingStepExecutor : ITaskStepInvocationExecutor
         }
     }
 
-    private static async Task DelayWithPauseAsync(int delayMs, ITaskStepExecutionContext context)
+    private static async Task DelayWithPauseAsync(int delayMs, ITaskOperationExecutionContext context)
     {
         const int chunkMs = 250;
         var remaining = delayMs;

@@ -79,7 +79,7 @@ public sealed class TestHarnessModuleTests
         var plugin = host.Services.GetRequiredService<ProviderApiClientFactory>()
             .GetPlugin(TestHarnessConstants.CostProviderKey);
 
-        var result = await plugin!.CostFeed!.GetCostsAsync(
+        var result = await plugin!.CreateCostFeed(new ProviderClientOptions(null))!.GetCostsAsync(
             new HttpClient(),
             "local",
             DateTimeOffset.UnixEpoch,

@@ -156,13 +156,18 @@ public sealed class OpenAICompatibleProvidersModule : ISharpClawModule
 /// </summary>
 internal sealed class DeviceCodeAuthClientFlow(IDeviceCodeAuthClient inner) : IDeviceCodeFlow
 {
-    public Task<SharpClaw.Contracts.DTOs.Providers.DeviceCodeSession> StartAsync(
-        HttpClient httpClient, CancellationToken ct = default)
-        => inner.StartDeviceCodeFlowAsync(httpClient, ct);
+    public async Task<SharpClaw.Contracts.DTOs.Providers.DeviceCodeSession> StartAsync(
+        CancellationToken ct = default)
+    {
+        using var httpClient = new HttpClient();
+        return await inner.StartDeviceCodeFlowAsync(httpClient, ct);
+    }
 
     public async Task<string?> PollAsync(
-        HttpClient httpClient,
         SharpClaw.Contracts.DTOs.Providers.DeviceCodeSession session,
         CancellationToken ct = default)
-        => await inner.PollForAccessTokenAsync(httpClient, session, ct);
+    {
+        using var httpClient = new HttpClient();
+        return await inner.PollForAccessTokenAsync(httpClient, session, ct);
+    }
 }

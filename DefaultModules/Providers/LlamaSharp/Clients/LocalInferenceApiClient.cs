@@ -31,6 +31,27 @@ namespace SharpClaw.Modules.Providers.LlamaSharp.Clients;
 /// </summary>
 public sealed class LocalInferenceApiClient : IProviderApiClient
 {
+    public Task<IReadOnlyList<string>> ListModelIdsAsync(CancellationToken ct = default) =>
+        ListModelIdsAsync(new HttpClient(), string.Empty, ct);
+
+    public Task<ChatCompletionResult> ChatCompletionAsync(
+        string model,
+        string? systemPrompt,
+        IReadOnlyList<ChatCompletionMessage> messages,
+        int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
+        CancellationToken ct = default) =>
+        ChatCompletionAsync(
+            new HttpClient(),
+            string.Empty,
+            model,
+            systemPrompt,
+            messages,
+            maxCompletionTokens,
+            providerParameters,
+            completionParameters,
+            ct);
     private readonly LocalInferenceProcessManager _modelManager;
     private readonly IServiceScopeFactory? _scopeFactory;
 

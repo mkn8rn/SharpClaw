@@ -20,6 +20,25 @@ public abstract class OpenAiCompatibleApiClient : IProviderApiClient
     public virtual bool SupportsNativeToolCalling => true;
     protected virtual bool SupportsReasoningContentReplay => false;
 
+    public Task<IReadOnlyList<string>> ListModelIdsAsync(CancellationToken ct = default)
+    {
+        throw new NotSupportedException(
+            $"Provider '{ProviderKey}' requires host-bound credentials in this SharpClaw mainline runtime.");
+    }
+
+    public Task<ChatCompletionResult> ChatCompletionAsync(
+        string model,
+        string? systemPrompt,
+        IReadOnlyList<ChatCompletionMessage> messages,
+        int? maxCompletionTokens = null,
+        Dictionary<string, JsonElement>? providerParameters = null,
+        CompletionParameters? completionParameters = null,
+        CancellationToken ct = default)
+    {
+        throw new NotSupportedException(
+            $"Provider '{ProviderKey}' requires host-bound credentials in this SharpClaw mainline runtime.");
+    }
+
     public virtual async Task<IReadOnlyList<string>> ListModelIdsAsync(
         HttpClient httpClient, string apiKey, CancellationToken ct = default)
     {

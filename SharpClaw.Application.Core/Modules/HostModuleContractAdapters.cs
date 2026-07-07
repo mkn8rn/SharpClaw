@@ -346,8 +346,13 @@ public sealed class HostModuleLifecycleManager(
     public bool IsToolPrefixRegistered(string toolPrefix) =>
         registry.GetModuleByPrefix(toolPrefix) is not null;
 
-    public (ISharpClawModule Module, string ToolName)? FindToolByName(string toolName) =>
-        registry.FindToolByName(toolName);
+    public (ISharpClawCoreModule Module, string ToolName)? FindToolByName(string toolName)
+    {
+        var tool = registry.FindToolByName(toolName);
+        return tool is null
+            ? null
+            : ((ISharpClawCoreModule)tool.Value.Module, tool.Value.ToolName);
+    }
 
     public async Task<Contracts.Modules.ModuleStateResponse> LoadExternalAsync(
         string moduleDir, IServiceProvider hostServices, CancellationToken ct = default)

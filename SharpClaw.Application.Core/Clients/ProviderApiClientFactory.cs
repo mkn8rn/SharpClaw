@@ -92,7 +92,7 @@ public sealed class ProviderApiClientFactory
         if (plugin is null)
             throw new ProviderUnavailableException(providerKey);
 
-        return plugin.CreateClient(apiEndpoint);
+        return plugin.CreateClient(new ProviderClientOptions(apiEndpoint));
     }
 
     /// <summary>

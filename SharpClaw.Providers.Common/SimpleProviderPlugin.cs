@@ -36,9 +36,12 @@ public sealed class SimpleProviderPlugin(
     public ICompletionParameterSpec ParameterSpec { get; } = parameterSpec ?? ICompletionParameterSpec.Passthrough;
     public IDeviceCodeFlow? DeviceCodeFlow { get; } = deviceCodeFlow;
     public IProviderCostFeed? CostFeed { get; } = costFeed;
+    public bool SupportsCostFeed => costFeed is not null;
+    public string CostFeedPermissionDeniedNote => costFeed?.PermissionDeniedNote ?? string.Empty;
 
-    public IProviderApiClient CreateClient(string? endpoint)
+    public IProviderApiClient CreateClient(ProviderClientOptions options)
     {
+        var endpoint = options.Endpoint;
         if (RequiresEndpoint
             && !SupportsAutomaticEndpointDiscovery
             && string.IsNullOrWhiteSpace(endpoint))
@@ -50,6 +53,8 @@ public sealed class SimpleProviderPlugin(
 
         return clientFactory(endpoint);
     }
+
+    public IProviderCostFeed? CreateCostFeed(ProviderClientOptions options) => costFeed;
 
     public Task<string> GetAgentIdentifierSuffixAsync(
         string providerName, Guid modelId, CancellationToken ct = default)
