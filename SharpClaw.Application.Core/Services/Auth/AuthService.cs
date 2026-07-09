@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.Auth;
 using SharpClaw.Contracts.DTOs.Users;
@@ -13,7 +14,8 @@ public sealed class AuthService(
     SharpClawDbContext db,
     TokenService tokenService,
     JwtOptions jwtOptions,
-    ChatCache chatCache)
+    ChatCache chatCache,
+    IConfiguration configuration)
 {
     public async Task<LoginResponse?> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
@@ -139,6 +141,28 @@ public sealed class AuthService(
         db.Users.Add(user);
         await db.SaveChangesAsync(ct);
         return user;
+    }
+
+    public async Task<Guid?> ResolveDisabledAuthSessionUserIdAsync(CancellationToken ct = default)
+    {
+        var configuredUsername = configuration["Admin:Username"];
+
+        if (!string.IsNullOrWhiteSpace(configuredUsername))
+        {
+            var configuredAdminId = await db.Users
+                .Where(u => u.Username == configuredUsername && u.IsUserAdmin)
+                .Select(u => (Guid?)u.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (configuredAdminId is not null)
+                return configuredAdminId;
+        }
+
+        return await db.Users
+            .Where(u => u.IsUserAdmin)
+            .OrderBy(u => u.Username)
+            .Select(u => (Guid?)u.Id)
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>
