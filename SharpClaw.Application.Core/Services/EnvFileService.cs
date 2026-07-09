@@ -1,14 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Application.Core.Modules;
+using SharpClaw.Infrastructure.Configuration;
 using SharpClaw.Infrastructure.Persistence;
+using SharpClaw.Utils.Instances;
 using SharpClaw.Utils.Security;
 
 namespace SharpClaw.Application.Services;
 
 /// <summary>
-/// Server-side service that manages reading and writing the Core
-/// <c>Environment/.env</c> file with authorisation enforcement.
+/// Server-side service that manages reading and writing the instance-scoped
+/// active <c>.env</c> file with authorisation enforcement.
 /// <para>
 /// Authorisation rules:
 /// <list type="bullet">
@@ -23,7 +25,8 @@ namespace SharpClaw.Application.Services;
 public sealed class EnvFileService(
     SharpClawDbContext db,
     SessionService session,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    SharpClawInstancePaths instancePaths)
 {
     /// <summary>
     /// Returns <c>true</c> when the current session user is authorised
@@ -87,10 +90,6 @@ public sealed class EnvFileService(
         return bool.TryParse(value, out var allowed) && allowed;
     }
 
-    private static string ResolveEnvFilePath()
-    {
-        return Path.Combine(
-            Path.GetDirectoryName(typeof(EnvFileService).Assembly.Location)!,
-            ModuleFileNames.EnvironmentDir, ModuleFileNames.EnvFile);
-    }
+    private string ResolveEnvFilePath()
+        => LocalEnvironment.ResolveActiveEnvFilePath(instancePaths);
 }

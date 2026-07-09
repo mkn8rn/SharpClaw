@@ -34,6 +34,8 @@ using SharpClaw.Application.Core.Services.Triggers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Chat;
+using SharpClaw.Infrastructure.Configuration;
+using SharpClaw.Utils.Instances;
 
 namespace SharpClaw.Application.API.Cli;
 
@@ -3416,8 +3418,8 @@ public static class CliDispatcher
             "get" => await EnvHandlers.Read(svc),
             "set" => await HandleEnvSet(svc),
             "auth" => await EnvHandlers.CheckAuth(svc),
-            "status" => HandleEnvStatus(),
-            "unlock" => await HandleEnvUnlockAsync(),
+            "status" => HandleEnvStatus(sp.GetRequiredService<SharpClawInstancePaths>()),
+            "unlock" => await HandleEnvUnlockAsync(sp.GetRequiredService<SharpClawInstancePaths>()),
             _ => UsageResult($"Unknown sub-command: env {sub}. Try 'env get', 'env set', 'env auth', 'env status', or 'env unlock'.")
         };
     }
@@ -3438,11 +3440,9 @@ public static class CliDispatcher
         return await EnvHandlers.Write(new EnvWriteRequest(content), svc);
     }
 
-    private static IResult HandleEnvStatus()
+    private static IResult HandleEnvStatus(SharpClawInstancePaths instancePaths)
     {
-        var path = Path.Combine(
-            Path.GetDirectoryName(typeof(CliDispatcher).Assembly.Location)!,
-            "Environment", ".env");
+        var path = LocalEnvironment.ResolveActiveEnvFilePath(instancePaths);
 
         if (!File.Exists(path))
         {
@@ -3455,11 +3455,9 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
-    private static async Task<IResult> HandleEnvUnlockAsync()
+    private static async Task<IResult> HandleEnvUnlockAsync(SharpClawInstancePaths instancePaths)
     {
-        var path = Path.Combine(
-            Path.GetDirectoryName(typeof(CliDispatcher).Assembly.Location)!,
-            "Environment", ".env");
+        var path = LocalEnvironment.ResolveActiveEnvFilePath(instancePaths);
 
         if (!File.Exists(path))
         {
@@ -3473,7 +3471,7 @@ public static class CliDispatcher
             return Results.Ok();
         }
 
-        var key = EncryptionKeyResolver.ResolveKey();
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
         if (key is null)
         {
             Console.Error.WriteLine("Cannot resolve encryption key.");

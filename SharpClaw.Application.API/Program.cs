@@ -119,7 +119,7 @@ using var sessionLogCapture = SessionLogCapture.Install(sessionLogs);
 // builder.Configuration; the two sources are reconciled by reading the
 // same .env files.
 var earlyConfiguration = new ConfigurationBuilder()
-    .AddLocalEnvironment(isDevelopment: false)
+    .AddLocalEnvironment(isDevelopment: false, backendInstancePaths)
     .Build();
 
 var serilogOptions = SerilogEnvironmentOptions.FromConfiguration(earlyConfiguration);
@@ -190,7 +190,7 @@ try
         builder.WebHost.UseUrls(backendManifest.BaseUrl ?? "http://127.0.0.1:48923");
 
     // Configuration: environment files
-    builder.Configuration.AddLocalEnvironment(builder.Environment.IsDevelopment());
+    builder.Configuration.AddLocalEnvironment(builder.Environment.IsDevelopment(), backendInstancePaths);
 
     builder.Host.UseSerilog();
     builder.Logging.AddProvider(new SessionLogLoggerProvider(sessionLogs));
