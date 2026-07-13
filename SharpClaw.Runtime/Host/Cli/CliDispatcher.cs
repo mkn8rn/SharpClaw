@@ -36,6 +36,8 @@ using SharpClaw.Contracts.Tasks;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Chat;
 using SharpClaw.Core.Modules;
+using SharpClaw.Runtime.INF.Configuration;
+using SharpClaw.Shared.Instances;
 
 namespace SharpClaw.Runtime.Host.Cli;
 
@@ -3425,7 +3427,8 @@ public static class CliDispatcher
             "set" => await HandleEnvSet(svc),
             "auth" => await EnvHandlers.CheckAuth(svc),
             "status" => HandleEnvStatus(),
-            "unlock" => await HandleEnvUnlockAsync(),
+            "unlock" => await HandleEnvUnlockAsync(
+                sp.GetRequiredService<SharpClawInstancePaths>()),
             _ => UsageResult($"Unknown sub-command: env {sub}. Try 'env get', 'env set', 'env auth', 'env status', or 'env unlock'.")
         };
     }
@@ -3448,9 +3451,7 @@ public static class CliDispatcher
 
     private static IResult HandleEnvStatus()
     {
-        var path = Path.Combine(
-            Path.GetDirectoryName(typeof(CliDispatcher).Assembly.Location)!,
-            "Environment", ".env");
+        var path = LocalEnvironment.ResolveActiveEnvFilePath();
 
         if (!File.Exists(path))
         {
@@ -3463,11 +3464,10 @@ public static class CliDispatcher
         return Results.Ok();
     }
 
-    private static async Task<IResult> HandleEnvUnlockAsync()
+    private static async Task<IResult> HandleEnvUnlockAsync(
+        SharpClawInstancePaths instancePaths)
     {
-        var path = Path.Combine(
-            Path.GetDirectoryName(typeof(CliDispatcher).Assembly.Location)!,
-            "Environment", ".env");
+        var path = LocalEnvironment.ResolveActiveEnvFilePath();
 
         if (!File.Exists(path))
         {
@@ -3481,7 +3481,7 @@ public static class CliDispatcher
             return Results.Ok();
         }
 
-        var key = EncryptionKeyResolver.ResolveKey();
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
         if (key is null)
         {
             Console.Error.WriteLine("Cannot resolve encryption key.");

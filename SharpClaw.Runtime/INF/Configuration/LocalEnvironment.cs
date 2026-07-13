@@ -1,115 +1,229 @@
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.FileProviders.Physical;
+using SharpClaw.Shared.Instances;
 using SharpClaw.Shared.Security;
 
 namespace SharpClaw.Runtime.INF.Configuration;
 
 /// <summary>
-/// Loads environment configuration from <c>Environment/.env</c> (always)
-/// and <c>Environment/.dev.env</c> (development only) relative to the assembly location.
-/// Creates a default <c>.env</c> if it does not exist.
-/// Supports transparent decryption of AES-GCM encrypted <c>.env</c> files
-/// and auto-locks plaintext files on first read.
+/// Loads environment configuration from the assembly-local active
+/// <c>Environment/.env</c> file created from the portable plaintext
+/// <c>Environment/.env.template</c>. Startup may encrypt the active file after
+/// loading it, but it never mutates the template.
 /// </summary>
 public static class LocalEnvironment
 {
-    private const string DefaultEnvContent =
-        """
-        {
-          // SharpClaw Environment Configuration
-          // Values here are loaded for all environments.
-
-          "Jwt": {
-            "Issuer": "SharpClaw",
-            "Audience": "SharpClaw",
-            "AccessTokenLifetime": "00:30:00",
-            "RefreshTokenLifetime": "30.00:00:00"
-          },
-
-          "Auth": {
-            "DisableApiKeyCheck": "false",
-            "DisableAccessTokenCheck": "false"
-          },
-
-          "Admin": {
-            "Username": "admin",
-            "Password": "123456",
-            "ReconcilePermissions": "true"
-          },
-
-          "EnvEditor": { "AllowNonAdmin": "false" }
-        }
-        """;
-
     public static IConfigurationBuilder AddLocalEnvironment(
-        this IConfigurationBuilder builder, bool isDevelopment = false)
+        this IConfigurationBuilder builder,
+        bool isDevelopment = false,
+        SharpClawInstancePaths? instancePaths = null)
     {
         var envDir = Path.Combine(
             Path.GetDirectoryName(typeof(LocalEnvironment).Assembly.Location)!,
             "Environment");
 
-        EnsureEnvironmentFile(envDir);
+        return builder.AddLocalEnvironmentFrom(
+            envDir,
+            isDevelopment,
+            instancePaths);
+    }
 
-        if (!Directory.Exists(envDir))
-            return builder;
+    internal static IConfigurationBuilder AddLocalEnvironmentFrom(
+        this IConfigurationBuilder builder,
+        string envDir,
+        bool isDevelopment,
+        SharpClawInstancePaths? instancePaths = null)
+    {
+        instancePaths ??= TryResolveBackendInstancePathsFromEnvironment();
 
-        AddEnvFile(builder, envDir, ".env");
+        EnsureEnvironmentTemplate(envDir, ".env.template");
+        EnsureActiveEnvironmentFile(envDir, ".env", ".env.template");
+        AddEnvFile(
+            builder,
+            envDir: envDir,
+            fileName: ".env",
+            templateFileName: ".env.template",
+            instancePaths: instancePaths);
 
         if (isDevelopment)
-            AddEnvFile(builder, envDir, ".dev.env");
+        {
+            EnsureEnvironmentTemplate(envDir, ".dev.env.template");
+            EnsureActiveEnvironmentFile(envDir, ".dev.env", ".dev.env.template");
+            AddEnvFile(
+                builder,
+                envDir: envDir,
+                fileName: ".dev.env",
+                templateFileName: ".dev.env.template",
+                instancePaths: instancePaths);
+        }
 
         return builder;
     }
 
-    private static void AddEnvFile(IConfigurationBuilder builder, string envDir, string fileName)
+    public static string ResolveActiveEnvFilePath() =>
+        Path.Combine(
+            Path.GetDirectoryName(typeof(LocalEnvironment).Assembly.Location)!,
+            "Environment",
+            ".env");
+
+    private static void AddEnvFile(
+        IConfigurationBuilder builder,
+        string envDir,
+        string fileName,
+        string templateFileName,
+        SharpClawInstancePaths? instancePaths)
     {
-        var path = Path.Combine(envDir, fileName);
-        if (!File.Exists(path))
+        var activePath = Path.Combine(envDir, fileName);
+        if (!File.Exists(activePath))
             return;
 
-        if (EncryptedEnvFile.IsEncryptedOnDisk(path))
+        if (!EncryptedEnvFile.IsEncryptedOnDisk(activePath))
         {
-            // Encrypted — decrypt into memory, load as JSON stream.
-            var key = EncryptionKeyResolver.ResolveKey();
-            var json = EncryptedEnvFile.ReadAsync(path, key, CancellationToken.None)
-                .GetAwaiter().GetResult(); // Sync OK: startup, single call
-            var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            builder.AddJsonStream(stream);
-        }
-        else
-        {
-            // Plaintext — load into memory, then auto-lock (encrypt in-place)
-            // so the file doesn't remain as readable text on disk.
-            var key = EncryptionKeyResolver.ResolveKey();
-            var json = File.ReadAllText(path);
-            var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            builder.AddJsonStream(stream);
-
-            if (key is not null)
+            try
             {
-                // Auto-lock: encrypt the plaintext file in-place immediately.
-                EncryptedEnvFile.WriteAsync(path, json, key, encrypt: true, CancellationToken.None)
-                    .GetAwaiter().GetResult();
+                AddPlaintextEnvFile(builder, activePath, instancePaths);
+                return;
             }
+            catch (Exception ex) when (IsUnreadableActiveFile(ex))
+            {
+                QuarantineUnreadableActiveFile(activePath);
+                CopyTemplateToActive(envDir, fileName, templateFileName);
+                AddPlaintextEnvFile(builder, activePath, instancePaths);
+                return;
+            }
+        }
+
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
+        try
+        {
+            var json = EncryptedEnvFile.ReadAsync(activePath, key, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            AddJson(builder, json);
+        }
+        catch (Exception ex) when (IsUnreadableActiveFile(ex))
+        {
+            QuarantineUnreadableActiveFile(activePath);
+            CopyTemplateToActive(envDir, fileName, templateFileName);
+            AddPlaintextEnvFile(builder, activePath, instancePaths);
         }
     }
 
-    private static void EnsureEnvironmentFile(string envDir)
+    private static void AddPlaintextEnvFile(
+        IConfigurationBuilder builder,
+        string activePath,
+        SharpClawInstancePaths? instancePaths)
     {
-        var envFile = Path.Combine(envDir, ".env");
-        if (File.Exists(envFile) && new FileInfo(envFile).Length > 0)
+        var json = File.ReadAllText(activePath);
+        AddJson(builder, json);
+
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
+        if (key is not null)
+        {
+            EncryptedEnvFile.WriteAsync(
+                    activePath,
+                    json,
+                    key,
+                    encrypt: true,
+                    CancellationToken.None)
+                .GetAwaiter().GetResult();
+        }
+    }
+
+    private static void AddJson(IConfigurationBuilder builder, string json)
+    {
+        var options = new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        };
+        using (JsonDocument.Parse(json, options))
+        {
+        }
+
+        builder.AddJsonStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+    }
+
+    private static void EnsureEnvironmentTemplate(
+        string templateDir,
+        string fileName)
+    {
+        var templatePath = Path.Combine(templateDir, fileName);
+        if (File.Exists(templatePath) && new FileInfo(templatePath).Length > 0)
+        {
+            if (EncryptedEnvFile.IsEncryptedOnDisk(templatePath))
+            {
+                throw new InvalidOperationException(
+                    $"Environment template '{templatePath}' is encrypted. Published templates must be plaintext and portable.");
+            }
+
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Environment template '{templatePath}' is missing or empty. Published templates must be plaintext and portable.");
+    }
+
+    private static void EnsureActiveEnvironmentFile(
+        string envDir,
+        string activeFileName,
+        string templateFileName)
+    {
+        var activePath = Path.Combine(envDir, activeFileName);
+        if (File.Exists(activePath) && new FileInfo(activePath).Length > 0)
             return;
 
-        try
+        CopyTemplateToActive(envDir, activeFileName, templateFileName);
+    }
+
+    private static void CopyTemplateToActive(
+        string envDir,
+        string activeFileName,
+        string templateFileName)
+    {
+        var templatePath = Path.Combine(envDir, templateFileName);
+        if (!File.Exists(templatePath) || new FileInfo(templatePath).Length == 0)
         {
-            Directory.CreateDirectory(envDir);
-            File.WriteAllText(envFile, DefaultEnvContent);
+            throw new InvalidOperationException(
+                $"Environment template '{templatePath}' is missing or empty. Published templates must be plaintext and portable.");
         }
-        catch
+
+        if (EncryptedEnvFile.IsEncryptedOnDisk(templatePath))
         {
-            // Best-effort — read-only or restricted file system.
+            throw new InvalidOperationException(
+                $"Environment template '{templatePath}' is encrypted. Published templates must be plaintext and portable.");
         }
+
+        Directory.CreateDirectory(envDir);
+        File.Copy(templatePath, Path.Combine(envDir, activeFileName), overwrite: true);
+    }
+
+    private static void QuarantineUnreadableActiveFile(string activePath)
+    {
+        var quarantinePath = activePath
+            + $".unreadable-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+        File.Move(activePath, quarantinePath, overwrite: true);
+    }
+
+    private static bool IsUnreadableActiveFile(Exception ex) =>
+        ex is CryptographicException
+        || ex is JsonException
+        || ex is InvalidDataException
+        || ex is FormatException
+        || ex is ArgumentException
+        || ex.InnerException is not null && IsUnreadableActiveFile(ex.InnerException);
+
+    private static SharpClawInstancePaths? TryResolveBackendInstancePathsFromEnvironment()
+    {
+        var instanceRoot = Environment.GetEnvironmentVariable("SHARPCLAW_INSTANCE_ROOT");
+        var dataDir = Environment.GetEnvironmentVariable("SHARPCLAW_DATA_DIR");
+        if (string.IsNullOrWhiteSpace(instanceRoot) && !string.IsNullOrWhiteSpace(dataDir))
+            instanceRoot = Path.GetDirectoryName(Path.GetFullPath(dataDir));
+
+        if (string.IsNullOrWhiteSpace(instanceRoot))
+            return null;
+
+        return new SharpClawInstancePaths(SharpClawInstanceKind.Backend, instanceRoot);
     }
 }

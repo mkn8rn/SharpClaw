@@ -82,6 +82,7 @@ public sealed class AuthServiceJsonColdStoreTests
             });
         await db.SaveChangesAsync();
 
+        var configuration = new ConfigurationBuilder().Build();
         var auth = new AuthService(
             db,
             new TokenService(new JwtOptions
@@ -92,7 +93,8 @@ public sealed class AuthServiceJsonColdStoreTests
             {
                 Secret = Convert.ToBase64String(new byte[32]),
             },
-            new ChatCache(new ConfigurationBuilder().Build()));
+            new ChatCache(configuration),
+            configuration);
 
         await auth.InvalidateAccessTokensAsync([target.Id]);
         await auth.InvalidateRefreshTokensAsync([target.Id]);

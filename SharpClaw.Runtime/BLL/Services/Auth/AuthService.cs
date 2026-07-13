@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.Auth;
 using SharpClaw.Contracts.DTOs.Users;
@@ -13,7 +14,8 @@ public sealed class AuthService(
     SharpClawDbContext db,
     TokenService tokenService,
     JwtOptions jwtOptions,
-    ChatCache chatCache)
+    ChatCache chatCache,
+    IConfiguration configuration)
 {
     public async Task<LoginResponse?> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
@@ -135,6 +137,45 @@ public sealed class AuthService(
         db.Users.Add(user);
         await db.SaveChangesAsync(ct);
         return user;
+    }
+
+    public async Task<Guid?> ResolveDisabledAuthSessionUserIdAsync(
+        CancellationToken ct = default)
+    {
+        var anonymousUsername = configuration["Auth:AnonymousUsername"];
+        if (anonymousUsername is not null)
+        {
+            if (string.IsNullOrWhiteSpace(anonymousUsername))
+            {
+                throw new InvalidOperationException(
+                    "Auth:AnonymousUsername is configured but empty.");
+            }
+
+            return await db.Users
+                .Where(user => user.Username == anonymousUsername)
+                .Select(user => (Guid?)user.Id)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new InvalidOperationException(
+                    $"Auth:AnonymousUsername is set to '{anonymousUsername}', but no matching user exists.");
+        }
+
+        var configuredUsername = configuration["Admin:Username"];
+        if (!string.IsNullOrWhiteSpace(configuredUsername))
+        {
+            var configuredAdminId = await db.Users
+                .Where(user => user.Username == configuredUsername && user.IsUserAdmin)
+                .Select(user => (Guid?)user.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (configuredAdminId is not null)
+                return configuredAdminId;
+        }
+
+        return await db.Users
+            .Where(user => user.IsUserAdmin)
+            .OrderBy(user => user.Username)
+            .Select(user => (Guid?)user.Id)
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>

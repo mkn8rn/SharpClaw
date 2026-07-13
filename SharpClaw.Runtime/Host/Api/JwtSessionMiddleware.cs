@@ -86,8 +86,34 @@ public sealed class JwtSessionMiddleware(
             }
         }
 
-        // Enforce authentication on non-exempt paths (skipped when disabled via .env).
-        if (!_disabled && !IsExemptPath(context.Request.Path) && !EndpointMetadataHelper.IsAnonymousAllowed(context))
+        if (_disabled)
+        {
+            var session = context.RequestServices.GetRequiredService<SessionService>();
+            if (session.UserId is null)
+            {
+                var authService = context.RequestServices.GetRequiredService<AuthService>();
+                session.UserId = await authService.ResolveDisabledAuthSessionUserIdAsync(
+                    context.RequestAborted);
+            }
+
+            if (session.UserId is null
+                && !IsExemptPath(context.Request.Path)
+                && !EndpointMetadataHelper.IsAnonymousAllowed(context)
+                && !IsGatewayAuthenticated(context))
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(
+                    """{"error":"resource_unavailable","message":"Access-token checks are disabled, but SharpClaw could not resolve a local session user. Configure Admin:Username and Admin:Password so startup can seed a local admin user, or authenticate with a Bearer token."}""");
+                return;
+            }
+
+            await next(context);
+            return;
+        }
+
+        // Enforce authentication on non-exempt paths.
+        if (!IsExemptPath(context.Request.Path) && !EndpointMetadataHelper.IsAnonymousAllowed(context))
         {
             var session = context.RequestServices.GetRequiredService<SessionService>();
             if (session.UserId is null && !IsGatewayAuthenticated(context))

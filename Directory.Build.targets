@@ -31,8 +31,8 @@
           DependsOnTargets="_EnsureEnvironmentFiles"
           Condition="Exists('Environment')">
     <ItemGroup>
-      <Content Include="Environment\*.env" Exclude="Environment\*.template"
-               CopyToOutputDirectory="Always" />
+      <Content Include="Environment\*.env;Environment\*.env.template"
+                 CopyToOutputDirectory="Always" />
     </ItemGroup>
   </Target>
 

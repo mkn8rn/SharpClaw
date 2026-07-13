@@ -1,3 +1,5 @@
+using SharpClaw.Shared.Instances;
+
 namespace SharpClaw.Shared.Security;
 
 /// <summary>
@@ -11,12 +13,14 @@ public static class EncryptionKeyResolver
     /// can be resolved (should not happen in normal operation — the
     /// persistent key store auto-generates one).
     /// </summary>
-    public static byte[]? ResolveKey()
+    public static byte[]? ResolveKey(SharpClawInstancePaths? instancePaths = null)
     {
         try
         {
             var keyBase64 = Environment.GetEnvironmentVariable("SHARPCLAW_ENCRYPTION_KEY")
-                ?? PersistentKeyStore.GetOrCreate("encryption-key");
+                ?? (instancePaths is null
+                    ? PersistentKeyStore.GetOrCreate("encryption-key")
+                    : PersistentKeyStore.GetOrCreate("encryption-key", instancePaths));
             var key = Convert.FromBase64String(keyBase64);
             return key.Length == 32 ? key : null;
         }

@@ -1,14 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using SharpClaw.Runtime.BLL.Modules;
+using SharpClaw.Runtime.INF.Configuration;
 using SharpClaw.Runtime.INF.Persistence;
+using SharpClaw.Shared.Instances;
 using SharpClaw.Shared.Security;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
 /// <summary>
-/// Server-side service that manages reading and writing the Core
-/// <c>Environment/.env</c> file with authorisation enforcement.
+/// Server-side service that manages reading and writing the assembly-local
+/// active <c>Environment/.env</c> file with authorisation enforcement.
 /// <para>
 /// Authorisation rules:
 /// <list type="bullet">
@@ -23,7 +24,8 @@ namespace SharpClaw.Runtime.BLL.Services;
 public sealed class EnvFileService(
     SharpClawDbContext db,
     SessionService session,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    SharpClawInstancePaths instancePaths)
 {
     /// <summary>
     /// Returns <c>true</c> when the current session user is authorised
@@ -57,7 +59,7 @@ public sealed class EnvFileService(
         var path = ResolveEnvFilePath();
         if (!File.Exists(path)) return null;
 
-        var key = EncryptionKeyResolver.ResolveKey();
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
         return await EncryptedEnvFile.ReadAsync(path, key, ct);
     }
 
@@ -73,7 +75,7 @@ public sealed class EnvFileService(
             throw new UnauthorizedAccessException("Admin login required to edit Runtime Host environment.");
 
         var path = ResolveEnvFilePath();
-        var key = EncryptionKeyResolver.ResolveKey();
+        var key = EncryptionKeyResolver.ResolveKey(instancePaths);
         // Always write encrypted — auto-lock ensures the file is encrypted
         // after first startup, and all subsequent writes preserve that.
         await EncryptedEnvFile.WriteAsync(path, content, key, encrypt: true, ct);
@@ -87,10 +89,6 @@ public sealed class EnvFileService(
         return bool.TryParse(value, out var allowed) && allowed;
     }
 
-    private static string ResolveEnvFilePath()
-    {
-        return Path.Combine(
-            Path.GetDirectoryName(typeof(EnvFileService).Assembly.Location)!,
-            ModuleFileNames.EnvironmentDir, ModuleFileNames.EnvFile);
-    }
+    private static string ResolveEnvFilePath() =>
+        LocalEnvironment.ResolveActiveEnvFilePath();
 }
