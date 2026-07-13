@@ -144,6 +144,8 @@ public sealed class TestHarnessPromptAssemblyExpandedTests
             TestHarnessConstants.JobResourceTool,
             TestHarnessConstants.JobStreamingTool,
             TestHarnessConstants.InlineOpenTool,
+            TestHarnessConstants.ControlTool,
+            TestHarnessConstants.SnapshotTool,
             TestHarnessConstants.InlinePermissionedToolAlias
         ]);
     }
