@@ -25,7 +25,7 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
-    <PackageReference Include="JSONColdStore" />
+    <PackageReference Include="Supprocom.JSONColdStore" />
     <PackageReference Include="System.Security.Cryptography.Xml" />
   </ItemGroup>
 
