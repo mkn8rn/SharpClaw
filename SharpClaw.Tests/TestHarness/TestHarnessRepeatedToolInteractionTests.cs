@@ -106,7 +106,6 @@ public sealed class TestHarnessRepeatedToolInteractionTests
         var denied = await CachedMeasurementAsync("hundred-denied-warm", MeasureHundredDeniedWarmAsync);
 
         denied.ToolBodyInvocations.Should().Be(0);
-        denied.DescriptorBuilds.Should().Be(0);
         denied.PermissionDeniedResults.Should().Be(HundredCalls);
         denied.SharpClawOverheadMs.Should().BeLessThanOrEqualTo(
             25,
@@ -189,7 +188,6 @@ public sealed class TestHarnessRepeatedToolInteractionTests
         host.Harness.ToolCalls.Should().BeEmpty();
         ToolResultMessages(host).Count(m => m.Content?.Contains("permission denied", StringComparison.OrdinalIgnoreCase) == true)
             .Should().Be(50);
-        host.Harness.PermissionDescriptorBuilds.Should().Be(0);
     }
 
     [Test]

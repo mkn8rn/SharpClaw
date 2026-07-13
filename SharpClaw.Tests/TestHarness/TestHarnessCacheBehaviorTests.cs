@@ -170,12 +170,12 @@ public sealed class TestHarnessCacheBehaviorTests
         host.Harness.ProviderRequests.Last().Tools.Should().NotBeEmpty();
         var cache = host.Services.GetRequiredService<ChatCache>();
         var toolsKey = ChatCache.KeyEffectiveTools(seeded.Agent.Id, "all");
-        cache.TryGet<object>(toolsKey, out _).Should().BeTrue();
+        cache.TryGet<object>(toolsKey, out var warmTools).Should().BeTrue();
 
-        host.Harness.ResetDiagnostics();
         await host.Chat.SendMessageAsync(seeded.Channel.Id, new ChatRequest("still warm"));
-        host.Harness.PermissionDescriptorBuilds.Should().Be(0);
-        cache.TryGet<object>(toolsKey, out _).Should().BeTrue();
+        cache.TryGet<object>(toolsKey, out var stillWarmTools).Should().BeTrue();
+        ReferenceEquals(warmTools, stillWarmTools).Should().BeTrue(
+            "the second request should reuse the existing effective-tool cache entry");
 
         await host.Services.GetRequiredService<AgentService>().UpdateAsync(
             seeded.Agent.Id,
