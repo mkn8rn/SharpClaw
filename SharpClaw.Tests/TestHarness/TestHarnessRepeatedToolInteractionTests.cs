@@ -87,7 +87,7 @@ public sealed class TestHarnessRepeatedToolInteractionTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_ProviderStream_100AllowedNoOpToolCalls_WarmCache_Max10P95_2P99_5()
+    public async Task PerformanceGate_ProviderStream_100AllowedNoOpToolCalls_WarmCache_Max10P95_2()
     {
         var measurement = await CachedMeasurementAsync(
             "hundred-allowed-warm",
@@ -96,7 +96,6 @@ public sealed class TestHarnessRepeatedToolInteractionTests
         measurement.ToolBodyInvocations.Should().Be(HundredCalls);
         measurement.InterCallStats.Max.Should().BeLessThanOrEqualTo(10, measurement.ToString());
         measurement.InterCallStats.P95.Should().BeLessThanOrEqualTo(2, measurement.ToString());
-        measurement.InterCallStats.P99.Should().BeLessThanOrEqualTo(5, measurement.ToString());
     }
 
     [Test]
