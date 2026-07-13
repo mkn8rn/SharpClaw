@@ -392,7 +392,8 @@ public sealed class TestHarnessPerformanceTierTests
             providerTimings.Should().HaveCount(10);
             providerTimings.Should().OnlyContain(timing =>
                 timing.ConfiguredDelayMs == 1000 && timing.ElapsedMs >= 900);
-            HasOverlappingProviderWork(providerTimings).Should().BeTrue(
+            HasOverlappingWork(providerTimings.Select(timing =>
+                (timing.StartedAtTimestamp, timing.CompletedAtTimestamp))).Should().BeTrue(
                 "ten concurrent streams must overlap in the provider work they exercise");
         }
         finally
@@ -564,10 +565,18 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_DirectJob_TwentyParallelAllowedNoOpJobs_Under250ms()
+    public async Task PerformanceGate_DirectJob_TwentyParallelAllowedJobs_OverlapsToolWork()
     {
-        var measured = await CachedAsync("direct-job-parallel-20", MeasureTwentyParallelAllowedJobsAsync);
-        measured.Should().BeLessThanOrEqualTo(250);
+        var measured = await MeasureTwentyParallelAllowedJobsAsync();
+
+        measured.ToolCalls.Should().HaveCount(20);
+        measured.ToolCalls.Should().OnlyContain(call =>
+            call.Kind == "job"
+            && call.ToolName == TestHarnessConstants.JobPermissionedTool
+            && call.ElapsedMs >= 20);
+        HasOverlappingWork(measured.ToolCalls.Select(call =>
+            (call.StartedAtTimestamp, call.CompletedAtTimestamp))).Should().BeTrue(
+                "parallel jobs must overlap in actual module tool execution");
     }
 
     private static IEnumerable<TestCaseData> StreamingAllSurfaceTiers()
@@ -1261,10 +1270,10 @@ public sealed class TestHarnessPerformanceTierTests
         return sw.ElapsedMilliseconds;
     }
 
-    private static async Task<long> MeasureTwentyParallelAllowedJobsAsync()
+    private static async Task<ParallelJobMeasurement> MeasureTwentyParallelAllowedJobsAsync()
     {
         await using var host = ChatHarnessHost.Create();
-        host.Harness.ConfigurePermissionedJobTool(new TestHarnessToolBehavior { Result = "" });
+        host.Harness.ConfigurePermissionedJobTool(new TestHarnessToolBehavior { Result = "", LatencyMs = 25 });
         var seeded = await host.SeedChatAsync(
             TestHarnessConstants.ToolProviderKey,
             grantHarnessPermission: true);
@@ -1276,7 +1285,7 @@ public sealed class TestHarnessPerformanceTierTests
                 ScriptJson: """{"result":""}"""));
 
         host.Harness.Reset();
-        host.Harness.ConfigurePermissionedJobTool(new TestHarnessToolBehavior { Result = "" });
+        host.Harness.ConfigurePermissionedJobTool(new TestHarnessToolBehavior { Result = "", LatencyMs = 25 });
 
         var sw = Stopwatch.StartNew();
         var tasks = Enumerable.Range(0, 20)
@@ -1295,7 +1304,7 @@ public sealed class TestHarnessPerformanceTierTests
         sw.Stop();
 
         results.Should().OnlyContain(r => r.Status == AgentJobStatus.Completed);
-        return sw.ElapsedMilliseconds;
+        return new ParallelJobMeasurement(sw.ElapsedMilliseconds, host.Harness.ToolCalls.ToArray());
     }
 
     private sealed class ApiStreamMeasurementFixture : IAsyncDisposable
@@ -1396,7 +1405,8 @@ public sealed class TestHarnessPerformanceTierTests
         public ValueTask DisposeAsync() => _host.DisposeAsync();
     }
 
-    private static bool HasOverlappingProviderWork(IReadOnlyList<CapturedProviderTiming> timings)
+    private static bool HasOverlappingWork(
+        IEnumerable<(long StartedAtTimestamp, long CompletedAtTimestamp)> timings)
     {
         var ordered = timings
             .Where(timing => timing.StartedAtTimestamp > 0 && timing.CompletedAtTimestamp > timing.StartedAtTimestamp)
@@ -1427,6 +1437,10 @@ public sealed class TestHarnessPerformanceTierTests
 }
 
 internal sealed record ToolRoundTripMeasurement(long ClientVisibleMs, long ProviderActualMs);
+
+internal sealed record ParallelJobMeasurement(
+    long ClientVisibleMs,
+    IReadOnlyList<CapturedToolCall> ToolCalls);
 
 internal sealed record HotPathSampleMeasurement(string Name, IReadOnlyList<double> SamplesMs)
 {
