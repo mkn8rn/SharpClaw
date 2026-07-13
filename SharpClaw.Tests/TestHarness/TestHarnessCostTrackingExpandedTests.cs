@@ -346,7 +346,9 @@ public sealed class TestHarnessCostTrackingExpandedTests
 
         job.Status.Should().Be(AgentJobStatus.Failed);
         job.CompletedAt.Should().NotBeNull();
-        job.ErrorLog.Should().Contain("test harness tool failure");
+        job.ErrorLog.Should().Contain("[ForeignModuleProtocolException]");
+        job.ErrorLog.Should().Contain("sharpclaw_test_harness_out_of_process.test_harness_job_permissioned");
+        job.ErrorLog.Should().Contain("HTTP 500");
         job.Logs.Should().Contain(l => l.Level == JobLogLevels.Error);
         host.Harness.ToolCalls.Should().ContainSingle()
             .Which.Failed.Should().BeTrue();
