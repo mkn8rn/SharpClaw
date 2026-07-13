@@ -39,7 +39,7 @@ public class ApiHostStartupTests
         var config = new DirectoryInfo(testBinDir).Parent!.Name;
         var tfm = new DirectoryInfo(testBinDir).Name;
 
-        var apiOutputDir = Path.Combine(solutionRoot, "SharpClaw.Runtime.Host", "bin", config, tfm);
+        var apiOutputDir = Path.Combine(solutionRoot, "SharpClaw.Runtime", "Host", "bin", config, tfm);
 
         // Prefer the platform-native launcher; fall back to `dotnet exec` on the dll.
         var exeName = OperatingSystem.IsWindows()
