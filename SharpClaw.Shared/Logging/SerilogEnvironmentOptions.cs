@@ -9,7 +9,6 @@ namespace SharpClaw.Shared.Logging;
 public sealed record SerilogEnvironmentOptions(
     bool Enabled,
     bool ConsoleEnabled,
-    bool FileEnabled,
     bool RequestLoggingEnabled,
     string MinimumLevel,
     string MicrosoftMinimumLevel,
@@ -32,7 +31,6 @@ public sealed record SerilogEnvironmentOptions(
         return new SerilogEnvironmentOptions(
             Enabled: GetBool(configuration, $"{SectionPath}:Enabled", defaultValue: true),
             ConsoleEnabled: GetBool(configuration, $"{SectionPath}:ConsoleEnabled", defaultValue: true),
-            FileEnabled: GetBool(configuration, $"{SectionPath}:FileEnabled", defaultValue: true),
             RequestLoggingEnabled: GetBool(configuration, $"{SectionPath}:RequestLoggingEnabled", defaultValue: true),
             MinimumLevel: GetString(configuration, $"{SectionPath}:MinimumLevel", "Information"),
             MicrosoftMinimumLevel: GetString(configuration, $"{SectionPath}:MicrosoftMinimumLevel", "Warning"),

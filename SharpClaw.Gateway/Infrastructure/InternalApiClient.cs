@@ -19,7 +19,7 @@ public sealed class InternalApiClient(
     HttpClient httpClient,
     IOptions<InternalApiOptions> options,
     IHttpContextAccessor httpContextAccessor,
-    SessionLogWriter sessionLogWriter) : IGatewayInternalApi
+    DurableProcessLogWriter processLogs) : IGatewayInternalApi
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -48,7 +48,7 @@ public sealed class InternalApiClient(
         {
             var body = await response.Content.ReadAsStringAsync(ct);
             Console.WriteLine($"[gateway] 401 on GET {path} — body: {body}");
-            sessionLogWriter.AppendDebug($"401 on GET {path} — body: {body}");
+            processLogs.AppendDebug($"401 on GET {path} — body: {body}");
 
             if (TryInvalidateAndReAttach(request))
             {
@@ -202,7 +202,7 @@ public sealed class InternalApiClient(
             $"prefix={key[..Math.Min(6, key.Length)]}.., " +
             $"suffix=..{key[^Math.Min(4, key.Length)..]} " +
             $"GwToken={gatewayToken?.Length.ToString() ?? "none"}");
-        sessionLogWriter.AppendDebug(
+        processLogs.AppendDebug(
             $"{request.Method} {request.RequestUri} X-Api-Key: {key.Length} chars, GwToken={gatewayToken?.Length.ToString() ?? "none"}");
     }
 

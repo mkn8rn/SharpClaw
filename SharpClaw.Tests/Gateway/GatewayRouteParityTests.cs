@@ -31,6 +31,9 @@ public sealed class GatewayRouteParityTests
     private static readonly HashSet<string> PrivateHandlerPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "/admin/db",
+        // Storage health and process logs are local operational diagnostics.
+        // They can contain deployment-sensitive data and stay off the public gateway.
+        "/diagnostics",
         "/env",
         "/system",
         // Module management is an admin-only surface; it must not be projected
@@ -67,6 +70,10 @@ public sealed class GatewayRouteParityTests
         "POST /tasks/{*}/instances/{*}/resume",
         "POST /tasks/{*}/instances/{*}/start",
         "GET /tasks/{*}/instances/{*}/outputs",
+        "GET /tasks/{*}/instances/{*}/outputs/latest",
+        "GET /tasks/{*}/instances/{*}/logs",
+        "GET /tasks/{*}/instances/{*}/audit",
+        "GET /tasks/{*}/instances/{*}/artifacts/{*}",
         "GET /tasks/{*}/instances/{*}/stream",
 
         // Tool awareness sets — no classic controller projection yet.

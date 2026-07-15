@@ -10,14 +10,14 @@ namespace SharpClaw.Gateway.Infrastructure;
 /// </summary>
 public sealed class ErrorEnvelopeFilter(
     ILogger<ErrorEnvelopeFilter> logger,
-    SessionLogWriter sessionLogWriter) : IExceptionFilter
+    DurableProcessLogWriter processLogs) : IExceptionFilter
 {
     public void OnException(ExceptionContext context)
     {
         logger.LogError(context.Exception, "Unhandled exception in {Controller}/{Action}.",
             context.RouteData.Values["controller"],
             context.RouteData.Values["action"]);
-        sessionLogWriter.AppendException(
+        processLogs.AppendException(
             context.Exception,
             $"Unhandled exception in {context.RouteData.Values["controller"]}/{context.RouteData.Values["action"]}.");
 

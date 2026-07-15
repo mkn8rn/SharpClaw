@@ -1,8 +1,5 @@
 using System.Text.Json;
 using SharpClaw.Contracts.DTOs.Tasks;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
-using SharpClaw.Contracts.Entities.Core.Tasks;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Models;
@@ -160,7 +157,7 @@ public sealed class TaskRuntimeCoreEngineTests
     {
         var now = new DateTimeOffset(2026, 6, 30, 12, 0, 0, TimeSpan.Zero);
         var engine = new TaskAdministrationEngine(new FixedTimeProvider(now));
-        var instance = new TaskInstanceDB
+        var instance = new TaskInstanceState
         {
             Status = TaskInstanceStatus.Paused
         };
@@ -212,7 +209,7 @@ public sealed class TaskRuntimeCoreEngineTests
         updated.Agent.SystemPrompt.Should().Be("new system");
         updated.Agent.CustomId.Should().Be("worker.custom");
 
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = channelId,
             Title = "Old"
@@ -236,11 +233,6 @@ public sealed class TaskRuntimeCoreEngineTests
         var thread = engine.CreateThread(channelId, null, now);
         thread.Name.Should().Be("Task Thread 12:34");
         thread.ChannelId.Should().Be(channelId);
-
-        var instance = new TaskInstanceDB();
-        engine.AdoptInstanceChannel(instance, channelId).Should().BeTrue();
-        engine.AdoptInstanceChannel(instance, Guid.NewGuid()).Should().BeFalse();
-        instance.ChannelId.Should().Be(channelId);
 
         TaskHostBridgeProvisioningEngine.BuildCreateAgentLog("Worker 2", agentId)
             .Should().Be($"CreateAgent 'Worker 2' \u2192 {agentId}");

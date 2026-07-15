@@ -1,8 +1,6 @@
 using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.Contracts.DTOs.Contexts;
 using SharpClaw.Contracts.DTOs.Threads;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Core.Conversation;
 
 namespace SharpClaw.Tests.Core;
@@ -19,7 +17,7 @@ public sealed class ConversationTopologyEngineTests
         var allowedAgent = Agent("Allowed agent");
         var permissionSetId = Guid.NewGuid();
 
-        var context = new ChannelContextDB
+        var context = new ChannelContextState
         {
             Id = Guid.NewGuid(),
             Name = "Clinical",
@@ -29,7 +27,7 @@ public sealed class ConversationTopologyEngineTests
         };
         context.AllowedAgents.Add(allowedAgent);
 
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = Guid.NewGuid(),
             Title = "Intake",
@@ -49,11 +47,11 @@ public sealed class ConversationTopologyEngineTests
     [Test]
     public void ApplyChannelUpdate_WhenSentinelValuesProvided_ClearsReferences()
     {
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Title = "Before",
             AgentContextId = Guid.NewGuid(),
-            AgentContext = new ChannelContextDB
+            AgentContext = new ChannelContextState
             {
                 Name = "Old context",
                 AgentId = Guid.NewGuid(),
@@ -84,7 +82,7 @@ public sealed class ConversationTopologyEngineTests
     [Test]
     public void ApplyThreadUpdate_WhenLimitsAreZero_ResetsToInheritedDefaults()
     {
-        var thread = new ChatThreadDB
+        var thread = new ChatThreadState
         {
             Name = "Thread",
             ChannelId = Guid.NewGuid(),
@@ -104,7 +102,7 @@ public sealed class ConversationTopologyEngineTests
     public void AddChannelAllowedAgent_WhenDuplicate_ReturnsFalse()
     {
         var agent = Agent("Existing");
-        var channel = new ChannelDB { Title = "Channel" };
+        var channel = new ChannelState { Title = "Channel" };
         channel.AllowedAgents.Add(agent);
 
         var changed = _engine.AddChannelAllowedAgent(channel, agent);
@@ -118,7 +116,7 @@ public sealed class ConversationTopologyEngineTests
     {
         var defaultAgent = Agent("Default");
         var requestedAgent = Agent("Requested");
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = Guid.NewGuid(),
             Title = "Channel",
@@ -136,11 +134,11 @@ public sealed class ConversationTopologyEngineTests
     public void ResolveRequestedAgent_WhenChannelUsesContextFallback_ReturnsContextAgent()
     {
         var contextAgent = Agent("Context");
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = Guid.NewGuid(),
             Title = "Channel",
-            AgentContext = new ChannelContextDB
+            AgentContext = new ChannelContextState
             {
                 Name = "Context",
                 Agent = contextAgent,
@@ -159,7 +157,7 @@ public sealed class ConversationTopologyEngineTests
     public void ResolveRequestedAgent_WhenOverrideIsDisallowed_Throws()
     {
         var requestedAgentId = Guid.NewGuid();
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = Guid.NewGuid(),
             Title = "Channel",
@@ -183,16 +181,16 @@ public sealed class ConversationTopologyEngineTests
             .WithMessage("A context named ' Clinical ' already exists.");
     }
 
-    private static AgentDB Agent(string name)
+    private static AgentState Agent(string name)
     {
-        var provider = new ProviderDB
+        var provider = new ProviderState
         {
             Id = Guid.NewGuid(),
             Name = "Provider",
             ProviderKey = "provider"
         };
 
-        var model = new ModelDB
+        var model = new ModelState
         {
             Id = Guid.NewGuid(),
             Name = "Model",
@@ -200,7 +198,7 @@ public sealed class ConversationTopologyEngineTests
             Provider = provider
         };
 
-        return new AgentDB
+        return new AgentState
         {
             Id = Guid.NewGuid(),
             Name = name,

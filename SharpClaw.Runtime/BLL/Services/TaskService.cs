@@ -1,7 +1,9 @@
 using SharpClaw.Contracts.DTOs.Tasks;
+using SharpClaw.Contracts.DTOs.Diagnostics;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Models;
+using SharpClaw.Runtime.INF.DurableStorage;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
@@ -10,7 +12,9 @@ namespace SharpClaw.Runtime.BLL.Services;
 /// </summary>
 public sealed class TaskService(
     TaskAdministrationWorkflowEngine administration,
-    EfTaskAdministrationHost administrationHost) : ITaskAuthoring
+    EfTaskAdministrationHost administrationHost,
+    ExecutionQueryService executionQueries,
+    ExecutionDiagnosticStore diagnostics) : ITaskAuthoring
 {
     public TaskValidationResponse ValidateDefinition(string sourceText)
         => administration.ValidateDefinition(sourceText);
@@ -97,18 +101,21 @@ public sealed class TaskService(
             ct);
     }
 
-    public async Task<TaskInstanceResponse> CreateInstanceAsync(
+    public async Task<TaskInstanceDetailResponse> CreateInstanceAsync(
         StartTaskInstanceRequest request,
         Guid? callerUserId = null,
         Guid? callerAgentId = null,
         CancellationToken ct = default)
     {
-        return await administration.CreateInstanceAsync(
+        var instance = await administration.CreateInstanceAsync(
             request,
             callerUserId,
             callerAgentId,
             administrationHost,
             ct);
+        return await executionQueries.GetTaskAsync(instance.Id, ct)
+            ?? throw new InvalidOperationException(
+                $"Task instance {instance.Id} was not persisted.");
     }
 
     public async Task<bool> PauseInstanceAsync(
@@ -151,23 +158,23 @@ public sealed class TaskService(
             ct);
     }
 
-    public async Task<TaskInstanceResponse?> GetInstanceAsync(
+    public async Task<TaskInstanceDetailResponse?> GetInstanceAsync(
         Guid id,
         CancellationToken ct = default)
     {
-        return await administration.GetInstanceAsync(
-            id,
-            administrationHost,
-            ct);
+        return await executionQueries.GetTaskAsync(id, ct);
     }
 
-    public async Task<IReadOnlyList<TaskInstanceSummaryResponse>> ListInstancesAsync(
+    public async Task<TaskInstanceSummaryPageResponse> ListInstancesAsync(
         Guid? taskDefinitionId = null,
+        string? cursor = null,
+        int take = 50,
         CancellationToken ct = default)
     {
-        return await administration.ListInstancesAsync(
+        return await executionQueries.ListTasksAsync(
             taskDefinitionId,
-            administrationHost,
+            cursor,
+            take,
             ct);
     }
 
@@ -195,15 +202,80 @@ public sealed class TaskService(
             ct);
     }
 
-    public async Task<IReadOnlyList<TaskOutputEntryResponse>> GetOutputsAsync(
+    public async Task<TaskOutputPageResponse> GetOutputsAsync(
         Guid instanceId,
-        DateTimeOffset? since = null,
+        string? cursor = null,
+        int take = 100,
+        int maxBytes = 262_144,
         CancellationToken ct = default)
     {
-        return await administration.GetOutputsAsync(
+        return await diagnostics.ReadTaskOutputsAsync(
             instanceId,
-            since,
-            administrationHost,
+            cursor,
+            take,
+            maxBytes,
             ct);
     }
+
+    internal Task<bool> ApplyCompilationFailureAsync(
+        Guid id,
+        string errors,
+        CancellationToken ct = default) =>
+        administration.ApplyCompilationFailureAsync(
+            id,
+            errors,
+            administrationHost,
+            ct);
+
+    internal Task<bool> ApplyTerminalStatusAsync(
+        Guid id,
+        SharpClaw.Contracts.Enums.TaskInstanceStatus status,
+        CancellationToken ct = default) =>
+        administration.ApplyTerminalStatusAsync(
+            id,
+            status,
+            administrationHost,
+            ct);
+
+    internal Task<bool> ApplyFailureAsync(
+        Guid id,
+        string error,
+        CancellationToken ct = default) =>
+        administration.ApplyFailureAsync(
+            id,
+            error,
+            administrationHost,
+            ct);
+
+    internal Task<TaskRestartRecoveryPlan?> ApplyRestartRecoveryAsync(
+        Guid id,
+        CancellationToken ct = default) =>
+        administration.ApplyRestartRecoveryAsync(
+            id,
+            administrationHost,
+            ct);
+
+    public ValueTask<TaskOutputRecordResponse?> GetLatestOutputAsync(
+        Guid instanceId,
+        CancellationToken ct = default) =>
+        diagnostics.ReadLatestTaskOutputAsync(instanceId, ct);
+
+    public ValueTask<DurableLogPageResponse> ReadLogsAsync(
+        Guid instanceId,
+        string? cursor,
+        DurableLogQuery query,
+        CancellationToken ct = default) =>
+        diagnostics.ReadTaskLogsAsync(instanceId, cursor, query, ct);
+
+    public Task<ExecutionAuditPageResponse> ReadAuditAsync(
+        Guid instanceId,
+        string? cursor,
+        int take = 50,
+        CancellationToken ct = default) =>
+        executionQueries.ReadAuditAsync(
+            SharpClaw.Contracts.Enums.ExecutionOwnerKind.TaskInstance,
+            instanceId,
+            cursor,
+            take,
+            ct);
 }

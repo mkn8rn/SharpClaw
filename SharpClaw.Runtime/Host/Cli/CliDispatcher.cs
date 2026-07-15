@@ -37,6 +37,7 @@ using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Chat;
 using SharpClaw.Core.Modules;
 using SharpClaw.Runtime.INF.Configuration;
+using SharpClaw.Runtime.INF.DurableStorage;
 using SharpClaw.Shared.Instances;
 
 namespace SharpClaw.Runtime.Host.Cli;
@@ -2555,7 +2556,7 @@ public static class CliDispatcher
                 "task start-instance <instanceId>         Start an existing queued instance",
                 "task instances <taskId>                  List instances of a definition",
                 "task instance <instanceId>               Show instance details",
-                "task outputs <instanceId> [--since <timestamp>]",
+                "task outputs <instanceId> [--cursor <token>] [--take <count>]",
                 "                                         Get persisted output history",
                 "task cancel <instanceId>                 Cancel a running instance",
                 "task stop <instanceId>                   Stop a running instance",
@@ -2647,16 +2648,16 @@ public static class CliDispatcher
             "start-instance" => UsageResult("task start-instance <instanceId>"),
 
             "instances" when args.Length >= 3
-                => await TaskInstanceHandlers.List(CliIdMap.Resolve(args[2]), svc),
+                => Results.Ok(await svc.ListInstancesAsync(CliIdMap.Resolve(args[2]))),
             "instances" => UsageResult("task instances <taskId>"),
 
             "instance" when args.Length >= 3
-                => await TaskInstanceHandlers.GetById(Guid.Empty, CliIdMap.Resolve(args[2]), svc, chatSvc),
+                => await HandleTaskInstance(CliIdMap.Resolve(args[2]), svc, chatSvc),
             "instance" => UsageResult("task instance <instanceId>"),
 
             "outputs" when args.Length >= 3
                 => await HandleTaskOutputs(args, svc),
-            "outputs" => UsageResult("task outputs <instanceId> [--since <timestamp>]"),
+            "outputs" => UsageResult("task outputs <instanceId> [--cursor <token>] [--take <count>]"),
 
             "cancel" when args.Length >= 3
                 => await svc.CancelInstanceAsync(CliIdMap.Resolve(args[2]))
@@ -2918,23 +2919,43 @@ public static class CliDispatcher
     private static async Task<IResult> HandleTaskOutputs(string[] args, TaskService svc)
     {
         var instanceId = CliIdMap.Resolve(args[2]);
-        DateTimeOffset? since = null;
+        string? cursor = null;
+        var take = 100;
+        var maxBytes = 262_144;
 
         for (var i = 3; i < args.Length; i++)
         {
-            if (args[i] is "--since" && i + 1 < args.Length)
-            {
-                if (DateTimeOffset.TryParse(args[++i], out var ts))
-                    since = ts;
-                else
-                {
-                    Console.Error.WriteLine($"Invalid timestamp: {args[i]}");
-                    return Results.Ok();
-                }
-            }
+            if (args[i] is "--cursor" && i + 1 < args.Length)
+                cursor = args[++i];
+            else if (args[i] is "--take" && i + 1 < args.Length
+                     && int.TryParse(args[++i], out var parsedTake))
+                take = parsedTake;
+            else if (args[i] is "--max-bytes" && i + 1 < args.Length
+                     && int.TryParse(args[++i], out var parsedBytes))
+                maxBytes = parsedBytes;
         }
 
-        return await TaskInstanceHandlers.GetOutputs(Guid.Empty, instanceId, svc, since);
+        return Results.Ok(await svc.GetOutputsAsync(
+            instanceId,
+            cursor,
+            take,
+            maxBytes));
+    }
+
+    private static async Task<IResult> HandleTaskInstance(
+        Guid instanceId,
+        TaskService svc,
+        ChatService chatSvc)
+    {
+        var instance = await svc.GetInstanceAsync(instanceId);
+        if (instance is null)
+            return Results.NotFound();
+        if (instance.ChannelId is { } channelId)
+        {
+            var cost = await chatSvc.GetChannelCostAsync(channelId);
+            instance = instance with { ChannelCost = cost };
+        }
+        return Results.Ok(instance);
     }
 
     private static async Task<IResult> HandleTaskListen(Guid instanceId, IServiceProvider sp)
@@ -2950,11 +2971,15 @@ public static class CliDispatcher
             var instance = await svc.GetInstanceAsync(instanceId);
             if (instance is not null)
             {
-                foreach (var log in instance.Logs)
+                var logs = await svc.ReadLogsAsync(
+                    instanceId,
+                    cursor: null,
+                    new DurableLogQuery());
+                foreach (var log in logs.Records)
                     Console.WriteLine($"  [log] {log.Message}");
 
                 var outputs = await svc.GetOutputsAsync(instanceId);
-                foreach (var o in outputs)
+                foreach (var o in outputs.Records)
                     Console.WriteLine($"  [output] {o.Data}");
 
                 Console.WriteLine($"  [status] {instance.Status}");
@@ -3634,7 +3659,7 @@ public static class CliDispatcher
               task start|run <taskId> [channelId | --context <id>] [--param key=value ...]
               task create-queued <taskId> [channelId | --context <id>] [--param key=value ...]
               task start-instance|instance|instances|cancel|stop|pause|resume|listen <instanceId>
-              task outputs <instanceId> [--since <timestamp>]
+              task outputs <instanceId> [--cursor <token>] [--take <count>]
               task preflight <taskId> [--param key=value ...]
               task schedule list|get|create|update|pause|resume|delete|preview [args]
               task triggers enable|disable <taskId>

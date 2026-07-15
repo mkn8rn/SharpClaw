@@ -3,6 +3,7 @@ using FluentAssertions;
 using NUnit.Framework;
 using SharpClaw.Presentation;
 using SharpClaw.Services;
+using SharpClaw.Shared.Instances;
 using SharpClaw.Shared.Logging;
 
 namespace SharpClaw.Tests.ClientUno;
@@ -154,13 +155,18 @@ public sealed class ClientUnoStartupSwitchTests
         private TestScope(string root)
         {
             _root = root;
-            Logs = new SessionLogWriter(
+            var paths = new SharpClawInstancePaths(
+                SharpClawInstanceKind.Frontend,
+                explicitInstanceRoot: root,
+                sharedRootOverride: root,
+                installAnchorOverride: root);
+            Logs = new DurableProcessLogWriter(
                 "client-uno-startup-tests",
-                logsRootDirectory: root,
+                paths,
                 flushInterval: TimeSpan.FromHours(1));
         }
 
-        public SessionLogWriter Logs { get; }
+        public DurableProcessLogWriter Logs { get; }
 
         public static TestScope Create()
         {

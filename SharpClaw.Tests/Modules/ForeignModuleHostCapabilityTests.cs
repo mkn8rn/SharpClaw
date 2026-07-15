@@ -89,18 +89,20 @@ public sealed class ForeignModuleHostCapabilityTests
         using var getResponse = await client.PostAsJsonAsync(
             ForeignModuleHostCapabilityProtocol.JobGetPath,
             new { id = reader.JobId });
-        using var listResponse = await client.PostAsJsonAsync(
-            ForeignModuleHostCapabilityProtocol.JobListByActionPrefixPath,
-            new { actionKeyPrefix = "cur_", resourceId = reader.ResourceId });
         using var summariesResponse = await client.PostAsJsonAsync(
             ForeignModuleHostCapabilityProtocol.JobListSummariesByActionPrefixPath,
-            new { actionKeyPrefix = "cur_", resourceId = reader.ResourceId });
+            new
+            {
+                actionKeyPrefix = "cur_",
+                resourceId = reader.ResourceId,
+                cursor = "next-page",
+                take = 17,
+            });
         using var existsResponse = await client.PostAsJsonAsync(
             ForeignModuleHostCapabilityProtocol.JobExistsWithActionPrefixPath,
             new { jobId = reader.JobId, actionKeyPrefix = "cur_" });
 
         getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         summariesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         existsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -111,11 +113,8 @@ public sealed class ForeignModuleHostCapabilityTests
             .Should()
             .Be(reader.JobId);
 
-        var listPayload = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
-        listPayload.RootElement.GetProperty("jobs").GetArrayLength().Should().Be(1);
-
         var summariesPayload = JsonDocument.Parse(await summariesResponse.Content.ReadAsStringAsync());
-        summariesPayload.RootElement.GetProperty("jobs")[0]
+        summariesPayload.RootElement.GetProperty("page").GetProperty("records")[0]
             .GetProperty("actionKey")
             .GetString()
             .Should()
@@ -123,12 +122,11 @@ public sealed class ForeignModuleHostCapabilityTests
 
         var existsPayload = JsonDocument.Parse(await existsResponse.Content.ReadAsStringAsync());
         existsPayload.RootElement.GetProperty("value").GetBoolean().Should().BeTrue();
-        reader.ListRequest.Should().NotBeNull();
-        reader.ListRequest!.Value.Prefix.Should().Be("cur_");
-        reader.ListRequest.Value.ResourceId.Should().Be(reader.ResourceId);
         reader.SummaryRequest.Should().NotBeNull();
         reader.SummaryRequest!.Value.Prefix.Should().Be("cur_");
         reader.SummaryRequest.Value.ResourceId.Should().Be(reader.ResourceId);
+        reader.SummaryRequest.Value.Cursor.Should().Be("next-page");
+        reader.SummaryRequest.Value.Take.Should().Be(17);
     }
 
     [Test]
@@ -671,7 +669,7 @@ public sealed class ForeignModuleHostCapabilityTests
             CancellationToken ct = default) =>
             throw new NotSupportedException();
 
-        public Task<AgentJobResponse?> StopJobAsync(
+        public Task<AgentJobDetailResponse?> StopJobAsync(
             Guid jobId,
             string? requiredActionPrefix = null,
             CancellationToken ct = default) =>
@@ -740,28 +738,28 @@ public sealed class ForeignModuleHostCapabilityTests
         public Guid ChannelId { get; } = Guid.Parse("23232323-2323-2323-2323-232323232323");
         public Guid AgentId { get; } = Guid.Parse("34343434-3434-3434-3434-343434343434");
         public Guid ResourceId { get; } = Guid.Parse("45454545-4545-4545-4545-454545454545");
-        public (string Prefix, Guid? ResourceId)? ListRequest { get; private set; }
-        public (string Prefix, Guid? ResourceId)? SummaryRequest { get; private set; }
+        public (string Prefix, Guid? ResourceId, string? Cursor, int Take)?
+            SummaryRequest { get; private set; }
 
-        public Task<AgentJobResponse?> GetJobAsync(Guid jobId, CancellationToken ct = default) =>
-            Task.FromResult<AgentJobResponse?>(jobId == JobId ? Job() : null);
+        public Task<AgentJobDetailResponse?> GetJobAsync(
+            Guid jobId,
+            CancellationToken ct = default) =>
+            Task.FromResult<AgentJobDetailResponse?>(
+                jobId == JobId ? Job() : null);
 
-        public Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
+        public Task<AgentJobSummaryPageResponse> ListJobSummariesByActionPrefixAsync(
             string actionKeyPrefix,
             Guid? resourceId = null,
+            string? cursor = null,
+            int take = 50,
             CancellationToken ct = default)
         {
-            ListRequest = (actionKeyPrefix, resourceId);
-            return Task.FromResult<IReadOnlyList<AgentJobResponse>>([Job()]);
-        }
-
-        public Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
-            string actionKeyPrefix,
-            Guid? resourceId = null,
-            CancellationToken ct = default)
-        {
-            SummaryRequest = (actionKeyPrefix, resourceId);
-            return Task.FromResult<IReadOnlyList<AgentJobSummaryResponse>>([Summary()]);
+            SummaryRequest = (actionKeyPrefix, resourceId, cursor, take);
+            return Task.FromResult(
+                new AgentJobSummaryPageResponse(
+                    [Summary()],
+                    NextCursor: null,
+                    HasMore: false));
         }
 
         public Task<bool> JobExistsWithActionPrefixAsync(
@@ -770,7 +768,7 @@ public sealed class ForeignModuleHostCapabilityTests
             CancellationToken ct = default) =>
             Task.FromResult(jobId == JobId && actionKeyPrefix == "cur_");
 
-        private AgentJobResponse Job() =>
+        private AgentJobDetailResponse Job() =>
             new(
                 JobId,
                 ChannelId,
@@ -779,9 +777,12 @@ public sealed class ForeignModuleHostCapabilityTests
                 ResourceId,
                 AgentJobStatus.Executing,
                 PermissionClearance.Independent,
-                ResultData: null,
-                ErrorLog: null,
-                Logs: [],
+                ResultArtifact: null,
+                ErrorCode: null,
+                ErrorMessage: null,
+                DiagnosticCompleteness.Complete,
+                FinalLogSequence: null,
+                LogRecordCount: 0,
                 CreatedAt: DateTimeOffset.UnixEpoch,
                 StartedAt: DateTimeOffset.UnixEpoch,
                 CompletedAt: null);

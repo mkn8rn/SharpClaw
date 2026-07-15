@@ -15,6 +15,8 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Runtime.INF.Persistence;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Shared.DurableStorage;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Preflight;
@@ -69,12 +71,14 @@ public sealed class TaskExecutionLifecycleTests
 
         await orchestrator.StartAsync(created.Id);
         var completed = await host.WaitForStatusAsync(created.Id, TaskInstanceStatus.Completed);
+        var logs = await host.ReadLogMessagesAsync(created.Id);
+        await host.WaitForDiagnosticsSealedAsync();
 
         completed.StartedAt.Should().NotBeNull();
         completed.CompletedAt.Should().NotBeNull();
-        completed.Logs.Select(l => l.Message).Should().Contain("Task started.");
-        completed.Logs.Select(l => l.Message).Should().Contain("task-body-log");
-        completed.Logs.Select(l => l.Message).Should().Contain("Task Completed.");
+        logs.Should().Contain("Task started.");
+        logs.Should().Contain("task-body-log");
+        logs.Should().Contain("Task Completed.");
     }
 
     [Test]
@@ -104,8 +108,9 @@ public sealed class TaskExecutionLifecycleTests
         var failed = await host.WaitForStatusAsync(
             instance.Id,
             TaskInstanceStatus.Failed);
+        var logs = await host.ReadLogMessagesAsync(instance.Id);
         failed.ErrorMessage.Should().StartWith("Compilation failed: ");
-        failed.Logs.Select(l => l.Message).Should().NotContain("Task started.");
+        logs.Should().NotContain("Task started.");
         registry.ActiveCount.Should().Be(0);
         orchestrator.GetOutputReader(instance.Id).Should().BeNull();
     }
@@ -133,7 +138,8 @@ public sealed class TaskExecutionLifecycleTests
         reader!.TryRead(out var started).Should().BeTrue();
         started.Type.Should().Be(TaskOutputEventType.StatusChange);
         started.Data.Should().Be("Running");
-        running.Logs.Select(l => l.Message).Should().Contain("Task started.");
+        (await host.ReadLogMessagesAsync(created.Id))
+            .Should().Contain("Task started.");
 
         await orchestrator.StopAsync(created.Id);
         await host.WaitForStatusAsync(created.Id, TaskInstanceStatus.Cancelled);
@@ -160,11 +166,12 @@ public sealed class TaskExecutionLifecycleTests
         await orchestrator.StopAsync(created.Id);
         var cancelled = await host.WaitForStatusAsync(created.Id, TaskInstanceStatus.Cancelled);
         cancelled = await host.WaitForLogAsync(created.Id, "Task Cancelled.");
+        var logs = await host.ReadLogMessagesAsync(created.Id);
 
         cancelled.CompletedAt.Should().NotBeNull();
-        cancelled.Logs.Select(l => l.Message).Should().Contain("Task paused.");
-        cancelled.Logs.Select(l => l.Message).Should().Contain("Task resumed.");
-        cancelled.Logs.Select(l => l.Message).Should().Contain("Task Cancelled.");
+        logs.Should().Contain("Task paused.");
+        logs.Should().Contain("Task resumed.");
+        logs.Should().Contain("Task Cancelled.");
     }
 
     [Test]
@@ -262,11 +269,16 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
 {
     private readonly ServiceProvider _root;
     private readonly AsyncServiceScope _scope;
+    private readonly string _durableRoot;
 
-    private TaskLifecycleHost(ServiceProvider root, AsyncServiceScope scope)
+    private TaskLifecycleHost(
+        ServiceProvider root,
+        AsyncServiceScope scope,
+        string durableRoot)
     {
         _root = root;
         _scope = scope;
+        _durableRoot = durableRoot;
     }
 
     public IServiceProvider Services => _scope.ServiceProvider;
@@ -280,6 +292,21 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>())
             .Build();
+        var durableRoot = Path.Combine(
+            Path.GetTempPath(),
+            "sharpclaw-task-lifecycle",
+            Guid.NewGuid().ToString("N"));
+        var rootKey = Enumerable.Repeat((byte)0x5a, 32).ToArray();
+        var durableOptions = new DurableStorageOptions
+        {
+            RootDirectory = durableRoot,
+            EncryptionKey = DurableStorageKeyDerivation.Derive(
+                rootKey,
+                "records"),
+            SegmentMaxBytes = 64 * 1024,
+            SegmentMaxAge = TimeSpan.FromMinutes(1),
+        };
+        var durablePaths = new DurableStreamPathEncoder(durableRoot);
 
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
@@ -288,10 +315,30 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         services.AddSingleton<ProviderApiClientFactory>();
         services.AddSingleton<TaskPreflightEngine>();
         services.AddSingleton<TaskAdministrationWorkflowEngine>();
+        services.AddSingleton(durableOptions);
+        services.AddSingleton<DurableSegmentStore>();
+        services.AddSingleton(durablePaths);
+        services.AddSingleton(new DurableCursorCodec(
+            DurableStorageKeyDerivation.Derive(rootKey, "cursors"),
+            durablePaths));
+        services.AddSingleton(new DatabaseCursorCodec(
+            DurableStorageKeyDerivation.Derive(rootKey, "database-cursors")));
+        services.AddSingleton<ExecutionArtifactStore>(sp => new(
+            durableRoot,
+            DurableStorageKeyDerivation.Derive(rootKey, "artifacts")));
+        services.AddSingleton<IExecutionArtifactStore>(sp =>
+            sp.GetRequiredService<ExecutionArtifactStore>());
+        services.AddSingleton<ExecutionDiagnosticStore>();
+        services.AddSingleton(sp => new TaskDiagnosticStateStore(
+            durableRoot,
+            DurableStorageKeyDerivation.Derive(rootKey, "task-state"),
+            sp.GetRequiredService<IExecutionArtifactStore>()));
         services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
         services.AddScoped<EfTaskPreflightHost>();
         services.AddScoped<TaskPreflightChecker>();
         services.AddScoped<EfTaskAdministrationHost>();
+        services.AddScoped<DurableExecutionPersistence>();
+        services.AddScoped<ExecutionQueryService>();
         services.AddScoped<TaskService>();
         services.AddScoped<ITaskAuthoring>(sp => sp.GetRequiredService<TaskService>());
         services.AddScoped<TaskStartupPreparationEngine>();
@@ -302,16 +349,19 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         services.AddSingleton<TaskRuntimeHost>();
 
         var root = services.BuildServiceProvider();
-        return new TaskLifecycleHost(root, root.CreateAsyncScope());
+        return new TaskLifecycleHost(
+            root,
+            root.CreateAsyncScope(),
+            durableRoot);
     }
 
-    public async Task<TaskInstanceResponse> WaitForStatusAsync(
+    public async Task<TaskInstanceDetailResponse> WaitForStatusAsync(
         Guid instanceId,
         TaskInstanceStatus expected,
         int timeoutMs = 3000)
     {
         var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMs);
-        TaskInstanceResponse? latest = null;
+        TaskInstanceDetailResponse? latest = null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -331,21 +381,26 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
         return latest;
     }
 
-    public async Task<IReadOnlyList<TaskOutputEntryResponse>> ReadOutputsAsync(Guid instanceId)
+    public async Task<IReadOnlyList<string>> ReadLogMessagesAsync(
+        Guid instanceId)
     {
         await using var scope = _root.CreateAsyncScope();
-        return await scope.ServiceProvider
+        var page = await scope.ServiceProvider
             .GetRequiredService<TaskService>()
-            .GetOutputsAsync(instanceId);
+            .ReadLogsAsync(
+                instanceId,
+                cursor: null,
+                query: new DurableLogQuery(Take: 200, MaxBytes: 262_144));
+        return page.Records.Select(record => record.Message).ToArray();
     }
 
-    public async Task<TaskInstanceResponse> WaitForLogAsync(
+    public async Task<TaskInstanceDetailResponse> WaitForLogAsync(
         Guid instanceId,
         string expectedMessage,
         int timeoutMs = 3000)
     {
         var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMs);
-        TaskInstanceResponse? latest = null;
+        TaskInstanceDetailResponse? latest = null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -354,14 +409,25 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
                 .GetRequiredService<TaskService>()
                 .GetInstanceAsync(instanceId);
 
-            if (latest?.Logs.Any(l => l.Message == expectedMessage) == true)
+            if ((await scope.ServiceProvider
+                    .GetRequiredService<TaskService>()
+                    .ReadLogsAsync(
+                        instanceId,
+                        cursor: null,
+                        query: new DurableLogQuery(
+                            Take: 200,
+                            MaxBytes: 262_144)))
+                .Records.Any(log => log.Message == expectedMessage))
+            {
                 return latest;
+            }
 
             await Task.Delay(25);
         }
 
         latest.Should().NotBeNull();
-        latest!.Logs.Select(l => l.Message).Should().Contain(expectedMessage);
+        (await ReadLogMessagesAsync(instanceId))
+            .Should().Contain(expectedMessage);
         return latest;
     }
 
@@ -376,9 +442,31 @@ internal sealed class TaskLifecycleHost : IAsyncDisposable
             .ToListAsync();
     }
 
+    public async Task WaitForDiagnosticsSealedAsync(int timeoutMs = 3000)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (Directory.GetFiles(
+                    _durableRoot,
+                    "*.open",
+                    SearchOption.AllDirectories).Length == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Directory.GetFiles(_durableRoot, "*.open", SearchOption.AllDirectories)
+            .Should().BeEmpty();
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _scope.DisposeAsync();
         await _root.DisposeAsync();
+        if (Directory.Exists(_durableRoot))
+            Directory.Delete(_durableRoot, recursive: true);
     }
 }

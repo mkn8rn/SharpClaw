@@ -23,7 +23,6 @@ public sealed class TaskRuntimeHost(
 {
     private readonly TaskCompletionSource _recoveryComplete =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskAdministrationEngine _tasks = new();
     private readonly TaskRuntimeLifecycleEngine _runtimeLifecycle = new();
 
     /// <summary>
@@ -173,7 +172,9 @@ public sealed class TaskRuntimeHost(
 
         foreach (var instance in stale)
         {
-            var recovery = _tasks.ApplyRestartRecovery(instance);
+            var recovery = await svc.ApplyRestartRecoveryAsync(instance.Id, ct)
+                ?? throw new InvalidOperationException(
+                    $"Task instance {instance.Id} disappeared during restart recovery.");
 
             await svc.AppendLogAsync(
                 instance.Id,
@@ -188,7 +189,6 @@ public sealed class TaskRuntimeHost(
                 recovery.PreviousStatus);
         }
 
-        await db.SaveChangesAsync(ct);
     }
 
     private async Task CancelEntryAsync(Guid instanceId)

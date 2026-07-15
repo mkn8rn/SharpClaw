@@ -6,6 +6,8 @@ using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.DTOs.Tasks;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Tasks.Preflight;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Runtime.Host.Handlers;
 
@@ -112,7 +114,7 @@ public static class TaskInstanceHandlers
         if (request.ChannelId is null && request.ContextId is null)
             return Results.BadRequest("Either a ChannelId or a ContextId is required to start a task instance.");
 
-        TaskInstanceResponse created;
+        TaskInstanceDetailResponse created;
         try
         {
             created = await svc.CreateInstanceAsync(
@@ -135,15 +137,21 @@ public static class TaskInstanceHandlers
     }
 
     [MapGet]
-    public static async Task<IResult> List(Guid taskId, TaskService svc)
-        => Results.Ok(await svc.ListInstancesAsync(taskId));
+    public static async Task<IResult> List(
+        Guid taskId,
+        TaskService svc,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default) =>
+        Results.Ok(await svc.ListInstancesAsync(taskId, cursor, take, ct));
 
     [MapGet("/{instanceId:guid}")]
     public static async Task<IResult> GetById(
         Guid taskId, Guid instanceId, TaskService svc, ChatService chatSvc)
     {
-        var inst = await svc.GetInstanceAsync(instanceId);
-        if (inst is null) return Results.NotFound();
+        var inst = await GetScopedInstanceAsync(taskId, instanceId, svc);
+        if (inst is null)
+            return Results.NotFound();
         if (inst.ChannelId is { } chId)
         {
             var cost = await chatSvc.GetChannelCostAsync(chId);
@@ -155,12 +163,23 @@ public static class TaskInstanceHandlers
     [MapPost("/{instanceId:guid}/cancel")]
     public static async Task<IResult> Cancel(
         Guid taskId, Guid instanceId, TaskService svc)
-        => await svc.CancelInstanceAsync(instanceId) ? Results.NoContent() : Results.NotFound();
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return await svc.CancelInstanceAsync(instanceId)
+            ? Results.NoContent()
+            : Results.NotFound();
+    }
 
     [MapPost("/{instanceId:guid}/stop")]
     public static async Task<IResult> Stop(
-        Guid taskId, Guid instanceId, TaskOrchestrator orchestrator)
+        Guid taskId,
+        Guid instanceId,
+        TaskOrchestrator orchestrator,
+        TaskService svc)
     {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
         await orchestrator.StopAsync(instanceId);
         return Results.NoContent();
     }
@@ -169,28 +188,147 @@ public static class TaskInstanceHandlers
     public static async Task<IResult> Pause(
         Guid taskId,
         Guid instanceId,
-        TaskOrchestrator orchestrator)
-        => await orchestrator.PauseAsync(instanceId) ? Results.NoContent() : Results.NotFound();
+        TaskOrchestrator orchestrator,
+        TaskService svc)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return await orchestrator.PauseAsync(instanceId)
+            ? Results.NoContent()
+            : Results.NotFound();
+    }
 
     [MapPost("/{instanceId:guid}/resume")]
     public static async Task<IResult> Resume(
         Guid taskId,
         Guid instanceId,
-        TaskOrchestrator orchestrator)
-        => await orchestrator.ResumeAsync(instanceId) ? Results.NoContent() : Results.NotFound();
+        TaskOrchestrator orchestrator,
+        TaskService svc)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return await orchestrator.ResumeAsync(instanceId)
+            ? Results.NoContent()
+            : Results.NotFound();
+    }
 
     [MapPost("/{instanceId:guid}/start")]
     public static async Task<IResult> StartExecution(
-        Guid taskId, Guid instanceId, TaskOrchestrator orchestrator)
+        Guid taskId,
+        Guid instanceId,
+        TaskOrchestrator orchestrator,
+        TaskService svc)
     {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
         await orchestrator.StartAsync(instanceId);
         return Results.NoContent();
     }
 
     [MapGet("/{instanceId:guid}/outputs")]
     public static async Task<IResult> GetOutputs(
-        Guid taskId, Guid instanceId, TaskService svc, DateTimeOffset? since = null)
-        => Results.Ok(await svc.GetOutputsAsync(instanceId, since));
+        Guid taskId,
+        Guid instanceId,
+        TaskService svc,
+        string? cursor = null,
+        int take = 100,
+        int maxBytes = 262_144,
+        CancellationToken ct = default)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return Results.Ok(await svc.GetOutputsAsync(
+            instanceId,
+            cursor,
+            take,
+            maxBytes,
+            ct));
+    }
+
+    [MapGet("/{instanceId:guid}/outputs/latest")]
+    public static async Task<IResult> GetLatestOutput(
+        Guid taskId,
+        Guid instanceId,
+        TaskService svc,
+        CancellationToken ct)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        var output = await svc.GetLatestOutputAsync(instanceId, ct);
+        return output is null ? Results.NoContent() : Results.Ok(output);
+    }
+
+    [MapGet("/{instanceId:guid}/logs")]
+    public static async Task<IResult> GetLogs(
+        Guid taskId,
+        Guid instanceId,
+        TaskService svc,
+        string? cursor = null,
+        int take = 200,
+        int maxBytes = 262_144,
+        string? minimumLevel = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        string? contains = null,
+        long maxScanBytes = 16 * 1024 * 1024,
+        CancellationToken ct = default)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return Results.Ok(await svc.ReadLogsAsync(
+            instanceId,
+            cursor,
+            new DurableLogQuery(
+                take,
+                maxBytes,
+                minimumLevel,
+                from,
+                to,
+                contains,
+                maxScanBytes),
+            ct));
+    }
+
+    [MapGet("/{instanceId:guid}/audit")]
+    public static async Task<IResult> GetAudit(
+        Guid taskId,
+        Guid instanceId,
+        TaskService svc,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        return Results.Ok(await svc.ReadAuditAsync(instanceId, cursor, take, ct));
+    }
+
+    [MapGet("/{instanceId:guid}/artifacts/{artifactId:guid}")]
+    public static async Task<IResult> GetArtifact(
+        Guid taskId,
+        Guid instanceId,
+        Guid artifactId,
+        TaskService svc,
+        IExecutionArtifactStore artifacts,
+        HttpContext context,
+        CancellationToken ct)
+    {
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
+            return Results.NotFound();
+        var handle = await artifacts.OpenReadAsync(
+            artifactId,
+            ExecutionOwnerKind.TaskInstance,
+            instanceId,
+            cancellationToken: ct);
+        if (handle is null)
+            return Results.NotFound();
+        context.Response.RegisterForDisposeAsync(handle);
+        context.Response.Headers.ETag = $"\"{handle.Descriptor.Sha256}\"";
+        return Results.Stream(
+            handle.Content,
+            handle.Descriptor.MediaType,
+            enableRangeProcessing: true);
+    }
 
     [MapGet("/{instanceId:guid}/stream")]
     public static async Task StreamEvents(
@@ -199,13 +337,22 @@ public static class TaskInstanceHandlers
         TaskService svc,
         HttpContext httpContext)
     {
-        if (await svc.GetInstanceAsync(instanceId) is null)
+        if (await GetScopedInstanceAsync(taskId, instanceId, svc) is null)
         {
             httpContext.Response.StatusCode = 404;
             return;
         }
 
         await TaskStreamHandlers.Stream(httpContext, taskId, instanceId, orchestrator);
+    }
+
+    private static async Task<TaskInstanceDetailResponse?> GetScopedInstanceAsync(
+        Guid taskId,
+        Guid instanceId,
+        TaskService svc)
+    {
+        var instance = await svc.GetInstanceAsync(instanceId);
+        return instance?.TaskDefinitionId == taskId ? instance : null;
     }
 }
 

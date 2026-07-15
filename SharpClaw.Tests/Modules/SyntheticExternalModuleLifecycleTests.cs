@@ -257,7 +257,7 @@ public sealed class SyntheticExternalModuleLifecycleTests
             seeded.Channel.CustomChatHeader.Should().Be("core persisted header");
             var messageCount = await host.Db.ChatMessages.CountAsync(m => m.ChannelId == seeded.Channel.Id);
             var jobCount = await host.Db.AgentJobs.CountAsync(
-                j => j.Id == job.Id && j.ResultData == "external job direct");
+                j => j.Id == job.Id && j.Status == AgentJobStatus.Completed);
             messageCount.Should().Be(2);
             jobCount.Should().Be(1);
         }

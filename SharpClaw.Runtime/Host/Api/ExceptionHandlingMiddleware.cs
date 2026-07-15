@@ -9,7 +9,7 @@ namespace SharpClaw.Runtime.Host.Api;
 
 public sealed class ExceptionHandlingMiddleware(
     RequestDelegate next,
-    SessionLogWriter sessionLogWriter)
+    DurableProcessLogWriter processLogs)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -25,7 +25,7 @@ public sealed class ExceptionHandlingMiddleware(
         catch (CompletionParameterValidationException ex)
         {
             Log.Warning(ex, "Completion parameter validation failed on {Method} {Path}", context.Request.Method, context.Request.Path);
-            sessionLogWriter.AppendException(ex,
+            processLogs.AppendException(ex,
                 $"Completion parameter validation failed on {context.Request.Method} {context.Request.Path}");
             if (!context.Response.HasStarted)
             {
@@ -42,7 +42,7 @@ public sealed class ExceptionHandlingMiddleware(
         catch (InvalidOperationException ex)
         {
             Log.Warning(ex, "Validation error on {Method} {Path}", context.Request.Method, context.Request.Path);
-            sessionLogWriter.AppendException(ex,
+            processLogs.AppendException(ex,
                 $"Validation error on {context.Request.Method} {context.Request.Path}");
             if (!context.Response.HasStarted)
             {
@@ -55,7 +55,7 @@ public sealed class ExceptionHandlingMiddleware(
         {
             // Unsupported provider feature (e.g. response_mime_type on Google) → 400.
             Log.Warning(ex, "Unsupported operation on {Method} {Path}", context.Request.Method, context.Request.Path);
-            sessionLogWriter.AppendException(ex,
+            processLogs.AppendException(ex,
                 $"Unsupported operation on {context.Request.Method} {context.Request.Path}");
             if (!context.Response.HasStarted)
             {
@@ -68,7 +68,7 @@ public sealed class ExceptionHandlingMiddleware(
         {
             // Provider / upstream HTTP errors → 502 Bad Gateway.
             Log.Warning(ex, "Provider error on {Method} {Path}", context.Request.Method, context.Request.Path);
-            sessionLogWriter.AppendException(ex,
+            processLogs.AppendException(ex,
                 $"Provider error on {context.Request.Method} {context.Request.Path}");
             if (!context.Response.HasStarted)
             {
@@ -80,7 +80,7 @@ public sealed class ExceptionHandlingMiddleware(
         catch (Exception ex)
         {
             Log.Error(ex, "Unhandled exception on {Method} {Path}", context.Request.Method, context.Request.Path);
-            sessionLogWriter.AppendException(ex,
+            processLogs.AppendException(ex,
                 $"Unhandled exception on {context.Request.Method} {context.Request.Path}");
             if (!context.Response.HasStarted)
             {

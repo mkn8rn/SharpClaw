@@ -1,50 +1,68 @@
+using SharpClaw.Shared.DurableStorage;
 using SharpClaw.Shared.Logging;
 
 namespace SharpClaw.Tests.Logging;
 
 [TestFixture]
-public sealed class SessionLogWriterTests
+public sealed class DurableProcessLogWriterTests
 {
     [Test]
-    public async Task FreshStartResetsSerilogFileAlongsideSessionLogs()
+    public async Task NewBootPreservesEarlierBootAndUsesIndependentStream()
     {
-        var logsRoot = Path.Combine(
+        var root = Path.Combine(
             Path.GetTempPath(),
-            "SharpClawSessionLogWriterTests_" + Guid.NewGuid().ToString("N"));
+            "SharpClawDurableProcessLogWriterTests_" + Guid.NewGuid().ToString("N"));
+        var options = new DurableStorageOptions
+        {
+            RootDirectory = root,
+            EncryptionKey = Enumerable.Repeat((byte)0x41, 32).ToArray(),
+            SegmentMaxBytes = 64 * 1024,
+            SegmentMaxAge = TimeSpan.FromHours(1),
+        };
 
         try
         {
-            var appLogDirectory = Path.Combine(logsRoot, "core");
-            Directory.CreateDirectory(appLogDirectory);
+            await using var store = new DurableSegmentStore(options);
+            var firstBoot = Guid.NewGuid();
+            var secondBoot = Guid.NewGuid();
 
-            File.WriteAllText(Path.Combine(appLogDirectory, "log.txt"), "old log");
-            File.WriteAllText(Path.Combine(appLogDirectory, "debug.txt"), "old debug");
-            File.WriteAllText(Path.Combine(appLogDirectory, "exceptions.txt"), "old exception");
-            File.WriteAllText(Path.Combine(appLogDirectory, "serilog.txt"), "old serilog");
-
-            string logPath;
-            string debugPath;
-            string exceptionPath;
-            await using (var writer = new SessionLogWriter(
-                "core",
-                logsRoot,
-                TimeSpan.FromMinutes(10)))
+            await using (var writer = new DurableProcessLogWriter(
+                             "core",
+                             store,
+                             firstBoot,
+                             TimeSpan.FromHours(1)))
             {
-                logPath = writer.LogFilePath;
-                debugPath = writer.DebugFilePath;
-                exceptionPath = writer.ExceptionFilePath;
-
-                File.Exists(writer.SerilogFilePath).Should().BeFalse(
-                    "Serilog creates this file after startup, so the stale file must be deleted first");
+                writer.AppendLog("first boot");
+                await writer.FlushAsync();
             }
 
-            new FileInfo(logPath).Length.Should().Be(0);
-            new FileInfo(debugPath).Length.Should().Be(0);
-            new FileInfo(exceptionPath).Length.Should().Be(0);
+            await using (var writer = new DurableProcessLogWriter(
+                             "core",
+                             store,
+                             secondBoot,
+                             TimeSpan.FromHours(1)))
+            {
+                writer.AppendLog("second boot");
+                await writer.FlushAsync();
+            }
+
+            var first = await store.ReadAsync(
+                DurableStreamKey.Process("core", firstBoot),
+                nextSequence: 1,
+                options: new DurableReadOptions());
+            var second = await store.ReadAsync(
+                DurableStreamKey.Process("core", secondBoot),
+                nextSequence: 1,
+                options: new DurableReadOptions());
+
+            first.Records.Select(record => record.Message)
+                .Should().Equal("first boot");
+            second.Records.Select(record => record.Message)
+                .Should().Equal("second boot");
         }
         finally
         {
-            TryDeleteDirectory(logsRoot);
+            TryDeleteDirectory(root);
         }
     }
 
@@ -57,7 +75,6 @@ public sealed class SessionLogWriterTests
         }
         catch
         {
-            // Best effort cleanup for Windows file handles in failed test runs.
         }
     }
 }

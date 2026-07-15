@@ -207,11 +207,6 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
                     ct),
             ForeignModuleHostCapabilityProtocol.JobGetPath =>
                 await GetJobAsync(services, Deserialize<ForeignModuleTaskIdRequest>(request), ct),
-            ForeignModuleHostCapabilityProtocol.JobListByActionPrefixPath =>
-                await ListJobsByActionPrefixAsync(
-                    services,
-                    Deserialize<ForeignModuleJobActionPrefixRequest>(request),
-                    ct),
             ForeignModuleHostCapabilityProtocol.JobListSummariesByActionPrefixPath =>
                 await ListJobSummariesByActionPrefixAsync(
                     services,
@@ -524,26 +519,20 @@ internal sealed class ForeignModuleHostCapabilityServer : IAsyncDisposable
             await ResolveJobReader(services).GetJobAsync(request.Id, ct));
     }
 
-    private static async Task<ForeignModuleJobListResponse> ListJobsByActionPrefixAsync(
+    private static async Task<ForeignModuleJobSummaryPageResponse> ListJobSummariesByActionPrefixAsync(
         IServiceProvider services,
         ForeignModuleJobActionPrefixRequest request,
         CancellationToken ct)
     {
         RequireActionKeyPrefix(request.ActionKeyPrefix);
-        return new ForeignModuleJobListResponse(
+        return new ForeignModuleJobSummaryPageResponse(
             await ResolveJobReader(services)
-                .ListJobsByActionPrefixAsync(request.ActionKeyPrefix, request.ResourceId, ct));
-    }
-
-    private static async Task<ForeignModuleJobSummaryListResponse> ListJobSummariesByActionPrefixAsync(
-        IServiceProvider services,
-        ForeignModuleJobActionPrefixRequest request,
-        CancellationToken ct)
-    {
-        RequireActionKeyPrefix(request.ActionKeyPrefix);
-        return new ForeignModuleJobSummaryListResponse(
-            await ResolveJobReader(services)
-                .ListJobSummariesByActionPrefixAsync(request.ActionKeyPrefix, request.ResourceId, ct));
+                .ListJobSummariesByActionPrefixAsync(
+                    request.ActionKeyPrefix,
+                    request.ResourceId,
+                    request.Cursor,
+                    request.Take,
+                    ct));
     }
 
     private static async Task<ForeignModuleBooleanResponse> JobExistsWithActionPrefixAsync(

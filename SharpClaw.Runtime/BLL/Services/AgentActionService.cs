@@ -1,7 +1,7 @@
 using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Permissions;
+using SharpClaw.Core.State;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
@@ -59,7 +59,7 @@ public sealed class AgentActionService(
     }
 
     public bool HasGrantByDelegateName(
-        PermissionSetDB permissionSet,
+        PermissionSetState permissionSet,
         string delegateName,
         Guid? resourceId)
     {
@@ -71,7 +71,7 @@ public sealed class AgentActionService(
             registry);
     }
 
-    public async Task<PermissionSetDB?> LoadPermissionSetAsync(
+    public async Task<PermissionSetState?> LoadPermissionSetAsync(
         Guid permissionSetId,
         CancellationToken ct)
     {

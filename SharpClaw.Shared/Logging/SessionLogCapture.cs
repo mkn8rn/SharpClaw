@@ -7,23 +7,23 @@ namespace SharpClaw.Shared.Logging;
 
 /// <summary>
 /// Installs process-wide bridges that feed console, diagnostics, and Serilog
-/// output into the current <see cref="SessionLogWriter"/>.
+/// output into the current <see cref="DurableProcessLogWriter"/>.
 /// </summary>
-public sealed class SessionLogCapture : IDisposable
+public sealed class DurableProcessLogCapture : IDisposable
 {
     private readonly List<IDisposable> _registrations = [];
     private int _disposed;
 
-    private SessionLogCapture(SessionLogWriter writer)
+    private DurableProcessLogCapture(DurableProcessLogWriter writer)
     {
-        _registrations.Add(SessionLogConsoleBridge.Install(writer));
-        _registrations.Add(SessionLogDiagnosticsBridge.Install(writer));
+        _registrations.Add(DurableProcessLogConsoleBridge.Install(writer));
+        _registrations.Add(DurableProcessLogDiagnosticsBridge.Install(writer));
     }
 
     /// <summary>
     /// Installs console and diagnostics capture for the process.
     /// </summary>
-    public static SessionLogCapture Install(SessionLogWriter writer) => new(writer);
+    public static DurableProcessLogCapture Install(DurableProcessLogWriter writer) => new(writer);
 
     public void Dispose()
     {
@@ -38,7 +38,7 @@ public sealed class SessionLogCapture : IDisposable
 /// <summary>
 /// Mirrors Serilog events into the session log files.
 /// </summary>
-public sealed class SessionLogSerilogSink(SessionLogWriter writer) : ILogEventSink
+public sealed class DurableProcessLogSerilogSink(DurableProcessLogWriter writer) : ILogEventSink
 {
     public void Emit(LogEvent logEvent)
     {
@@ -55,21 +55,21 @@ public sealed class SessionLogSerilogSink(SessionLogWriter writer) : ILogEventSi
     }
 }
 
-internal sealed class SessionLogConsoleBridge : IDisposable
+internal sealed class DurableProcessLogConsoleBridge : IDisposable
 {
     private readonly TextWriter _originalOut;
     private readonly TextWriter _originalError;
 
-    private SessionLogConsoleBridge(SessionLogWriter writer)
+    private DurableProcessLogConsoleBridge(DurableProcessLogWriter writer)
     {
         _originalOut = Console.Out;
         _originalError = Console.Error;
 
-        Console.SetOut(new SessionLogTextWriter(_originalOut, writer.AppendLog));
-        Console.SetError(new SessionLogTextWriter(_originalError, writer.AppendException));
+        Console.SetOut(new DurableProcessLogTextWriter(_originalOut, writer.AppendLog));
+        Console.SetError(new DurableProcessLogTextWriter(_originalError, writer.AppendException));
     }
 
-    public static SessionLogConsoleBridge Install(SessionLogWriter writer) => new(writer);
+    public static DurableProcessLogConsoleBridge Install(DurableProcessLogWriter writer) => new(writer);
 
     public void Dispose()
     {
@@ -78,17 +78,17 @@ internal sealed class SessionLogConsoleBridge : IDisposable
     }
 }
 
-internal sealed class SessionLogDiagnosticsBridge : IDisposable
+internal sealed class DurableProcessLogDiagnosticsBridge : IDisposable
 {
-    private readonly SessionLogTraceListener _listener;
+    private readonly DurableProcessLogTraceListener _listener;
 
-    private SessionLogDiagnosticsBridge(SessionLogWriter writer)
+    private DurableProcessLogDiagnosticsBridge(DurableProcessLogWriter writer)
     {
-        _listener = new SessionLogTraceListener(writer);
+        _listener = new DurableProcessLogTraceListener(writer);
         Trace.Listeners.Add(_listener);
     }
 
-    public static SessionLogDiagnosticsBridge Install(SessionLogWriter writer) => new(writer);
+    public static DurableProcessLogDiagnosticsBridge Install(DurableProcessLogWriter writer) => new(writer);
 
     public void Dispose()
     {
@@ -97,7 +97,7 @@ internal sealed class SessionLogDiagnosticsBridge : IDisposable
     }
 }
 
-internal sealed class SessionLogTraceListener(SessionLogWriter writer) : TraceListener
+internal sealed class DurableProcessLogTraceListener(DurableProcessLogWriter writer) : TraceListener
 {
     private readonly object _gate = new();
     private readonly StringBuilder _buffer = new();
@@ -149,7 +149,7 @@ internal sealed class SessionLogTraceListener(SessionLogWriter writer) : TraceLi
     }
 }
 
-internal sealed class SessionLogTextWriter(TextWriter inner, Action<string> appendLine) : TextWriter
+internal sealed class DurableProcessLogTextWriter(TextWriter inner, Action<string> appendLine) : TextWriter
 {
     private readonly object _gate = new();
     private readonly StringBuilder _buffer = new();

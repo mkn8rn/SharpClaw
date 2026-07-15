@@ -6,6 +6,7 @@ using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Models;
 using SharpClaw.Core.Tasks.Preflight;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
@@ -14,11 +15,14 @@ public sealed class EfTaskAdministrationHost(
     SharpClawDbContext db,
     IPersistenceEntityResolver entities,
     TaskPreflightChecker preflight,
+    DurableExecutionPersistence durablePersistence,
     TaskTriggerRegistrar? triggerRegistrar = null,
     TaskTriggerHostService? triggerHostService = null,
     ITaskTriggerSourceRegistry? triggerSourceRegistry = null)
     : ITaskAdministrationHost
 {
+    private readonly CoreStateSession _states = new(db);
+
     public async Task<bool> DefinitionNameExistsAsync(
         string name,
         CancellationToken ct)
@@ -28,45 +32,50 @@ public sealed class EfTaskAdministrationHost(
             ct);
     }
 
-    public async Task<TaskDefinitionDB?> LoadDefinitionAsync(
+    public async Task<TaskDefinitionState?> LoadDefinitionAsync(
         Guid id,
         CancellationToken ct)
     {
-        return await db.TaskDefinitions.FindAsync([id], ct);
+        var entity = await db.TaskDefinitions.FindAsync([id], ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<IReadOnlyList<TaskDefinitionDB>> ListDefinitionsAsync(
+    public async Task<IReadOnlyList<TaskDefinitionState>> ListDefinitionsAsync(
         CancellationToken ct)
     {
-        return await db.TaskDefinitions.ToListAsync(ct);
+        return _states.Map(await db.TaskDefinitions.ToListAsync(ct));
     }
 
-    public void TrackDefinition(TaskDefinitionDB definition)
+    public void TrackDefinition(TaskDefinitionState definition)
     {
-        db.TaskDefinitions.Add(definition);
+        _states.Track(definition);
     }
 
-    public void RemoveDefinition(TaskDefinitionDB definition)
+    public void RemoveDefinition(TaskDefinitionState definition)
     {
-        db.TaskDefinitions.Remove(definition);
+        _states.Remove(definition);
     }
 
-    public async Task<IReadOnlyList<TaskTriggerBindingDB>> LoadTriggerBindingsAsync(
+    public async Task<IReadOnlyList<TaskTriggerBindingState>> LoadTriggerBindingsAsync(
         Guid taskDefinitionId,
         CancellationToken ct)
     {
-        return await db.TaskTriggerBindings
+        var records = await db.TaskTriggerBindings
             .Where(binding => binding.TaskDefinitionId == taskDefinitionId)
             .ToListAsync(ct);
+        return _states.Map(records);
     }
 
     public async Task<bool> SyncTriggersAsync(
-        TaskDefinitionDB definition,
+        TaskDefinitionState definition,
         IReadOnlyList<TaskTriggerDefinition> triggers,
         CancellationToken ct)
     {
         return triggerRegistrar is not null
-            && await triggerRegistrar.SyncTriggersAsync(definition, triggers, ct);
+            && await triggerRegistrar.SyncTriggersAsync(
+                _states.Entity<TaskDefinitionDB>(definition),
+                triggers,
+                ct);
     }
 
     public async Task<bool> RemoveTriggersAsync(
@@ -113,85 +122,44 @@ public sealed class EfTaskAdministrationHost(
             ct);
     }
 
-    public void TrackInstance(TaskInstanceDB instance)
+    public void TrackInstance(TaskInstanceState instance)
     {
-        db.TaskInstances.Add(instance);
+        db.TaskInstances.Add(ExecutionStateMapper.ToEntity(instance));
     }
 
-    public async Task<TaskInstanceDB?> LoadInstanceAsync(
+    public async Task<TaskInstanceState?> LoadInstanceAsync(
         Guid id,
         CancellationToken ct)
     {
-        return await entities.FindAsync<TaskInstanceDB>(db, id, ct);
+        var entity = await entities.FindAsync<TaskInstanceDB>(db, id, ct);
+        return entity is null ? null : ExecutionStateMapper.ToCoreState(entity);
     }
 
-    public async Task<TaskInstanceDB?> LoadInstanceWithLogsAsync(
-        Guid id,
+    public async Task PersistInstanceAsync(
+        TaskInstanceState instance,
         CancellationToken ct)
     {
-        var instance = await entities.FindAsync<TaskInstanceDB>(db, id, ct);
-        if (instance is null)
-            return null;
-
-        instance.LogEntries = (await entities.QueryAsync<TaskExecutionLogDB>(
-            db,
-            log => log.TaskInstanceId == id,
-            hint: new PersistenceQueryHint("TaskInstanceId", id),
-            ct: ct)).OrderBy(log => log.CreatedAt).ToList();
-        return instance;
+        var entity = db.TaskInstances.Local
+                         .FirstOrDefault(candidate => candidate.Id == instance.Id)
+            ?? await entities.FindAsync<TaskInstanceDB>(db, instance.Id, ct)
+            ?? throw new InvalidOperationException(
+                $"Task instance {instance.Id} was not found while persisting state.");
+        ExecutionStateMapper.Apply(instance, entity);
+        var terminalInstances = durablePersistence.PrepareTaskState();
+        await db.SaveChangesAsync(ct);
+        await durablePersistence.SealTaskDiagnosticsAsync(terminalInstances, ct);
     }
 
-    public async Task<IReadOnlyList<TaskInstanceDB>> ListInstancesAsync(
-        Guid? taskDefinitionId,
-        CancellationToken ct)
-    {
-        return await entities.QueryAsync<TaskInstanceDB>(
-            db,
-            taskDefinitionId is not null
-                ? instance => instance.TaskDefinitionId == taskDefinitionId.Value
-                : _ => true,
-            hint: taskDefinitionId is not null
-                ? new PersistenceQueryHint(
-                    "TaskDefinitionId",
-                    taskDefinitionId.Value)
-                : null,
-            ct: ct);
-    }
-
-    public async Task<IReadOnlyDictionary<Guid, string>> LoadDefinitionNamesAsync(
-        IReadOnlyCollection<Guid> definitionIds,
-        CancellationToken ct)
-    {
-        return await db.TaskDefinitions
-            .Where(definition => definitionIds.Contains(definition.Id))
-            .ToDictionaryAsync(
-                definition => definition.Id,
-                definition => definition.Name,
-                ct);
-    }
-
-    public void TrackLog(TaskExecutionLogDB log)
-    {
-        db.TaskExecutionLogs.Add(log);
-    }
-
-    public async Task<IReadOnlyList<TaskOutputEntryDB>> ListOutputsAsync(
-        Guid instanceId,
-        DateTimeOffset? since,
-        CancellationToken ct)
-    {
-        return await entities.QueryAsync<TaskOutputEntryDB>(
-            db,
-            since is not null
-                ? output => output.TaskInstanceId == instanceId
-                    && output.CreatedAt > since.Value
-                : output => output.TaskInstanceId == instanceId,
-            hint: new PersistenceQueryHint("TaskInstanceId", instanceId),
-            ct: ct);
-    }
+    public Task AppendLogAsync(
+        TaskExecutionLog log,
+        CancellationToken ct) =>
+        durablePersistence.AppendTaskLogAsync(log, saveChanges: true, ct);
 
     public async Task SaveAsync(CancellationToken ct)
     {
-        await db.SaveChangesAsync(ct);
+        _states.ApplyAll();
+        var terminalInstances = durablePersistence.PrepareTaskState();
+        await _states.SaveChangesAsync(ct);
+        await durablePersistence.SealTaskDiagnosticsAsync(terminalInstances, ct);
     }
 }

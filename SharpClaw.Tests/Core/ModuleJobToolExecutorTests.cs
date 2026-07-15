@@ -3,9 +3,9 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
+using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Modules;
 
 namespace SharpClaw.Tests.Core;
@@ -153,7 +153,7 @@ public sealed class ModuleJobToolExecutorTests
     }
 
     private static ModuleJobToolExecutionRequest Request(
-        AgentJobDB job,
+        AgentJobState job,
         ModuleRegistry registry,
         ServiceProvider provider,
         Action<string> addInfoLog,
@@ -187,7 +187,7 @@ public sealed class ModuleJobToolExecutorTests
         return registry;
     }
 
-    private static AgentJobDB MakeJob(string actionKey = "test_run") => new()
+    private static AgentJobState MakeJob(string actionKey = "test_run") => new()
     {
         Id = Guid.NewGuid(),
         ChannelId = Guid.NewGuid(),
@@ -196,7 +196,6 @@ public sealed class ModuleJobToolExecutorTests
         ActionKey = actionKey,
         Status = AgentJobStatus.Executing,
         CreatedAt = DateTimeOffset.UtcNow,
-        UpdatedAt = DateTimeOffset.UtcNow,
     };
 
     private static JsonElement Json(string json)

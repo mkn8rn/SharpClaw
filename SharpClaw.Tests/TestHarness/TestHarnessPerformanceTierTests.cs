@@ -521,18 +521,22 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_DirectJobAllowedWarmNoOp_Under25ms()
+    public async Task PerformanceGate_DirectJobAllowedDurableCommit_Under50ms()
     {
         var measured = await CachedAsync("direct-job-allowed", MeasureDirectAllowedJobAsync);
-        measured.Should().BeLessThanOrEqualTo(25);
+        measured.Should().BeLessThanOrEqualTo(
+            50,
+            "an allowed submission durably commits each lifecycle decision and its terminal result");
     }
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_DirectJobDeniedWarmNoOp_Under10ms()
+    public async Task PerformanceGate_DirectJobDeniedDurableCommit_Under25ms()
     {
         var measured = await CachedAsync("direct-job-denied", MeasureDirectDeniedJobAsync);
-        measured.Should().BeLessThanOrEqualTo(10);
+        measured.Should().BeLessThanOrEqualTo(
+            25,
+            "a denied submission now durably commits its lifecycle diagnostics before returning");
     }
 
     [Test]
@@ -545,7 +549,7 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_DirectJobSummaries_OneThousandJobsLargeBodies_Under250ms()
+    public async Task PerformanceGate_DirectJobPage_OneThousandJobs_Under250ms()
     {
         var measured = await CachedAsync(
             "direct-job-summaries-1000",
@@ -555,7 +559,7 @@ public sealed class TestHarnessPerformanceTierTests
 
     [Test]
     [Category(HarnessTestCategories.PerformanceGate)]
-    public async Task PerformanceGate_DirectJobDetailHotLogs_OneHundredReads_Under100ms()
+    public async Task PerformanceGate_CompactJobDetailWithFiveHundredLogs_OneHundredReads_Under100ms()
     {
         var measured = await CachedAsync(
             "direct-job-detail-hot-logs-100",
@@ -1196,7 +1200,6 @@ public sealed class TestHarnessPerformanceTierTests
                 ActionKey = TestHarnessConstants.JobPermissionedTool,
                 Status = AgentJobStatus.Completed,
                 EffectiveClearance = PermissionClearance.Independent,
-                ResultData = new string('x', resultBytes),
                 ScriptJson = """{"result":""}""",
                 CreatedAt = now.AddMilliseconds(i),
                 UpdatedAt = now.AddMilliseconds(i),
@@ -1207,14 +1210,22 @@ public sealed class TestHarnessPerformanceTierTests
         await host.Db.SaveChangesAsync();
 
         var svc = host.Services.GetRequiredService<AgentJobService>();
-        await svc.ListSummariesAsync(seeded.Channel.Id);
+        await svc.ListSummariesAsync(
+            seeded.Channel.Id,
+            cursor: null,
+            take: 200);
 
         var sw = Stopwatch.StartNew();
-        var summaries = await svc.ListSummariesAsync(seeded.Channel.Id);
+        var summaries = await svc.ListSummariesAsync(
+            seeded.Channel.Id,
+            cursor: null,
+            take: 200);
         sw.Stop();
 
-        summaries.Should().HaveCount(jobCount);
-        JsonSerializer.Serialize(summaries).Should().NotContain(new string('x', Math.Min(resultBytes, 100)));
+        summaries.Records.Should().HaveCount(Math.Min(jobCount, 200));
+        summaries.HasMore.Should().Be(jobCount > 200);
+        JsonSerializer.Serialize(summaries).Should()
+            .NotContain(new string('x', Math.Min(resultBytes, 100)));
         return sw.ElapsedMilliseconds;
     }
 
@@ -1237,36 +1248,32 @@ public sealed class TestHarnessPerformanceTierTests
         };
 
         host.Db.AgentJobs.Add(job);
+        await host.Db.SaveChangesAsync();
+        var persistence = host.Services
+            .GetRequiredService<DurableExecutionPersistence>();
         for (var i = 0; i < logCount; i++)
         {
-            host.Db.AgentJobLogEntries.Add(new AgentJobLogEntryDB
-            {
-                Id = Guid.NewGuid(),
-                AgentJobId = job.Id,
-                Message = $"segment {i}",
-                Level = JobLogLevels.Info,
-                CreatedAt = now.AddMilliseconds(i),
-                UpdatedAt = now.AddMilliseconds(i)
-            });
+            await persistence.AppendJobLogAsync(
+                job.Id,
+                $"segment {i}",
+                JobLogLevels.Info,
+                "PerformanceFixture",
+                CancellationToken.None);
         }
-        await host.Db.SaveChangesAsync();
 
         var svc = host.Services.GetRequiredService<AgentJobService>();
         var warm = await svc.GetAsync(job.Id);
-        warm!.Logs.Should().HaveCount(logCount);
+        warm!.LogRecordCount.Should().Be(logCount);
 
         host.PersistenceCounter.Reset();
         var sw = Stopwatch.StartNew();
         for (var i = 0; i < readCount; i++)
         {
             var detail = await svc.GetAsync(job.Id);
-            detail!.Logs.Should().HaveCount(logCount);
+            detail!.LogRecordCount.Should().Be(logCount);
         }
         sw.Stop();
 
-        host.PersistenceCounter.QueryCalls.Should().Be(
-            0,
-            "hot job detail reads should reuse cached log snapshots instead of querying log storage");
         return sw.ElapsedMilliseconds;
     }
 

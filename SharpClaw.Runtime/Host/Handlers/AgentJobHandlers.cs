@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Http;
 using SharpClaw.Runtime.Host.Routing;
 using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.DTOs.AgentActions;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Runtime.Host.Handlers;
 
@@ -18,12 +20,13 @@ public static class AgentJobHandlers
     }
 
     [MapGet]
-    public static async Task<IResult> List(Guid channelId, AgentJobService svc)
-        => Results.Ok(await svc.ListAsync(channelId));
-
-    [MapGet("/summaries")]
-    public static async Task<IResult> ListSummaries(Guid channelId, AgentJobService svc)
-        => Results.Ok(await svc.ListSummariesAsync(channelId));
+    public static async Task<IResult> List(
+        Guid channelId,
+        AgentJobService svc,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default) =>
+        Results.Ok(await svc.ListSummariesAsync(channelId, cursor, take, ct));
 
     [MapGet("/{jobId:guid}")]
     public static async Task<IResult> GetById(
@@ -90,7 +93,83 @@ public static class AgentJobHandlers
         return Results.Ok(job with { ChannelCost = cost });
     }
 
-    private static async Task<AgentJobResponse?> GetScopedJobAsync(
+    [MapGet("/{jobId:guid}/logs")]
+    public static async Task<IResult> GetLogs(
+        Guid channelId,
+        Guid jobId,
+        AgentJobService svc,
+        string? cursor = null,
+        int take = 200,
+        int maxBytes = 262_144,
+        string? minimumLevel = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        string? contains = null,
+        long maxScanBytes = 16 * 1024 * 1024,
+        CancellationToken ct = default)
+    {
+        if (await GetScopedJobSummaryAsync(channelId, jobId, svc) is null)
+            return Results.NotFound();
+
+        var page = await svc.ReadLogsAsync(
+            jobId,
+            cursor,
+            new DurableLogQuery(
+                take,
+                maxBytes,
+                minimumLevel,
+                from,
+                to,
+                contains,
+                maxScanBytes),
+            ct);
+        return Results.Ok(page);
+    }
+
+    [MapGet("/{jobId:guid}/audit")]
+    public static async Task<IResult> GetAudit(
+        Guid channelId,
+        Guid jobId,
+        AgentJobService svc,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default)
+    {
+        if (await GetScopedJobSummaryAsync(channelId, jobId, svc) is null)
+            return Results.NotFound();
+        return Results.Ok(await svc.ReadAuditAsync(jobId, cursor, take, ct));
+    }
+
+    [MapGet("/{jobId:guid}/artifacts/{artifactId:guid}")]
+    public static async Task<IResult> GetArtifact(
+        Guid channelId,
+        Guid jobId,
+        Guid artifactId,
+        AgentJobService svc,
+        IExecutionArtifactStore artifacts,
+        HttpContext context,
+        CancellationToken ct)
+    {
+        if (await GetScopedJobSummaryAsync(channelId, jobId, svc) is null)
+            return Results.NotFound();
+
+        var handle = await artifacts.OpenReadAsync(
+            artifactId,
+            ExecutionOwnerKind.AgentJob,
+            jobId,
+            cancellationToken: ct);
+        if (handle is null)
+            return Results.NotFound();
+
+        context.Response.RegisterForDisposeAsync(handle);
+        context.Response.Headers.ETag = $"\"{handle.Descriptor.Sha256}\"";
+        return Results.Stream(
+            handle.Content,
+            handle.Descriptor.MediaType,
+            enableRangeProcessing: true);
+    }
+
+    private static async Task<AgentJobDetailResponse?> GetScopedJobAsync(
         Guid channelId, Guid jobId, AgentJobService svc)
     {
         var job = await svc.GetAsync(jobId);

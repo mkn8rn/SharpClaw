@@ -2,9 +2,6 @@ using System.Text.Json;
 using SharpClaw.Contracts.Chat;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
-using SharpClaw.Contracts.Entities.Core.Messages;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Providers;
@@ -38,7 +35,7 @@ public sealed class ChatRequestWorkflowEngineTests
             new ChatPreparedRequest(
                 channelId,
                 threadId,
-                new ChannelDB { Id = channelId, Title = "channel" },
+                new ChannelState { Id = channelId, Title = "channel" },
                 CreateAgent(),
                 CreatePlan(),
                 new ChatRequest("hello", ClientType: "cli")),
@@ -93,8 +90,8 @@ public sealed class ChatRequestWorkflowEngineTests
             AgentJobStatus.Completed,
             PermissionClearance.Independent,
             ResultData: "done",
-            ErrorLog: null,
-            Logs: [],
+            ErrorCode: null,
+            ErrorMessage: null,
             CreatedAt: DateTimeOffset.UtcNow,
             StartedAt: null,
             CompletedAt: null,
@@ -194,7 +191,7 @@ public sealed class ChatRequestWorkflowEngineTests
             ProviderName: "Test",
             ProviderEndpoint: null);
 
-    private static AgentDB CreateAgent() => new()
+    private static AgentState CreateAgent() => new()
     {
         Id = Guid.NewGuid(),
         Name = "Agent",
@@ -212,7 +209,7 @@ public sealed class ChatRequestWorkflowEngineTests
         public Guid? SessionUserId { get; init; }
         public ChatSenderSnapshot SenderSnapshot { get; init; } =
             new(null, null, null);
-        public List<ChatMessageDB> PersistedMessages { get; } = [];
+        public List<ChatMessageState> PersistedMessages { get; } = [];
         public Exception? PersistException { get; init; }
         public bool UserMessageExists { get; init; }
         public (int Prompt, int Completion)? RecordedCurrentExecutionTokens { get; private set; }
@@ -238,8 +235,8 @@ public sealed class ChatRequestWorkflowEngineTests
             Task.FromResult(HistoryResult);
 
         public Task<string?> BuildChatHeaderAsync(
-            ChannelDB channel,
-            AgentDB agent,
+            ChannelState channel,
+            AgentState agent,
             ChatRequest request,
             ChatRequestPlan plan,
             CancellationToken ct) =>
@@ -255,7 +252,7 @@ public sealed class ChatRequestWorkflowEngineTests
             Task.FromResult(SenderSnapshot);
 
         public Task PersistChatMessagesAsync(
-            IReadOnlyList<ChatMessageDB> messages,
+            IReadOnlyList<ChatMessageState> messages,
             CancellationToken ct)
         {
             if (PersistException is not null)

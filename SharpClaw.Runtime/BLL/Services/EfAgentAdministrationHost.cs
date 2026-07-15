@@ -8,6 +8,7 @@ using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Agents;
 using SharpClaw.Core.Clients;
 using SharpClaw.Core.Modules;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
@@ -20,6 +21,8 @@ public sealed class EfAgentAdministrationHost(
     ProviderApiClientFactory clientFactory,
     ChatCache chatCache) : IAgentAdministrationHost
 {
+    private readonly CoreStateSession _states = new(db);
+
     public bool UniqueAgentNamesEnforced =>
         AgentAdministrationEngine.IsUniqueAgentNameEnforced(
             configuration["UniqueNames:Agents"]);
@@ -38,60 +41,66 @@ public sealed class EfAgentAdministrationHost(
         return clientFactory.GetPlugin(providerKey);
     }
 
-    public async Task<ModelDB?> LoadModelAsync(
+    public async Task<ModelState?> LoadModelAsync(
         Guid modelId,
         CancellationToken ct)
     {
-        return await db.Models
+        var entity = await db.Models
             .Include(m => m.Provider)
             .FirstOrDefaultAsync(m => m.Id == modelId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<AgentDB?> LoadAgentAsync(
+    public async Task<AgentState?> LoadAgentAsync(
         Guid agentId,
         CancellationToken ct)
     {
-        return await db.Agents
+        var entity = await db.Agents
             .Include(a => a.Model).ThenInclude(m => m.Provider)
             .Include(a => a.Role)
             .FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<RoleDB?> LoadRoleAsync(
+    public async Task<RoleState?> LoadRoleAsync(
         Guid roleId,
         CancellationToken ct)
     {
-        return await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        var entity = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<UserDB?> LoadUserAsync(
+    public async Task<UserState?> LoadUserAsync(
         Guid userId,
         CancellationToken ct)
     {
-        return await db.Users
+        var entity = await db.Users
             .Include(u => u.Role)
             .FirstOrDefaultAsync(u => u.Id == userId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<PermissionSetDB?> LoadFullPermissionSetAsync(
+    public async Task<PermissionSetState?> LoadFullPermissionSetAsync(
         Guid permissionSetId,
         CancellationToken ct)
     {
-        return await db.PermissionSets
+        var entity = await db.PermissionSets
             .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == permissionSetId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<IReadOnlyList<ModelDB>> LoadChatCapableModelsAsync(
+    public async Task<IReadOnlyList<ModelState>> LoadChatCapableModelsAsync(
         CancellationToken ct)
     {
-        return await db.Models
+        var entities = await db.Models
             .Include(m => m.Provider)
             .Where(m => m.CapabilityTagsRaw != null
                 && m.CapabilityTagsRaw.Contains(WellKnownCapabilityKeys.Chat))
             .ToListAsync(ct);
+        return _states.Map(entities);
     }
 
     public async Task<IReadOnlyList<string>> ListAgentNamesAsync(
@@ -104,21 +113,21 @@ public sealed class EfAgentAdministrationHost(
             .ToListAsync(ct);
     }
 
-    public void TrackAgent(AgentDB agent)
+    public void TrackAgent(AgentState agent)
     {
-        db.Agents.Add(agent);
+        _states.Track(agent);
     }
 
-    public void RemoveAgent(AgentDB agent)
+    public void RemoveAgent(AgentState agent)
     {
-        db.Agents.Remove(agent);
+        _states.Remove(agent);
     }
 
     public async Task SaveAsync(
         Func<ChatRuntimeInvalidationPlan?>? buildInvalidationPlan,
         CancellationToken ct)
     {
-        await db.SaveChangesAsync(ct);
+        await _states.SaveChangesAsync(ct);
         buildInvalidationPlan?.Invoke()?.ApplyTo(chatCache);
     }
 }

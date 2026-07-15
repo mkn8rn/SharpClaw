@@ -21,7 +21,7 @@ namespace SharpClaw.Services;
 public sealed class BackendProcessManager : IDisposable
 {
     private readonly FrontendInstanceService? _frontendInstance;
-    private readonly SessionLogWriter _sessionLogWriter;
+    private readonly DurableProcessLogWriter _processLogs;
     private readonly Func<bool>? _processOnPortProbe;
     private readonly Func<CancellationToken, Task<bool>>? _apiReachabilityProbe;
     private readonly Action<ProcessStartInfo>? _processStartObserver;
@@ -73,11 +73,11 @@ public sealed class BackendProcessManager : IDisposable
 
     public BackendProcessManager(
         string apiUrl,
-        SessionLogWriter sessionLogWriter,
+        DurableProcessLogWriter processLogs,
         FrontendInstanceService? frontendInstance = null)
         : this(
             apiUrl,
-            sessionLogWriter,
+            processLogs,
             frontendInstance,
             executablePath: null,
             processOnPortProbe: null,
@@ -88,7 +88,7 @@ public sealed class BackendProcessManager : IDisposable
 
     internal BackendProcessManager(
         string apiUrl,
-        SessionLogWriter sessionLogWriter,
+        DurableProcessLogWriter processLogs,
         FrontendInstanceService? frontendInstance,
         string? executablePath,
         Func<bool>? processOnPortProbe,
@@ -96,7 +96,7 @@ public sealed class BackendProcessManager : IDisposable
         Action<ProcessStartInfo>? processStartObserver)
     {
         _frontendInstance = frontendInstance;
-        _sessionLogWriter = sessionLogWriter;
+        _processLogs = processLogs;
         _processOnPortProbe = processOnPortProbe;
         _apiReachabilityProbe = apiReachabilityProbe;
         _processStartObserver = processStartObserver;
@@ -329,7 +329,7 @@ public sealed class BackendProcessManager : IDisposable
             if (e.Data is not null)
             {
                 lock (_outputLock) _processOutput.Add(e.Data);
-                _sessionLogWriter.AppendDebug($"[backend] {e.Data}");
+                _processLogs.AppendDebug($"[backend] {e.Data}");
             }
         };
         _process.ErrorDataReceived += (_, e) =>
@@ -337,7 +337,7 @@ public sealed class BackendProcessManager : IDisposable
             if (e.Data is not null)
             {
                 lock (_outputLock) _processOutput.Add($"[stderr] {e.Data}");
-                _sessionLogWriter.AppendException($"[backend stderr] {e.Data}");
+                _processLogs.AppendException($"[backend stderr] {e.Data}");
             }
         };
         _process.BeginOutputReadLine();

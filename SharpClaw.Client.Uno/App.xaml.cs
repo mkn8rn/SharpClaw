@@ -11,8 +11,8 @@ namespace SharpClaw;
 
 public partial class App : Application
 {
-    private SessionLogWriter? _sessionLogs;
-    private SessionLogCapture? _sessionLogCapture;
+    private DurableProcessLogWriter? _processLogs;
+    private DurableProcessLogCapture? _processLogCapture;
 
     /// <summary>
     /// Initializes the singleton application object. This is the first line of authored code
@@ -31,9 +31,9 @@ public partial class App : Application
     protected async override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var frontendInstance = new FrontendInstanceService();
-        _sessionLogs = new SessionLogWriter("uno", frontendInstance.Paths.LogsDirectory);
-        _sessionLogCapture = SessionLogCapture.Install(_sessionLogs);
-        RegisterGlobalExceptionLogging(_sessionLogs);
+        _processLogs = new DurableProcessLogWriter("uno", frontendInstance.Paths);
+        _processLogCapture = DurableProcessLogCapture.Install(_processLogs);
+        RegisterGlobalExceptionLogging(_processLogs);
 
         var serilogOptions = SerilogEnvironmentOptions.FromConfiguration(
             new ConfigurationBuilder()
@@ -53,15 +53,10 @@ public partial class App : Application
                     serilogOptions.UnoMinimumLevel,
                     LogEventLevel.Warning))
                 .Enrich.FromLogContext()
-                .WriteTo.Sink(new SessionLogSerilogSink(_sessionLogs));
+                .WriteTo.Sink(new DurableProcessLogSerilogSink(_processLogs));
 
             if (serilogOptions.ConsoleEnabled)
                 loggerConfiguration = loggerConfiguration.WriteTo.Console();
-
-            if (serilogOptions.FileEnabled)
-                loggerConfiguration = loggerConfiguration.WriteTo.File(
-                    _sessionLogs.SerilogFilePath,
-                    rollingInterval: RollingInterval.Infinite);
 
             Log.Logger = loggerConfiguration.CreateLogger();
         }
@@ -84,7 +79,7 @@ public partial class App : Application
                 {
                     // Configure log levels for different categories of logging
                     logBuilder
-                        .AddProvider(new SessionLogLoggerProvider(_sessionLogs))
+                        .AddProvider(new DurableProcessLogLoggerProvider(_processLogs))
                         .SetMinimumLevel(
                             context.HostingEnvironment.IsDevelopment() ?
                                 LogLevel.Information :
@@ -163,7 +158,7 @@ public partial class App : Application
                 )
                 .ConfigureServices((context, services) =>
                 {
-                    services.AddSingleton(_sessionLogs);
+                    services.AddSingleton(_processLogs);
                     services.AddSingleton(frontendInstance);
                     var isDev = context.HostingEnvironment.IsDevelopment();
                     var configuredApiUrl = LocalEnvironment.LoadApiUrl(isDev);
@@ -173,7 +168,7 @@ public partial class App : Application
                     var backendEnabled = LocalEnvironment.LoadBackendEnabled(isDev);
                     var persistent = LocalEnvironment.LoadProcessesPersistent(isDev);
 
-                    var backendManager = new BackendProcessManager(apiUrl, _sessionLogs, frontendInstance)
+                    var backendManager = new BackendProcessManager(apiUrl, _processLogs, frontendInstance)
                     {
                         SkipLaunch = !backendEnabled,
                         Persistent = persistent,
@@ -183,14 +178,14 @@ public partial class App : Application
                     var gatewayUrl = LocalEnvironment.LoadGatewayUrl(isDev);
                     var gatewayEnabled = LocalEnvironment.LoadGatewayEnabled(isDev);
 
-                    var gatewayManager = new GatewayProcessManager(gatewayUrl, apiUrl, _sessionLogs, frontendInstance)
+                    var gatewayManager = new GatewayProcessManager(gatewayUrl, apiUrl, _processLogs, frontendInstance)
                     {
                         SkipLaunch = !gatewayEnabled,
                         Persistent = persistent,
                     };
                     services.AddSingleton(gatewayManager);
 
-                    services.AddSingleton(new SharpClawApiClient(apiUrl, _sessionLogs, frontendInstance));
+                    services.AddSingleton(new SharpClawApiClient(apiUrl, _processLogs, frontendInstance));
                     services.AddSingleton(new FirstSetupMarker(frontendInstance));
                     services.AddSingleton(new ClientSettings(frontendInstance));
                     services.AddSingleton(new AccountStore(frontendInstance));
@@ -238,26 +233,26 @@ public partial class App : Application
 
                 gw?.Dispose();
                 be?.Dispose();
-                _sessionLogCapture?.Dispose();
-                _sessionLogs?.Dispose();
+                _processLogCapture?.Dispose();
+                _processLogs?.Dispose();
                 Log.CloseAndFlush();
             };
         }
     }
 
-    private static void RegisterGlobalExceptionLogging(SessionLogWriter sessionLogs)
+    private static void RegisterGlobalExceptionLogging(DurableProcessLogWriter processLogs)
     {
         AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
         {
             if (eventArgs.ExceptionObject is Exception exception)
-                sessionLogs.AppendException(exception, "Unhandled AppDomain exception in Uno.");
+                processLogs.AppendException(exception, "Unhandled AppDomain exception in Uno.");
             else
-                sessionLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
+                processLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
         };
 
         TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
         {
-            sessionLogs.AppendException(eventArgs.Exception, "Unobserved task exception in Uno.");
+            processLogs.AppendException(eventArgs.Exception, "Unobserved task exception in Uno.");
         };
     }
 

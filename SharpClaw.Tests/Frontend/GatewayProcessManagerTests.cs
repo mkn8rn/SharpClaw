@@ -1,5 +1,6 @@
 using FluentAssertions;
 using SharpClaw.Services;
+using SharpClaw.Shared.Instances;
 using SharpClaw.Shared.Logging;
 
 namespace SharpClaw.Tests.Frontend;
@@ -12,7 +13,8 @@ public class GatewayProcessManagerTests
     {
         var instanceRoot = CreateTempDirectory();
         var sharedRoot = CreateTempDirectory();
-        using var sessionLogs = new SessionLogWriter("gateway-tests", CreateTempDirectory());
+        var logsRoot = CreateTempDirectory();
+        using var processLogs = CreateProcessLogs(logsRoot);
 
         try
         {
@@ -23,7 +25,7 @@ public class GatewayProcessManagerTests
             var manager = new GatewayProcessManager(
                 GatewayProcessManager.DefaultGatewayUrl,
                 "http://127.0.0.1:48923",
-                sessionLogs,
+                processLogs,
                 frontendInstance);
 
             manager.BundledGatewayInstanceRoot.Should().Be(
@@ -33,22 +35,41 @@ public class GatewayProcessManagerTests
         {
             DeleteDirectoryIfExists(instanceRoot);
             DeleteDirectoryIfExists(sharedRoot);
+            DeleteDirectoryIfExists(logsRoot);
         }
     }
 
     [Test]
     public void UpdateBackendBaseUrl_WhenCalled_UpdatesForwardedBackendBaseUrl()
     {
-        using var sessionLogs = new SessionLogWriter("gateway-tests", CreateTempDirectory());
-        var manager = new GatewayProcessManager(
-            GatewayProcessManager.DefaultGatewayUrl,
-            "http://127.0.0.1:48923",
-            sessionLogs);
+        var logsRoot = CreateTempDirectory();
+        try
+        {
+            using var processLogs = CreateProcessLogs(logsRoot);
+            var manager = new GatewayProcessManager(
+                GatewayProcessManager.DefaultGatewayUrl,
+                "http://127.0.0.1:48923",
+                processLogs);
 
-        manager.UpdateBackendBaseUrl("http://127.0.0.1:48925");
+            manager.UpdateBackendBaseUrl("http://127.0.0.1:48925");
 
-        manager.BackendBaseUrl.Should().Be("http://127.0.0.1:48925");
+            manager.BackendBaseUrl.Should().Be("http://127.0.0.1:48925");
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(logsRoot);
+        }
     }
+
+    private static DurableProcessLogWriter CreateProcessLogs(string root) =>
+        new(
+            "gateway-tests",
+            new SharpClawInstancePaths(
+                SharpClawInstanceKind.Gateway,
+                root,
+                root,
+                root),
+            TimeSpan.FromHours(1));
 
     private static string CreateTempDirectory()
     {

@@ -45,6 +45,7 @@ public sealed class SharpClawInstancePaths
         SecretsDirectory = Path.Combine(InstanceRoot, "secrets");
         RuntimeDirectory = Path.Combine(InstanceRoot, "runtime");
         LogsDirectory = Path.Combine(InstanceRoot, "logs");
+        DurableDirectory = Path.Combine(InstanceRoot, "durable", "v1");
         ConfigDirectory = Path.Combine(InstanceRoot, "config");
         DiscoveryDirectory = Path.Combine(SharedRoot, "discovery", "instances");
         DiscoveryEntryPath = Path.Combine(DiscoveryDirectory, $"{instanceKind.ToString().ToLowerInvariant()}-{InstallFingerprint}.json");
@@ -70,6 +71,8 @@ public sealed class SharpClawInstancePaths
     public string RuntimeDirectory { get; }
 
     public string LogsDirectory { get; }
+
+    public string DurableDirectory { get; }
 
     public string ConfigDirectory { get; }
 
@@ -98,6 +101,7 @@ public sealed class SharpClawInstancePaths
         Directory.CreateDirectory(SecretsDirectory);
         Directory.CreateDirectory(RuntimeDirectory);
         Directory.CreateDirectory(LogsDirectory);
+        Directory.CreateDirectory(DurableDirectory);
         Directory.CreateDirectory(ConfigDirectory);
         Directory.CreateDirectory(DiscoveryDirectory);
     }

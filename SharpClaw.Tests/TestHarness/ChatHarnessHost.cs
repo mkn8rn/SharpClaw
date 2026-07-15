@@ -35,6 +35,8 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Runtime.INF.Persistence.Modules;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Shared.DurableStorage;
 using SharpClaw.Shared.Instances;
 using SharpClaw.Core.Modules;
 
@@ -108,6 +110,39 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         {
             Secret = Convert.ToBase64String(new byte[32])
         });
+        var durableRoot = instancePaths.DurableDirectory;
+        var durableMasterKey = new byte[32];
+        var durableOptions = new DurableStorageOptions
+        {
+            RootDirectory = durableRoot,
+            EncryptionKey = DurableStorageKeyDerivation.Derive(
+                durableMasterKey,
+                "records"),
+        };
+        services.AddSingleton(durableOptions);
+        services.AddSingleton<DurableSegmentStore>();
+        services.AddSingleton(new DurableStreamPathEncoder(durableRoot));
+        services.AddSingleton(sp => new DurableCursorCodec(
+            DurableStorageKeyDerivation.Derive(durableMasterKey, "cursors"),
+            sp.GetRequiredService<DurableStreamPathEncoder>()));
+        services.AddSingleton(new DatabaseCursorCodec(
+            DurableStorageKeyDerivation.Derive(
+                durableMasterKey,
+                "database-cursors")));
+        services.AddSingleton(sp => new ExecutionArtifactStore(
+            durableRoot,
+            DurableStorageKeyDerivation.Derive(
+                durableMasterKey,
+                "artifacts")));
+        services.AddSingleton<IExecutionArtifactStore>(sp =>
+            sp.GetRequiredService<ExecutionArtifactStore>());
+        services.AddSingleton<ExecutionDiagnosticStore>();
+        services.AddSingleton(sp => new TaskDiagnosticStateStore(
+            durableRoot,
+            DurableStorageKeyDerivation.Derive(
+                durableMasterKey,
+                "task-state"),
+            sp.GetRequiredService<IExecutionArtifactStore>()));
         services.AddDbContext<SharpClawDbContext>(options =>
         {
             if (useJsonColdStoreDatabase)
@@ -202,6 +237,8 @@ internal sealed class ChatHarnessHost : IAsyncDisposable
         services.AddScoped<EfAgentActionHost>();
         services.AddScoped<EfChatQueryHost>();
         services.AddScoped<AgentActionService>();
+        services.AddScoped<DurableExecutionPersistence>();
+        services.AddScoped<ExecutionQueryService>();
         services.AddScoped<EfAgentJobAdministrationHost>();
         services.AddScoped<AgentJobService>();
         services.AddScoped<IAgentJobController, HostAgentJobController>();

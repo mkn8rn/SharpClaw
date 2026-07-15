@@ -101,7 +101,6 @@ public sealed class ChatRuntimePlanningTests
         var userId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
-        var jobId = Guid.NewGuid();
         var userKey = ChatCache.KeyHeaderUser(userId);
         var suffixKey = ChatCache.KeyHeaderAgentSuffix(
             agentId,
@@ -112,20 +111,20 @@ public sealed class ChatRuntimePlanningTests
             channelId,
             agentId,
             null);
-        var jobKey = ChatCache.KeyJobLogs(jobId);
+        const string unrelatedKey = "chat:unrelated";
 
         cache.Set(userKey, "user");
         cache.Set(suffixKey, "suffix");
         cache.Set(defaultResourceKey, "resource");
-        cache.Set(jobKey, "job");
+        cache.Set(unrelatedKey, "unrelated");
 
         planner.PermissionSetsChanged().ApplyTo(cache);
 
         cache.TryGet<string>(userKey, out _).Should().BeFalse();
         cache.TryGet<string>(suffixKey, out _).Should().BeFalse();
         cache.TryGet<string>(defaultResourceKey, out _).Should().BeFalse();
-        cache.TryGet<string>(jobKey, out var job).Should().BeTrue();
-        job.Should().Be("job");
+        cache.TryGet<string>(unrelatedKey, out var unrelated).Should().BeTrue();
+        unrelated.Should().Be("unrelated");
     }
 
     private static ChatCache CreateCache()

@@ -172,47 +172,6 @@ public sealed class ChatCacheTests
         agent.ChannelBreakdown.Single().TotalTokens.Should().Be(21);
     }
 
-    [Test]
-    public async Task JobLogs_AreCachedAndAppendedOnlyWhenSnapshotIsHot()
-    {
-        var cache = CreateCache(cacheBytes: 1_000_000);
-        var jobId = Guid.NewGuid();
-        var calls = 0;
-
-        var first = await cache.GetJobLogsAsync(
-            jobId,
-            _ =>
-            {
-                calls++;
-                return Task.FromResult<IReadOnlyList<AgentJobLogResponse>>(
-                    [new AgentJobLogResponse("first", "Info", DateTimeOffset.UnixEpoch)]);
-            },
-            CancellationToken.None);
-
-        cache.AppendJobLogIfCached(
-            jobId,
-            new AgentJobLogResponse("second", "Info", DateTimeOffset.UnixEpoch.AddSeconds(1)));
-
-        var second = await cache.GetJobLogsAsync(
-            jobId,
-            _ =>
-            {
-                calls++;
-                return Task.FromResult<IReadOnlyList<AgentJobLogResponse>>([]);
-            },
-            CancellationToken.None);
-
-        var coldJobId = Guid.NewGuid();
-        cache.AppendJobLogIfCached(
-            coldJobId,
-            new AgentJobLogResponse("ignored", "Info", DateTimeOffset.UnixEpoch));
-
-        cache.TryGetJobLogs(coldJobId, out _).Should().BeFalse();
-        calls.Should().Be(1);
-        first!.Should().ContainSingle().Which.Message.Should().Be("first");
-        second!.Select(l => l.Message).Should().Equal("first", "second");
-    }
-
     private static ChatCache CreateCache(long cacheBytes)
     {
         var configuration = new ConfigurationBuilder()

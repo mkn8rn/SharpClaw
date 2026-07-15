@@ -1,8 +1,5 @@
 using SharpClaw.Contracts.Chat;
 using SharpClaw.Contracts.DTOs.Chat;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts.Entities.Core.Messages;
 using SharpClaw.Contracts.Enums;
 
 namespace SharpClaw.Tests.Core;
@@ -45,13 +42,13 @@ public sealed class ChatMessageEngineTests
     public void CreateAssistantMessage_CapturesAgentSenderAndPositiveTokensOnly()
     {
         var roleId = Guid.NewGuid();
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Id = Guid.NewGuid(),
             Name = "agent",
             ModelId = Guid.NewGuid(),
             RoleId = roleId,
-            Role = new RoleDB { Id = roleId, Name = "Worker" }
+            Role = new RoleState { Id = roleId, Name = "Worker" }
         };
 
         var message = _engine.CreateAssistantMessage(
@@ -96,7 +93,7 @@ public sealed class ChatMessageEngineTests
     {
         var firstId = Guid.Parse("00000000-0000-0000-0000-000000000001");
         var secondId = Guid.Parse("00000000-0000-0000-0000-000000000002");
-        var later = new ChatMessageDB
+        var later = new ChatMessageState
         {
             Id = secondId,
             CreatedAt = new DateTimeOffset(2026, 6, 30, 12, 1, 0, TimeSpan.Zero),
@@ -108,7 +105,7 @@ public sealed class ChatMessageEngineTests
             SenderAgentName = "agent",
             ClientType = "api"
         };
-        var firstTie = new ChatMessageDB
+        var firstTie = new ChatMessageState
         {
             Id = firstId,
             CreatedAt = new DateTimeOffset(2026, 6, 30, 12, 0, 0, TimeSpan.Zero),
@@ -119,7 +116,7 @@ public sealed class ChatMessageEngineTests
             SenderUsername = "user",
             ClientType = "cli"
         };
-        var secondTie = new ChatMessageDB
+        var secondTie = new ChatMessageState
         {
             Id = secondId,
             CreatedAt = firstTie.CreatedAt,

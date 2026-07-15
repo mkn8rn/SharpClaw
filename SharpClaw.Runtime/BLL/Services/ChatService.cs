@@ -27,6 +27,7 @@ using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Shared.Security;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Core.Modules;
+using SharpClaw.Core.State;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
@@ -79,6 +80,7 @@ public sealed class ChatService(
     private readonly ChatHeaderGrantFormatter _headerGrantFormatter = headerGrantFormatter;
     private readonly IServiceProvider _serviceProvider = serviceProvider;
     private readonly ProviderApiClientFactory _providerClientFactory = providerClientFactory;
+    private readonly CoreStateSession _states = new(db);
 
     private readonly bool _disableCustomProviderParameters =
         configuration.GetValue<bool>("Agent:DisableCustomProviderParameters");
@@ -113,7 +115,7 @@ public sealed class ChatService(
                 request.Message.Length, ct.IsCancellationRequested);
         }
 
-        var channel = await _db.Channels
+        var channelEntity = await _db.Channels
             .AsNoTracking()
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
@@ -129,6 +131,7 @@ public sealed class ChatService(
             .AsSplitQuery()
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
+        var channel = _states.Map(channelEntity);
 
         var agent = conversation.ResolveRequestedAgent(channel, request.AgentId);
         var providerExecution = ResolveProviderExecution(agent.Model?.Provider);
@@ -392,7 +395,7 @@ public sealed class ChatService(
     /// (either at channel level or inherited from the context).
     /// </summary>
     private async Task<string?> BuildChatHeaderAsync(
-        ChannelDB channel, AgentDB agent, string clientType,
+        ChannelState channel, AgentState agent, string clientType,
         CancellationToken ct,
         TaskChatContext? taskContext = null,
         string? externalUsername = null, string? externalDisplayName = null,
@@ -453,7 +456,7 @@ public sealed class ChatService(
                 request.Message.Length, ct.IsCancellationRequested);
         }
 
-        var channel = await _db.Channels
+        var channelEntity = await _db.Channels
             .AsNoTracking()
             .Include(c => c.Agent!).ThenInclude(a => a.Model).ThenInclude(m => m.Provider)
             .Include(c => c.Agent!).ThenInclude(a => a.ToolAwarenessSet)
@@ -469,6 +472,7 @@ public sealed class ChatService(
             .AsSplitQuery()
             .FirstOrDefaultAsync(c => c.Id == channelId, ct)
             ?? throw new ArgumentException($"Channel {channelId} not found.");
+        var channel = _states.Map(channelEntity);
 
         var agent = conversation.ResolveRequestedAgent(channel, request.AgentId);
         var providerExecution = ResolveProviderExecution(agent.Model?.Provider);
@@ -853,7 +857,8 @@ public sealed class ChatService(
                         resourceId,
                         innerCt,
                         actionKey),
-                (jobId, innerCt) => _jobService.CancelAsync(jobId, innerCt),
+                (jobId, innerCt) =>
+                    _jobService.CancelForToolExecutionAsync(jobId, innerCt),
                 approvalCallback,
                 (jobId, innerCt) => _jobService.ApproveAsync(
                     jobId,
@@ -879,7 +884,7 @@ public sealed class ChatService(
             message => Debug.WriteLine(message, "SharpClaw.CLI"));
 
     private ChatProviderExecutionSelection? ResolveProviderExecution(
-        ProviderDB? provider)
+        ProviderState? provider)
     {
         if (provider is null)
             return null;
@@ -919,7 +924,7 @@ public sealed class ChatService(
 
     private static IProviderApiClient CreateProviderClient(
         ChatProviderExecutionSelection providerExecution,
-        ProviderDB provider,
+        ProviderState provider,
         string apiKey)
     {
         if (providerExecution.Plugin is null)
@@ -947,8 +952,8 @@ public sealed class ChatService(
 
         public async Task<string> ExpandCustomHeaderAsync(
             string template,
-            ChannelDB channel,
-            AgentDB agent,
+            ChannelState channel,
+            AgentState agent,
             string clientType,
             Guid? sessionUserId,
             CompletionParameters? completionParameters,
@@ -992,7 +997,7 @@ public sealed class ChatService(
                 {
                     grants = [.. await service._headerGrantFormatter
                         .FormatGrantNamesWithResourcesAsync(
-                            ps,
+                            service._states.Map(ps),
                             service._serviceProvider,
                             ct)];
                 }
@@ -1038,7 +1043,7 @@ public sealed class ChatService(
                 {
                     grants = await service._headerGrantFormatter
                         .FormatGrantNamesWithResourcesAsync(
-                            agentPs,
+                            service._states.Map(agentPs),
                             service._serviceProvider,
                             ct);
                 }
@@ -1076,8 +1081,8 @@ public sealed class ChatService(
                 ct);
 
         public async Task<string?> BuildChatHeaderAsync(
-            ChannelDB channel,
-            AgentDB agent,
+            ChannelState channel,
+            AgentState agent,
             ChatRequest request,
             ChatRequestPlan plan,
             CancellationToken ct) =>
@@ -1113,11 +1118,12 @@ public sealed class ChatService(
         }
 
         public async Task PersistChatMessagesAsync(
-            IReadOnlyList<ChatMessageDB> messages,
+            IReadOnlyList<ChatMessageState> messages,
             CancellationToken ct)
         {
-            service._db.ChatMessages.AddRange(messages);
-            await service._db.SaveChangesAsync(ct);
+            foreach (var message in messages)
+                service._states.Track(message);
+            await service._states.SaveChangesAsync(ct);
         }
 
         public async Task<bool> HasUserMessageAsync(

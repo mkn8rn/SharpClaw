@@ -1,23 +1,27 @@
 using Microsoft.EntityFrameworkCore;
 using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Core.Permissions;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
 public sealed class EfAgentActionHost(SharpClawDbContext db) : IAgentActionHost
 {
-    public async Task<PermissionSetDB?> LoadPermissionSetAsync(
+    private readonly CoreStateSession _states = new(db);
+
+    public async Task<PermissionSetState?> LoadPermissionSetAsync(
         Guid permissionSetId,
         CancellationToken ct)
     {
-        return await db.PermissionSets
+        var entity = await db.PermissionSets
+            .AsNoTracking()
             .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .Include(p => p.ClearanceUserWhitelist)
             .Include(p => p.ClearanceAgentWhitelist)
             .FirstOrDefaultAsync(p => p.Id == permissionSetId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
     public async Task<PermissionSetSnapshot?> LoadAgentPermissionSnapshotAsync(

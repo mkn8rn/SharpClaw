@@ -12,6 +12,8 @@ public sealed class AgentService(
     AgentRuntimeAdministrationEngine runtimeAdministration,
     EfAgentAdministrationHost administrationHost)
 {
+    private readonly CoreStateSession _states = new(db);
+
     public async Task<AgentResponse> CreateAsync(
         CreateAgentRequest request,
         CancellationToken ct = default)
@@ -33,7 +35,9 @@ public sealed class AgentService(
 
         return agent is null
             ? null
-            : agentAdministration.ToResponse(agent, agent.Model);
+            : agentAdministration.ToResponse(
+                _states.Map(agent),
+                _states.Map(agent.Model));
     }
 
     public async Task<AgentResponse?> GetByIdAsync(
@@ -47,15 +51,24 @@ public sealed class AgentService(
 
         return agent is null
             ? null
-            : agentAdministration.ToResponse(agent, agent.Model);
+            : agentAdministration.ToResponse(
+                _states.Map(agent),
+                _states.Map(agent.Model));
     }
 
     public async Task<IReadOnlyList<AgentResponse>> ListAsync(
         CancellationToken ct = default)
     {
-        return await db.Agents
-            .Select(agentAdministration.ToResponseProjection())
+        var agents = await db.Agents
+            .Include(agent => agent.Model)
+            .ThenInclude(model => model.Provider)
+            .Include(agent => agent.Role)
             .ToListAsync(ct);
+        return agents
+            .Select(agent => agentAdministration.ToResponse(
+                _states.Map(agent),
+                _states.Map(agent.Model)))
+            .ToList();
     }
 
     public async Task<AgentResponse?> UpdateAsync(

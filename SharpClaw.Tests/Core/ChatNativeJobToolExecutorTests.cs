@@ -255,8 +255,8 @@ public sealed class ChatNativeJobToolExecutorTests
             status,
             PermissionClearance.Independent,
             resultData,
-            ErrorLog: null,
-            Logs: [],
+            ErrorCode: null,
+            ErrorMessage: null,
             CreatedAt: DateTimeOffset.UtcNow,
             StartedAt: null,
             CompletedAt: null);

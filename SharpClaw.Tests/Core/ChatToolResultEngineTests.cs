@@ -157,8 +157,8 @@ public sealed class ChatToolResultEngineTests
             Status: status,
             EffectiveClearance: PermissionClearance.Independent,
             ResultData: resultData,
-            ErrorLog: errorLog,
-            Logs: [],
+            ErrorCode: errorLog is null ? null : "job_execution_failed",
+            ErrorMessage: errorLog,
             CreatedAt: DateTimeOffset.UtcNow,
             StartedAt: null,
             CompletedAt: null);

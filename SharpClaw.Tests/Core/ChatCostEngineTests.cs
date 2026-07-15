@@ -1,5 +1,4 @@
 using FluentAssertions;
-using SharpClaw.Contracts.Entities.Core.Messages;
 using SharpClaw.Core.Chat;
 
 namespace SharpClaw.Tests.Core;
@@ -20,7 +19,7 @@ public sealed class ChatCostEngineTests
             Message(channelId, largeAgentId, "large", prompt: 8, completion: 2),
             Message(channelId, smallAgentId, "small", prompt: 1, completion: 1),
             Message(channelId, largeAgentId, "large", prompt: 4, completion: null),
-            new ChatMessageDB
+            new ChatMessageState
             {
                 Role = "user",
                 Content = "ignored",
@@ -76,7 +75,7 @@ public sealed class ChatCostEngineTests
         {
             Message(largeChannelId, agentId, "agent", prompt: 10, completion: 3),
             Message(smallChannelId, agentId, "agent", prompt: 1, completion: 1),
-            new ChatMessageDB
+            new ChatMessageState
             {
                 Role = "assistant",
                 Content = "ignored",
@@ -99,14 +98,14 @@ public sealed class ChatCostEngineTests
             .Should().Equal(largeChannelId, smallChannelId);
     }
 
-    private static ChatMessageDB Message(
+    private static ChatMessageState Message(
         Guid channelId,
         Guid agentId,
         string agentName,
         int prompt,
         int? completion)
     {
-        return new ChatMessageDB
+        return new ChatMessageState
         {
             Role = "assistant",
             Content = "message",

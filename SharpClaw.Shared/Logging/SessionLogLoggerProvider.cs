@@ -3,21 +3,21 @@ using Microsoft.Extensions.Logging;
 namespace SharpClaw.Shared.Logging;
 
 /// <summary>
-/// Routes <see cref="ILogger"/> messages into a <see cref="SessionLogWriter"/>.
+/// Routes <see cref="ILogger"/> messages into a <see cref="DurableProcessLogWriter"/>.
 /// </summary>
-public sealed class SessionLogLoggerProvider(SessionLogWriter writer) : ILoggerProvider
+public sealed class DurableProcessLogLoggerProvider(DurableProcessLogWriter writer) : ILoggerProvider
 {
     /// <summary>
     /// Creates a logger for the specified category.
     /// </summary>
     public ILogger CreateLogger(string categoryName) =>
-        new SessionLogLogger(writer, categoryName);
+        new DurableProcessLogger(writer, categoryName);
 
     public void Dispose()
     {
     }
 
-    private sealed class SessionLogLogger(SessionLogWriter writer, string categoryName) : ILogger
+    private sealed class DurableProcessLogger(DurableProcessLogWriter writer, string categoryName) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

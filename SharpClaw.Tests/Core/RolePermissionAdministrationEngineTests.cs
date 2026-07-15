@@ -1,8 +1,5 @@
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Roles;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Core.Permissions;
 
@@ -24,7 +21,7 @@ public sealed class RolePermissionAdministrationEngineTests
 
         var act = () => _engine.ValidateRequestedGrants(
             request,
-            new PermissionSetDB());
+            new PermissionSetState());
 
         act.Should().Throw<UnauthorizedAccessException>()
             .WithMessage("Cannot grant CanClickDesktop*");
@@ -33,8 +30,8 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void ValidateRequestedGrants_WhenCallerHasWildcard_AllowsResourceGrant()
     {
-        var caller = new PermissionSetDB();
-        caller.ResourceAccesses.Add(new ResourceAccessDB
+        var caller = new PermissionSetState();
+        caller.ResourceAccesses.Add(new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = WellKnownIds.AllResources,
@@ -58,13 +55,13 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void ReconcilePermissionSet_UpdatesAddsAndRemovesGlobalFlags()
     {
-        var target = new PermissionSetDB();
-        target.GlobalFlags.Add(new GlobalFlagDB
+        var target = new PermissionSetState();
+        target.GlobalFlags.Add(new GlobalFlagState
         {
             FlagKey = "remove",
             Clearance = PermissionClearance.Independent
         });
-        target.GlobalFlags.Add(new GlobalFlagDB
+        target.GlobalFlags.Add(new GlobalFlagState
         {
             FlagKey = "update",
             Clearance = PermissionClearance.Unset
@@ -88,8 +85,8 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void ReconcilePermissionSet_WhenWildcardGrantIsOmitted_Throws()
     {
-        var target = new PermissionSetDB();
-        target.ResourceAccesses.Add(new ResourceAccessDB
+        var target = new PermissionSetState();
+        target.ResourceAccesses.Add(new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = WellKnownIds.AllResources,
@@ -108,8 +105,8 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void ReconcilePermissionSet_WhenWildcardGrantIsIncluded_UpdatesClearance()
     {
-        var target = new PermissionSetDB();
-        target.ResourceAccesses.Add(new ResourceAccessDB
+        var target = new PermissionSetState();
+        target.ResourceAccesses.Add(new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = WellKnownIds.AllResources,
@@ -156,7 +153,7 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void CreatePermissionSetForRole_AttachesNewSet()
     {
-        var role = new RoleDB { Name = "Operators" };
+        var role = new RoleState { Name = "Operators" };
 
         var permissionSet = _engine.CreatePermissionSetForRole(role);
 
@@ -166,19 +163,19 @@ public sealed class RolePermissionAdministrationEngineTests
     [Test]
     public void ToPermissionsResponse_GroupsResourceGrants()
     {
-        var role = new RoleDB
+        var role = new RoleState
         {
             Id = Guid.NewGuid(),
             Name = "Operators"
         };
         var resourceId = Guid.NewGuid();
-        var permissionSet = new PermissionSetDB();
-        permissionSet.GlobalFlags.Add(new GlobalFlagDB
+        var permissionSet = new PermissionSetState();
+        permissionSet.GlobalFlags.Add(new GlobalFlagState
         {
             FlagKey = "CanUseShell",
             Clearance = PermissionClearance.Independent
         });
-        permissionSet.ResourceAccesses.Add(new ResourceAccessDB
+        permissionSet.ResourceAccesses.Add(new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = resourceId,
@@ -201,20 +198,20 @@ public sealed class RolePermissionAdministrationEngineTests
     public void PlanDeleteRole_DetachesUsersAndReturnsOwnedPermissionRows()
     {
         var roleId = Guid.NewGuid();
-        var user = new UserDB
+        var user = new UserState
         {
             Username = "marko",
             PasswordHash = [],
             PasswordSalt = [],
             RoleId = roleId
         };
-        var permissionSet = new PermissionSetDB();
-        var flag = new GlobalFlagDB
+        var permissionSet = new PermissionSetState();
+        var flag = new GlobalFlagState
         {
             FlagKey = "CanUseShell",
             Clearance = PermissionClearance.Independent
         };
-        var access = new ResourceAccessDB
+        var access = new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = Guid.NewGuid(),
@@ -222,7 +219,7 @@ public sealed class RolePermissionAdministrationEngineTests
         };
         permissionSet.GlobalFlags.Add(flag);
         permissionSet.ResourceAccesses.Add(access);
-        var role = new RoleDB
+        var role = new RoleState
         {
             Id = roleId,
             Name = "Operators",

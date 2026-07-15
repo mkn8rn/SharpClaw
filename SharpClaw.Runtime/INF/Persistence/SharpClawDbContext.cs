@@ -43,7 +43,7 @@ public class SharpClawDbContext(
     public DbSet<ClearanceUserWhitelistEntryDB> ClearanceUserWhitelistEntries => Set<ClearanceUserWhitelistEntryDB>();
     public DbSet<ClearanceAgentWhitelistEntryDB> ClearanceAgentWhitelistEntries => Set<ClearanceAgentWhitelistEntryDB>();
     public DbSet<AgentJobDB> AgentJobs => Set<AgentJobDB>();
-    public DbSet<AgentJobLogEntryDB> AgentJobLogEntries => Set<AgentJobLogEntryDB>();
+    public DbSet<ExecutionAuditEventDB> ExecutionAuditEvents => Set<ExecutionAuditEventDB>();
     public DbSet<DefaultResourceSetDB> DefaultResourceSets => Set<DefaultResourceSetDB>();
     public DbSet<DefaultResourceEntryDB> DefaultResourceEntries => Set<DefaultResourceEntryDB>();
     public DbSet<ToolAwarenessSetDB> ToolAwarenessSets => Set<ToolAwarenessSetDB>();
@@ -63,8 +63,6 @@ public class SharpClawDbContext(
     // ── Task scripts ──────────────────────────────────────────────
     public DbSet<TaskDefinitionDB> TaskDefinitions => Set<TaskDefinitionDB>();
     public DbSet<TaskInstanceDB> TaskInstances => Set<TaskInstanceDB>();
-    public DbSet<TaskExecutionLogDB> TaskExecutionLogs => Set<TaskExecutionLogDB>();
-    public DbSet<TaskOutputEntryDB> TaskOutputEntries => Set<TaskOutputEntryDB>();
     public DbSet<TaskTriggerBindingDB> TaskTriggerBindings => Set<TaskTriggerBindingDB>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -135,6 +133,16 @@ public class SharpClawDbContext(
         modelBuilder.Entity<AgentDB>(e =>
         {
             e.HasIndex(a => a.Name).IsUnique();
+            e.Property(a => a.ResponseFormat).HasConversion(
+                    value => SerializeJsonElement(value),
+                    value => DeserializeJsonElement(value))
+                .Metadata.SetValueComparer(new ValueComparer<JsonElement?>(
+                    (left, right) => SerializeJsonElement(left)
+                        == SerializeJsonElement(right),
+                    value => SerializeJsonElement(value) == null
+                        ? 0
+                        : SerializeJsonElement(value)!.GetHashCode(),
+                    value => CloneJsonElement(value)));
             e.Property(a => a.ProviderParameters).HasConversion(
                 v => v != null ? JsonSerializer.Serialize(v, (JsonSerializerOptions?)null) : null,
                 v => v != null ? JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(v, (JsonSerializerOptions?)null) : null)
@@ -293,13 +301,28 @@ public class SharpClawDbContext(
         {
             e.Property(j => j.Status).HasConversion<string>();
             e.Property(j => j.EffectiveClearance).HasConversion<string>();
+            e.Property(j => j.ActionKey).HasMaxLength(256);
+            e.Property(j => j.ScriptJson).HasMaxLength(65_536);
+            e.Property<Guid?>(ExecutionMetadataColumns.ResultArtifactId);
+            e.Property<string?>(ExecutionMetadataColumns.ResultMediaType)
+                .HasMaxLength(128);
+            e.Property<long?>(ExecutionMetadataColumns.ResultLength);
+            e.Property<string?>(ExecutionMetadataColumns.ResultSha256)
+                .HasMaxLength(64);
+            e.Property<string?>(ExecutionMetadataColumns.ResultPreview)
+                .HasMaxLength(2_048);
+            e.Property<string?>(ExecutionMetadataColumns.ErrorCode)
+                .HasMaxLength(128);
+            e.Property<string?>(ExecutionMetadataColumns.ErrorMessage)
+                .HasMaxLength(2_048);
+            e.Property<DiagnosticCompleteness>(
+                    ExecutionMetadataColumns.DiagnosticCompleteness)
+                .HasConversion<string>();
+            e.Property<long?>(ExecutionMetadataColumns.FinalLogSequence);
+            e.Property<long>(ExecutionMetadataColumns.LogRecordCount);
             e.HasOne(j => j.Agent)
                 .WithMany()
                 .HasForeignKey(j => j.AgentId)
-                .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(j => j.LogEntries)
-                .WithOne(l => l.AgentJob)
-                .HasForeignKey(l => l.AgentJobId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(j => j.Channel)
                 .WithMany()
@@ -324,6 +347,16 @@ public class SharpClawDbContext(
         modelBuilder.Entity<TaskInstanceDB>(e =>
         {
             e.Property(i => i.Status).HasConversion<string>();
+            e.Property(i => i.ErrorMessage).HasMaxLength(2_048);
+            e.Property<string?>(ExecutionMetadataColumns.ErrorCode)
+                .HasMaxLength(128);
+            e.Property<DiagnosticCompleteness>(
+                    ExecutionMetadataColumns.DiagnosticCompleteness)
+                .HasConversion<string>();
+            e.Property<long?>(ExecutionMetadataColumns.FinalLogSequence);
+            e.Property<long>(ExecutionMetadataColumns.LogRecordCount);
+            e.Property<long?>(ExecutionMetadataColumns.FinalOutputSequence);
+            e.Property<long>(ExecutionMetadataColumns.OutputRecordCount);
             e.HasOne(i => i.Channel)
                 .WithMany()
                 .HasForeignKey(i => i.ChannelId)
@@ -332,14 +365,17 @@ public class SharpClawDbContext(
                 .WithMany()
                 .HasForeignKey(i => i.ContextId)
                 .OnDelete(DeleteBehavior.SetNull);
-            e.HasMany(i => i.LogEntries)
-                .WithOne(l => l.TaskInstance)
-                .HasForeignKey(l => l.TaskInstanceId)
-                .OnDelete(DeleteBehavior.Cascade);
-            e.HasMany(i => i.OutputEntries)
-                .WithOne(o => o.TaskInstance)
-                .HasForeignKey(o => o.TaskInstanceId)
-                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ExecutionAuditEventDB>(e =>
+        {
+            e.Property(a => a.OwnerKind).HasConversion<string>();
+            e.Property(a => a.EventKind).HasMaxLength(128);
+            e.Property(a => a.PreviousState).HasMaxLength(64);
+            e.Property(a => a.NewState).HasMaxLength(64);
+            e.Property(a => a.ActorKind).HasMaxLength(64);
+            e.Property(a => a.ReasonCode).HasMaxLength(128);
+            e.HasIndex(a => new { a.OwnerKind, a.OwnerId, a.CreatedAt, a.Id });
         });
 
         // ── Module state & config ─────────────────────────────────
@@ -519,4 +555,17 @@ public class SharpClawDbContext(
         }
         return false;
     }
+
+    private static string? SerializeJsonElement(JsonElement? value) =>
+        value?.GetRawText();
+
+    private static JsonElement? DeserializeJsonElement(string? value) =>
+        value is null
+            ? null
+            : JsonDocument.Parse(value).RootElement.Clone();
+
+    private static JsonElement? CloneJsonElement(JsonElement? value) =>
+        value is null
+            ? null
+            : JsonDocument.Parse(value.Value.GetRawText()).RootElement.Clone();
 }

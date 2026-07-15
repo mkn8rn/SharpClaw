@@ -12,14 +12,17 @@ using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Contracts.DTOs.Diagnostics;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Runtime.INF.Persistence;
+using SharpClaw.Runtime.INF.DurableStorage;
 using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Permissions;
 using SharpClaw.Core.Resources;
+using SharpClaw.Core.State;
 
 namespace SharpClaw.Runtime.BLL.Services;
 
@@ -43,10 +46,13 @@ public sealed class AgentJobService(
     EfAgentJobAdministrationHost jobAdministrationHost,
     AgentJobAdministrationEngine jobAdministration,
     AgentJobDefaultResourceResolver jobDefaultResources,
+    ExecutionQueryService executionQueries,
+    ExecutionDiagnosticStore diagnostics,
     ILogger<AgentJobService> logger) : IAgentJobRuntimeHost
 {
     private readonly IConfiguration _configuration = configuration;
     private readonly ILogger<AgentJobService> _logger = logger;
+    private readonly CoreStateSession _states = new(db);
     private static readonly AsyncLocal<Guid?> CurrentExecutionJob = new();
 
     // ═══════════════════════════════════════════════════════════════
@@ -88,31 +94,42 @@ public sealed class AgentJobService(
     }
 
     /// <summary>Cancel a job that has not yet completed.</summary>
-    public async Task<AgentJobResponse?> CancelAsync(
+    public async Task<AgentJobDetailResponse?> CancelAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        return await jobWorkflow.CancelAsync(jobId, jobAdministrationHost, ct);
+        var job = await jobWorkflow.CancelAsync(jobId, jobAdministrationHost, ct);
+        return job is null ? null : await GetAsync(job.Id, ct);
+    }
+
+    internal async Task<AgentJobResponse?> CancelForToolExecutionAsync(
+        Guid jobId,
+        CancellationToken ct = default)
+    {
+        var job = await jobWorkflow.CancelAsync(jobId, jobAdministrationHost, ct);
+        return job is null ? null : jobAdministration.ToResponse(job);
     }
 
     /// <summary>Stop a long-running job and complete it normally.</summary>
-    public async Task<AgentJobResponse?> StopAsync(
+    public async Task<AgentJobDetailResponse?> StopAsync(
         Guid jobId, string? requiredActionPrefix = null, CancellationToken ct = default)
     {
-        return await jobWorkflow.StopAsync(
+        var job = await jobWorkflow.StopAsync(
             jobId,
             requiredActionPrefix,
             jobAdministrationHost,
             ct);
+        return job is null ? null : await GetAsync(job.Id, ct);
     }
 
     /// <summary>
     /// Pause a long-running job. The job can be resumed later with
     /// <see cref="ResumeAsync"/>.
     /// </summary>
-    public async Task<AgentJobResponse?> PauseAsync(
+    public async Task<AgentJobDetailResponse?> PauseAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        return await jobWorkflow.PauseAsync(jobId, jobAdministrationHost, ct);
+        var job = await jobWorkflow.PauseAsync(jobId, jobAdministrationHost, ct);
+        return job is null ? null : await GetAsync(job.Id, ct);
     }
 
     /// <summary>
@@ -120,73 +137,75 @@ public sealed class AgentJobService(
     /// semantics and restore any module-specific state using the original
     /// job parameters.
     /// </summary>
-    public async Task<AgentJobResponse?> ResumeAsync(
+    public async Task<AgentJobDetailResponse?> ResumeAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        return await jobWorkflow.ResumeAsync(jobId, jobAdministrationHost, ct);
+        var job = await jobWorkflow.ResumeAsync(jobId, jobAdministrationHost, ct);
+        return job is null ? null : await GetAsync(job.Id, ct);
     }
 
     /// <summary>Retrieve a single job by ID.</summary>
-    public async Task<AgentJobResponse?> GetAsync(
+    public async Task<AgentJobDetailResponse?> GetAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        return await jobWorkflow.GetAsync(jobId, jobAdministrationHost, ct);
+        return await executionQueries.GetJobAsync(jobId, ct);
     }
 
     /// <summary>Retrieve a single job summary by ID without loading logs.</summary>
     public async Task<AgentJobSummaryResponse?> GetSummaryAsync(
         Guid jobId, CancellationToken ct = default)
     {
-        return await jobWorkflow.GetSummaryAsync(
-            jobId,
-            jobAdministrationHost,
-            ct);
-    }
-
-    /// <summary>List all jobs for a channel, most recent first.</summary>
-    public async Task<IReadOnlyList<AgentJobResponse>> ListAsync(
-        Guid channelId, CancellationToken ct = default)
-    {
-        return await jobWorkflow.ListAsync(channelId, jobAdministrationHost, ct);
+        return await executionQueries.GetJobSummaryAsync(jobId, ct);
     }
 
     /// <summary>
     /// List lightweight summaries for all jobs in a channel, most recent first.
-    /// Does not load <c>ResultData</c>, <c>ErrorLog</c>, logs, or segments —
-    /// suitable for populating dropdowns or list views without memory pressure.
+    /// Does not load result artifacts or diagnostic records, so it is suitable
+    /// for populating dropdowns and list views without storage amplification.
     /// </summary>
-    public async Task<IReadOnlyList<AgentJobSummaryResponse>> ListSummariesAsync(
-        Guid channelId, CancellationToken ct = default)
+    public async Task<AgentJobSummaryPageResponse> ListSummariesAsync(
+        Guid channelId,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default)
     {
-        return await jobWorkflow.ListSummariesAsync(
-            channelId,
-            jobAdministrationHost,
+        return await executionQueries.ListChannelJobsAsync(
+            channelId, cursor, take, ct);
+    }
+
+    public async Task<AgentJobSummaryPageResponse> ListJobSummariesByActionPrefixAsync(
+        string actionKeyPrefix,
+        Guid? resourceId = null,
+        string? cursor = null,
+        int take = 50,
+        CancellationToken ct = default)
+    {
+        return await executionQueries.ListJobsByActionPrefixAsync(
+            actionKeyPrefix,
+            resourceId,
+            cursor,
+            take,
             ct);
     }
 
-    public async Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
-        string actionKeyPrefix,
-        Guid? resourceId = null,
-        CancellationToken ct = default)
-    {
-        return await jobWorkflow.ListByActionPrefixAsync(
-            actionKeyPrefix,
-            resourceId,
-            jobAdministrationHost,
-            ct);
-    }
+    public ValueTask<DurableLogPageResponse> ReadLogsAsync(
+        Guid jobId,
+        string? cursor,
+        DurableLogQuery query,
+        CancellationToken ct = default) =>
+        diagnostics.ReadJobLogsAsync(jobId, cursor, query, ct);
 
-    public async Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
-        string actionKeyPrefix,
-        Guid? resourceId = null,
-        CancellationToken ct = default)
-    {
-        return await jobWorkflow.ListSummariesByActionPrefixAsync(
-            actionKeyPrefix,
-            resourceId,
-            jobAdministrationHost,
+    public Task<ExecutionAuditPageResponse> ReadAuditAsync(
+        Guid jobId,
+        string? cursor,
+        int take = 50,
+        CancellationToken ct = default) =>
+        executionQueries.ReadAuditAsync(
+            ExecutionOwnerKind.AgentJob,
+            jobId,
+            cursor,
+            take,
             ct);
-    }
 
     public async Task<bool> JobExistsWithActionPrefixAsync(
         Guid jobId, string actionKeyPrefix, CancellationToken ct = default)
@@ -216,23 +235,25 @@ public sealed class AgentJobService(
 
     ModuleRegistry IAgentJobRuntimeHost.ModuleRegistry => moduleRegistry;
 
-    async Task<ChannelDB?> IAgentJobRuntimeHost.LoadSubmissionChannelAsync(
+    async Task<AgentJobChannelContext?> IAgentJobRuntimeHost.LoadSubmissionChannelAsync(
         Guid channelId,
         CancellationToken ct)
     {
-        return await db.Channels
+        var channel = await db.Channels
             .Include(c => c.AgentContext).ThenInclude(ctx => ctx!.AllowedAgents)
             .Include(c => c.AllowedAgents)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct);
+        return channel is null ? null : ToCoreChannelContext(channel);
     }
 
-    async Task<ChannelDB?> IAgentJobRuntimeHost.LoadApprovalChannelAsync(
+    async Task<AgentJobChannelContext?> IAgentJobRuntimeHost.LoadApprovalChannelAsync(
         Guid channelId,
         CancellationToken ct)
     {
-        return await db.Channels
+        var channel = await db.Channels
             .Include(c => c.AgentContext)
             .FirstOrDefaultAsync(c => c.Id == channelId, ct);
+        return channel is null ? null : ToCoreChannelContext(channel);
     }
 
     Task<Guid?> IAgentJobRuntimeHost.ResolveDefaultResourceIdAsync(
@@ -242,17 +263,16 @@ public sealed class AgentJobService(
         CancellationToken ct)
         => ResolveDefaultResourceIdAsync(actionKey, channelId, agentId, ct);
 
-    void IAgentJobRuntimeHost.TrackJob(AgentJobDB job)
+    void IAgentJobRuntimeHost.TrackJob(AgentJobState job)
     {
-        db.AgentJobs.Add(job);
+        db.AgentJobs.Add(ExecutionStateMapper.ToEntity(job));
     }
 
-    async Task IAgentJobRuntimeHost.SaveAsync(
-        IReadOnlyList<AgentJobLogEntryDB> logs,
-        CancellationToken ct)
-    {
-        await jobAdministrationHost.SaveAsync(logs, ct);
-    }
+    Task IAgentJobRuntimeHost.PersistDecisionAsync(
+        AgentJobState job,
+        AgentJobLifecycleDecision decision,
+        CancellationToken ct) =>
+        jobAdministrationHost.PersistDecisionAsync(job, decision, ct);
 
     Task<AgentActionResult> IAgentJobRuntimeHost.DispatchPermissionCheckAsync(
         Guid agentId,
@@ -291,15 +311,24 @@ public sealed class AgentJobService(
     }
 
     async Task<AgentJobExecutionDispatchResult> IAgentJobRuntimeHost.DispatchExecutionAsync(
-        AgentJobDB job,
-        Action<string, string> addLog,
+        AgentJobState job,
         CancellationToken ct)
     {
         using var executionScope = BeginExecutionScope(job.Id);
-        return await DispatchExecutionAsync(job, addLog, ct);
+        return await DispatchExecutionAsync(
+            job,
+            (message, level) => diagnostics.AppendJobLogAsync(
+                    job.Id,
+                    message,
+                    level,
+                    "ModuleExecution")
+                .AsTask()
+                .GetAwaiter()
+                .GetResult(),
+            ct);
     }
 
-    void IAgentJobRuntimeHost.LogLongRunningExecutionStarted(AgentJobDB job)
+    void IAgentJobRuntimeHost.LogLongRunningExecutionStarted(AgentJobState job)
     {
         _logger.LogInformation(
             "Long-running module job {JobId} for action {ActionKey} started and remains Executing.",
@@ -308,7 +337,7 @@ public sealed class AgentJobService(
     }
 
     void IAgentJobRuntimeHost.LogExecutionFailed(
-        AgentJobDB job,
+        AgentJobState job,
         Exception exception)
     {
         _logger.LogError(
@@ -318,24 +347,12 @@ public sealed class AgentJobService(
             job.ActionKey);
     }
 
-    void IAgentJobRuntimeHost.CacheJobLogs(
-        Guid jobId,
-        IReadOnlyList<AgentJobLogResponse> logs)
-    {
-        chatCache.SetJobLogs(jobId, logs);
-    }
-
-    Task<AgentJobResponse> IAgentJobRuntimeHost.BuildResponseAsync(
-        AgentJobDB job,
-        CancellationToken ct)
-        => jobWorkflow.BuildResponseAsync(job, jobAdministrationHost, ct);
-
     // ═══════════════════════════════════════════════════════════════
     // Execution
     // ═══════════════════════════════════════════════════════════════
 
     private async Task<AgentJobExecutionDispatchResult> DispatchExecutionAsync(
-        AgentJobDB job,
+        AgentJobState job,
         Action<string, string> addLog,
         CancellationToken ct)
     {
@@ -359,7 +376,7 @@ public sealed class AgentJobService(
     /// <see cref="ModuleServiceScope"/> with a per-manifest timeout.
     /// </summary>
     private async Task<AgentJobExecutionDispatchResult> DispatchModuleExecutionAsync(
-        AgentJobDB job,
+        AgentJobState job,
         ModuleToolExecutionPlan plan,
         Action<string, string> addLog,
         CancellationToken ct)
@@ -486,7 +503,7 @@ public sealed class AgentJobService(
 
             permissionSetSnapshotsById = permissionSets.ToDictionary(
                 p => p.Id,
-                PermissionSetSnapshot.FromPermissionSet);
+                p => PermissionSetSnapshot.FromPermissionSet(_states.Map(p)));
         }
 
         void AddPermissionSetIdToLoad(Guid? permissionSetId)
@@ -506,10 +523,12 @@ public sealed class AgentJobService(
                 actionKey,
                 moduleRegistry,
                 ch?.DefaultResourceSet is { } channelDefaults
-                    ? DefaultResourceSetSnapshot.FromDefaultResourceSet(channelDefaults)
+                    ? DefaultResourceSetSnapshot.FromDefaultResourceSet(
+                        _states.Map(channelDefaults))
                     : null,
                 ch?.AgentContext?.DefaultResourceSet is { } contextDefaults
-                    ? DefaultResourceSetSnapshot.FromDefaultResourceSet(contextDefaults)
+                    ? DefaultResourceSetSnapshot.FromDefaultResourceSet(
+                        _states.Map(contextDefaults))
                     : null,
                 Snapshot(channelPermissionSetId),
                 Snapshot(contextPermissionSetId),
@@ -627,6 +646,20 @@ public sealed class AgentJobService(
     // ═══════════════════════════════════════════════════════════════
 
     private sealed record ResolvedDefaultResourceId(Guid? ResourceId);
+
+    private static AgentJobChannelContext ToCoreChannelContext(ChannelDB channel)
+    {
+        var allowed = channel.AllowedAgents.Count > 0
+            ? channel.AllowedAgents.Select(agent => agent.Id)
+            : channel.AgentContext?.AllowedAgents.Select(agent => agent.Id) ?? [];
+        return new AgentJobChannelContext(
+            channel.Id,
+            channel.AgentId,
+            channel.AgentContext?.AgentId,
+            allowed.ToHashSet(),
+            channel.PermissionSetId,
+            channel.AgentContext?.PermissionSetId);
+    }
 
     /// <summary>
     /// Records prompt/completion tokens on a set of jobs that were

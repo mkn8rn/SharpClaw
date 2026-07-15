@@ -12,9 +12,9 @@ namespace SharpClaw.Runtime.BLL.Modules;
 public sealed class HostAgentJobController(
     AgentJobService jobs,
     SharpClawDbContext db,
-    ChatCache chatCache,
     AgentJobAdministrationEngine jobAdministration,
-    AgentJobLifecycleEngine jobLifecycle) : IAgentJobController
+    AgentJobLifecycleEngine jobLifecycle,
+    DurableExecutionPersistence persistence) : IAgentJobController
 {
     public Task<AgentJobResponse> SubmitJobAsync(
         Guid channelId,
@@ -22,7 +22,7 @@ public sealed class HostAgentJobController(
         CancellationToken ct = default) =>
         jobs.SubmitAsync(channelId, request, ct);
 
-    public Task<AgentJobResponse?> StopJobAsync(
+    public Task<AgentJobDetailResponse?> StopJobAsync(
         Guid jobId,
         string? requiredActionPrefix = null,
         CancellationToken ct = default) =>
@@ -34,15 +34,12 @@ public sealed class HostAgentJobController(
         string level = JobLogLevels.Info,
         CancellationToken ct = default)
     {
-        var job = await db.AgentJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct);
-        if (job is null) return;
-
-        var entry = jobAdministration.AddLog(job, message, level);
-
-        await db.SaveChangesAsync(ct);
-        chatCache.AppendJobLogIfCached(
+        await persistence.AppendJobLogAsync(
             jobId,
-            jobAdministration.ToLogResponse(entry));
+            message,
+            level,
+            "ModuleJobDiagnostic",
+            ct);
     }
 
     public async Task MarkJobFailedAsync(
@@ -111,10 +108,11 @@ public sealed class HostAgentJobController(
             .ToListAsync(ct);
 
         var stale = candidates
-            .Where(j => jobAdministration.JobMatchesActionPrefix(j, actionKeyPrefix))
+            .Where(j => jobAdministration.JobMatchesActionPrefix(
+                ExecutionStateMapper.ToCoreState(j),
+                actionKeyPrefix))
             .ToList();
 
-        var cancelledLogs = new List<(Guid JobId, AgentJobLogEntryDB Entry)>(stale.Count);
         foreach (var job in stale)
         {
             var decision = jobLifecycle.CancelStaleFromPreviousSession(
@@ -123,19 +121,10 @@ public sealed class HostAgentJobController(
             if (!decision.HasChanges)
                 continue;
 
-            foreach (var entry in jobAdministration.ApplyLifecycleDecision(job, decision))
-                cancelledLogs.Add((job.Id, entry));
-        }
-
-        if (cancelledLogs.Count > 0)
-        {
-            await db.SaveChangesAsync(ct);
-            foreach (var (jobId, entry) in cancelledLogs)
-            {
-                chatCache.AppendJobLogIfCached(
-                    jobId,
-                    jobAdministration.ToLogResponse(entry));
-            }
+            var state = ExecutionStateMapper.ToCoreState(job);
+            jobAdministration.ApplyLifecycleState(state, decision);
+            ExecutionStateMapper.Apply(state, job);
+            await persistence.PersistJobDecisionAsync(job, decision, ct);
         }
     }
 
@@ -147,14 +136,9 @@ public sealed class HostAgentJobController(
         if (!decision.HasChanges)
             return;
 
-        var logs = jobAdministration.ApplyLifecycleDecision(job, decision);
-        await db.SaveChangesAsync(ct);
-
-        foreach (var entry in logs)
-        {
-            chatCache.AppendJobLogIfCached(
-                job.Id,
-                jobAdministration.ToLogResponse(entry));
-        }
+        var state = ExecutionStateMapper.ToCoreState(job);
+        jobAdministration.ApplyLifecycleState(state, decision);
+        ExecutionStateMapper.Apply(state, job);
+        await persistence.PersistJobDecisionAsync(job, decision, ct);
     }
 }

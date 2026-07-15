@@ -1,117 +1,170 @@
 using System.Collections.Concurrent;
-
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Contracts.DTOs.Diagnostics;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Shared.DurableStorage;
 
 namespace SharpClaw.Runtime.INF.Logging;
 
 /// <summary>
-/// A single log entry captured from a module's <see cref="ILogger"/> category.
-/// Runtime-only — not persisted to disk.
+/// Bounded asynchronous adapter that writes module diagnostics to one durable
+/// stream per module and backend boot. The in-memory counters are health hints,
+/// not a second canonical copy of log content.
 /// </summary>
-public sealed record ModuleLogEntry(
-    DateTimeOffset Timestamp,
-    LogLevel Level,
-    string Message,
-    string? ExceptionType,
-    string? StackTrace);
-
-/// <summary>
-/// Fixed-capacity ring buffer of <see cref="ModuleLogEntry"/> records.
-/// Thread-safe via lock-free <see cref="ConcurrentQueue{T}"/> with a trim pass.
-/// </summary>
-public sealed class ModuleLogBuffer(int capacity = 1000)
+public sealed class ModuleLogService : IAsyncDisposable
 {
-    private readonly ConcurrentQueue<ModuleLogEntry> _queue = new();
-    private int _count;
-
-    public int Count => Volatile.Read(ref _count);
-
-    public void Append(ModuleLogEntry entry)
-    {
-        _queue.Enqueue(entry);
-        var c = Interlocked.Increment(ref _count);
-
-        // Trim oldest entries when over capacity.
-        while (c > capacity && _queue.TryDequeue(out _))
-            c = Interlocked.Decrement(ref _count);
-    }
-
-    public IReadOnlyList<ModuleLogEntry> GetEntries(
-        DateTimeOffset? since, LogLevel? minLevel, int take)
-    {
-        var result = new List<ModuleLogEntry>(Math.Min(take, Count));
-        foreach (var entry in _queue)
-        {
-            if (since.HasValue && entry.Timestamp <= since.Value) continue;
-            if (minLevel.HasValue && entry.Level < minLevel.Value) continue;
-            result.Add(entry);
-            if (result.Count >= take) break;
-        }
-        return result;
-    }
-
-    public (int Errors, int Warnings) GetDiagnosticCounts()
-    {
-        int errors = 0, warnings = 0;
-        foreach (var entry in _queue)
-        {
-            if (entry.Level == LogLevel.Error || entry.Level == LogLevel.Critical) errors++;
-            else if (entry.Level == LogLevel.Warning) warnings++;
-        }
-        return (errors, warnings);
-    }
-
-    public void Clear()
-    {
-        while (_queue.TryDequeue(out _))
-            Interlocked.Decrement(ref _count);
-    }
-}
-
-/// <summary>
-/// Singleton service that maintains per-module ring buffers of log entries.
-/// Fed by <see cref="ModuleLogSinkProvider"/> and queried by API endpoints.
-/// </summary>
-public sealed class ModuleLogService
-{
-    /// <summary>Logger category prefix used for module loggers.</summary>
     internal const string CategoryPrefix = "SharpClaw.Modules.";
+    private readonly ExecutionDiagnosticStore _diagnostics;
+    private readonly Channel<ModuleWriteCommand> _queue;
+    private readonly ConcurrentDictionary<string, DiagnosticCounts> _counts =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> _dropped =
+        new(StringComparer.Ordinal);
+    private readonly Task _processor;
+    private int _queueDepth;
+    private int _disposeState;
 
-    private readonly ConcurrentDictionary<string, ModuleLogBuffer> _buffers = new(StringComparer.Ordinal);
-
-    /// <summary>Append a log entry for a module. Creates the buffer on first use.</summary>
-    public void Append(string moduleId, LogLevel level, string message, Exception? exception)
+    public ModuleLogService(
+        ExecutionDiagnosticStore diagnostics,
+        Guid? bootId = null,
+        int queueCapacity = 4096)
     {
-        var buffer = _buffers.GetOrAdd(moduleId, _ => new ModuleLogBuffer());
-        buffer.Append(new ModuleLogEntry(
-            DateTimeOffset.UtcNow,
+        ArgumentNullException.ThrowIfNull(diagnostics);
+        if (queueCapacity < 16)
+            throw new ArgumentOutOfRangeException(nameof(queueCapacity));
+        _diagnostics = diagnostics;
+        BootId = bootId ?? Guid.NewGuid();
+        _queue = Channel.CreateBounded<ModuleWriteCommand>(
+            new BoundedChannelOptions(queueCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+                AllowSynchronousContinuations = false,
+            });
+        _processor = Task.Run(ProcessAsync);
+    }
+
+    public Guid BootId { get; }
+    public int QueueDepth => Volatile.Read(ref _queueDepth);
+
+    public void Append(
+        string moduleId,
+        LogLevel level,
+        string message,
+        Exception? exception)
+    {
+        ObjectDisposedException.ThrowIf(_disposeState != 0, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(moduleId);
+        ArgumentNullException.ThrowIfNull(message);
+        var detail = exception is null
+            ? message
+            : message + Environment.NewLine + exception;
+        var command = new ModuleWriteCommand(
+            moduleId,
             level,
-            message,
-            exception?.GetType().Name,
-            exception?.StackTrace));
+            detail,
+            exception?.GetType().FullName);
+        if (_queue.Writer.TryWrite(command))
+        {
+            Interlocked.Increment(ref _queueDepth);
+            return;
+        }
+
+        if (level < LogLevel.Error)
+        {
+            _dropped.AddOrUpdate(moduleId, 1, static (_, count) => count + 1);
+            return;
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            _queue.Writer.WriteAsync(command, timeout.Token)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+            Interlocked.Increment(ref _queueDepth);
+        }
+        catch (OperationCanceledException)
+        {
+            _dropped.AddOrUpdate(moduleId, 1, static (_, count) => count + 1);
+        }
     }
 
-    /// <summary>Get filtered log entries for a module.</summary>
-    public IReadOnlyList<ModuleLogEntry> GetEntries(
-        string moduleId, DateTimeOffset? since = null, LogLevel? minLevel = null, int take = 100)
-    {
-        return _buffers.TryGetValue(moduleId, out var buffer)
-            ? buffer.GetEntries(since, minLevel, take)
-            : [];
-    }
+    public ValueTask<DurableLogPageResponse> ReadAsync(
+        string moduleId,
+        Guid bootId,
+        string? cursor,
+        DurableLogQuery query,
+        CancellationToken cancellationToken = default) =>
+        _diagnostics.ReadModuleLogsAsync(
+            moduleId,
+            bootId,
+            cursor,
+            query,
+            cancellationToken);
 
-    /// <summary>Get error and warning counts for a module.</summary>
     public (int Errors, int Warnings) GetDiagnosticCounts(string moduleId)
     {
-        return _buffers.TryGetValue(moduleId, out var buffer)
-            ? buffer.GetDiagnosticCounts()
+        return _counts.TryGetValue(moduleId, out var counts)
+            ? (counts.Errors, counts.Warnings)
             : (0, 0);
     }
 
-    /// <summary>Clear the log buffer for a module.</summary>
-    public void Clear(string moduleId)
+    public async ValueTask DisposeAsync()
     {
-        if (_buffers.TryGetValue(moduleId, out var buffer))
-            buffer.Clear();
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+            return;
+        _queue.Writer.TryComplete();
+        await _processor.ConfigureAwait(false);
+    }
+
+    private async Task ProcessAsync()
+    {
+        await foreach (var command in _queue.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            Interlocked.Decrement(ref _queueDepth);
+            if (_dropped.TryRemove(command.ModuleId, out var dropped) && dropped > 0)
+            {
+                await _diagnostics.AppendModuleLogAsync(
+                    command.ModuleId,
+                    BootId,
+                    $"{dropped} module diagnostic records were dropped because the queue was full.",
+                    "Warning",
+                    "RecordsDropped",
+                    writeMode: DurableWriteMode.Durable).ConfigureAwait(false);
+            }
+
+            await _diagnostics.AppendModuleLogAsync(
+                command.ModuleId,
+                BootId,
+                command.Message,
+                command.Level.ToString(),
+                "ModuleDiagnostic",
+                command.ExceptionType,
+                writeMode: command.Level >= LogLevel.Error
+                    ? DurableWriteMode.Durable
+                    : DurableWriteMode.Buffered).ConfigureAwait(false);
+
+            var counts = _counts.GetOrAdd(command.ModuleId, static _ => new DiagnosticCounts());
+            if (command.Level >= LogLevel.Error)
+                Interlocked.Increment(ref counts.Errors);
+            else if (command.Level == LogLevel.Warning)
+                Interlocked.Increment(ref counts.Warnings);
+        }
+    }
+
+    private sealed record ModuleWriteCommand(
+        string ModuleId,
+        LogLevel Level,
+        string Message,
+        string? ExceptionType);
+
+    private sealed class DiagnosticCounts
+    {
+        public int Errors;
+        public int Warnings;
     }
 }

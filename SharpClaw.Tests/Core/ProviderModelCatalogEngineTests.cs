@@ -1,7 +1,6 @@
 using System.Text.Json;
 using SharpClaw.Contracts.DTOs.Models;
 using SharpClaw.Contracts.DTOs.Providers;
-using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Providers;
 
 namespace SharpClaw.Tests.Core;
@@ -173,7 +172,7 @@ public sealed class ProviderModelCatalogEngineTests
     [Test]
     public void ApplyUpdate_WhenNameDuplicatesAndUniqueIsEnforced_Throws()
     {
-        var model = new ModelDB
+        var model = new ModelState
         {
             Name = "old",
             ProviderId = Guid.NewGuid()
@@ -192,7 +191,7 @@ public sealed class ProviderModelCatalogEngineTests
     [Test]
     public void ApplyUpdate_WhenCapabilitiesAreEmpty_ClearsPersistedTags()
     {
-        var model = new ModelDB
+        var model = new ModelState
         {
             Name = "old",
             ProviderId = Guid.NewGuid(),
@@ -216,7 +215,7 @@ public sealed class ProviderModelCatalogEngineTests
     [Test]
     public void RefreshCapabilityTags_WhenResolverChangesTags_UpdatesAndReturnsTrue()
     {
-        var model = new ModelDB
+        var model = new ModelState
         {
             Name = "vision-model",
             ProviderId = Guid.NewGuid(),
@@ -252,7 +251,7 @@ public sealed class ProviderModelCatalogEngineTests
     public void ToResponse_UsesLoadedProviderAndParsedCapabilityTags()
     {
         var provider = Provider();
-        var model = new ModelDB
+        var model = new ModelState
         {
             Id = Guid.NewGuid(),
             Name = "model",
@@ -295,7 +294,7 @@ public sealed class ProviderModelCatalogEngineTests
         public IReadOnlyList<ProviderCostSeed> CostSeeds => [];
     }
 
-    private static ProviderDB Provider() => new()
+    private static ProviderState Provider() => new()
     {
         Id = Guid.NewGuid(),
         Name = "Provider",

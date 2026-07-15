@@ -1,11 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts;
-using SharpClaw.Contracts.Entities;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Contracts.Providers;
@@ -44,7 +39,7 @@ public sealed class ChatHeaderTemplateEngineTests
     [Test]
     public async Task ExpandAsync_WhenResourceTemplateUsesSensitiveField_RedactsIt()
     {
-        var provider = new ProviderDB
+        var provider = new ProviderState
         {
             Id = Guid.NewGuid(),
             Name = "Custom",
@@ -136,11 +131,11 @@ public sealed class ChatHeaderTemplateEngineTests
                     }))
             ]));
         var engine = CreateEngine(registry);
-        var permissionSet = new PermissionSetDB
+        var permissionSet = new PermissionSetState
         {
             ResourceAccesses =
             [
-                new ResourceAccessDB
+                new ResourceAccessState
                 {
                     ResourceType = "documents",
                     ResourceId = WellKnownIds.AllResources,
@@ -152,7 +147,7 @@ public sealed class ChatHeaderTemplateEngineTests
         var expanded = await engine.ExpandAsync(
             "{{agent-role}} | {{agent-grants}}",
             CreateContext(
-                agentRole: new RoleDB { Name = "Researcher" },
+                agentRole: new RoleState { Name = "Researcher" },
                 agentPermissionSet: permissionSet),
             new ChatHeaderExpansionOptions(),
             resourceTags: null,
@@ -174,16 +169,16 @@ public sealed class ChatHeaderTemplateEngineTests
     private static ChatHeaderExpansionContext CreateContext(
         string channelTitle = "Channel",
         string agentName = "Agent",
-        RoleDB? agentRole = null,
-        PermissionSetDB? agentPermissionSet = null)
+        RoleState? agentRole = null,
+        PermissionSetState? agentPermissionSet = null)
     {
         return new ChatHeaderExpansionContext(
-            new ChannelDB
+            new ChannelState
             {
                 Id = Guid.NewGuid(),
                 Title = channelTitle
             },
-            new AgentDB
+            new AgentState
             {
                 Id = Guid.NewGuid(),
                 Name = agentName
@@ -197,14 +192,14 @@ public sealed class ChatHeaderTemplateEngineTests
 
     private sealed class StaticResourceTagResolver(
         string tagName,
-        IReadOnlyList<BaseEntity> entities)
+        IReadOnlyList<DomainState> entities)
         : IChatHeaderResourceTagResolver
     {
-        public Task<IReadOnlyList<BaseEntity>?> LoadEntitiesAsync(
+        public Task<IReadOnlyList<DomainState>?> LoadEntitiesAsync(
             string requestedTagName,
             CancellationToken ct)
         {
-            IReadOnlyList<BaseEntity>? result = requestedTagName.Equals(
+            IReadOnlyList<DomainState>? result = requestedTagName.Equals(
                 tagName,
                 StringComparison.OrdinalIgnoreCase)
                 ? entities

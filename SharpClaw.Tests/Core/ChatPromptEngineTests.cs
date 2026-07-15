@@ -1,5 +1,4 @@
 using System.Text.Json;
-using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Core.Chat;
 
 namespace SharpClaw.Tests.Core;
@@ -52,7 +51,7 @@ public sealed class ChatPromptEngineTests
         var responseFormat = JsonDocument.Parse("""{"type":"json_object"}""")
             .RootElement
             .Clone();
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Name = "Agent",
             ModelId = modelId,

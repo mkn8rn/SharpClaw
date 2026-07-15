@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Core.Chat;
 using SharpClaw.Core.Permissions;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
@@ -12,59 +13,66 @@ public sealed class EfRoleAdministrationHost(
     IConfiguration configuration,
     ChatCache chatCache) : IRoleAdministrationHost
 {
+    private readonly CoreStateSession _states = new(db);
+
     public bool UniqueRoleNamesEnforced =>
         RolePermissionAdministrationEngine.IsUniqueRoleNameEnforced(
             configuration["UniqueNames:Roles"]);
 
-    public async Task<RoleDB?> LoadRoleAsync(
+    public async Task<RoleState?> LoadRoleAsync(
         Guid roleId,
         CancellationToken ct)
     {
-        return await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        var entity = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<IReadOnlyList<RoleDB>> ListRolesAsync(
+    public async Task<IReadOnlyList<RoleState>> ListRolesAsync(
         CancellationToken ct)
     {
-        return await db.Roles
+        var entities = await db.Roles
             .OrderBy(role => role.Name)
             .ToListAsync(ct);
+        return _states.Map(entities);
     }
 
-    public async Task<RoleDB?> LoadRoleWithPermissionReferenceAsync(
+    public async Task<RoleState?> LoadRoleWithPermissionReferenceAsync(
         Guid roleId,
         CancellationToken ct)
     {
-        return await db.Roles
+        var entity = await db.Roles
             .Include(r => r.PermissionSet)
             .FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<RoleDB?> LoadRoleForDeleteAsync(
+    public async Task<RoleState?> LoadRoleForDeleteAsync(
         Guid roleId,
         CancellationToken ct)
     {
-        return await db.Roles
+        var entity = await db.Roles
             .Include(r => r.PermissionSet)
                 .ThenInclude(ps => ps!.GlobalFlags)
             .Include(r => r.PermissionSet)
                 .ThenInclude(ps => ps!.ResourceAccesses)
             .Include(r => r.Users)
             .FirstOrDefaultAsync(r => r.Id == roleId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<PermissionSetDB?> LoadFullPermissionSetAsync(
+    public async Task<PermissionSetState?> LoadFullPermissionSetAsync(
         Guid permissionSetId,
         CancellationToken ct)
     {
-        return await db.PermissionSets
+        var entity = await db.PermissionSets
             .Include(p => p.GlobalFlags)
             .Include(p => p.ResourceAccesses)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == permissionSetId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<PermissionSetDB?> LoadCallerPermissionSetAsync(
+    public async Task<PermissionSetState?> LoadCallerPermissionSetAsync(
         Guid userId,
         CancellationToken ct)
     {
@@ -97,33 +105,36 @@ public sealed class EfRoleAdministrationHost(
             .ToListAsync(ct);
     }
 
-    public void TrackRole(RoleDB role)
+    public void TrackRole(RoleState role)
     {
-        db.Roles.Add(role);
+        _states.Track(role);
     }
 
-    public void TrackPermissionSet(PermissionSetDB permissionSet)
+    public void TrackPermissionSet(PermissionSetState permissionSet)
     {
-        db.PermissionSets.Add(permissionSet);
+        _states.Track(permissionSet);
     }
 
     public void ApplyRoleDeletion(RoleDeletionPlan deletion)
     {
+        _states.ApplyAll();
         if (deletion.PermissionSet is not null)
         {
-            db.RemoveRange(deletion.GlobalFlags);
-            db.RemoveRange(deletion.ResourceAccesses);
-            db.PermissionSets.Remove(deletion.PermissionSet);
+            foreach (var flag in deletion.GlobalFlags)
+                _states.Remove(flag);
+            foreach (var access in deletion.ResourceAccesses)
+                _states.Remove(access);
+            _states.Remove(deletion.PermissionSet);
         }
 
-        db.Roles.Remove(deletion.Role);
+        _states.Remove(deletion.Role);
     }
 
     public async Task SaveAsync(
         Func<ChatRuntimeInvalidationPlan?>? buildInvalidationPlan,
         CancellationToken ct)
     {
-        await db.SaveChangesAsync(ct);
+        await _states.SaveChangesAsync(ct);
         buildInvalidationPlan?.Invoke()?.ApplyTo(chatCache);
     }
 }

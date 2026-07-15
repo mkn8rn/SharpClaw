@@ -12,17 +12,17 @@ public sealed class SharpClawApiClient : IDisposable
 {
     private readonly HttpClient _http;
     private readonly FrontendInstanceService? _frontendInstance;
-    private readonly SessionLogWriter? _sessionLogWriter;
+    private readonly DurableProcessLogWriter? _processLogs;
     private string? _cachedApiKey;
 
     public SharpClawApiClient(
         string baseUrl,
-        SessionLogWriter? sessionLogWriter = null,
+        DurableProcessLogWriter? processLogs = null,
         FrontendInstanceService? frontendInstance = null)
     {
         _frontendInstance = frontendInstance;
-        _sessionLogWriter = sessionLogWriter;
-        _http = new HttpClient(new DebugLoggingHandler(new HttpClientHandler(), sessionLogWriter))
+        _processLogs = processLogs;
+        _http = new HttpClient(new DebugLoggingHandler(new HttpClientHandler(), processLogs))
         {
             BaseAddress = new Uri(baseUrl),
             Timeout = TimeSpan.FromMinutes(10)
@@ -213,7 +213,7 @@ public sealed class SharpClawApiClient : IDisposable
     /// </summary>
     private sealed class DebugLoggingHandler(
         HttpMessageHandler inner,
-        SessionLogWriter? sessionLogWriter) : DelegatingHandler(inner)
+        DurableProcessLogWriter? processLogs) : DelegatingHandler(inner)
     {
         private const string Category = "SharpClaw.Client.Uno";
 
@@ -223,7 +223,7 @@ public sealed class SharpClawApiClient : IDisposable
         private void LogPersistent(string message)
         {
             Log(message);
-            sessionLogWriter?.AppendDebug(message);
+            processLogs?.AppendDebug(message);
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -257,7 +257,7 @@ public sealed class SharpClawApiClient : IDisposable
             {
                 sw.Stop();
                 LogPersistent($"[{id}] !!! FAILED after {sw.ElapsedMilliseconds}ms: {ex.GetType().Name}: {ex.Message}");
-                sessionLogWriter?.AppendException(ex, $"HTTP request failed: {request.Method} {request.RequestUri}");
+                processLogs?.AppendException(ex, $"HTTP request failed: {request.Method} {request.RequestUri}");
                 throw;
             }
             sw.Stop();

@@ -1,5 +1,3 @@
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Chat;
 using SharpClaw.Core.Clients;
@@ -14,23 +12,23 @@ public sealed class ChatDefaultHeaderEngineTests
     {
         var engine = CreateEngine();
 
-        engine.IsHeaderDisabled(new ChannelDB
+        engine.IsHeaderDisabled(new ChannelState
         {
             Title = "Direct",
             DisableChatHeader = true
         }).Should().BeTrue();
 
-        engine.IsHeaderDisabled(new ChannelDB
+        engine.IsHeaderDisabled(new ChannelState
         {
             Title = "Inherited",
-            AgentContext = new ChannelContextDB
+            AgentContext = new ChannelContextState
             {
                 Name = "Context",
                 DisableChatHeader = true
             }
         }).Should().BeTrue();
 
-        engine.IsHeaderDisabled(new ChannelDB { Title = "Enabled" })
+        engine.IsHeaderDisabled(new ChannelState { Title = "Enabled" })
             .Should().BeFalse();
     }
 
@@ -39,12 +37,12 @@ public sealed class ChatDefaultHeaderEngineTests
     {
         var engine = CreateEngine();
         var template = engine.ResolveCustomTemplate(
-            new ChannelDB
+            new ChannelState
             {
                 Title = "Channel",
                 CustomChatHeader = "channel-template"
             },
-            new AgentDB
+            new AgentState
             {
                 Name = "Agent",
                 CustomChatHeader = "agent-template"

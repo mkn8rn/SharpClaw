@@ -31,6 +31,7 @@ public static class SystemHandlers
         var errors = new List<string>();
 
         DeleteDirectory(jsonColdStoreOptions.DataDirectory, "Data", errors);
+        DeleteDirectory(instancePaths.DurableDirectory, "Durable diagnostics", errors);
         DeleteDirectory(instancePaths.SecretsDirectory, "Secrets", errors);
         DeleteDirectory(instancePaths.RuntimeDirectory, "Runtime", errors);
         DeleteDirectory(instancePaths.LogsDirectory, "Logs", errors);

@@ -22,11 +22,12 @@ public sealed partial class MainPage
         var api = App.Services!.GetRequiredService<SharpClawApiClient>();
         try
         {
-            using var resp = await api.GetAsync($"/channels/{channelId}/jobs/summaries");
+            using var resp = await api.GetAsync($"/channels/{channelId}/jobs?take=100");
             if (resp.IsSuccessStatusCode)
             {
                 using var jobStream = await resp.Content.ReadAsStreamAsync();
-                _channelJobs = await JsonSerializer.DeserializeAsync<List<JobDto>>(jobStream, Json) ?? [];
+                var page = await JsonSerializer.DeserializeAsync<JobPageDto>(jobStream, Json);
+                _channelJobs = page?.Records.ToList() ?? [];
 
                 _jobItemPoolUsed = 0;
                 foreach (var job in _channelJobs)
@@ -130,6 +131,7 @@ public sealed partial class MainPage
             StopLoadingAnimation();
             _jobLogPoolUsed = 0;
             JobLogsPanel.Children.Clear();
+            _currentJobLogs = [];
 
             JobStatusBlock.Text = $"status: {job.Status}";
             JobStatusBlock.Foreground = Brush(job.Status switch
@@ -148,18 +150,41 @@ public sealed partial class MainPage
             if (job.CompletedAt.HasValue) _jobTimestampParts.Add($"completed: {job.CompletedAt.Value.LocalDateTime:HH:mm:ss}");
             JobTimestampBlock.Text = string.Join("  |  ", _jobTimestampParts);
 
-            if (job.Logs is { Count: > 0 })
+            if (job.LogRecordCount > 0)
             {
-                foreach (var log in job.Logs)
-                    AppendJobLog(log.Level, TruncateForDisplay(log.Message), log.Timestamp);
+                using var logsResponse = await api.GetAsync(
+                    $"/channels/{channelId}/jobs/{jobId}/logs?take=200&maxBytes=262144");
+                if (logsResponse.IsSuccessStatusCode)
+                {
+                    var page = await JsonSerializer.DeserializeAsync<JobLogPageDto>(
+                        await logsResponse.Content.ReadAsStreamAsync(),
+                        Json);
+                    _currentJobLogs = page?.Records ?? [];
+                    foreach (var log in _currentJobLogs)
+                        AppendJobLog(log.Level, TruncateForDisplay(log.Message), log.Timestamp);
+                    if (page?.HasMore == true)
+                    {
+                        AppendJobLog(
+                            "info",
+                            $"Showing a bounded page of {page.ReturnedRecords} records. More history is available.",
+                            null);
+                    }
+                    if (page?.ExpiredRecordCount > 0)
+                    {
+                        AppendJobLog(
+                            "warning",
+                            $"{page.ExpiredRecordCount:N0} older records expired under retention.",
+                            null);
+                    }
+                }
             }
-            if (!string.IsNullOrWhiteSpace(job.ResultData))
-                await AppendJobResultAsync(job.ResultData);
-            if (!string.IsNullOrWhiteSpace(job.ErrorLog))
-                AppendJobLog("error", TruncateForDisplay(job.ErrorLog), null);
+            if (!string.IsNullOrWhiteSpace(job.ResultArtifact?.Preview))
+                await AppendJobResultAsync(job.ResultArtifact.Preview);
+            if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
+                AppendJobLog("error", TruncateForDisplay(job.ErrorMessage), null);
 
-            if (job.Logs is { Count: 0 }
-                && string.IsNullOrWhiteSpace(job.ResultData) && string.IsNullOrWhiteSpace(job.ErrorLog))
+            if (_currentJobLogs.Count == 0
+                && job.ResultArtifact is null && string.IsNullOrWhiteSpace(job.ErrorMessage))
                 AppendJobLog("info", "(no log entries yet)", null);
 
             if (job.ChannelCost is { } jobCost)
@@ -168,8 +193,8 @@ public sealed partial class MainPage
             ApplyJobActionVisibility(job.Status);
 
             _currentJobDetail = job;
-            CopyLogsButton.Visibility = job.Logs is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-            CopyResultButton.Visibility = !string.IsNullOrWhiteSpace(job.ResultData) || !string.IsNullOrWhiteSpace(job.ErrorLog)
+            CopyLogsButton.Visibility = _currentJobLogs.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            CopyResultButton.Visibility = job.ResultArtifact is not null || !string.IsNullOrWhiteSpace(job.ErrorMessage)
                 ? Visibility.Visible : Visibility.Collapsed;
             CopyAllButton.Visibility = Visibility.Visible;
         }
@@ -209,6 +234,7 @@ public sealed partial class MainPage
         CopyResultButton.Visibility = Visibility.Collapsed;
         CopyAllButton.Visibility = Visibility.Collapsed;
         _currentJobDetail = null;
+        _currentJobLogs = [];
     }
 
     private void StartLoadingAnimation()
@@ -524,9 +550,9 @@ public sealed partial class MainPage
 
     private void OnCopyJobLogsClick(object sender, RoutedEventArgs e)
     {
-        if (_currentJobDetail?.Logs is not { Count: > 0 } logs) return;
+        if (_currentJobLogs.Count == 0) return;
         var sb = new StringBuilder();
-        foreach (var log in logs)
+        foreach (var log in _currentJobLogs)
             sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
         TerminalUI.CopyToClipboard(sb.ToString());
     }
@@ -534,15 +560,18 @@ public sealed partial class MainPage
     {
         if (_currentJobDetail is not { } job) return;
         var sb = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(job.ResultData))
+        if (!string.IsNullOrWhiteSpace(job.ResultArtifact?.Preview))
         {
-            var markerIndex = job.ResultData.IndexOf(ScreenshotMarker, StringComparison.Ordinal);
-            sb.AppendLine(markerIndex >= 0 ? job.ResultData[..markerIndex].TrimEnd() : job.ResultData);
+            var preview = job.ResultArtifact.Preview;
+            var markerIndex = preview.IndexOf(ScreenshotMarker, StringComparison.Ordinal);
+            sb.AppendLine(markerIndex >= 0 ? preview[..markerIndex].TrimEnd() : preview);
+            if (job.ResultArtifact.Length > Encoding.UTF8.GetByteCount(preview))
+                sb.AppendLine($"[artifact {job.ResultArtifact.Id}, {job.ResultArtifact.Length:N0} bytes; preview only]");
         }
-        if (!string.IsNullOrWhiteSpace(job.ErrorLog))
+        if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
         {
             if (sb.Length > 0) sb.AppendLine();
-            sb.AppendLine($"[error] {job.ErrorLog}");
+            sb.AppendLine($"[error] {job.ErrorCode}: {job.ErrorMessage}");
         }
         if (sb.Length > 0)
             TerminalUI.CopyToClipboard(sb.ToString());
@@ -559,26 +588,29 @@ public sealed partial class MainPage
         if (job.StartedAt.HasValue) sb.AppendLine($"Started: {job.StartedAt.Value.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
         if (job.CompletedAt.HasValue) sb.AppendLine($"Completed: {job.CompletedAt.Value.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
 
-        if (job.Logs is { Count: > 0 } logs)
+        if (_currentJobLogs.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("── Logs ──");
-            foreach (var log in logs)
+            foreach (var log in _currentJobLogs)
                 sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
         }
-        if (!string.IsNullOrWhiteSpace(job.ResultData))
+        if (!string.IsNullOrWhiteSpace(job.ResultArtifact?.Preview))
         {
             sb.AppendLine();
             sb.AppendLine("── Result ──");
-            var markerIndex = job.ResultData.IndexOf(ScreenshotMarker, StringComparison.Ordinal);
-            sb.AppendLine(markerIndex >= 0 ? job.ResultData[..markerIndex].TrimEnd() : job.ResultData);
+            var preview = job.ResultArtifact.Preview;
+            var markerIndex = preview.IndexOf(ScreenshotMarker, StringComparison.Ordinal);
+            sb.AppendLine(markerIndex >= 0 ? preview[..markerIndex].TrimEnd() : preview);
+            if (job.ResultArtifact.Length > Encoding.UTF8.GetByteCount(preview))
+                sb.AppendLine($"[artifact {job.ResultArtifact.Id}, {job.ResultArtifact.Length:N0} bytes; preview only]");
         }
 
-        if (!string.IsNullOrWhiteSpace(job.ErrorLog))
+        if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
         {
             sb.AppendLine();
             sb.AppendLine("── Error ──");
-            sb.AppendLine(job.ErrorLog);
+            sb.AppendLine($"{job.ErrorCode}: {job.ErrorMessage}");
         }
 
         TerminalUI.CopyToClipboard(sb.ToString());

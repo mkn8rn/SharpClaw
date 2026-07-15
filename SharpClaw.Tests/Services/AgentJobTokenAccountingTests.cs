@@ -11,6 +11,8 @@ using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Runtime.INF.Persistence;
+using SharpClaw.Runtime.INF.DurableStorage;
+using SharpClaw.Shared.DurableStorage;
 using SharpClaw.Core.Jobs;
 using SharpClaw.Core.Modules;
 using SharpClaw.Core.Permissions;
@@ -23,11 +25,15 @@ public sealed class AgentJobTokenAccountingTests
     [Test]
     public async Task WhenCurrentExecutionRecordsTokensThenJobResponseIncludesJobCost()
     {
-        await using var db = CreateDbContext();
+        var databaseName = Guid.NewGuid().ToString();
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var provider = CreateHostProvider(databaseName, databaseRoot);
         var job = MakeJob();
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
         db.AgentJobs.Add(job);
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var service = scope.ServiceProvider.GetRequiredService<AgentJobService>();
 
         using (AgentJobService.BeginExecutionScope(job.Id))
         {
@@ -46,12 +52,16 @@ public sealed class AgentJobTokenAccountingTests
     [Test]
     public async Task WhenRecordingTokensForMultipleJobsThenInputOrderGetsTheRemainder()
     {
-        await using var db = CreateDbContext();
+        var databaseName = Guid.NewGuid().ToString();
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var provider = CreateHostProvider(databaseName, databaseRoot);
         var first = MakeJob();
         var second = MakeJob();
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
         db.AgentJobs.AddRange(first, second);
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var service = scope.ServiceProvider.GetRequiredService<AgentJobService>();
 
         await service.RecordTokensAsync([second.Id, first.Id], promptTokens: 5, completionTokens: 3);
 
@@ -113,61 +123,6 @@ public sealed class AgentJobTokenAccountingTests
         AgentJobService.CurrentExecutionJobId.Should().BeNull();
     }
 
-    private static SharpClawDbContext CreateDbContext()
-    {
-        var options = new DbContextOptionsBuilder<SharpClawDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString(), new InMemoryDatabaseRoot())
-            .Options;
-        return new SharpClawDbContext(options);
-    }
-
-    private static AgentJobService CreateService(SharpClawDbContext db)
-    {
-        var registry = new ModuleRegistry();
-        var configuration = new ConfigurationBuilder().Build();
-        var serviceProvider = new ServiceCollection().BuildServiceProvider();
-        var jobAdministration = new AgentJobAdministrationEngine();
-        var jobLifecycle = new AgentJobLifecycleEngine();
-        var defaultResources = new DefaultResourceEngine();
-        var permissionEvaluator = new PermissionEvaluationEngine();
-        var actionHost = new EfAgentActionHost(db);
-        var chatCache = new ChatCache(configuration);
-
-        return new AgentJobService(
-            db,
-            new AgentActionService(
-                registry,
-                new AgentActionWorkflowEngine(
-                    permissionEvaluator,
-                    new PermissionDelegateEvaluationEngine(
-                        permissionEvaluator)),
-                actionHost),
-            new SessionService(),
-            registry,
-            new ModuleToolExecutionPlanner(),
-            new ModuleToolPermissionExecutor(new ModuleToolPermissionPlanner()),
-            new ModuleJobToolExecutor(
-                new ModuleMetricsCollector(),
-                NullLogger<ModuleJobToolExecutor>.Instance),
-            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-            configuration,
-            chatCache,
-            new AgentJobRuntimeEngine(jobLifecycle, jobAdministration),
-            new AgentJobAdministrationWorkflowEngine(
-                jobAdministration,
-                jobLifecycle),
-            new EfAgentJobAdministrationHost(
-                db,
-                new EfPersistenceEntityResolver(),
-                chatCache,
-                jobAdministration),
-            jobAdministration,
-            new AgentJobDefaultResourceResolver(
-                jobAdministration,
-                defaultResources),
-            NullLogger<AgentJobService>.Instance);
-    }
-
     private static ServiceProvider CreateHostProvider(
         string databaseName,
         InMemoryDatabaseRoot root)
@@ -179,6 +134,35 @@ public sealed class AgentJobTokenAccountingTests
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddDbContext<SharpClawDbContext>(
             options => options.UseInMemoryDatabase(databaseName, root));
+        services.AddSingleton<TemporaryDurableRoot>();
+        services.AddSingleton(sp => new DurableStorageOptions
+        {
+            RootDirectory = sp.GetRequiredService<TemporaryDurableRoot>().Path,
+            EncryptionKey = DurableStorageKeyDerivation.Derive(
+                TemporaryDurableRoot.RootKey,
+                "records"),
+            SegmentMaxBytes = 64 * 1024,
+        });
+        services.AddSingleton<DurableSegmentStore>();
+        services.AddSingleton(sp => new DurableStreamPathEncoder(
+            sp.GetRequiredService<TemporaryDurableRoot>().Path));
+        services.AddSingleton(sp => new DurableCursorCodec(
+            DurableStorageKeyDerivation.Derive(
+                TemporaryDurableRoot.RootKey,
+                "cursors"),
+            sp.GetRequiredService<DurableStreamPathEncoder>()));
+        services.AddSingleton(sp => new DatabaseCursorCodec(
+            DurableStorageKeyDerivation.Derive(
+                TemporaryDurableRoot.RootKey,
+                "database-cursors")));
+        services.AddSingleton(sp => new ExecutionArtifactStore(
+            sp.GetRequiredService<TemporaryDurableRoot>().Path,
+            DurableStorageKeyDerivation.Derive(
+                TemporaryDurableRoot.RootKey,
+                "artifacts")));
+        services.AddSingleton<IExecutionArtifactStore>(sp =>
+            sp.GetRequiredService<ExecutionArtifactStore>());
+        services.AddSingleton<ExecutionDiagnosticStore>();
         services.AddScoped<IPersistenceEntityResolver, EfPersistenceEntityResolver>();
         services.AddSingleton<ModuleRegistry>();
         services.AddSingleton<ModuleToolExecutionPlanner>();
@@ -203,6 +187,8 @@ public sealed class AgentJobTokenAccountingTests
                 NullLogger<ModuleEventDispatcher>.Instance));
         services.AddScoped<AgentActionService>();
         services.AddScoped<SessionService>();
+        services.AddScoped<DurableExecutionPersistence>();
+        services.AddScoped<ExecutionQueryService>();
         services.AddScoped<EfAgentJobAdministrationHost>();
         services.AddScoped<EfAgentActionHost>();
         services.AddScoped<AgentJobService>();
@@ -221,4 +207,32 @@ public sealed class AgentJobTokenAccountingTests
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow,
     };
+
+    private sealed class TemporaryDurableRoot : IDisposable
+    {
+        public static byte[] RootKey { get; } =
+            Enumerable.Repeat((byte)0x27, 32).ToArray();
+
+        public TemporaryDurableRoot()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "sharpclaw-token-accounting",
+                Guid.NewGuid().ToString("N"));
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            try
+            {
+                if (Directory.Exists(Path))
+                    Directory.Delete(Path, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
 }

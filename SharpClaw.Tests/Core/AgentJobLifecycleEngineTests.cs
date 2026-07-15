@@ -1,6 +1,5 @@
 using FluentAssertions;
 using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Jobs;
@@ -93,8 +92,8 @@ public sealed class AgentJobLifecycleEngineTests
         decision.Status.Should().Be(AgentJobStatus.Executing);
         decision.UpdateCompletedAt.Should().BeTrue();
         decision.CompletedAt.Should().BeNull();
-        decision.UpdateResultData.Should().BeTrue();
-        decision.ResultData.Should().Be("started");
+        decision.UpdateResult.Should().BeTrue();
+        decision.Result.Should().Be("started");
         decision.Logs.Should().ContainSingle(log =>
             log.Level == JobLogLevels.Info
             && log.Message.Contains("job remains Executing"));
@@ -127,8 +126,10 @@ public sealed class AgentJobLifecycleEngineTests
         decision.Status.Should().Be(AgentJobStatus.Failed);
         decision.UpdateCompletedAt.Should().BeTrue();
         decision.CompletedAt.Should().Be(now);
-        decision.UpdateErrorLog.Should().BeTrue();
-        decision.ErrorLog.Should().Be("exception details");
+        decision.UpdateFailure.Should().BeTrue();
+        decision.ErrorCode.Should().Be("job_execution_failed");
+        decision.ErrorMessage.Should().Be("late failure");
+        decision.ErrorDetails.Should().Be("exception details");
         decision.Logs.Should().ContainSingle(log =>
             log.Level == JobLogLevels.Error
             && log.Message == "Job failed: late failure");
@@ -149,7 +150,7 @@ public sealed class AgentJobLifecycleEngineTests
         decision.Status.Should().Be(AgentJobStatus.Completed);
         decision.UpdateCompletedAt.Should().BeTrue();
         decision.CompletedAt.Should().Be(now);
-        decision.UpdateResultData.Should().BeFalse();
+        decision.UpdateResult.Should().BeFalse();
         decision.Logs.Should().ContainSingle(log =>
             log.Level == JobLogLevels.Info
             && log.Message == "Job completed by module.");
@@ -164,8 +165,8 @@ public sealed class AgentJobLifecycleEngineTests
             message: "custom completion",
             DateTimeOffset.Parse("2026-07-02T17:02:00Z"));
 
-        decision.UpdateResultData.Should().BeTrue();
-        decision.ResultData.Should().Be("result");
+        decision.UpdateResult.Should().BeTrue();
+        decision.Result.Should().Be("result");
         decision.Logs.Should().ContainSingle(log =>
             log.Level == JobLogLevels.Info
             && log.Message == "custom completion");
@@ -256,9 +257,9 @@ public sealed class AgentJobLifecycleEngineTests
     public void JobMatchesActionPrefix_HandlesNullActionsAndCaseInsensitiveMatches()
     {
         var jobs = new AgentJobAdministrationEngine();
-        var nullAction = new AgentJobDB { ActionKey = null };
-        var match = new AgentJobDB { ActionKey = "Curativa.Audio.Start" };
-        var miss = new AgentJobDB { ActionKey = "Curativa.Video.Start" };
+        var nullAction = new AgentJobState { ActionKey = null };
+        var match = new AgentJobState { ActionKey = "Curativa.Audio.Start" };
+        var miss = new AgentJobState { ActionKey = "Curativa.Video.Start" };
 
         jobs.JobMatchesActionPrefix(nullAction, "curativa.audio.").Should().BeFalse();
         jobs.JobMatchesActionPrefix(match, "curativa.audio.").Should().BeTrue();

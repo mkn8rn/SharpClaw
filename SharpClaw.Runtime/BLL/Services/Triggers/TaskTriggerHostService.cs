@@ -286,7 +286,7 @@ public sealed class TaskTriggerHostService(
                 TaskDefinitionId: TaskDefinitionId,
                 ParameterValues:  parameters?.ToDictionary(kv => kv.Key, kv => kv.Value));
 
-            TaskInstanceResponse instance;
+            TaskInstanceDetailResponse instance;
             try
             {
                 instance = await taskService.CreateInstanceAsync(request, ct: ct);

@@ -1,11 +1,6 @@
 using SharpClaw.Contracts.DTOs.Channels;
 using SharpClaw.Contracts.DTOs.Chat;
 using SharpClaw.Contracts.DTOs.Tasks;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts.Entities.Core.Context;
-using SharpClaw.Contracts.Entities.Core.Tasks;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Core.Tasks.Runtime;
 
@@ -54,13 +49,13 @@ public sealed class TaskHostBridgeWorkflowEngineTests
         var instanceId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var contextId = Guid.NewGuid();
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Id = Guid.NewGuid(),
             Title = "old",
             CustomId = "task.channel"
         };
-        var instance = new TaskInstanceDB
+        var instance = new TaskInstanceState
         {
             Id = instanceId,
             ContextId = contextId
@@ -94,11 +89,11 @@ public sealed class TaskHostBridgeWorkflowEngineTests
     {
         var engine = new TaskHostBridgeWorkflowEngine();
         var host = new RecordingHost();
-        var role = new RoleDB
+        var role = new RoleState
         {
             Id = Guid.NewGuid(),
             Name = "Worker",
-            PermissionSet = new PermissionSetDB()
+            PermissionSet = new PermissionSetState()
         };
         host.Roles[role.Id] = role;
         var requestJson =
@@ -123,10 +118,10 @@ public sealed class TaskHostBridgeWorkflowEngineTests
     private sealed class RecordingHost : ITaskHostBridgeWorkflowHost
     {
         public Dictionary<Guid, Guid?> InstanceChannelIds { get; } = [];
-        public Dictionary<Guid, TaskInstanceDB> Instances { get; } = [];
-        public Dictionary<string, ChannelDB> ChannelsByCustomId { get; } = [];
-        public Dictionary<string, ChannelDB> ChannelsByTitle { get; } = [];
-        public Dictionary<Guid, RoleDB> Roles { get; } = [];
+        public Dictionary<Guid, TaskInstanceState> Instances { get; } = [];
+        public Dictionary<string, ChannelState> ChannelsByCustomId { get; } = [];
+        public Dictionary<string, ChannelState> ChannelsByTitle { get; } = [];
+        public Dictionary<Guid, RoleState> Roles { get; } = [];
         public List<(Guid InstanceId, string Message)> Logs { get; } = [];
         public List<(TaskHostBridgeInvalidationTarget Target, Guid? EntityId)>
             Invalidations { get; } = [];
@@ -199,18 +194,18 @@ public sealed class TaskHostBridgeWorkflowEngineTests
             return Task.FromResult<Guid?>(null);
         }
 
-        public Task<AgentDB?> LoadLatestAgentByCustomIdAsync(
+        public Task<AgentState?> LoadLatestAgentByCustomIdAsync(
             string customId,
             CancellationToken ct)
         {
-            return Task.FromResult<AgentDB?>(null);
+            return Task.FromResult<AgentState?>(null);
         }
 
-        public void TrackAgent(AgentDB agent)
+        public void TrackAgent(AgentState agent)
         {
         }
 
-        public Task<ChannelDB?> LoadChannelWithAllowedAgentsAsync(
+        public Task<ChannelState?> LoadChannelWithAllowedAgentsAsync(
             Guid channelId,
             CancellationToken ct)
         {
@@ -220,11 +215,11 @@ public sealed class TaskHostBridgeWorkflowEngineTests
             return Task.FromResult(channel);
         }
 
-        public void TrackThread(ChatThreadDB thread)
+        public void TrackThread(ChatThreadState thread)
         {
         }
 
-        public Task<RoleDB?> LoadRoleByNameAsync(
+        public Task<RoleState?> LoadRoleByNameAsync(
             string roleName,
             CancellationToken ct)
         {
@@ -234,36 +229,36 @@ public sealed class TaskHostBridgeWorkflowEngineTests
 
         public Task<Guid> CreateRoleAsync(string roleName, CancellationToken ct)
         {
-            var role = new RoleDB { Id = Guid.NewGuid(), Name = roleName };
+            var role = new RoleState { Id = Guid.NewGuid(), Name = roleName };
             Roles[role.Id] = role;
             return Task.FromResult(role.Id);
         }
 
-        public Task<RoleDB?> LoadRoleWithPermissionSetAsync(
+        public Task<RoleState?> LoadRoleWithPermissionSetAsync(
             Guid roleId,
             CancellationToken ct)
         {
             return Task.FromResult(Roles.GetValueOrDefault(roleId));
         }
 
-        public Task<PermissionSetDB> EnsureRolePermissionSetAsync(
-            RoleDB role,
+        public Task<PermissionSetState> EnsureRolePermissionSetAsync(
+            RoleState role,
             CancellationToken ct)
         {
-            role.PermissionSet ??= new PermissionSetDB();
+            role.PermissionSet ??= new PermissionSetState();
             return Task.FromResult(role.PermissionSet);
         }
 
         public Task LoadPermissionSetCollectionsAsync(
-            PermissionSetDB permissionSet,
+            PermissionSetState permissionSet,
             CancellationToken ct)
         {
             return Task.CompletedTask;
         }
 
-        public Task<AgentDB?> LoadAgentAsync(Guid agentId, CancellationToken ct)
+        public Task<AgentState?> LoadAgentAsync(Guid agentId, CancellationToken ct)
         {
-            return Task.FromResult<AgentDB?>(null);
+            return Task.FromResult<AgentState?>(null);
         }
 
         public Task<bool> RoleExistsAsync(Guid roleId, CancellationToken ct)
@@ -271,7 +266,7 @@ public sealed class TaskHostBridgeWorkflowEngineTests
             return Task.FromResult(Roles.ContainsKey(roleId));
         }
 
-        public Task<ChannelDB?> LoadChannelByCustomIdAsync(
+        public Task<ChannelState?> LoadChannelByCustomIdAsync(
             string customId,
             CancellationToken ct)
         {
@@ -279,7 +274,7 @@ public sealed class TaskHostBridgeWorkflowEngineTests
                 ChannelsByCustomId.GetValueOrDefault(customId));
         }
 
-        public Task<ChannelDB?> LoadChannelByTitleAsync(
+        public Task<ChannelState?> LoadChannelByTitleAsync(
             string title,
             CancellationToken ct)
         {
@@ -291,7 +286,7 @@ public sealed class TaskHostBridgeWorkflowEngineTests
             CancellationToken ct)
         {
             var title = request.Title ?? string.Empty;
-            var channel = new ChannelDB
+            var channel = new ChannelState
             {
                 Id = Guid.NewGuid(),
                 Title = title,
@@ -306,11 +301,20 @@ public sealed class TaskHostBridgeWorkflowEngineTests
             return Task.FromResult(channel.Id);
         }
 
-        public Task<TaskInstanceDB?> LoadTaskInstanceAsync(
+        public Task<bool> TryAdoptInstanceChannelAsync(
             Guid instanceId,
+            Guid channelId,
             CancellationToken ct)
         {
-            return Task.FromResult(Instances.GetValueOrDefault(instanceId));
+            if (!Instances.TryGetValue(instanceId, out var instance)
+                || instance.ChannelId is not null)
+            {
+                return Task.FromResult(false);
+            }
+
+            instance.ChannelId = channelId;
+            SaveCount++;
+            return Task.FromResult(true);
         }
 
         public Task SaveAsync(CancellationToken ct)

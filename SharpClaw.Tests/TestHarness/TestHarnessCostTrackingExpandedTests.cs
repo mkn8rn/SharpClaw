@@ -2,11 +2,13 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.DTOs.Chat;
+using SharpClaw.Contracts.DTOs.Diagnostics;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Tests.TestHarness;
+using SharpClaw.Runtime.INF.DurableStorage;
 
 namespace SharpClaw.Tests.TestHarness;
 
@@ -188,20 +190,23 @@ public sealed class TestHarnessCostTrackingExpandedTests
         job.ResultData.Should().Be("direct-ok");
         job.StartedAt.Should().NotBeNull();
         job.CompletedAt.Should().NotBeNull();
-        job.Logs.Select(l => l.Message).Should().Contain(m => m.Contains("Job completed successfully"));
+        (await ReadLogsAsync(svc, job.Id)).Select(log => log.Message)
+            .Should().Contain(message =>
+                message.Contains("Job completed successfully"));
         host.Harness.ToolCalls.Should().ContainSingle()
             .Which.JobId.Should().Be(job.Id);
 
         host.PersistenceCounter.Reset();
         var summaries = await svc.ListSummariesAsync(seeded.Channel.Id);
 
-        summaries.Should().ContainSingle()
+        summaries.Records.Should().ContainSingle()
             .Which.Status.Should().Be(AgentJobStatus.Completed);
-        host.PersistenceCounter.QueryCalls.Should().Be(1);
+        host.PersistenceCounter.QueryCalls.Should().Be(0,
+            "bounded summary projections bypass the generic entity resolver");
     }
 
     [Test]
-    public async Task DirectJobDetailAndLifecycleActionsReuseCachedLogs()
+    public async Task DirectJobDetailStaysCompactAndLifecycleLogsRemainRetrievable()
     {
         await using var host = ChatHarnessHost.Create();
         host.Harness.ConfigurePermissionedJobTool(new TestHarnessToolBehavior { Result = "started" });
@@ -219,15 +224,15 @@ public sealed class TestHarnessCostTrackingExpandedTests
         host.PersistenceCounter.Reset();
         var firstDetail = await svc.GetAsync(job.Id);
 
-        firstDetail!.Logs.Should().NotBeEmpty();
-        host.PersistenceCounter.QueryCalls.Should().Be(0);
+        firstDetail!.LogRecordCount.Should().BeGreaterThan(0);
+        (await ReadLogsAsync(svc, job.Id)).Should().NotBeEmpty();
 
         host.PersistenceCounter.Reset();
         var stopped = await svc.StopAsync(job.Id);
 
         stopped!.Status.Should().Be(AgentJobStatus.Completed);
-        stopped.Logs.Select(l => l.Message).Should().Contain("Job stopped.");
-        host.PersistenceCounter.QueryCalls.Should().Be(0);
+        (await ReadLogsAsync(svc, job.Id)).Select(log => log.Message)
+            .Should().Contain("Job stopped.");
     }
 
     [Test]
@@ -246,7 +251,7 @@ public sealed class TestHarnessCostTrackingExpandedTests
         job.Status.Should().Be(AgentJobStatus.Denied);
         job.CompletedAt.Should().BeNull();
         job.ResultData.Should().BeNull();
-        job.Logs.Should().Contain(l =>
+        (await ReadLogsAsync(svc, job.Id)).Should().Contain(l =>
             l.Level == JobLogLevels.Warning
             && l.Message.Contains("Denied", StringComparison.OrdinalIgnoreCase));
         host.Harness.ToolCalls.Should().BeEmpty();
@@ -282,9 +287,10 @@ public sealed class TestHarnessCostTrackingExpandedTests
 
         approved!.Status.Should().Be(AgentJobStatus.Completed);
         approved.ResultData.Should().Be("approved-ok");
-        approved.Logs.Select(l => l.Message).Should().Contain(m =>
+        var approvedLogs = await ReadLogsAsync(svc, approved.Id);
+        approvedLogs.Select(l => l.Message).Should().Contain(m =>
             m.Contains("Awaiting approval", StringComparison.OrdinalIgnoreCase));
-        approved.Logs.Select(l => l.Message).Should().Contain(m =>
+        approvedLogs.Select(l => l.Message).Should().Contain(m =>
             m.Contains("Approved by", StringComparison.OrdinalIgnoreCase));
         host.Harness.ToolCalls.Should().ContainSingle()
             .Which.JobId.Should().Be(pending.Id);
@@ -323,7 +329,7 @@ public sealed class TestHarnessCostTrackingExpandedTests
 
         denied!.Status.Should().Be(AgentJobStatus.Denied);
         denied.CompletedAt.Should().NotBeNull();
-        denied.Logs.Should().Contain(l =>
+        (await ReadLogsAsync(svc, denied.Id)).Should().Contain(l =>
             l.Level == JobLogLevels.Warning
             && l.Message.Contains("permission revoked", StringComparison.OrdinalIgnoreCase));
         host.Harness.ToolCalls.Should().BeEmpty();
@@ -346,10 +352,14 @@ public sealed class TestHarnessCostTrackingExpandedTests
 
         job.Status.Should().Be(AgentJobStatus.Failed);
         job.CompletedAt.Should().NotBeNull();
-        job.ErrorLog.Should().Contain("[ForeignModuleProtocolException]");
-        job.ErrorLog.Should().Contain("sharpclaw_test_harness_out_of_process.test_harness_job_permissioned");
-        job.ErrorLog.Should().Contain("HTTP 500");
-        job.Logs.Should().Contain(l => l.Level == JobLogLevels.Error);
+        job.ErrorCode.Should().Be("job_execution_failed");
+        job.ErrorMessage.Should().Contain("ForeignModuleProtocolException");
+        var failureLogs = await ReadLogsAsync(svc, job.Id);
+        failureLogs.Should().Contain(log =>
+            log.Message.Contains(
+                "sharpclaw_test_harness_out_of_process.test_harness_job_permissioned"));
+        failureLogs.Should().Contain(log => log.Message.Contains("HTTP 500"));
+        failureLogs.Should().Contain(l => l.Level == JobLogLevels.Error);
         host.Harness.ToolCalls.Should().ContainSingle()
             .Which.Failed.Should().BeTrue();
     }
@@ -385,8 +395,18 @@ public sealed class TestHarnessCostTrackingExpandedTests
 
         var cancelCompleted = await svc.CancelAsync(started.Id);
         cancelCompleted!.Status.Should().Be(AgentJobStatus.Completed);
-        cancelCompleted.Logs.Should().Contain(l =>
+        (await ReadLogsAsync(svc, started.Id)).Should().Contain(l =>
             l.Message.Contains("Cancel rejected", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<IReadOnlyList<DurableLogRecordResponse>>
+        ReadLogsAsync(AgentJobService service, Guid jobId)
+    {
+        var page = await service.ReadLogsAsync(
+            jobId,
+            cursor: null,
+            query: new DurableLogQuery(Take: 500, MaxBytes: 512 * 1024));
+        return page.Records;
     }
 
     [Test]

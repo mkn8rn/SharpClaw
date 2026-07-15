@@ -1,7 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using SharpClaw.Contracts.DTOs.Tasks;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Chat;
 using SharpClaw.Core.Clients;
@@ -24,7 +22,7 @@ public sealed class ChatHeaderWorkflowEngineTests
 
         var header = await engine.BuildHeaderAsync(
             CreateRequest(
-                channel: new ChannelDB
+                channel: new ChannelState
                 {
                     Id = Guid.NewGuid(),
                     Title = "channel",
@@ -189,8 +187,8 @@ public sealed class ChatHeaderWorkflowEngineTests
                     .Build()));
 
     private static ChatHeaderWorkflowRequest CreateRequest(
-        ChannelDB? channel = null,
-        AgentDB? agent = null,
+        ChannelState? channel = null,
+        AgentState? agent = null,
         string clientType = "api",
         bool disableDefaultHeaders = false,
         TaskChatContext? taskContext = null,
@@ -199,12 +197,12 @@ public sealed class ChatHeaderWorkflowEngineTests
         CompletionParameters? completionParameters = null,
         string providerKey = "test")
         => new(
-            channel ?? new ChannelDB
+            channel ?? new ChannelState
             {
                 Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
                 Title = "channel"
             },
-            agent ?? new AgentDB
+            agent ?? new AgentState
             {
                 Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
                 Name = "Agent"
@@ -232,8 +230,8 @@ public sealed class ChatHeaderWorkflowEngineTests
 
         public Task<string> ExpandCustomHeaderAsync(
             string template,
-            ChannelDB channel,
-            AgentDB agent,
+            ChannelState channel,
+            AgentState agent,
             string clientType,
             Guid? sessionUserId,
             CompletionParameters? completionParameters,

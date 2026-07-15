@@ -1,7 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Chat;
@@ -16,11 +14,11 @@ public sealed class ChatHeaderGrantFormatterTests
     public void FormatGrantNames_WhenGlobalFlagStartsWithCan_TrimsPrefix()
     {
         var formatter = new ChatHeaderGrantFormatter(new ModuleRegistry());
-        var permissionSet = new PermissionSetDB
+        var permissionSet = new PermissionSetState
         {
             GlobalFlags =
             [
-                new GlobalFlagDB
+                new GlobalFlagState
                 {
                     FlagKey = "CanReadLogs",
                     Clearance = PermissionClearance.Independent
@@ -50,11 +48,11 @@ public sealed class ChatHeaderGrantFormatterTests
                     secondId
                 }))));
         var formatter = new ChatHeaderGrantFormatter(registry);
-        var permissionSet = new PermissionSetDB
+        var permissionSet = new PermissionSetState
         {
             ResourceAccesses =
             [
-                new ResourceAccessDB
+                new ResourceAccessState
                 {
                     ResourceType = "documents",
                     ResourceId = WellKnownIds.AllResources,

@@ -11,6 +11,7 @@ using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Entities.Core.Tasks;
 using SharpClaw.Contracts.Tasks;
 using SharpClaw.Core.Tasks.Runtime;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
@@ -32,6 +33,7 @@ public sealed class HostAgentBridge(
 {
     private static readonly TaskHostBridgeInvalidationPlanner BridgeInvalidations =
         new();
+    private readonly CoreStateSession _states = new(db);
 
     public Task<string?> ChatAsync(
         Guid instanceId,
@@ -286,42 +288,45 @@ public sealed class HostAgentBridge(
         };
     }
 
-    public async Task<AgentDB?> LoadLatestAgentByCustomIdAsync(
+    public async Task<AgentState?> LoadLatestAgentByCustomIdAsync(
         string customId,
         CancellationToken ct)
     {
-        return await db.Agents
+        var entity = await db.Agents
             .Where(agent => agent.CustomId == customId)
             .OrderByDescending(agent => agent.CreatedAt)
             .FirstOrDefaultAsync(ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public void TrackAgent(AgentDB agent)
+    public void TrackAgent(AgentState agent)
     {
-        db.Agents.Add(agent);
+        _states.Track(agent);
     }
 
-    public async Task<ChannelDB?> LoadChannelWithAllowedAgentsAsync(
+    public async Task<ChannelState?> LoadChannelWithAllowedAgentsAsync(
         Guid channelId,
         CancellationToken ct)
     {
-        return await db.Channels
+        var entity = await db.Channels
             .Include(channel => channel.AllowedAgents)
             .FirstOrDefaultAsync(channel => channel.Id == channelId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public void TrackThread(ChatThreadDB thread)
+    public void TrackThread(ChatThreadState thread)
     {
-        db.ChatThreads.Add(thread);
+        _states.Track(thread);
     }
 
-    public async Task<RoleDB?> LoadRoleByNameAsync(
+    public async Task<RoleState?> LoadRoleByNameAsync(
         string roleName,
         CancellationToken ct)
     {
-        return await db.Roles.FirstOrDefaultAsync(
+        var entity = await db.Roles.FirstOrDefaultAsync(
             role => role.Name == roleName,
             ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
     async Task<Guid> ITaskHostBridgeWorkflowHost.CreateRoleAsync(
@@ -334,47 +339,51 @@ public sealed class HostAgentBridge(
         return created.Id;
     }
 
-    public async Task<RoleDB?> LoadRoleWithPermissionSetAsync(
+    public async Task<RoleState?> LoadRoleWithPermissionSetAsync(
         Guid roleId,
         CancellationToken ct)
     {
-        return await db.Roles
+        var entity = await db.Roles
             .Include(role => role.PermissionSet)
             .FirstOrDefaultAsync(role => role.Id == roleId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<PermissionSetDB> EnsureRolePermissionSetAsync(
-        RoleDB role,
+    public async Task<PermissionSetState> EnsureRolePermissionSetAsync(
+        RoleState role,
         CancellationToken ct)
     {
         if (role.PermissionSet is { } existing)
             return existing;
 
-        var permissionSet = new PermissionSetDB();
-        db.PermissionSets.Add(permissionSet);
-        await db.SaveChangesAsync(ct);
-        role.PermissionSetId = permissionSet.Id;
+        var permissionSet = new PermissionSetState();
+        _states.Track(permissionSet);
         role.PermissionSet = permissionSet;
+        await _states.SaveChangesAsync(ct);
+        role.PermissionSetId = permissionSet.Id;
         return permissionSet;
     }
 
     public async Task LoadPermissionSetCollectionsAsync(
-        PermissionSetDB permissionSet,
+        PermissionSetState permissionSet,
         CancellationToken ct)
     {
-        await db.Entry(permissionSet)
+        var entity = _states.Entity<PermissionSetDB>(permissionSet);
+        await db.Entry(entity)
             .Collection(set => set.GlobalFlags)
             .LoadAsync(ct);
-        await db.Entry(permissionSet)
+        await db.Entry(entity)
             .Collection(set => set.ResourceAccesses)
             .LoadAsync(ct);
+        _states.Refresh(permissionSet);
     }
 
-    public async Task<AgentDB?> LoadAgentAsync(Guid agentId, CancellationToken ct)
+    public async Task<AgentState?> LoadAgentAsync(Guid agentId, CancellationToken ct)
     {
-        return await db.Agents.FirstOrDefaultAsync(
+        var entity = await db.Agents.FirstOrDefaultAsync(
             agent => agent.Id == agentId,
             ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
     public async Task<bool> RoleExistsAsync(Guid roleId, CancellationToken ct)
@@ -382,22 +391,24 @@ public sealed class HostAgentBridge(
         return await db.Roles.AnyAsync(role => role.Id == roleId, ct);
     }
 
-    public async Task<ChannelDB?> LoadChannelByCustomIdAsync(
+    public async Task<ChannelState?> LoadChannelByCustomIdAsync(
         string customId,
         CancellationToken ct)
     {
-        return await db.Channels.FirstOrDefaultAsync(
+        var entity = await db.Channels.FirstOrDefaultAsync(
             channel => channel.CustomId == customId,
             ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<ChannelDB?> LoadChannelByTitleAsync(
+    public async Task<ChannelState?> LoadChannelByTitleAsync(
         string title,
         CancellationToken ct)
     {
-        return await db.Channels.FirstOrDefaultAsync(
+        var entity = await db.Channels.FirstOrDefaultAsync(
             channel => channel.Title == title,
             ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
     async Task<Guid> ITaskHostBridgeWorkflowHost.CreateChannelAsync(
@@ -411,16 +422,23 @@ public sealed class HostAgentBridge(
         return response.Id;
     }
 
-    public async Task<TaskInstanceDB?> LoadTaskInstanceAsync(
+    public async Task<bool> TryAdoptInstanceChannelAsync(
         Guid instanceId,
+        Guid channelId,
         CancellationToken ct)
     {
-        return await db.TaskInstances.FindAsync([instanceId], ct);
+        var instance = await db.TaskInstances.FindAsync([instanceId], ct);
+        if (instance is null || instance.ChannelId is not null)
+            return false;
+
+        instance.ChannelId = channelId;
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     public Task SaveAsync(CancellationToken ct)
     {
-        return db.SaveChangesAsync(ct);
+        return _states.SaveChangesAsync(ct);
     }
 
     public void Invalidate(

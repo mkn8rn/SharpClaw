@@ -1,6 +1,6 @@
 using System.Text.Json;
-using SharpClaw.Contracts.Entities.Core.Tasks;
 using SharpClaw.Contracts.Enums;
+using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Runtime;
 
 namespace SharpClaw.Tests.Core;
@@ -11,12 +11,12 @@ public sealed class TaskStartupPreparationEngineTests
     [Test]
     public void Prepare_WhenQueuedAndParameterJsonIsNull_ReturnsCompiledPlan()
     {
-        var definition = Definition(LogOnlySource("startup-null-parameters"));
+        var source = LogOnlySource("startup-null-parameters");
         var instance = Instance(TaskInstanceStatus.Queued);
 
         var result = new TaskStartupPreparationEngine().Prepare(
             instance,
-            definition);
+            source);
 
         result.Kind.Should().Be(TaskStartupPreparationKind.StartExecution);
         result.Plan.Should().NotBeNull();
@@ -29,14 +29,14 @@ public sealed class TaskStartupPreparationEngineTests
     [Test]
     public void Prepare_WhenQueuedAndParameterJsonExists_UsesCurrentJsonDeserializerBehavior()
     {
-        var definition = Definition(LogOnlySource("startup-json-parameters"));
+        var source = LogOnlySource("startup-json-parameters");
         var instance = Instance(
             TaskInstanceStatus.Queued,
             """{"Topic":"from-json"}""");
 
         var result = new TaskStartupPreparationEngine().Prepare(
             instance,
-            definition);
+            source);
 
         result.Kind.Should().Be(TaskStartupPreparationKind.StartExecution);
         result.Plan!.ParameterValues.Should().ContainKey("Topic");
@@ -46,12 +46,12 @@ public sealed class TaskStartupPreparationEngineTests
     [Test]
     public void Prepare_WhenParameterJsonIsInvalid_PropagatesJsonExceptionWithoutCompilationFailure()
     {
-        var definition = Definition(LogOnlySource("startup-invalid-json"));
+        var source = LogOnlySource("startup-invalid-json");
         var instance = Instance(TaskInstanceStatus.Queued, "{not-json");
 
         var act = () => new TaskStartupPreparationEngine().Prepare(
             instance,
-            definition);
+            source);
 
         act.Should().Throw<JsonException>();
         instance.Status.Should().Be(TaskInstanceStatus.Queued);
@@ -62,12 +62,12 @@ public sealed class TaskStartupPreparationEngineTests
     [Test]
     public void Prepare_WhenInstanceIsNotQueued_ThrowsCanonicalStatusMessage()
     {
-        var definition = Definition(LogOnlySource("startup-not-queued"));
+        var source = LogOnlySource("startup-not-queued");
         var instance = Instance(TaskInstanceStatus.Cancelled);
 
         var act = () => new TaskStartupPreparationEngine().Prepare(
             instance,
-            definition);
+            source);
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage($"Task instance {instance.Id} is Cancelled, expected Queued.");
@@ -76,11 +76,11 @@ public sealed class TaskStartupPreparationEngineTests
     [Test]
     public void Prepare_WhenCompilationFails_ReturnsJoinedDiagnosticsWithoutMutatingInstance()
     {
-        var definition = Definition(InvalidSource("startup-compile-failure"));
+        var source = InvalidSource("startup-compile-failure");
         var instance = Instance(TaskInstanceStatus.Queued);
         var engine = new TaskStartupPreparationEngine();
 
-        var result = engine.Prepare(instance, definition);
+        var result = engine.Prepare(instance, source);
 
         result.Kind.Should().Be(TaskStartupPreparationKind.CompilationFailed);
         result.Plan.Should().BeNull();
@@ -92,14 +92,7 @@ public sealed class TaskStartupPreparationEngineTests
         instance.ErrorMessage.Should().BeNull();
     }
 
-    private static TaskDefinitionDB Definition(string sourceText) => new()
-    {
-        Id = Guid.NewGuid(),
-        Name = "definition",
-        SourceText = sourceText
-    };
-
-    private static TaskInstanceDB Instance(
+    private static TaskInstanceState Instance(
         TaskInstanceStatus status,
         string? parameterValuesJson = null) => new()
     {

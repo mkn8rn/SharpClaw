@@ -1,6 +1,5 @@
 using FluentAssertions;
 using SharpClaw.Contracts.DTOs.DefaultResources;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Core.Permissions;
 using SharpClaw.Core.Resources;
@@ -131,7 +130,7 @@ public sealed class DefaultResourceEngineTests
     [Test]
     public void Apply_WhenRequestUpdatesAddsAndClearsEntries_MutatesSet()
     {
-        var removed = new List<DefaultResourceEntryDB>();
+        var removed = new List<DefaultResourceEntryState>();
         var setId = Guid.NewGuid();
         var oldTask = Guid.NewGuid();
         var newTask = Guid.NewGuid();
@@ -195,14 +194,14 @@ public sealed class DefaultResourceEngineTests
             new HashSet<Guid>(),
             new HashSet<Guid>());
 
-    private static DefaultResourceSetDB EntitySet(
+    private static DefaultResourceSetState EntitySet(
         Guid id,
         params (string Key, Guid ResourceId)[] entries) =>
         new()
         {
             Id = id,
             Entries = entries
-                .Select(entry => new DefaultResourceEntryDB
+                .Select(entry => new DefaultResourceEntryState
                 {
                     DefaultResourceSetId = id,
                     ResourceKey = entry.Key,

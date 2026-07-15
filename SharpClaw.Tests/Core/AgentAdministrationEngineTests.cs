@@ -1,9 +1,6 @@
 using System.Text.Json;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.Agents;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Agents;
@@ -56,7 +53,7 @@ public sealed class AgentAdministrationEngineTests
     public void ApplyUpdate_ClearsSentinelAndEmptyValues()
     {
         var model = CreateModel();
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Id = Guid.NewGuid(),
             Name = "agent",
@@ -98,7 +95,7 @@ public sealed class AgentAdministrationEngineTests
     public void ApplyUpdate_WhenNameConflictsAfterTrimAndCase_Throws()
     {
         var model = CreateModel();
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Name = "current",
             ModelId = model.Id,
@@ -122,19 +119,19 @@ public sealed class AgentAdministrationEngineTests
     public void AssignRole_WhenCallerHasSameRole_SkipsPermissionCoverage()
     {
         var model = CreateModel();
-        var role = new RoleDB
+        var role = new RoleState
         {
             Id = Guid.NewGuid(),
             Name = "target"
         };
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Name = "agent",
             ModelId = model.Id,
             Model = model
         };
-        var targetPermissions = new PermissionSetDB();
-        targetPermissions.GlobalFlags.Add(new GlobalFlagDB
+        var targetPermissions = new PermissionSetState();
+        targetPermissions.GlobalFlags.Add(new GlobalFlagState
         {
             FlagKey = "CanDoThing",
             Clearance = PermissionClearance.Independent
@@ -157,25 +154,25 @@ public sealed class AgentAdministrationEngineTests
     public void AssignRole_WhenCallerLacksResourceGrant_Throws()
     {
         var model = CreateModel();
-        var role = new RoleDB
+        var role = new RoleState
         {
             Id = Guid.NewGuid(),
             Name = "target"
         };
-        var agent = new AgentDB
+        var agent = new AgentState
         {
             Name = "agent",
             ModelId = model.Id,
             Model = model
         };
-        var targetPermissions = new PermissionSetDB();
-        targetPermissions.ResourceAccesses.Add(new ResourceAccessDB
+        var targetPermissions = new PermissionSetState();
+        targetPermissions.ResourceAccesses.Add(new ResourceAccessState
         {
             ResourceType = "Module.Resource",
             ResourceId = Guid.NewGuid(),
             Clearance = PermissionClearance.Independent
         });
-        var callerPermissions = new PermissionSetDB();
+        var callerPermissions = new PermissionSetState();
 
         var act = () => _engine.AssignRole(
             agent,
@@ -207,16 +204,16 @@ public sealed class AgentAdministrationEngineTests
         known.Should().Contain("default-gpt-azure");
     }
 
-    private static ModelDB CreateModel(string name = "model")
+    private static ModelState CreateModel(string name = "model")
     {
-        var provider = new ProviderDB
+        var provider = new ProviderState
         {
             Id = Guid.NewGuid(),
             Name = "Provider",
             ProviderKey = "provider"
         };
 
-        return new ModelDB
+        return new ModelState
         {
             Id = Guid.NewGuid(),
             Name = name,

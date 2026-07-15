@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using SharpClaw.Contracts.DTOs.AgentActions;
 using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Persistence;
 using SharpClaw.Core.Jobs;
@@ -10,17 +9,17 @@ namespace SharpClaw.Runtime.BLL.Services;
 public sealed class EfAgentJobAdministrationHost(
     SharpClawDbContext db,
     IPersistenceEntityResolver entities,
-    ChatCache chatCache,
-    AgentJobAdministrationEngine jobs) : IAgentJobAdministrationHost
+    DurableExecutionPersistence durablePersistence) : IAgentJobAdministrationHost
 {
-    public async Task<AgentJobDB?> LoadJobAsync(
+    public async Task<AgentJobState?> LoadJobAsync(
         Guid jobId,
         CancellationToken ct)
     {
-        return await entities.FindAsync<AgentJobDB>(db, jobId, ct);
+        var entity = await entities.FindAsync<AgentJobDB>(db, jobId, ct);
+        return entity is null ? null : ExecutionStateMapper.ToCoreState(entity);
     }
 
-    public async Task<IReadOnlyList<AgentJobDB>> LoadJobsByIdsAsync(
+    public async Task<IReadOnlyList<AgentJobState>> LoadJobsByIdsAsync(
         IReadOnlyList<Guid> jobIds,
         CancellationToken ct)
     {
@@ -46,68 +45,42 @@ public sealed class EfAgentJobAdministrationHost(
         return distinctIds
             .Select(id => byId.GetValueOrDefault(id))
             .Where(job => job is not null)
-            .Select(job => job!)
+            .Select(job => ExecutionStateMapper.ToCoreState(job!))
             .ToList();
     }
 
-    public async Task<IReadOnlyList<AgentJobDB>> ListJobsForChannelAsync(
-        Guid channelId,
+    public async Task PersistDecisionAsync(
+        AgentJobState job,
+        AgentJobLifecycleDecision decision,
         CancellationToken ct)
     {
-        return await entities.QueryAsync<AgentJobDB>(
-            db,
-            job => job.ChannelId == channelId,
-            hint: new PersistenceQueryHint("ChannelId", channelId),
-            ct: ct);
+        var entity = await FindTrackedEntityAsync(job.Id, ct)
+            ?? throw new InvalidOperationException(
+                $"Agent job {job.Id} was not tracked by the Runtime host.");
+        ExecutionStateMapper.Apply(job, entity);
+        await durablePersistence.PersistJobDecisionAsync(entity, decision, ct);
     }
 
-    public async Task<IReadOnlyList<AgentJobDB>> ListJobsByActionPrefixAsync(
-        string actionKeyPrefix,
-        Guid? resourceId,
+    public async Task PersistStatesAsync(
+        IReadOnlyList<AgentJobState> jobs,
         CancellationToken ct)
     {
-        return await entities.QueryAsync<AgentJobDB>(
-            db,
-            job => job.ActionKey != null
-                && job.ActionKey.StartsWith(
-                    actionKeyPrefix,
-                    StringComparison.OrdinalIgnoreCase)
-                && (resourceId == null || job.ResourceId == resourceId),
-            ct: ct);
+        foreach (var state in jobs)
+        {
+            var entity = await FindTrackedEntityAsync(state.Id, ct)
+                ?? throw new InvalidOperationException(
+                    $"Agent job {state.Id} was not found while persisting state.");
+            ExecutionStateMapper.Apply(state, entity);
+        }
+
+        await durablePersistence.SaveJobStateAsync(ct);
     }
 
-    public bool TryGetCachedJobLogResponses(
-        Guid jobId,
-        out IReadOnlyList<AgentJobLogResponse>? logs)
-    {
-        return chatCache.TryGetJobLogs(jobId, out logs);
-    }
-
-    public async Task<IReadOnlyList<AgentJobLogEntryDB>> LoadJobLogEntriesAsync(
-        Guid jobId,
+    private async Task<AgentJobDB?> FindTrackedEntityAsync(
+        Guid id,
         CancellationToken ct)
     {
-        return await entities.QueryAsync<AgentJobLogEntryDB>(
-            db,
-            log => log.AgentJobId == jobId,
-            hint: new PersistenceQueryHint("AgentJobId", jobId),
-            ct: ct);
-    }
-
-    public void CacheJobLogResponses(
-        Guid jobId,
-        IReadOnlyList<AgentJobLogResponse> logs)
-    {
-        chatCache.SetJobLogs(jobId, logs);
-    }
-
-    public async Task SaveAsync(
-        IReadOnlyList<AgentJobLogEntryDB> logs,
-        CancellationToken ct)
-    {
-        await db.SaveChangesAsync(ct);
-
-        foreach (var log in logs)
-            chatCache.AppendJobLogIfCached(log.AgentJobId, jobs.ToLogResponse(log));
+        return db.AgentJobs.Local.FirstOrDefault(job => job.Id == id)
+            ?? await entities.FindAsync<AgentJobDB>(db, id, ct);
     }
 }

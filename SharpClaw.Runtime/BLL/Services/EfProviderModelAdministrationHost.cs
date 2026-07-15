@@ -6,6 +6,7 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Clients;
 using SharpClaw.Core.Providers;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Shared.Security;
 
@@ -17,6 +18,8 @@ public sealed class EfProviderModelAdministrationHost(
     ProviderApiClientFactory clientFactory,
     IConfiguration configuration) : IProviderModelAdministrationHost
 {
+    private readonly CoreStateSession _states = new(db);
+
     public bool UniqueProviderNamesEnforced =>
         ProviderCatalogEngine.IsUniqueNameEnforced(
             configuration["UniqueNames:Providers"]);
@@ -46,40 +49,44 @@ public sealed class EfProviderModelAdministrationHost(
             encryptionOptions.Key);
     }
 
-    public async Task<ProviderDB?> LoadProviderAsync(
+    public async Task<ProviderState?> LoadProviderAsync(
         Guid providerId,
         CancellationToken ct)
     {
-        return await db.Providers.FindAsync([providerId], ct);
+        var entity = await db.Providers.FindAsync([providerId], ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<ProviderDB?> LoadProviderWithModelsAsync(
+    public async Task<ProviderState?> LoadProviderWithModelsAsync(
         Guid providerId,
         CancellationToken ct)
     {
-        return await db.Providers
+        var entity = await db.Providers
             .Include(p => p.Models)
             .FirstOrDefaultAsync(p => p.Id == providerId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<ModelDB?> LoadModelAsync(
+    public async Task<ModelState?> LoadModelAsync(
         Guid modelId,
         CancellationToken ct)
     {
-        return await db.Models
+        var entity = await db.Models
             .Include(m => m.Provider)
             .FirstOrDefaultAsync(m => m.Id == modelId, ct);
+        return entity is null ? null : _states.Map(entity);
     }
 
-    public async Task<IReadOnlyList<ProviderDB>> ListProvidersAsync(
+    public async Task<IReadOnlyList<ProviderState>> ListProvidersAsync(
         CancellationToken ct)
     {
-        return await db.Providers
+        var entities = await db.Providers
             .OrderBy(provider => provider.Name)
             .ToListAsync(ct);
+        return _states.Map(entities);
     }
 
-    public async Task<IReadOnlyList<ModelDB>> ListModelsAsync(
+    public async Task<IReadOnlyList<ModelState>> ListModelsAsync(
         Guid? providerId,
         CancellationToken ct)
     {
@@ -90,19 +97,21 @@ public sealed class EfProviderModelAdministrationHost(
         if (providerId is not null)
             query = query.Where(model => model.ProviderId == providerId);
 
-        return await query
+        var entities = await query
             .OrderBy(model => model.Provider.Name)
             .ThenBy(model => model.Name)
             .ToListAsync(ct);
+        return _states.Map(entities);
     }
 
-    public async Task<IReadOnlyList<ModelDB>> ListModelsForProviderAsync(
+    public async Task<IReadOnlyList<ModelState>> ListModelsForProviderAsync(
         Guid providerId,
         CancellationToken ct)
     {
-        return await db.Models
+        var entities = await db.Models
             .Where(m => m.ProviderId == providerId)
             .ToListAsync(ct);
+        return _states.Map(entities);
     }
 
     public async Task<IReadOnlyList<string>> ListProviderNamesAsync(
@@ -127,7 +136,7 @@ public sealed class EfProviderModelAdministrationHost(
     }
 
     public async Task<IReadOnlyList<string>> ListProviderModelIdsAsync(
-        ProviderDB provider,
+        ProviderState provider,
         IProviderPlugin plugin,
         CancellationToken ct)
     {
@@ -156,33 +165,34 @@ public sealed class EfProviderModelAdministrationHost(
         return await deviceCodeFlow.PollAsync(session, ct);
     }
 
-    public void TrackProvider(ProviderDB provider)
+    public void TrackProvider(ProviderState provider)
     {
-        db.Providers.Add(provider);
+        _states.Track(provider);
     }
 
-    public void TrackModel(ModelDB model)
+    public void TrackModel(ModelState model)
     {
-        db.Models.Add(model);
+        _states.Track(model);
     }
 
-    public void TrackModels(IReadOnlyList<ModelDB> models)
+    public void TrackModels(IReadOnlyList<ModelState> models)
     {
-        db.Models.AddRange(models);
+        foreach (var model in models)
+            _states.Track(model);
     }
 
-    public void RemoveProvider(ProviderDB provider)
+    public void RemoveProvider(ProviderState provider)
     {
-        db.Providers.Remove(provider);
+        _states.Remove(provider);
     }
 
-    public void RemoveModel(ModelDB model)
+    public void RemoveModel(ModelState model)
     {
-        db.Models.Remove(model);
+        _states.Remove(model);
     }
 
     public async Task SaveAsync(CancellationToken ct)
     {
-        await db.SaveChangesAsync(ct);
+        await _states.SaveChangesAsync(ct);
     }
 }

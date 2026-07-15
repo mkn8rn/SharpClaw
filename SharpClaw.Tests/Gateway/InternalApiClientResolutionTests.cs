@@ -44,7 +44,7 @@ public class InternalApiClientResolutionTests
 
         try
         {
-            using var sessionLogs = new SessionLogWriter("gateway-tests", logsRoot);
+            using var processLogs = CreateProcessLogs(logsRoot);
             var handler = new CaptureHandler();
             var httpClient = new HttpClient(handler)
             {
@@ -59,7 +59,7 @@ public class InternalApiClientResolutionTests
                     ApiKeyFilePath = apiKeyPath,
                 }),
                 new HttpContextAccessor(),
-                sessionLogs);
+                processLogs);
 
             _ = await client.GetAsync<object>("/ping");
 
@@ -100,7 +100,7 @@ public class InternalApiClientResolutionTests
             Environment.SetEnvironmentVariable("SHARPCLAW_INSTANCE_ROOT", gatewayRoot);
             Environment.SetEnvironmentVariable("SHARPCLAW_SHARED_ROOT", sharedRoot);
 
-            using var sessionLogs = new SessionLogWriter("gateway-tests", logsRoot);
+            using var processLogs = CreateProcessLogs(logsRoot);
             var handler = new CaptureHandler();
             var httpClient = new HttpClient(handler)
             {
@@ -114,7 +114,7 @@ public class InternalApiClientResolutionTests
                     BaseUrl = "http://127.0.0.1:48923",
                 }),
                 new HttpContextAccessor(),
-                sessionLogs);
+                processLogs);
 
             _ = await client.GetAsync<object>("/ping");
 
@@ -180,6 +180,16 @@ public class InternalApiClientResolutionTests
         Directory.CreateDirectory(path);
         return path;
     }
+
+    private static DurableProcessLogWriter CreateProcessLogs(string root) =>
+        new(
+            "gateway-tests",
+            new SharpClawInstancePaths(
+                SharpClawInstanceKind.Gateway,
+                root,
+                root,
+                root),
+            TimeSpan.FromHours(1));
 
     private static void DeleteDirectoryIfExists(string path)
     {

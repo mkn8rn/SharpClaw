@@ -63,6 +63,7 @@ public sealed partial class MainPage : Page
     private int _loadingFrame;
     private TextBlock? _loadingMsgBlock;
     private JobDetailDto? _currentJobDetail;
+    private IReadOnlyList<JobLogDto> _currentJobLogs = [];
 
     // ── Chat bubble pool (avoids per-history-load GC pressure) ──
     private readonly record struct ChatBubbleRow(Border Root, TextBlock Role, TextBlock Time, TextBlock Content);
@@ -87,6 +88,8 @@ public sealed partial class MainPage : Page
     private Guid? _selectedTaskDefinitionId;
     private Guid? _selectedTaskInstanceId;
     private TaskInstanceDetailDto? _currentTaskDetail;
+    private IReadOnlyList<TaskLogDto> _currentTaskLogs = [];
+    private TaskOutputRecordDto? _currentTaskOutput;
     private bool _suppressTaskDefSelection;
     private bool _suppressTaskInstSelection;
     private readonly List<ComboBoxItem> _taskDefItemPool = [];
@@ -960,16 +963,35 @@ public sealed partial class MainPage : Page
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record RoleDto(Guid Id, string Name, Guid? PermissionSetId = null);
     [ImplicitKeys(IsEnabled = false)]
-    private sealed partial record JobDto(Guid Id, Guid ChannelId, string ActionKey, string Status, DateTimeOffset CreatedAt);
-    private sealed record JobLogDto(string Message, string Level, DateTimeOffset Timestamp);
+    private sealed partial record JobDto(Guid Id, Guid ChannelId, string? ActionKey, string Status, DateTimeOffset CreatedAt);
+    private sealed record JobPageDto(IReadOnlyList<JobDto> Records, string? NextCursor, bool HasMore);
+    [ImplicitKeys(IsEnabled = false)]
+    private sealed partial record ArtifactDto(Guid Id, string MediaType, long Length, string Sha256, string? Preview = null);
+    private sealed record JobLogDto(
+        long Sequence,
+        Guid RecordId,
+        string Message,
+        string Level,
+        DateTimeOffset Timestamp,
+        ArtifactDto? Artifact = null);
+    private sealed record JobLogPageDto(
+        IReadOnlyList<JobLogDto> Records,
+        string? NextCursor,
+        bool HasMore,
+        int ReturnedRecords,
+        int ReturnedBytes,
+        long SnapshotLastSequence,
+        long FirstAvailableSequence,
+        long ExpiredRecordCount);
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record ResourceItemDto(Guid Id, string Name);
 
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record JobDetailDto(
-        Guid Id, Guid ChannelId, Guid AgentId, string ActionKey, Guid? ResourceId,
-        string Status, string? ResultData, string? ErrorLog,
-        IReadOnlyList<JobLogDto>? Logs,
+        Guid Id, Guid ChannelId, Guid AgentId, string? ActionKey, Guid? ResourceId,
+        string Status, ArtifactDto? ResultArtifact, string? ErrorCode,
+        string? ErrorMessage, string DiagnosticCompleteness,
+        long? FinalLogSequence, long LogRecordCount,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
         TokenUsageDto? JobCost = null,
         ChannelCostDto? ChannelCost = null);
@@ -984,14 +1006,33 @@ public sealed partial class MainPage : Page
     private sealed partial record TaskInstanceSummaryDto(
         Guid Id, Guid TaskDefinitionId, string TaskName, string Status,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt);
+    private sealed record TaskInstancePageDto(
+        IReadOnlyList<TaskInstanceSummaryDto> Records,
+        string? NextCursor,
+        bool HasMore);
 
     private sealed record TaskLogDto(string Message, string Level, DateTimeOffset Timestamp);
+    private sealed record TaskLogPageDto(
+        IReadOnlyList<TaskLogDto> Records,
+        string? NextCursor,
+        bool HasMore,
+        int ReturnedRecords,
+        int ReturnedBytes,
+        long SnapshotLastSequence,
+        long FirstAvailableSequence,
+        long ExpiredRecordCount);
+    private sealed record TaskOutputRecordDto(
+        long Sequence,
+        DateTimeOffset Timestamp,
+        string? Data,
+        ArtifactDto? Artifact = null);
 
     [ImplicitKeys(IsEnabled = false)]
     private sealed partial record TaskInstanceDetailDto(
         Guid Id, Guid TaskDefinitionId, string TaskName, string Status,
-        string? OutputSnapshotJson, string? ErrorMessage,
-        IReadOnlyList<TaskLogDto>? Logs,
+        string? ErrorCode, string? ErrorMessage, string DiagnosticCompleteness,
+        long? FinalLogSequence, long LogRecordCount,
+        long? FinalOutputSequence, long OutputRecordCount,
         DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt,
         Guid? ChannelId = null, ChannelCostDto? ChannelCost = null);
 

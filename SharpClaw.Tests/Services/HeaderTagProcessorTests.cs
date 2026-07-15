@@ -4,8 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Core.Clients;
 using SharpClaw.Runtime.BLL.Modules;
 using SharpClaw.Runtime.BLL.Services;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Core.Modules;
@@ -20,8 +18,8 @@ public sealed class HeaderTagProcessorTests
     {
         await using var db = CreateDbContext();
         var processor = CreateProcessor(db, disableHeaderTagExpansion: true);
-        var channel = new ChannelDB { Title = "Channel" };
-        var agent = new AgentDB { Name = "Agent" };
+        var channel = new ChannelState { Title = "Channel" };
+        var agent = new AgentState { Name = "Agent" };
         const string template = "[{{time}} | {{agent-name}} | {{Agents:{Name}}}]";
 
         var expanded = await processor.ExpandAsync(
@@ -40,8 +38,8 @@ public sealed class HeaderTagProcessorTests
     {
         await using var db = CreateDbContext();
         var processor = CreateProcessor(db, disableHeaderTagExpansion: false);
-        var channel = new ChannelDB { Title = "Channel" };
-        var agent = new AgentDB { Name = "Agent" };
+        var channel = new ChannelState { Title = "Channel" };
+        var agent = new AgentState { Name = "Agent" };
 
         var expanded = await processor.ExpandAsync(
             "[{{agent-name}}]",

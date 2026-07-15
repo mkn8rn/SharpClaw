@@ -1,6 +1,4 @@
 using System.Text.Json;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Models;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Core.Chat;
@@ -13,12 +11,12 @@ public sealed class ChatRequestPlanningEngineTests
     [Test]
     public void BuildBufferedPlan_WhenProviderSupportsNativeTools_EnablesToolsAndUsesChannelAwareness()
     {
-        var channelAwareness = new ToolAwarenessSetDB
+        var channelAwareness = new ToolAwarenessSetState
         {
             Name = "Channel tools",
             Tools = new Dictionary<string, bool> { ["channel_tool"] = true }
         };
-        var agentAwareness = new ToolAwarenessSetDB
+        var agentAwareness = new ToolAwarenessSetState
         {
             Name = "Agent tools",
             Tools = new Dictionary<string, bool> { ["agent_tool"] = true }
@@ -31,7 +29,7 @@ public sealed class ChatRequestPlanningEngineTests
         {
             ["custom"] = JsonDocument.Parse("1").RootElement.Clone()
         };
-        var channel = new ChannelDB
+        var channel = new ChannelState
         {
             Title = "Channel",
             ToolAwarenessSet = channelAwareness
@@ -66,7 +64,7 @@ public sealed class ChatRequestPlanningEngineTests
         var planner = CreatePlanner(agent);
 
         var plan = planner.BuildBufferedPlan(
-            new ChannelDB { Title = "Channel" },
+            new ChannelState { Title = "Channel" },
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
@@ -89,7 +87,7 @@ public sealed class ChatRequestPlanningEngineTests
         var planner = CreatePlanner(agent);
 
         var plan = planner.BuildStreamingPlan(
-            new ChannelDB { Title = "Channel" },
+            new ChannelState { Title = "Channel" },
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
@@ -108,7 +106,7 @@ public sealed class ChatRequestPlanningEngineTests
         var agent = CreateAgent(
             supportsNativeToolCalling: true,
             requiresApiKey: false);
-        agent.ToolAwarenessSet = new ToolAwarenessSetDB
+        agent.ToolAwarenessSet = new ToolAwarenessSetState
         {
             Name = "Agent tools",
             Tools = new Dictionary<string, bool> { ["agent_tool"] = true }
@@ -116,7 +114,7 @@ public sealed class ChatRequestPlanningEngineTests
         var planner = CreatePlanner(agent);
 
         var plan = planner.BuildStreamingPlan(
-            new ChannelDB
+            new ChannelState
             {
                 Title = "Channel",
                 DisableToolSchemas = true
@@ -146,7 +144,7 @@ public sealed class ChatRequestPlanningEngineTests
         var planner = CreatePlanner(agent);
 
         var plan = planner.BuildBufferedPlan(
-            new ChannelDB { Title = "Channel" },
+            new ChannelState { Title = "Channel" },
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
@@ -166,7 +164,7 @@ public sealed class ChatRequestPlanningEngineTests
         var planner = CreatePlanner(agent);
 
         var act = () => planner.BuildBufferedPlan(
-            new ChannelDB { Title = "Channel" },
+            new ChannelState { Title = "Channel" },
             agent,
             threadId: null,
             disableDefaultSystemPrompt: false,
@@ -177,13 +175,13 @@ public sealed class ChatRequestPlanningEngineTests
             .WithMessage("Provider does not have an API key configured.");
     }
 
-    private static ChatRequestPlanningEngine CreatePlanner(AgentDB agent)
+    private static ChatRequestPlanningEngine CreatePlanner(AgentState agent)
     {
         _ = agent;
         return new ChatRequestPlanningEngine(new ChatPromptEngine());
     }
 
-    private static ChatProviderPlanningFacts CreateProviderFacts(AgentDB agent)
+    private static ChatProviderPlanningFacts CreateProviderFacts(AgentState agent)
     {
         var provider = agent.Model.Provider;
         var requiresApiKey = provider.ProviderKey.Contains(
@@ -198,7 +196,7 @@ public sealed class ChatRequestPlanningEngineTests
             ICompletionParameterSpec.Passthrough);
     }
 
-    private static AgentDB CreateAgent(
+    private static AgentState CreateAgent(
         bool supportsNativeToolCalling,
         bool requiresApiKey,
         string capabilityTags = "chat",
@@ -207,14 +205,14 @@ public sealed class ChatRequestPlanningEngineTests
         var providerKey = supportsNativeToolCalling ? "native-test" : "plain-test";
         if (requiresApiKey)
             providerKey += "-requires-key";
-        var provider = new ProviderDB
+        var provider = new ProviderState
         {
             Id = Guid.NewGuid(),
             Name = "Provider",
             ProviderKey = providerKey,
             EncryptedApiKey = requiresApiKey ? encryptedApiKey : null
         };
-        var model = new ModelDB
+        var model = new ModelState
         {
             Id = Guid.NewGuid(),
             Name = "model",
@@ -223,7 +221,7 @@ public sealed class ChatRequestPlanningEngineTests
             CapabilityTagsRaw = capabilityTags
         };
 
-        return new AgentDB
+        return new AgentState
         {
             Id = Guid.NewGuid(),
             Name = "Agent",

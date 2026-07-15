@@ -10,6 +10,7 @@ using SharpClaw.Core.Tasks;
 using SharpClaw.Core.Tasks.Administration;
 using SharpClaw.Core.Tasks.Compilation;
 using SharpClaw.Core.Tasks.Runtime;
+using SharpClaw.Runtime.INF.DurableStorage;
 using SharpClaw.Runtime.INF.Persistence;
 using SharpClaw.Shared.Security;
 
@@ -26,7 +27,6 @@ public sealed class TaskOrchestrator(
     TaskStartupPreparationEngine startupPreparation,
     ILogger<TaskOrchestrator> logger)
 {
-    private readonly TaskAdministrationEngine _tasks = new();
     private readonly TaskRuntimeLifecycleEngine _runtimeLifecycle = new();
 
     /// <summary>
@@ -58,16 +58,22 @@ public sealed class TaskOrchestrator(
         }
 
         var startup = startupPreparation.Prepare(
-            instance,
-            instance.TaskDefinition);
+            ExecutionStateMapper.ToCoreState(instance),
+            instance.TaskDefinition.SourceText);
 
         if (startup.Kind == TaskStartupPreparationKind.CompilationFailed)
         {
             var errors = startup.CompilationErrors
                 ?? throw new InvalidOperationException(
                     "Core task startup preparation returned compilation failure without diagnostics.");
-            _tasks.ApplyCompilationFailure(instance, errors);
-            await startupDb.SaveChangesAsync(ct);
+            if (!await startupTaskService.ApplyCompilationFailureAsync(
+                    instanceId,
+                    errors,
+                    ct))
+            {
+                throw new InvalidOperationException(
+                    $"Task instance {instanceId} disappeared during compilation failure persistence.");
+            }
             logger.LogDebug(
                 "Task instance {InstanceId} compilation failed after {ElapsedMs}ms with {DiagnosticCount} diagnostic(s).",
                 instanceId,
@@ -147,22 +153,40 @@ public sealed class TaskOrchestrator(
             var taskService = scope.ServiceProvider.GetRequiredService<TaskService>();
             var executionEngine = scope.ServiceProvider
                 .GetRequiredService<TaskPlanExecutionEngine>();
-            var host = new EfTaskPlanExecutionHost(db, taskService, _tasks);
+            var persistence = scope.ServiceProvider
+                .GetRequiredService<DurableExecutionPersistence>();
+            var stateStore = scope.ServiceProvider
+                .GetRequiredService<TaskDiagnosticStateStore>();
+            var host = new EfTaskPlanExecutionHost(
+                db,
+                taskService,
+                new TaskAdministrationEngine(),
+                persistence,
+                stateStore);
 
-            var outcome = await executionEngine.ExecuteAsync(
-                new TaskPlanExecutionRequest(
+            try
+            {
+                var outcome = await executionEngine.ExecuteAsync(
+                    new TaskPlanExecutionRequest(
+                        instanceId,
+                        plan,
+                        runtime,
+                        scope.ServiceProvider,
+                        host,
+                        runtime.CancellationToken));
+
+                logger.LogDebug(
+                    "Task instance {InstanceId} execution engine finished with {Status} in {ElapsedMs}ms.",
                     instanceId,
-                    plan,
-                    runtime,
-                    scope.ServiceProvider,
-                    host,
-                    runtime.CancellationToken));
-
-            logger.LogDebug(
-                "Task instance {InstanceId} execution engine finished with {Status} in {ElapsedMs}ms.",
-                instanceId,
-                outcome.Status,
-                outcome.Elapsed.TotalMilliseconds);
+                    outcome.Status,
+                    outcome.Elapsed.TotalMilliseconds);
+            }
+            finally
+            {
+                await persistence.SealTaskDiagnosticsAsync(
+                    [instanceId],
+                    CancellationToken.None);
+            }
         }
         finally
         {
@@ -191,7 +215,9 @@ public sealed class TaskOrchestrator(
     private sealed class EfTaskPlanExecutionHost(
         SharpClawDbContext db,
         TaskService taskService,
-        TaskAdministrationEngine tasks) : ITaskPlanExecutionHost
+        TaskAdministrationEngine tasks,
+        DurableExecutionPersistence persistence,
+        TaskDiagnosticStateStore stateStore) : ITaskPlanExecutionHost
     {
         public async Task<Guid?> LoadInitialChannelIdAsync(
             Guid instanceId,
@@ -213,26 +239,45 @@ public sealed class TaskOrchestrator(
             if (instance is null)
                 return;
 
-            db.TaskOutputEntries.Add(tasks.ApplyOutput(
-                instance,
-                sequence,
-                outputJson));
+            await persistence.AppendTaskOutputAsync(
+                tasks.CreateOutput(instanceId, sequence, outputJson),
+                ct);
             await db.SaveChangesAsync(ct);
         }
 
-        public async Task PersistSharedDataSnapshotAsync(
+        public async Task PersistSharedDataChangeAsync(
             Guid instanceId,
-            string? lightSnapshot,
-            string? bigSnapshotJson,
+            TaskSharedDataChange change,
             CancellationToken ct)
         {
             var instance = await db.TaskInstances.FindAsync([instanceId], ct);
             if (instance is null)
                 return;
 
-            instance.LightDataSnapshot = lightSnapshot;
-            instance.BigDataSnapshotJson = bigSnapshotJson;
-            await db.SaveChangesAsync(ct);
+            await stateStore.ApplyChangeAsync(
+                instanceId,
+                change.Kind switch
+                {
+                    TaskSharedDataChangeKind.LightDataReplaced =>
+                        new TaskDiagnosticStateChange(
+                            TaskDiagnosticStateChangeKind.LightDataReplaced,
+                            LightData: change.LightData),
+                    TaskSharedDataChangeKind.BigDataUpserted when change.BigData is { } big =>
+                        new TaskDiagnosticStateChange(
+                            TaskDiagnosticStateChangeKind.BigDataUpserted,
+                            BigData: new TaskDiagnosticBigDataChange(
+                                big.Id,
+                                big.Title,
+                                big.Content,
+                                big.CreatedAt)),
+                    TaskSharedDataChangeKind.BigDataRemoved =>
+                        new TaskDiagnosticStateChange(
+                            TaskDiagnosticStateChangeKind.BigDataRemoved,
+                            BigDataId: change.BigDataId),
+                    _ => throw new InvalidOperationException(
+                        "Task shared-data change is incomplete."),
+                },
+                ct);
         }
 
         public Task AppendLogAsync(
@@ -247,12 +292,7 @@ public sealed class TaskOrchestrator(
             TaskInstanceStatus status,
             CancellationToken ct)
         {
-            var instance = await db.TaskInstances.FindAsync([instanceId], ct);
-            if (instance is null)
-                return;
-
-            tasks.ApplyTerminalStatus(instance, status);
-            await db.SaveChangesAsync(ct);
+            await taskService.ApplyTerminalStatusAsync(instanceId, status, ct);
         }
 
         public async Task MarkFailedAsync(
@@ -260,12 +300,7 @@ public sealed class TaskOrchestrator(
             string error,
             CancellationToken ct)
         {
-            var instance = await db.TaskInstances.FindAsync([instanceId], ct);
-            if (instance is null)
-                return;
-
-            tasks.ApplyFailure(instance, error);
-            await db.SaveChangesAsync(ct);
+            await taskService.ApplyFailureAsync(instanceId, error, ct);
         }
     }
 }

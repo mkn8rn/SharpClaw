@@ -30,7 +30,9 @@ using SharpClaw.Contracts.Persistence;
 using SharpClaw.Contracts.Providers;
 using SharpClaw.Runtime.INF;
 using SharpClaw.Runtime.INF.Configuration;
+using SharpClaw.Runtime.INF.DurableStorage;
 using SharpClaw.Runtime.INF.Persistence;
+using SharpClaw.Shared.DurableStorage;
 using SharpClaw.Shared.Logging;
 using SharpClaw.Shared.Instances;
 using Microsoft.EntityFrameworkCore;
@@ -73,7 +75,7 @@ using SharpClaw.Core.Tasks.Runtime;
 //             early config, exception capture, Serilog).
 //    PHASE 2  WebApplication builder + URL binding.
 //    PHASE 3  Configuration + Serilog wire-up + per-instance singletons
-//             (SessionLogWriter, instance paths, instance lock).
+//             (durable process writer, instance paths, instance lock).
 //    PHASE 4  Module log capture (ILoggerProvider feeding /modules/{id}/logs).
 //    PHASE 5  Encryption key resolution + validation
 //             (must run before infrastructure, which uses it for at-rest enc).
@@ -126,9 +128,6 @@ backendInstancePaths.EnsureDirectories();
 backendInstancePaths.CleanupStaleDiscoveryEntries(TimeSpan.FromMinutes(2));
 using var backendInstanceLock = new SharpClawInstanceLock(backendInstancePaths);
 
-await using var sessionLogs = new SessionLogWriter("core", backendInstancePaths.LogsDirectory);
-using var sessionLogCapture = SessionLogCapture.Install(sessionLogs);
-
 // Early configuration is read once, *before* the WebApplication builder
 // exists, so that Serilog can be configured against .env values during
 // the bootstrap window.  The "real" configuration is rebuilt below on
@@ -138,19 +137,136 @@ var earlyConfiguration = new ConfigurationBuilder()
     .AddLocalEnvironment(isDevelopment: false, backendInstancePaths)
     .Build();
 
+var encryptionKeyBase64 = earlyConfiguration["Encryption:Key"]
+    ?? PersistentKeyStore.GetOrCreate("encryption-key", backendInstancePaths);
+byte[] encryptionKey;
+try
+{
+    encryptionKey = Convert.FromBase64String(encryptionKeyBase64);
+}
+catch (FormatException ex)
+{
+    throw new InvalidOperationException(
+        "Encryption:Key is not valid Base64. "
+        + "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.",
+        ex);
+}
+
+if (encryptionKey.Length != 32)
+{
+    throw new InvalidOperationException(
+        $"Encryption:Key must be exactly 256 bits (32 bytes) after Base64 decoding. "
+        + $"Got {encryptionKey.Length} bytes. "
+        + "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.");
+}
+
+var durableOptions = new DurableStorageOptions
+{
+    RootDirectory = backendInstancePaths.DurableDirectory,
+    EncryptionKey = DurableStorageKeyDerivation.Derive(encryptionKey, "records"),
+    SegmentMaxBytes = earlyConfiguration.GetValue(
+        "DurableStorage:SegmentMaxBytes",
+        8L * 1024 * 1024),
+    SegmentMaxAge = TimeSpan.FromMinutes(earlyConfiguration.GetValue(
+        "DurableStorage:SegmentMaxAgeMinutes",
+        5)),
+    MaxRecordBytes = earlyConfiguration.GetValue(
+        "DurableStorage:MaxRecordBytes",
+        256 * 1024),
+    MaxPageRecords = earlyConfiguration.GetValue(
+        "DurableStorage:MaxPageRecords",
+        1000),
+    MaxPageBytes = earlyConfiguration.GetValue(
+        "DurableStorage:MaxPageBytes",
+        1024 * 1024),
+    MaxReadScanBytes = earlyConfiguration.GetValue(
+        "DurableStorage:MaxReadScanBytes",
+        16L * 1024 * 1024),
+};
+await using var durableRecords = new DurableSegmentStore(durableOptions);
+var durablePaths = new DurableStreamPathEncoder(durableOptions.RootDirectory);
+var durableCursors = new DurableCursorCodec(
+    DurableStorageKeyDerivation.Derive(encryptionKey, "cursors"),
+    durablePaths);
+var databaseCursors = new DatabaseCursorCodec(
+    DurableStorageKeyDerivation.Derive(encryptionKey, "database-cursors"));
+var artifactStore = new ExecutionArtifactStore(
+    durableOptions.RootDirectory,
+    DurableStorageKeyDerivation.Derive(encryptionKey, "artifacts"));
+var executionDiagnostics = new ExecutionDiagnosticStore(
+    durableRecords,
+    durableCursors,
+    artifactStore);
+var taskDiagnosticState = new TaskDiagnosticStateStore(
+    durableOptions.RootDirectory,
+    DurableStorageKeyDerivation.Derive(encryptionKey, "task-state"),
+    artifactStore);
+var durableMaintenanceOptions = new DurableStorageMaintenanceOptions
+{
+    Interval = TimeSpan.FromMinutes(earlyConfiguration.GetValue(
+        "DurableStorage:Retention:IntervalMinutes",
+        15)),
+    Logs = new DurableRetentionOptions
+    {
+        JobLogAge = TimeSpan.FromDays(earlyConfiguration.GetValue(
+            "DurableStorage:Retention:JobLogDays",
+            30)),
+        TaskLogAge = TimeSpan.FromDays(earlyConfiguration.GetValue(
+            "DurableStorage:Retention:TaskLogDays",
+            30)),
+        TaskOutputAge = TimeSpan.FromDays(earlyConfiguration.GetValue(
+            "DurableStorage:Retention:TaskOutputDays",
+            90)),
+        ProcessLogAge = TimeSpan.FromDays(earlyConfiguration.GetValue(
+            "DurableStorage:Retention:ProcessLogDays",
+            14)),
+        ModuleLogAge = TimeSpan.FromDays(earlyConfiguration.GetValue(
+            "DurableStorage:Retention:ModuleLogDays",
+            14)),
+        MaximumEncodedBytes = earlyConfiguration.GetValue(
+            "DurableStorage:Retention:MaximumLogBytes",
+            10L * 1024 * 1024 * 1024),
+        MinimumFreeBytes = earlyConfiguration.GetValue(
+            "DurableStorage:Retention:MinimumFreeBytes",
+            1024L * 1024 * 1024),
+        MaximumDeletesPerRun = earlyConfiguration.GetValue(
+            "DurableStorage:Retention:MaximumDeletesPerRun",
+            10_000),
+    },
+    MaximumArtifactBytes = earlyConfiguration.GetValue(
+        "DurableStorage:Retention:MaximumArtifactBytes",
+        20L * 1024 * 1024 * 1024),
+    MinimumFreeBytes = earlyConfiguration.GetValue(
+        "DurableStorage:Retention:MinimumFreeBytes",
+        1024L * 1024 * 1024),
+    MaximumArtifactDeletesPerRun = earlyConfiguration.GetValue(
+        "DurableStorage:Retention:MaximumArtifactDeletesPerRun",
+        10_000),
+    MaximumTaskStateDeletesPerRun = earlyConfiguration.GetValue(
+        "DurableStorage:Retention:MaximumTaskStateDeletesPerRun",
+        10_000),
+    ArtifactOrphanGraceAge = TimeSpan.FromHours(earlyConfiguration.GetValue(
+        "DurableStorage:Retention:ArtifactOrphanGraceHours",
+        24)),
+};
+DurableStorageMaintenanceService.ValidateOptions(durableMaintenanceOptions);
+await using var processLogs = new DurableProcessLogWriter("core", durableRecords);
+await using var moduleLogService = new ModuleLogService(executionDiagnostics);
+using var processLogCapture = DurableProcessLogCapture.Install(processLogs);
+
 var serilogOptions = SerilogEnvironmentOptions.FromConfiguration(earlyConfiguration);
 
 AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
 {
     if (eventArgs.ExceptionObject is Exception exception)
-        sessionLogs.AppendException(exception, "Unhandled AppDomain exception in core.");
+        processLogs.AppendException(exception, "Unhandled AppDomain exception in core.");
     else
-        sessionLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
+        processLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
 };
 
 TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 {
-    sessionLogs.AppendException(eventArgs.Exception, "Unobserved task exception in core.");
+    processLogs.AppendException(eventArgs.Exception, "Unobserved task exception in core.");
 };
 
 var consoleLevelSwitch = new Serilog.Core.LoggingLevelSwitch(LogEventLevel.Information);
@@ -173,15 +289,10 @@ if (serilogOptions.Enabled)
             serilogOptions.EntityFrameworkCoreMinimumLevel,
             LogEventLevel.Warning))
         .Enrich.FromLogContext()
-        .WriteTo.Sink(new SessionLogSerilogSink(sessionLogs));
+        .WriteTo.Sink(new DurableProcessLogSerilogSink(processLogs));
 
     if (serilogOptions.ConsoleEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.Console(levelSwitch: consoleLevelSwitch);
-
-    if (serilogOptions.FileEnabled)
-        loggerConfiguration = loggerConfiguration.WriteTo.File(
-            sessionLogs.SerilogFilePath,
-            rollingInterval: RollingInterval.Infinite);
 
     Log.Logger = loggerConfiguration.CreateLogger();
 }
@@ -211,42 +322,30 @@ try
         backendInstancePaths);
 
     builder.Host.UseSerilog();
-    builder.Logging.AddProvider(new SessionLogLoggerProvider(sessionLogs));
+    builder.Logging.AddProvider(new DurableProcessLogLoggerProvider(processLogs));
 
-    builder.Services.AddSingleton(sessionLogs);
+    builder.Services.AddSingleton(processLogs);
+    builder.Services.AddSingleton(durableOptions);
+    builder.Services.AddSingleton(durableRecords);
+    builder.Services.AddSingleton(durableCursors);
+    builder.Services.AddSingleton(databaseCursors);
+    builder.Services.AddSingleton<IExecutionArtifactStore>(artifactStore);
+    builder.Services.AddSingleton(artifactStore);
+    builder.Services.AddSingleton(executionDiagnostics);
+    builder.Services.AddSingleton(taskDiagnosticState);
+    builder.Services.AddSingleton(durableMaintenanceOptions);
     builder.Services.AddSingleton(backendInstancePaths);
     builder.Services.AddSingleton(backendInstanceLock);
 
     // Module log capture — feeds per-module ring buffers for the /modules/{id}/logs API.
-    var moduleLogService = new ModuleLogService();
     builder.Services.AddSingleton(moduleLogService);
     builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(
         new ModuleLogSinkProvider(moduleLogService));
+    builder.Services.AddSingleton<DurableStorageMaintenanceService>();
+    builder.Services.AddHostedService(sp =>
+        sp.GetRequiredService<DurableStorageMaintenanceService>());
 
     // Encryption key — resolved early so Infrastructure can use it for JSON file encryption.
-    var encryptionKeyBase64 = builder.Configuration["Encryption:Key"]
-        ?? PersistentKeyStore.GetOrCreate("encryption-key", backendInstancePaths);
-    byte[] encryptionKey;
-    try
-    {
-        encryptionKey = Convert.FromBase64String(encryptionKeyBase64);
-    }
-    catch (FormatException ex)
-    {
-        throw new InvalidOperationException(
-            "Encryption:Key is not valid Base64. " +
-            "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.",
-            ex);
-    }
-
-    if (encryptionKey.Length != 32)
-    {
-        throw new InvalidOperationException(
-            $"Encryption:Key must be exactly 256 bits (32 bytes) after Base64 decoding. " +
-            $"Got {encryptionKey.Length} bytes. " +
-            "Remove the key from .env to auto-generate a new one, or provide a valid 256-bit Base64 key.");
-    }
-
     // ──────── PHASE 6 ──── Infrastructure persistence ──────────────────────
     // Infrastructure — resolve provider from .env
     var databaseOptions = DatabaseProviderOptions.FromConfiguration(
@@ -377,6 +476,8 @@ try
     builder.Services.AddScoped<EfAgentActionHost>();
     builder.Services.AddScoped<EfChatQueryHost>();
     builder.Services.AddScoped<AgentActionService>();
+    builder.Services.AddScoped<DurableExecutionPersistence>();
+    builder.Services.AddScoped<ExecutionQueryService>();
     builder.Services.AddScoped<EfAgentJobAdministrationHost>();
     builder.Services.AddScoped<AgentJobService>();
 
@@ -501,7 +602,28 @@ try
     var databaseInitializationGate = app.Services.GetRequiredService<DatabaseInitializationGate>();
     try
     {
+        if (storageMode == StorageMode.JsonFile)
+        {
+            ExecutionStorageSchemaPreflight
+                .ValidateJsonStoreBeforeInitialization(
+                    databaseOptions.JsonFile.DataDirectory);
+        }
+
         await app.Services.InitializeInfrastructureAsync();
+
+        if (storageMode == StorageMode.JsonFile)
+        {
+            ExecutionStorageSchemaPreflight.MarkJsonStoreInitialized(
+                databaseOptions.JsonFile.DataDirectory);
+        }
+        else
+        {
+            using var schemaScope = app.Services.CreateScope();
+            await ExecutionStorageSchemaPreflight.ValidateRelationalStoreAsync(
+                schemaScope.ServiceProvider
+                    .GetRequiredService<SharpClawDbContext>());
+        }
+
         databaseInitializationGate.MarkInitialized();
     }
     catch (Exception ex)

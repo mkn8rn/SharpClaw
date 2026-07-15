@@ -57,8 +57,8 @@ if (!string.Equals(gatewayManifest.SelectedBackendBindingKind, selectedBackendBi
 if (gatewayManifestChanged)
     gatewayPaths.SaveManifest(gatewayManifest);
 
-await using var sessionLogs = new SessionLogWriter("gateway", gatewayPaths.LogsDirectory);
-using var sessionLogCapture = SessionLogCapture.Install(sessionLogs);
+await using var processLogs = new DurableProcessLogWriter("gateway", gatewayPaths);
+using var processLogCapture = DurableProcessLogCapture.Install(processLogs);
 
 var publishedGatewayUrl = !string.IsNullOrWhiteSpace(configuredGatewayUrl)
     ? configuredGatewayUrl
@@ -72,20 +72,20 @@ gatewayDiscoveryLease.PublishNow();
 AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
 {
     if (eventArgs.ExceptionObject is Exception exception)
-        sessionLogs.AppendException(exception, "Unhandled AppDomain exception in gateway.");
+        processLogs.AppendException(exception, "Unhandled AppDomain exception in gateway.");
     else
-        sessionLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
+        processLogs.AppendException($"Unhandled AppDomain exception payload: {eventArgs.ExceptionObject}");
 };
 
 TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 {
-    sessionLogs.AppendException(eventArgs.Exception, "Unobserved task exception in gateway.");
+    processLogs.AppendException(eventArgs.Exception, "Unobserved task exception in gateway.");
 };
 
 builder.Logging.ClearProviders();
 builder.Host.UseSerilog();
-builder.Services.AddSingleton(sessionLogs);
-builder.Logging.AddProvider(new SessionLogLoggerProvider(sessionLogs));
+builder.Services.AddSingleton(processLogs);
+builder.Logging.AddProvider(new DurableProcessLogLoggerProvider(processLogs));
 
 // ── Gateway .env (same pattern as Core / Interface) ──────────────
 builder.Configuration.AddGatewayEnvironment(
@@ -109,15 +109,10 @@ if (serilogOptions.Enabled)
             serilogOptions.EntityFrameworkCoreMinimumLevel,
             LogEventLevel.Warning))
         .Enrich.FromLogContext()
-        .WriteTo.Sink(new SessionLogSerilogSink(sessionLogs));
+        .WriteTo.Sink(new DurableProcessLogSerilogSink(processLogs));
 
     if (serilogOptions.ConsoleEnabled)
         loggerConfiguration = loggerConfiguration.WriteTo.Console();
-
-    if (serilogOptions.FileEnabled)
-        loggerConfiguration = loggerConfiguration.WriteTo.File(
-            sessionLogs.SerilogFilePath,
-            rollingInterval: RollingInterval.Infinite);
 
     Log.Logger = loggerConfiguration.CreateLogger();
 }
@@ -232,12 +227,12 @@ var configuredApiKey = builder.Configuration[$"{InternalApiOptions.SectionName}:
 if (!string.IsNullOrEmpty(configuredApiKey))
 {
     Console.WriteLine($"[gateway] API key resolved from config: {configuredApiKey.Length} chars, prefix={configuredApiKey[..Math.Min(6, configuredApiKey.Length)]}..");
-    sessionLogs.AppendDebug($"API key resolved from config: {configuredApiKey.Length} chars.");
+    processLogs.AppendDebug($"API key resolved from config: {configuredApiKey.Length} chars.");
 }
 else
 {
     Console.WriteLine("[gateway] ⚠ No API key found in configuration — will fall back to file read.");
-    sessionLogs.AppendDebug("No API key found in configuration; will fall back to file read.");
+    processLogs.AppendDebug("No API key found in configuration; will fall back to file read.");
 }
 
 var app = builder.Build();

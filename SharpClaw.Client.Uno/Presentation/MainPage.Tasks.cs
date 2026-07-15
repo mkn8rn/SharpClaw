@@ -140,11 +140,12 @@ public sealed partial class MainPage
             {
                 try
                 {
-                    using var resp = await api.GetAsync($"/tasks/{def.Id}/instances");
+                    using var resp = await api.GetAsync($"/tasks/{def.Id}/instances?take=100");
                     if (resp.IsSuccessStatusCode)
                     {
                         using var stream = await resp.Content.ReadAsStreamAsync();
-                        return await JsonSerializer.DeserializeAsync<List<TaskInstanceSummaryDto>>(stream, Json) ?? [];
+                        var page = await JsonSerializer.DeserializeAsync<TaskInstancePageDto>(stream, Json);
+                        return page?.Records.ToList() ?? [];
                     }
                 }
                 catch { /* swallow */ }
@@ -304,11 +305,12 @@ public sealed partial class MainPage
         var api = App.Services!.GetRequiredService<SharpClawApiClient>();
         try
         {
-            using var resp = await api.GetAsync($"/tasks/{taskDefinitionId}/instances");
+            using var resp = await api.GetAsync($"/tasks/{taskDefinitionId}/instances?take=100");
             if (resp.IsSuccessStatusCode)
             {
                 using var stream = await resp.Content.ReadAsStreamAsync();
-                var instances = await JsonSerializer.DeserializeAsync<List<TaskInstanceSummaryDto>>(stream, Json) ?? [];
+                var page = await JsonSerializer.DeserializeAsync<TaskInstancePageDto>(stream, Json);
+                var instances = page?.Records ?? [];
 
                 _taskInstItemPoolUsed = 0;
                 foreach (var inst in instances)
@@ -402,6 +404,8 @@ public sealed partial class MainPage
 
             _taskLogPoolUsed = 0;
             TaskLogsPanel.Children.Clear();
+            _currentTaskLogs = [];
+            _currentTaskOutput = null;
 
             TaskStatusBlock.Text = $"status: {detail.Status}";
             TaskStatusBlock.Foreground = Brush(detail.Status switch
@@ -421,20 +425,70 @@ public sealed partial class MainPage
             if (detail.CompletedAt.HasValue) _taskTimestampParts.Add($"completed: {detail.CompletedAt.Value.LocalDateTime:HH:mm:ss}");
             TaskTimestampBlock.Text = string.Join("  |  ", _taskTimestampParts);
 
-            var hasLogs = detail.Logs is { Count: > 0 };
+            if (detail.LogRecordCount > 0)
+            {
+                using var logsResponse = await api.GetAsync(
+                    $"/tasks/{taskDefinitionId}/instances/{instanceId}/logs?take=200&maxBytes=262144");
+                if (logsResponse.IsSuccessStatusCode)
+                {
+                    var page = await JsonSerializer.DeserializeAsync<TaskLogPageDto>(
+                        await logsResponse.Content.ReadAsStreamAsync(),
+                        Json);
+                    _currentTaskLogs = page?.Records ?? [];
+                    if (page?.HasMore == true)
+                    {
+                        AppendTaskLog(
+                            "info",
+                            $"Showing a bounded page of {page.ReturnedRecords} records. More history is available.",
+                            null);
+                    }
+                    if (page?.ExpiredRecordCount > 0)
+                    {
+                        AppendTaskLog(
+                            "warning",
+                            $"{page.ExpiredRecordCount:N0} older records expired under retention.",
+                            null);
+                    }
+                }
+            }
+
+            if (detail.OutputRecordCount > 0)
+            {
+                using var outputResponse = await api.GetAsync(
+                    $"/tasks/{taskDefinitionId}/instances/{instanceId}/outputs/latest");
+                if (outputResponse.IsSuccessStatusCode
+                    && outputResponse.StatusCode != System.Net.HttpStatusCode.NoContent)
+                {
+                    _currentTaskOutput = await JsonSerializer.DeserializeAsync<TaskOutputRecordDto>(
+                        await outputResponse.Content.ReadAsStreamAsync(),
+                        Json);
+                }
+            }
+
+            var hasLogs = _currentTaskLogs.Count > 0;
             if (hasLogs)
             {
-                AppendTaskLog("info", $"── execution logs ({detail.Logs!.Count}) ──", null);
-                foreach (var log in detail.Logs)
+                AppendTaskLog("info", $"── execution logs ({_currentTaskLogs.Count}) ──", null);
+                foreach (var log in _currentTaskLogs)
                     AppendTaskLog(log.Level, TruncateForDisplay(log.Message), log.Timestamp);
             }
 
-            var hasOutput = !string.IsNullOrWhiteSpace(detail.OutputSnapshotJson);
+            var hasOutput = !string.IsNullOrWhiteSpace(_currentTaskOutput?.Data)
+                || _currentTaskOutput?.Artifact is not null;
             var hasError = !string.IsNullOrWhiteSpace(detail.ErrorMessage);
             if (hasOutput || hasError)
             {
                 AppendTaskLog("info", "── task output ──", null);
-                if (hasOutput) AppendTaskLog("result", TruncateForDisplay(detail.OutputSnapshotJson!), null);
+                if (!string.IsNullOrWhiteSpace(_currentTaskOutput?.Data))
+                    AppendTaskLog("result", TruncateForDisplay(_currentTaskOutput.Data), _currentTaskOutput.Timestamp);
+                if (_currentTaskOutput?.Artifact is { } artifact
+                    && string.IsNullOrWhiteSpace(_currentTaskOutput.Data))
+                {
+                    AppendTaskLog(
+                        "result",
+                        $"Artifact {artifact.Id} ({artifact.Length:N0} bytes, {artifact.MediaType})",
+                        _currentTaskOutput.Timestamp);
+                }
                 if (hasError) AppendTaskLog("error", TruncateForDisplay(detail.ErrorMessage!), null);
             }
 
@@ -488,6 +542,8 @@ public sealed partial class MainPage
         TaskSubmitButton.Visibility = Visibility.Collapsed;
         TaskNoInstancePlaceholder.Visibility = Visibility.Collapsed;
         _currentTaskDetail = null;
+        _currentTaskLogs = [];
+        _currentTaskOutput = null;
     }
 
     private JobLogRow AcquireTaskLogRow()
@@ -774,9 +830,9 @@ public sealed partial class MainPage
 
     private void OnCopyTaskLogsClick(object sender, RoutedEventArgs e)
     {
-        if (_currentTaskDetail?.Logs is not { Count: > 0 } logs) return;
+        if (_currentTaskLogs.Count == 0) return;
         var sb = new StringBuilder();
-        foreach (var log in logs) sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
+        foreach (var log in _currentTaskLogs) sb.AppendLine($"[{log.Timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}] [{log.Level}] {log.Message}");
         TerminalUI.CopyToClipboard(sb.ToString());
     }
 
@@ -784,7 +840,10 @@ public sealed partial class MainPage
     {
         if (_currentTaskDetail is not { } detail) return;
         var sb = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(detail.OutputSnapshotJson)) sb.AppendLine(detail.OutputSnapshotJson);
+        if (!string.IsNullOrWhiteSpace(_currentTaskOutput?.Data))
+            sb.AppendLine(_currentTaskOutput.Data);
+        if (_currentTaskOutput?.Artifact is { } artifact)
+            sb.AppendLine($"[artifact {artifact.Id}, {artifact.Length:N0} bytes, {artifact.MediaType}]");
         if (!string.IsNullOrWhiteSpace(detail.ErrorMessage)) { if (sb.Length > 0) sb.AppendLine(); sb.AppendLine($"[error] {detail.ErrorMessage}"); }
         if (sb.Length > 0) TerminalUI.CopyToClipboard(sb.ToString());
     }

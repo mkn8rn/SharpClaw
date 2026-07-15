@@ -146,6 +146,81 @@ public sealed class DatabaseProviderOptionsTests
         moduleOptions.ConnectionString.Should().Be("Data Source=:memory:");
     }
 
+    [TestCase(
+        StorageMode.SQLite,
+        "Data Source=:memory:",
+        "Microsoft.EntityFrameworkCore.Sqlite")]
+    [TestCase(
+        StorageMode.Postgres,
+        "Host=localhost;Database=sharpclaw;Username=test;Password=test",
+        "Npgsql.EntityFrameworkCore.PostgreSQL")]
+    [TestCase(
+        StorageMode.SqlServer,
+        "Server=localhost;Database=sharpclaw;User Id=test;Password=test;TrustServerCertificate=True",
+        "Microsoft.EntityFrameworkCore.SqlServer")]
+    public void AddInfrastructure_ActivatesOnlyTheSelectedEfProvider(
+        StorageMode mode,
+        string connectionString,
+        string expectedProvider)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddInfrastructure(new DatabaseProviderOptions
+        {
+            Provider = mode,
+            ConnectionString = connectionString,
+        });
+
+        services.Count(descriptor => descriptor.ServiceType
+                == typeof(DbContextOptions<SharpClawDbContext>))
+            .Should().Be(1);
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+        db.Database.ProviderName.Should().Be(expectedProvider);
+        provider.GetRequiredService<ModuleDbContextOptions>().StorageMode
+            .Should().Be(mode);
+    }
+
+    [Test]
+    public void AddInfrastructure_ActivatesOnlyJsonColdStoreWhenSelected()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "SharpClaw.Tests",
+            "provider-selection",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var options = new DatabaseProviderOptions
+            {
+                Provider = StorageMode.JsonFile,
+            };
+            options.JsonFile.DataDirectory = root;
+            options.JsonFile.EncryptAtRest = false;
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddInfrastructure(options);
+
+            services.Count(descriptor => descriptor.ServiceType
+                    == typeof(DbContextOptions<SharpClawDbContext>))
+                .Should().Be(1);
+            using var provider = services.BuildServiceProvider();
+            using var scope = provider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<SharpClawDbContext>();
+
+            db.Database.ProviderName.Should().Contain("JSONColdStore");
+            provider.GetRequiredService<ModuleDbContextOptions>().StorageMode
+                .Should().Be(StorageMode.JsonFile);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public void ModuleDbContextFactory_AppliesSharedSqliteCommandTimeout()
     {

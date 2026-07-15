@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using SharpClaw.Runtime.BLL.Modules;
 using SharpClaw.Runtime.Host.Routing;
 using SharpClaw.Runtime.INF.Logging;
+using SharpClaw.Runtime.INF.DurableStorage;
 using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Runtime.BLL.Services;
 using SharpClaw.Contracts.Modules;
@@ -34,83 +35,42 @@ public static class ModuleHandlers
             : Results.NotFound(new { error = $"Unknown module: {moduleId}" });
     }
 
-    /// <summary>
-    /// Query the in-memory log ring buffer for a module.
-    /// Supports cursor-based pagination via the <c>since</c> timestamp.
-    /// </summary>
+    /// <summary>Read a bounded page from a module's durable boot stream.</summary>
     [MapGet("/{moduleId}/logs")]
-    public static IResult GetLogs(
-        string moduleId, ModuleLogService logService,
-        string? since = null, string? level = null, int take = 100)
+    public static async Task<IResult> GetLogs(
+        string moduleId,
+        ModuleLogService logService,
+        Guid? bootId = null,
+        string? cursor = null,
+        string? minimumLevel = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        string? contains = null,
+        int take = 200,
+        int maxBytes = 262_144,
+        long maxScanBytes = 16 * 1024 * 1024,
+        CancellationToken ct = default)
     {
-        take = Math.Clamp(take, 1, 500);
-
-        DateTimeOffset? sinceTs = null;
-        if (since is not null && DateTimeOffset.TryParse(since, out var parsed))
-            sinceTs = parsed;
-
-        LogLevel? minLevel = null;
-        if (level is not null && Enum.TryParse<LogLevel>(level, ignoreCase: true, out var lv))
-            minLevel = lv;
-
-        var entries = logService.GetEntries(moduleId, sinceTs, minLevel, take);
-        var cursor = entries.Count > 0 ? entries[^1].Timestamp.ToString("O") : since;
-
-        return Results.Ok(new
-        {
+        var selectedBootId = bootId ?? logService.BootId;
+        var page = await logService.ReadAsync(
             moduleId,
-            entries = entries.Select(e => new
-            {
-                timestamp = e.Timestamp,
-                level = e.Level.ToString(),
-                message = e.Message,
-                exceptionType = e.ExceptionType,
-                stackTrace = e.StackTrace,
-            }),
+            selectedBootId,
             cursor,
-        });
-    }
-
-    /// <summary>Get accumulated error or warning entries for a module.</summary>
-    [MapGet("/{moduleId}/diagnostics")]
-    public static IResult GetDiagnostics(
-        string moduleId, ModuleLogService logService,
-        string level = "error", int take = 50)
-    {
-        take = Math.Clamp(take, 1, 200);
-
-        var minLevel = string.Equals(level, "warning", StringComparison.OrdinalIgnoreCase)
-            ? LogLevel.Warning
-            : LogLevel.Error;
-
-        // For diagnostics we filter to exact level (errors = Error+Critical, warnings = Warning only).
-        var allEntries = logService.GetEntries(moduleId, since: null, minLevel: minLevel, take: 500);
-        var filtered = level.Equals("warning", StringComparison.OrdinalIgnoreCase)
-            ? allEntries.Where(e => e.Level == LogLevel.Warning).Take(take).ToList()
-            : allEntries.Where(e => e.Level >= LogLevel.Error).Take(take).ToList();
-
+            new DurableLogQuery(
+                take,
+                maxBytes,
+                minimumLevel,
+                from,
+                to,
+                contains,
+                maxScanBytes),
+            ct);
         return Results.Ok(new
         {
             moduleId,
-            level,
-            count = filtered.Count,
-            entries = filtered.Select(e => new
-            {
-                timestamp = e.Timestamp,
-                level = e.Level.ToString(),
-                message = e.Message,
-                exceptionType = e.ExceptionType,
-                stackTrace = e.StackTrace,
-            }),
+            bootId = selectedBootId,
+            page,
         });
-    }
-
-    /// <summary>Clear the in-memory log buffer for a module.</summary>
-    [MapDelete("/{moduleId}/logs")]
-    public static IResult ClearLogs(string moduleId, ModuleLogService logService)
-    {
-        logService.Clear(moduleId);
-        return Results.NoContent();
     }
 
     /// <summary>Enable a bundled module. Registers it, runs initialization, persists state.</summary>

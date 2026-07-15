@@ -1,5 +1,4 @@
 using SharpClaw.Contracts.DTOs.Tools;
-using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Core.Tools;
 
 namespace SharpClaw.Tests.Core;
@@ -21,7 +20,7 @@ public sealed class ToolAwarenessSetEngineTests
     [Test]
     public void ApplyUpdate_WhenToolsAreProvided_ReplacesDictionary()
     {
-        var entity = new ToolAwarenessSetDB
+        var entity = new ToolAwarenessSetState
         {
             Name = "Before",
             Tools = new Dictionary<string, bool>

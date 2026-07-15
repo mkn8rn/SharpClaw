@@ -5,6 +5,7 @@ using SharpClaw.Contracts.Entities.Core;
 using SharpClaw.Contracts.Entities.Core.Clearance;
 using SharpClaw.Contracts.Entities.Core.Context;
 using SharpClaw.Contracts.Providers;
+using SharpClaw.Core.State;
 using SharpClaw.Runtime.INF.Persistence;
 
 namespace SharpClaw.Runtime.BLL.Services;
@@ -16,6 +17,8 @@ public sealed class HeaderTagProcessor(
     IServiceProvider serviceProvider,
     IConfiguration configuration)
 {
+    private readonly CoreStateSession _states = new(db);
+
     private readonly bool _disableModuleHeaderTags =
         configuration.GetValue<bool>("Chat:DisableModuleHeaderTags");
 
@@ -27,8 +30,8 @@ public sealed class HeaderTagProcessor(
 
     public async Task<string> ExpandAsync(
         string template,
-        ChannelDB channel,
-        AgentDB agent,
+        ChannelState channel,
+        AgentState agent,
         string clientType,
         Guid? userId,
         CancellationToken ct,
@@ -69,8 +72,8 @@ public sealed class HeaderTagProcessor(
     }
 
     private async Task<ChatHeaderExpansionContext> BuildContextAsync(
-        ChannelDB channel,
-        AgentDB agent,
+        ChannelState channel,
+        AgentState agent,
         string clientType,
         Guid? userId,
         ChatHeaderExpansionPlan plan,
@@ -78,29 +81,31 @@ public sealed class HeaderTagProcessor(
         CompletionParameters? completionParameters = null,
         string providerKey = "")
     {
-        UserDB? user = null;
-        PermissionSetDB? userPs = null;
+        UserState? user = null;
+        PermissionSetState? userPs = null;
         if (plan.RequiresUser)
         {
-            user = await db.Users
+            var userEntity = await db.Users
                 .AsNoTracking()
                 .Include(u => u.Role).ThenInclude(r => r!.PermissionSet)
                 .FirstOrDefaultAsync(u => u.Id == userId, ct);
+            user = userEntity is null ? null : _states.Map(userEntity);
 
             if (plan.RequiresUserPermissionSet
                 && user?.Role?.PermissionSetId is { } psId)
             {
-                userPs = await db.PermissionSets
+                var permissionSet = await db.PermissionSets
                     .AsNoTracking()
                     .Include(p => p.GlobalFlags)
                     .Include(p => p.ResourceAccesses)
                     .AsSplitQuery()
                     .FirstOrDefaultAsync(p => p.Id == psId, ct);
+                userPs = permissionSet is null ? null : _states.Map(permissionSet);
             }
         }
 
-        RoleDB? agentRole = null;
-        PermissionSetDB? agentPs = null;
+        RoleState? agentRole = null;
+        PermissionSetState? agentPs = null;
         if (plan.RequiresAgentPermissionSet)
         {
             var agentWithRole = await db.Agents
@@ -108,15 +113,18 @@ public sealed class HeaderTagProcessor(
                 .Include(a => a.Role).ThenInclude(r => r!.PermissionSet)
                 .FirstOrDefaultAsync(a => a.Id == agent.Id, ct);
 
-            agentRole = agentWithRole?.Role;
+            agentRole = agentWithRole?.Role is null
+                ? null
+                : _states.Map(agentWithRole.Role);
             if (agentRole?.PermissionSetId is { } agentPsId)
             {
-                agentPs = await db.PermissionSets
+                var permissionSet = await db.PermissionSets
                     .AsNoTracking()
                     .Include(p => p.ResourceAccesses)
                     .Include(p => p.GlobalFlags)
                     .AsSplitQuery()
                     .FirstOrDefaultAsync(p => p.Id == agentPsId, ct);
+                agentPs = permissionSet is null ? null : _states.Map(permissionSet);
             }
         }
 
@@ -135,7 +143,9 @@ public sealed class HeaderTagProcessor(
     private sealed class EfHeaderResourceTagResolver(SharpClawDbContext db)
         : IChatHeaderResourceTagResolver
     {
-        public async Task<IReadOnlyList<BaseEntity>?> LoadEntitiesAsync(
+        private readonly CoreStateSession _states = new(db);
+
+        public async Task<IReadOnlyList<DomainState>?> LoadEntitiesAsync(
             string tagName,
             CancellationToken ct)
         {
@@ -158,10 +168,10 @@ public sealed class HeaderTagProcessor(
             };
         }
 
-        private static IReadOnlyList<BaseEntity> Cast<T>(List<T> items)
+        private IReadOnlyList<DomainState> Cast<T>(List<T> items)
             where T : BaseEntity
         {
-            return items.ConvertAll(static item => (BaseEntity)item);
+            return items.ConvertAll(item => _states.Map(item));
         }
     }
 }

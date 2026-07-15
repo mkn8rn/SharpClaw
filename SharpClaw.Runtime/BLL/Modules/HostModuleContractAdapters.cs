@@ -197,20 +197,21 @@ public sealed class HostAgentManager(
 
 public sealed class HostAgentJobReader(AgentJobService jobs) : IAgentJobReader
 {
-    public Task<AgentJobResponse?> GetJobAsync(Guid jobId, CancellationToken ct = default) =>
+    public Task<AgentJobDetailResponse?> GetJobAsync(Guid jobId, CancellationToken ct = default) =>
         jobs.GetAsync(jobId, ct);
 
-    public Task<IReadOnlyList<AgentJobResponse>> ListJobsByActionPrefixAsync(
+    public Task<AgentJobSummaryPageResponse> ListJobSummariesByActionPrefixAsync(
         string actionKeyPrefix,
         Guid? resourceId = null,
+        string? cursor = null,
+        int take = 50,
         CancellationToken ct = default) =>
-        jobs.ListJobsByActionPrefixAsync(actionKeyPrefix, resourceId, ct);
-
-    public Task<IReadOnlyList<AgentJobSummaryResponse>> ListJobSummariesByActionPrefixAsync(
-        string actionKeyPrefix,
-        Guid? resourceId = null,
-        CancellationToken ct = default) =>
-        jobs.ListJobSummariesByActionPrefixAsync(actionKeyPrefix, resourceId, ct);
+        jobs.ListJobSummariesByActionPrefixAsync(
+            actionKeyPrefix,
+            resourceId,
+            cursor,
+            take,
+            ct);
 
     public Task<bool> JobExistsWithActionPrefixAsync(
         Guid jobId, string actionKeyPrefix, CancellationToken ct = default) =>

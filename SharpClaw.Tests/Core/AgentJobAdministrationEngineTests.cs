@@ -2,11 +2,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Contracts;
 using SharpClaw.Contracts.DTOs.AgentActions;
-using SharpClaw.Contracts.Entities.Core;
-using SharpClaw.Contracts.Entities.Core.Access;
-using SharpClaw.Contracts.Entities.Core.Clearance;
-using SharpClaw.Contracts.Entities.Core.Context;
-using SharpClaw.Contracts.Entities.Core.Jobs;
 using SharpClaw.Contracts.Enums;
 using SharpClaw.Contracts.Modules;
 using SharpClaw.Core.Jobs;
@@ -24,21 +19,18 @@ public sealed class AgentJobAdministrationEngineTests
     {
         var defaultAgentId = Guid.NewGuid();
         var requestedAgentId = Guid.NewGuid();
-        var channel = new ChannelDB
-        {
-            Id = Guid.NewGuid(),
-            Title = "channel",
-            AgentId = defaultAgentId
-        };
-        channel.AllowedAgents.Add(new AgentDB
-        {
-            Id = requestedAgentId,
-            Name = "allowed"
-        });
+        var channelId = Guid.NewGuid();
+        var channel = new AgentJobChannelContext(
+            channelId,
+            defaultAgentId,
+            ContextAgentId: null,
+            AllowedAgentIds: new HashSet<Guid> { requestedAgentId },
+            PermissionSetId: null,
+            ContextPermissionSetId: null);
 
         var resolved = _engine.ResolveSubmissionAgent(
             channel,
-            channel.Id,
+            channelId,
             requestedAgentId);
 
         resolved.Should().Be(requestedAgentId);
@@ -48,20 +40,18 @@ public sealed class AgentJobAdministrationEngineTests
     public void ResolveSubmissionAgent_WhenChannelHasNoAgent_UsesContextAgent()
     {
         var contextAgentId = Guid.NewGuid();
-        var channel = new ChannelDB
-        {
-            Id = Guid.NewGuid(),
-            Title = "channel",
-            AgentContext = new ChannelContextDB
-            {
-                Name = "context",
-                AgentId = contextAgentId
-            }
-        };
+        var channelId = Guid.NewGuid();
+        var channel = new AgentJobChannelContext(
+            channelId,
+            AgentId: null,
+            ContextAgentId: contextAgentId,
+            AllowedAgentIds: new HashSet<Guid>(),
+            PermissionSetId: null,
+            ContextPermissionSetId: null);
 
         var resolved = _engine.ResolveSubmissionAgent(
             channel,
-            channel.Id,
+            channelId,
             requestedAgentId: null);
 
         resolved.Should().Be(contextAgentId);
@@ -72,24 +62,26 @@ public sealed class AgentJobAdministrationEngineTests
     {
         var defaultAgentId = Guid.NewGuid();
         var requestedAgentId = Guid.NewGuid();
-        var channel = new ChannelDB
-        {
-            Id = Guid.NewGuid(),
-            Title = "channel",
-            AgentId = defaultAgentId
-        };
+        var channelId = Guid.NewGuid();
+        var channel = new AgentJobChannelContext(
+            channelId,
+            defaultAgentId,
+            ContextAgentId: null,
+            AllowedAgentIds: new HashSet<Guid>(),
+            PermissionSetId: null,
+            ContextPermissionSetId: null);
 
         var act = () => _engine.ResolveSubmissionAgent(
             channel,
-            channel.Id,
+            channelId,
             requestedAgentId);
 
         act.Should().Throw<InvalidOperationException>()
-            .WithMessage($"Agent {requestedAgentId} is not allowed on channel {channel.Id}*");
+            .WithMessage($"Agent {requestedAgentId} is not allowed on channel {channelId}*");
     }
 
     [Test]
-    public void CreateSubmissionJob_MapsRequestAndCaller()
+    public void CreateSubmissionState_MapsRequestAndCreatesIdentityBeforePersistence()
     {
         var channelId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -104,7 +96,7 @@ public sealed class AgentJobAdministrationEngineTests
             ScriptJson: "{}",
             WorkingDirectory: "E:\\work");
 
-        var job = _engine.CreateSubmissionJob(
+        var job = _engine.CreateSubmissionState(
             channelId,
             agentId,
             request,
@@ -119,13 +111,15 @@ public sealed class AgentJobAdministrationEngineTests
         job.ResourceId.Should().Be(resourceId);
         job.ScriptJson.Should().Be("{}");
         job.WorkingDirectory.Should().Be("E:\\work");
+        job.Id.Should().NotBeEmpty();
+        job.CreatedAt.Should().NotBe(default);
     }
 
     [Test]
-    public void ApplyLifecycleDecision_UpdatesJobAndAttachesLogs()
+    public void ApplyLifecycleState_UpdatesCompactStateAndLeavesPayloadOnDecision()
     {
         var started = DateTimeOffset.Parse("2026-06-28T18:00:00Z");
-        var job = new AgentJobDB();
+        var job = new AgentJobState();
         var decision = new AgentJobLifecycleDecision
         {
             Status = AgentJobStatus.Executing,
@@ -138,19 +132,18 @@ public sealed class AgentJobAdministrationEngineTests
             ]
         };
 
-        var logs = _engine.ApplyLifecycleDecision(job, decision);
+        _engine.ApplyLifecycleState(job, decision);
 
         job.Status.Should().Be(AgentJobStatus.Executing);
         job.StartedAt.Should().Be(started);
-        logs.Should().HaveCount(2);
-        job.LogEntries.Should().BeEquivalentTo(logs);
-        logs.Select(log => log.Message).Should().Equal("started", "careful");
+        decision.Logs.Select(log => log.Message)
+            .Should().Equal("started", "careful");
     }
 
     [Test]
-    public void ToResponse_IncludesOrderedLogsAndTokenUsage()
+    public void ToResponse_IncludesTransientOutcomeAndTokenUsageWithoutStoredLogs()
     {
-        var job = new AgentJobDB
+        var job = new AgentJobState
         {
             Id = Guid.NewGuid(),
             ChannelId = Guid.NewGuid(),
@@ -162,31 +155,25 @@ public sealed class AgentJobAdministrationEngineTests
             CompletionTokens = 4,
             CreatedAt = DateTimeOffset.Parse("2026-06-28T18:00:00Z")
         };
-        job.LogEntries.Add(new AgentJobLogEntryDB
-        {
-            Message = "second",
-            CreatedAt = DateTimeOffset.Parse("2026-06-28T18:00:02Z")
-        });
-        job.LogEntries.Add(new AgentJobLogEntryDB
-        {
-            Message = "first",
-            CreatedAt = DateTimeOffset.Parse("2026-06-28T18:00:01Z")
-        });
-
-        var response = _engine.ToResponse(job);
+        var response = _engine.ToResponse(
+            job,
+            new AgentJobExecutionOutcome(
+                ResultData: "result",
+                ErrorCode: null,
+                ErrorMessage: null));
 
         response.JobCost.Should().NotBeNull();
         response.JobCost!.TotalPromptTokens.Should().Be(3);
         response.JobCost.TotalCompletionTokens.Should().Be(4);
         response.JobCost.TotalTokens.Should().Be(7);
-        response.Logs.Select(log => log.Message).Should().Equal("first", "second");
+        response.ResultData.Should().Be("result");
     }
 
     [Test]
     public void ApplyTokenUsage_SplitsRemaindersOntoFirstJob()
     {
-        var first = new AgentJobDB();
-        var second = new AgentJobDB();
+        var first = new AgentJobState();
+        var second = new AgentJobState();
 
         _engine.ApplyTokenUsage([first, second], promptTokens: 5, completionTokens: 7);
 
@@ -200,7 +187,7 @@ public sealed class AgentJobAdministrationEngineTests
     public void ApplyTokenUsage_WhenPromptTokensAreNegative_Throws()
     {
         var act = () => _engine.ApplyTokenUsage(
-            [new AgentJobDB()],
+            [new AgentJobState()],
             promptTokens: -1,
             completionTokens: 0);
 
@@ -318,11 +305,11 @@ public sealed class AgentJobAdministrationEngineTests
     {
         var registry = CreateRegistry();
         var resourceId = Guid.NewGuid();
-        var permissionSet = new PermissionSetDB
+        var permissionSet = new PermissionSetState
         {
             ResourceAccesses =
             [
-                new ResourceAccessDB
+                new ResourceAccessState
                 {
                     ResourceType = "documents",
                     ResourceId = resourceId,
@@ -343,11 +330,11 @@ public sealed class AgentJobAdministrationEngineTests
     public void HasGrantByDelegateName_WhenGlobalFlagMatches_ReturnsTrue()
     {
         var registry = CreateRegistry();
-        var permissionSet = new PermissionSetDB
+        var permissionSet = new PermissionSetState
         {
             GlobalFlags =
             [
-                new GlobalFlagDB
+                new GlobalFlagState
                 {
                     FlagKey = "CanAuditJobs",
                     Clearance = PermissionClearance.Independent
@@ -361,52 +348,6 @@ public sealed class AgentJobAdministrationEngineTests
                 "AuditJobsAsync",
                 resourceId: null)
             .Should().BeTrue();
-    }
-
-    [Test]
-    public void BuildActionPrefixPredicate_WhenResourceIsProvided_FiltersByPrefixAndResource()
-    {
-        var matchingResourceId = Guid.NewGuid();
-        var otherResourceId = Guid.NewGuid();
-        var predicate = _engine.BuildActionPrefixPredicate(
-                "docs_",
-                matchingResourceId)
-            .Compile();
-
-        predicate(new AgentJobDB
-        {
-            ActionKey = "docs_open",
-            ResourceId = matchingResourceId
-        }).Should().BeTrue();
-        predicate(new AgentJobDB
-        {
-            ActionKey = "DOCS_OPEN",
-            ResourceId = matchingResourceId
-        }).Should().BeTrue();
-        predicate(new AgentJobDB
-        {
-            ActionKey = "docs_open",
-            ResourceId = otherResourceId
-        }).Should().BeFalse();
-    }
-
-    [Test]
-    public void OrderMostRecent_SortsJobsByCreatedAtDescending()
-    {
-        var older = new AgentJobDB
-        {
-            Id = Guid.NewGuid(),
-            CreatedAt = DateTimeOffset.Parse("2026-06-28T18:00:00Z")
-        };
-        var newer = new AgentJobDB
-        {
-            Id = Guid.NewGuid(),
-            CreatedAt = DateTimeOffset.Parse("2026-06-28T19:00:00Z")
-        };
-
-        var ordered = _engine.OrderMostRecent([older, newer]);
-
-        ordered.Select(job => job.Id).Should().Equal(newer.Id, older.Id);
     }
 
     private static ModuleRegistry CreateRegistry()
