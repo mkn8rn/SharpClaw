@@ -222,6 +222,30 @@ public class BundledModuleOutputTests
     }
 
     [Test]
+    public void PackagedModuleDependenciesDoNotOverwriteHostEfCoreAssembly()
+    {
+        var outputDir = ResolveApiOutputDirectory();
+        var outputAssemblyPath = Path.Combine(outputDir, "Microsoft.EntityFrameworkCore.dll");
+        var packageAssemblyPath = Path.Combine(
+            ResolveNuGetPackageRoot("Microsoft.EntityFrameworkCore"),
+            "lib",
+            "net10.0",
+            "Microsoft.EntityFrameworkCore.dll");
+
+        File.Exists(outputAssemblyPath).Should().BeTrue(
+            $"the API host output should contain its resolved EF Core assembly at '{outputAssemblyPath}'");
+        File.Exists(packageAssemblyPath).Should().BeTrue(
+            $"the restored EF Core package should contain its resolved assembly at '{packageAssemblyPath}'");
+
+        var outputVersion = AssemblyName.GetAssemblyName(outputAssemblyPath).Version;
+        var packageVersion = AssemblyName.GetAssemblyName(packageAssemblyPath).Version;
+
+        outputVersion.Should().Be(
+            packageVersion,
+            "a stale module dependency must not overwrite the host assembly selected by the central package graph");
+    }
+
+    [Test]
     public void InProcessTestHarnessPayloadIsBuiltAsSeparateModule()
     {
         var solutionRoot = ResolveSolutionRoot();

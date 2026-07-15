@@ -51,6 +51,16 @@
                                     Exclude="$(PkgSharpClaw_Modules_ModuleDev)\sharpclaw\SharpClaw.*.dll"
                                     Condition="'$(PkgSharpClaw_Modules_ModuleDev)' != ''" />
 
+      <!--
+        A module package can carry a dependency that is also a host dependency,
+        but at a different version. The host has already built its authoritative
+        copy before this target runs; do not let a module payload overwrite it.
+        Module entry assemblies remain in _PackagedModuleDll and are intentionally
+        unaffected by this dependency-only filter.
+      -->
+      <_PackagedModuleDependencyDll Remove="@(_PackagedModuleDependencyDll)"
+                                    Condition="Exists('$(TargetDir)%(Filename)%(Extension)')" />
+
       <_PackagedModuleManifest Include="$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\module.json"
                                Condition="Exists('$(PkgSharpClaw_Modules_EditorCommon)\sharpclaw\module.json')">
         <ModuleId>sharpclaw_editor_common</ModuleId>
